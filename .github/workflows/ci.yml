@@ -1,0 +1,60 @@
+# CI — rustfmt, clippy -D warnings, cargo test, host node:test, shellcheck.
+# Same gate as `make quality` / `scripts/docker-run.sh quality`.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # docker-run.sh forks on this: run the in-container gate without Compose.
+  DRAW_ENGINE_IN_DOCKER: "1"
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint scripts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          # SC1128: 42-school banner sits above the shebang (scripts are invoked as bash).
+          # SC1091: sourced helpers are not followed from CI.
+          find scripts -type f -name '*.sh' -print0 \
+            | xargs -0 --no-run-if-empty shellcheck -S error -e SC1091 -e SC1128
+
+  quality:
+    name: Quality & tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: rustfmt, clippy, cargo test, host tests
+        run: bash scripts/docker-run.sh quality
