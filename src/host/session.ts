@@ -2,7 +2,7 @@
  * Shared mutable state for a bound canvas: engine + pointer-gesture bookkeeping.
  */
 
-import type { DrawEngine } from "../core/engine";
+import type { DrawEngine } from "../engine";
 import type { HostCallbacks } from "./types";
 
 export interface HostSession {

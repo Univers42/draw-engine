@@ -7,12 +7,20 @@ services:
     environment:
       DRAW_ENGINE_IN_DOCKER: "1"
       NODE_ENV: test
+      CARGO_HOME: /usr/local/cargo
+      CARGO_TARGET_DIR: /cargo-target
     volumes:
       - .:/app
       - draw_engine_node_modules:/app/node_modules
       - draw_engine_pnpm_store:/pnpm/store
+      - draw_engine_cargo_registry:/usr/local/cargo/registry
+      - draw_engine_cargo_git:/usr/local/cargo/git
+      - draw_engine_cargo_target:/cargo-target
     command: ["sleep", "infinity"]
 
 volumes:
   draw_engine_node_modules:
   draw_engine_pnpm_store:
+  draw_engine_cargo_registry:
+  draw_engine_cargo_git:
+  draw_engine_cargo_target:

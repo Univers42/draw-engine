@@ -1,13 +1,10 @@
 /**
- * Host-facing canvas contract. Framework adapters (Svelte today) bind a <canvas>
+ * Host-facing canvas contract. Framework adapters bind a <canvas>
  * and forward these callbacks; the engine owns drawing and tools.
  */
 
-import type { Camera } from "../core/camera/transform";
-import type { DrawEngine, TextEditRequest } from "../core/engine";
-import type { DrawTool } from "../core/interaction/tools";
-import type { DrawTheme } from "../core/render/paint";
-import type { Scene } from "../core/scene/scene";
+import type { DrawEngine } from "../engine";
+import type { Camera, DrawTheme, DrawTool, Scene, TextEditRequest } from "../types";
 
 export interface DrawCanvasProps {
   scene?: Scene;

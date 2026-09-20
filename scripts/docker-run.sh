@@ -20,15 +20,42 @@ shift || true
 
 cd "${ROOT_DIR}"
 
-run_tests() {
+run_host_tests() {
   shopt -s globstar nullglob
-  local files=(src/**/*.test.ts tests/**/*.test.ts)
-  exec node --experimental-strip-types --import ./scripts/ts-register.mjs --test-reporter=spec --test "${files[@]}" "$@"
+  local files=(src/host/**/*.test.ts)
+  if ((${#files[@]} == 0)); then
+    return 0
+  fi
+  node --experimental-strip-types --import ./scripts/ts-register.mjs --test-reporter=spec --test "${files[@]}" "$@"
+}
+
+run_cargo_test() {
+  cargo test --workspace --offline "$@" 2>/dev/null || cargo test --workspace "$@"
+}
+
+run_quality() {
+  cargo fmt --all --check
+  cargo clippy --all-targets --all-features -- -D warnings
+  run_cargo_test "$@"
+  run_host_tests "$@"
+}
+
+run_wasm() {
+  local target_dir="${CARGO_TARGET_DIR:-target}"
+  cargo build --release --target wasm32-unknown-unknown -p draw-engine
+  mkdir -p pkg
+  wasm-bindgen --target web --out-dir pkg \
+    "${target_dir}/wasm32-unknown-unknown/release/draw_engine.wasm"
 }
 
 run_inside_container() {
   case "${COMMAND}" in
-    test|quality) run_tests "$@" ;;
+    test)
+      run_cargo_test "$@"
+      run_host_tests "$@"
+      ;;
+    quality) run_quality "$@" ;;
+    wasm) run_wasm "$@" ;;
     install) exec pnpm install --frozen-lockfile --prefer-offline --store-dir /pnpm/store "$@" ;;
     lock) exec pnpm install --lockfile-only --no-frozen-lockfile --store-dir /pnpm/store "$@" ;;
     *) echo "Unknown docker-run command: ${COMMAND}" >&2; exit 2 ;;
@@ -37,6 +64,7 @@ run_inside_container() {
 
 if [[ -f /.dockerenv || "${DRAW_ENGINE_IN_DOCKER:-}" == "1" ]]; then
   run_inside_container "$@"
+  exit 0
 fi
 
 if ! docker info >/dev/null 2>&1; then
@@ -47,11 +75,11 @@ fi
 compose=(docker compose)
 
 case "${COMMAND}" in
-  test|quality|install|lock)
-    "${compose[@]}" run --rm --no-deps draw-engine bash scripts/docker-run.sh "${COMMAND}" "$@"
+  test|quality|install|lock|wasm)
+    "${compose[@]}" run --rm --build --no-deps draw-engine bash scripts/docker-run.sh "${COMMAND}" "$@"
     ;;
   *)
-    echo "Usage: $0 {test|quality|install|lock}" >&2
+    echo "Usage: $0 {test|quality|install|lock|wasm}" >&2
     exit 2
     ;;
 esac

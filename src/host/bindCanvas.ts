@@ -1,11 +1,11 @@
 /**
  * Bind a <canvas> + focusable container to DrawEngine: create the engine, size it,
  * and attach pointer/keyboard. Framework adapters call this once on mount.
+ * WASM must already be initialized (`loadDrawEngine()`); use `bindCanvasAsync`.
  */
 
-import { DrawEngine } from "../core/engine";
-import type { DrawTheme } from "../core/render/paint";
-import type { Scene } from "../core/scene/scene";
+import { DrawEngine, loadDrawEngine } from "../engine";
+import type { DrawTheme, Scene } from "../types";
 import { attachKeyboardInput } from "./keyboardInput";
 import { attachPointerInput } from "./pointerInput";
 import type { HostSession } from "./session";
@@ -77,4 +77,9 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
       if (debugHost.__osioDrawEngine === engine) delete debugHost.__osioDrawEngine;
     },
   };
+}
+
+export async function bindCanvasAsync(args: BindCanvasArgs): Promise<BindCanvasResult> {
+  await loadDrawEngine();
+  return bindCanvas(args);
 }

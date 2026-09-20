@@ -1,13 +1,13 @@
 /**
  * The React host for DrawEngine: mounts one <canvas> and forwards it to
- * bindCanvas. Thin adapter — drawing and tool chords live in host/ + core/.
+ * bindCanvas after WASM init. Thin adapter — drawing and tool chords live in host/.
  */
 
 import { useEffect, useRef } from "react";
-import { bindCanvas } from "../host/bindCanvas";
+import { bindCanvasAsync } from "../host/bindCanvas";
 import type { DrawCanvasProps, HostCallbacks } from "../host/types";
-import { LIGHT_THEME } from "../core/render/paint";
-import type { DrawEngine } from "../core/engine";
+import { LIGHT_THEME } from "../types";
+import type { DrawEngine } from "../engine";
 
 export type { DrawCanvasProps } from "../host/types";
 
@@ -29,6 +29,12 @@ export function DrawCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<DrawEngine | null>(null);
+  const sceneRef = useRef(scene);
+  const themeRef = useRef(theme);
+  const strokeRef = useRef(defaultStroke);
+  sceneRef.current = scene;
+  themeRef.current = theme;
+  strokeRef.current = defaultStroke;
   const callbacksRef = useRef<HostCallbacks>({});
   const callbacks = callbacksRef.current;
   callbacks.onCameraChange = onCameraChange;
@@ -43,10 +49,22 @@ export function DrawCanvas({
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
-    const bound = bindCanvas({ canvas, container, callbacks, onReady });
-    engineRef.current = bound.engine;
+    let cancelled = false;
+    let destroy: (() => void) | undefined;
+    void bindCanvasAsync({ canvas, container, callbacks, onReady }).then((bound) => {
+      if (cancelled) {
+        bound.destroy();
+        return;
+      }
+      engineRef.current = bound.engine;
+      destroy = bound.destroy;
+      if (sceneRef.current) bound.engine.setScene(sceneRef.current);
+      bound.engine.setTheme(themeRef.current);
+      if (strokeRef.current) bound.engine.setNextStyle({ strokeColor: strokeRef.current });
+    });
     return () => {
-      bound.destroy();
+      cancelled = true;
+      destroy?.();
       engineRef.current = null;
     };
     // Engine is created once for the lifetime of the mount; prop syncs live in

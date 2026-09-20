@@ -17,6 +17,7 @@
     "preinstall": "node scripts/only-pnpm.mjs",
     "test": "bash scripts/docker-run.sh test",
     "quality": "bash scripts/docker-run.sh quality",
+    "wasm": "bash scripts/docker-run.sh wasm",
     "lock": "bash scripts/docker-run.sh lock"
   },
   "peerDependencies": {

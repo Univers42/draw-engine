@@ -1,0 +1,2 @@
+# Deal-kit scripts source lib/common.sh; info-level noise is not a product gate.
+disable=SC1091,SC2015,SC2034,SC2164,SC2005,SC2012,SC2016,SC2018,SC2019

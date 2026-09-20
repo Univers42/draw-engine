@@ -36,11 +36,14 @@ lock: build ## Regenerate pnpm-lock.yaml inside Docker
 		'pnpm install --lockfile-only --no-frozen-lockfile --store-dir /pnpm/store'
 	@echo -e "$(GREEN)✔ pnpm-lock.yaml updated$(RESET)"
 
-test: ## Run the node:test suite in Docker via pnpm
+test: ## cargo test + host node:test suite in Docker
 	$(DC) run --rm --no-deps draw-engine bash scripts/docker-run.sh test
 
-quality: ## Quality gate (currently the test suite) in Docker via pnpm
+quality: ## rustfmt, clippy -D warnings, cargo test, host node:test
 	$(DC) run --rm --no-deps draw-engine bash scripts/docker-run.sh quality
+
+wasm: ## wasm-bindgen build into pkg/
+	$(DC) run --rm --no-deps draw-engine bash scripts/docker-run.sh wasm
 
 shell: ## Interactive shell in the draw-engine container
 	$(DC) run --rm --no-deps draw-engine sh
@@ -57,4 +60,4 @@ clean: ## Remove containers, volumes, and the local image
 	$(DC) down -v --rmi local
 	@echo -e "$(GREEN)✔ clean$(RESET)"
 
-.PHONY: help build install lock test quality shell up down clean
+.PHONY: help build install lock test quality wasm shell up down clean

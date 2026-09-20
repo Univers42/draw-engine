@@ -3,9 +3,8 @@
  * chords without a window. attachKeyboardInput is the thin listener glue.
  */
 
-import type { FlipAxis } from "../core/edit/flip";
-import type { ZOrderMode } from "../core/edit/zorder";
-import { type DrawTool, toolForKey } from "../core/interaction/tools";
+import { type DrawTool, toolForKey } from "../tools";
+import type { FlipAxis, ZOrderMode } from "../types";
 import type { HostCallbacks } from "./types";
 
 export type KeyResult = "prevent" | "pass";

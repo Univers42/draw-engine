@@ -5,9 +5,9 @@
    * drawing or tool logic lives here; bindCanvas + the engine own it.
    */
   import { onMount } from "svelte";
-  import type { DrawEngine } from "../core/engine";
-  import { LIGHT_THEME } from "../core/render/paint";
-  import { bindCanvas } from "../host/bindCanvas";
+  import type { DrawEngine } from "../engine";
+  import { LIGHT_THEME } from "../types";
+  import { bindCanvasAsync } from "../host/bindCanvas";
   import type { DrawCanvasProps, HostCallbacks } from "../host/types";
 
   let {
@@ -45,13 +45,22 @@
 
   onMount(() => {
     if (!canvasEl || !containerEl) return;
-    const bound = bindCanvas({ canvas: canvasEl, container: containerEl, callbacks, onReady });
-    engine = bound.engine;
-    ready = true;
+    let destroy: (() => void) | undefined;
+    let cancelled = false;
+    void bindCanvasAsync({ canvas: canvasEl, container: containerEl, callbacks, onReady }).then((bound) => {
+      if (cancelled) {
+        bound.destroy();
+        return;
+      }
+      engine = bound.engine;
+      destroy = bound.destroy;
+      ready = true;
+    });
     return () => {
+      cancelled = true;
       ready = false;
       engine = null;
-      bound.destroy();
+      destroy?.();
     };
   });
 

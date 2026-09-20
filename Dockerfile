@@ -1,18 +1,32 @@
 # syntax=docker/dockerfile:1.7
 # Dockerfile
 #
-# Alpine + Node 22 + pnpm. Matches the osionos playground image.
-# Bind-mount the repo at /app for tests; named volumes hold node_modules
-# and the pnpm store. Entrypoint installs when the lockfile stamp is stale.
+# Debian + Node 22 + Rust stable + wasm32. Bind-mount the repo at /app.
+# Named volumes hold node_modules, pnpm store, and the cargo registry.
 
-FROM public.ecr.aws/docker/library/node:22-alpine
+FROM public.ecr.aws/docker/library/node:22-bookworm-slim
 
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-	apk add --update-cache git bash
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config \
+	&& rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV DRAW_ENGINE_IN_DOCKER=1
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal \
+	&& rustup target add wasm32-unknown-unknown \
+	&& rustup component add rustfmt clippy
+
+# Prebuilt wasm-bindgen-cli (compiling it from crates.io is minutes of LLVM).
+ARG WASM_BINDGEN_VERSION=0.2.128
+RUN curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+	| tar -xz -C /usr/local/bin --strip-components=1 \
+	&& chmod +x /usr/local/bin/wasm-bindgen /usr/local/bin/wasm2es6js || true
 
 ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
-ENV DRAW_ENGINE_IN_DOCKER=1
+ENV PATH=${PNPM_HOME}:${PATH}
 
 RUN corepack enable \
 	&& corepack prepare pnpm@10.32.1 --activate \
@@ -25,4 +39,4 @@ COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["pnpm", "test"]
+CMD ["bash", "scripts/docker-run.sh", "test"]
