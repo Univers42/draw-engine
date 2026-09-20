@@ -1,0 +1,5 @@
+# Single-package workspace. pnpm-workspace.yaml is the only way to set
+# `minimumReleaseAge` (7-day release hold). Mirrors .npmrc.
+packages: []
+
+minimumReleaseAge: 10080

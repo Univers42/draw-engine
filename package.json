@@ -3,12 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Runtime-agnostic Canvas2D drawing/whiteboard engine (Excalidraw/Figma-class): scene model, dirty-driven rAF renderer, camera, and (later) bindings/collab. Decoupled from the host app — feed it a Scene, it renders. Thin React adapter in src/react/.",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Runtime-agnostic Canvas2D drawing/whiteboard engine (Excalidraw/Figma-class): scene model, dirty-driven rAF renderer, camera. Decoupled from the host app — feed it a Scene, it renders. Vanilla bindCanvas host; React adapter shipped; Svelte 5 adapter additive.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./svelte": "./src/svelte.ts"
+  },
+  "svelte": "./src/svelte/DrawCanvas.svelte",
+  "scripts": {
+    "preinstall": "node scripts/only-pnpm.mjs",
+    "test": "bash scripts/docker-run.sh test",
+    "quality": "bash scripts/docker-run.sh quality",
+    "lock": "bash scripts/docker-run.sh lock"
   },
   "peerDependencies": {
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "svelte": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "svelte": {
+      "optional": true
+    }
   }
 }

@@ -1,8 +1,10 @@
 /**
  * @osionos/draw-engine — a runtime-agnostic Canvas2D drawing engine (Excalidraw /
- * Figma / draw.io class), consumed by osionos like a plugin. `core/**` is
- * framework-agnostic and DOM-free where possible (node-tested); `react/**` is the
- * thin host adapter. Resolved by the `@osionos/draw-engine` alias — no build step.
+ * Figma / draw.io class), consumed by a host like a plugin. `core/**` is
+ * framework-agnostic and DOM-free where possible (node-tested); `host/**` binds a
+ * canvas in vanilla DOM. `react/**` is the shipped adapter (backward compatible);
+ * `svelte/**` is an additive Svelte 5 adapter. Resolved by the
+ * `@osionos/draw-engine` alias — no build step.
  */
 
 // Camera
@@ -71,5 +73,10 @@ export { DrawEngine, type DrawEngineOptions, type TextEditRequest } from "./core
 export { elementsFromJson, type OsidrawFile, sceneToJson } from "./core/export/json";
 export { sceneToSvg } from "./core/export/svg";
 
-// React adapter
-export { DrawCanvas, type DrawCanvasProps } from "./react/DrawCanvas";
+// Vanilla canvas host (any framework — or none)
+export { bindCanvas, type BindCanvasArgs, type BindCanvasResult } from "./host/bindCanvas";
+export type { DrawCanvasProps, HostCallbacks } from "./host/types";
+
+// React adapter — the shipped public component. Svelte hosts import from
+// "@osionos/draw-engine/svelte" instead, so this barrel never evaluates .svelte.
+export { DrawCanvas } from "./react/DrawCanvas";

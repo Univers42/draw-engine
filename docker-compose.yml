@@ -1,0 +1,18 @@
+services:
+  draw-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      DRAW_ENGINE_IN_DOCKER: "1"
+      NODE_ENV: test
+    volumes:
+      - .:/app
+      - draw_engine_node_modules:/app/node_modules
+      - draw_engine_pnpm_store:/pnpm/store
+    command: ["sleep", "infinity"]
+
+volumes:
+  draw_engine_node_modules:
+  draw_engine_pnpm_store:
