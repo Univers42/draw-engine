@@ -4,7 +4,7 @@ import type { Camera, DrawEngineOptions, DrawTool, TextEditRequest } from "./typ
 let ready: Promise<void> | null = null;
 
 export function loadDrawEngine(): Promise<void> {
-  ready ??= init().then(() => undefined);
+  if (ready === null) ready = init().then(() => undefined);
   return ready;
 }
 
