@@ -15,7 +15,18 @@ mod paint;
 
 use paint::CanvasPainter;
 
+/// Timings for the most recent frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PaintStats {
+    /// Assembling the display list: culling, and the scene walk behind it.
+    pub build_ms: f64,
+    /// Issuing the drawing itself.
+    pub paint_ms: f64,
+    pub visible: usize,
+}
+
 pub(crate) struct EngineCell {
+    pub stats: PaintStats,
     pub(crate) engine: DrawEngine,
     pub(crate) canvas: HtmlCanvasElement,
     pub(crate) ctx: CanvasRenderingContext2d,
@@ -42,12 +53,30 @@ fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, Js
 
 #[wasm_bindgen(js_class = DrawEngine)]
 impl WasmEngine {
+    /// Timings for the most recent frame, as JSON.
+    ///
+    /// Exists because a frame measured from outside is just the rAF interval — the
+    /// display cadence plus everything else on the page — which cannot tell our paint
+    /// apart from the browser's own work. Three separate guesses at a slow frame were
+    /// wrong before this existed.
+    #[wasm_bindgen(js_name = paintStats)]
+    pub fn paint_stats(&self) -> String {
+        match self.cell.try_borrow() {
+            Ok(cell) => format!(
+                r#"{{"buildMs":{:.3},"paintMs":{:.3},"visible":{}}}"#,
+                cell.stats.build_ms, cell.stats.paint_ms, cell.stats.visible
+            ),
+            Err(_) => String::from(r#"{"buildMs":0,"paintMs":0,"visible":0}"#),
+        }
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: HtmlCanvasElement) -> Result<WasmEngine, JsValue> {
         let ctx = context_2d(&canvas)?;
         let mut engine = DrawEngine::new();
         engine.set_measure_text(measure_via_ctx);
         let cell = Rc::new(RefCell::new(EngineCell {
+            stats: PaintStats::default(),
             engine,
             canvas,
             ctx,
@@ -180,6 +209,7 @@ fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
     if cell.engine.is_disposed() {
         return;
     }
+    let started = now_ms();
     cell.engine.set_now(now_ms());
     let view = cell.engine.paint_view();
     let dpr = view.dpr;
@@ -191,8 +221,23 @@ fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
     if cell.canvas.height() != bh {
         cell.canvas.set_height(bh);
     }
+    let built = now_ms();
+    let visible = view.elements.len();
     CanvasPainter { ctx: &cell.ctx }.paint(&view);
+    let painted = now_ms();
+    drop(view);
+
     cell.engine.take_dirty();
+
+    // Recorded so a slow frame can be attributed rather than guessed at. Measuring a
+    // frame from outside only gives the rAF interval — the display cadence plus
+    // everything else on the page — which cannot tell our paint apart from the
+    // browser's own work.
+    cell.stats = PaintStats {
+        build_ms: built - started,
+        paint_ms: painted - built,
+        visible,
+    };
 }
 
 fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
