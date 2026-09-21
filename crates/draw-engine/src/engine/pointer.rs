@@ -42,6 +42,15 @@ impl DrawEngine {
                 }
                 self.request_draw();
             }
+            DrawTool::Laser => {
+                // Deliberately the unsnapped point. A laser follows the cursor; snapping
+                // it to the grid would make the beam jump between intersections while the
+                // hand it is meant to be tracking moves smoothly.
+                let exact = self.screen_to_world(sx, sy);
+                self.interaction = Some(Interaction::Laser);
+                self.laser.start(exact.x, exact.y, self.now_ms);
+                self.request_draw();
+            }
             DrawTool::Hand => {
                 self.interaction = Some(Interaction::Pan {
                     last_x: sx,

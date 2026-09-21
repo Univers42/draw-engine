@@ -46,7 +46,9 @@ export type DrawTool =
   | "arrow"
   | "freedraw"
   | "text"
-  | "eraser";
+  | "eraser"
+  /** A trail that follows the cursor and fades. Draws nothing into the scene. */
+  | "laser";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";

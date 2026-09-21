@@ -146,6 +146,15 @@ impl DrawEngine {
                 self.request_draw();
                 Some(Interaction::Lasso { path, base })
             }
+            Interaction::Laser => {
+                // Unsnapped, and every sample kept: the trail's smoothing wants the raw
+                // pointer stream, and thinning it here would flatten the curves the
+                // streamlining exists to produce.
+                let exact = self.screen_to_world(sx, sy);
+                self.laser.add(exact.x, exact.y, self.now_ms);
+                self.request_draw();
+                Some(Interaction::Laser)
+            }
             Interaction::Marquee { start, base, .. } => Some(Interaction::Marquee {
                 start,
                 current: world,

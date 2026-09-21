@@ -391,7 +391,39 @@ impl Painter for CanvasPainter<'_> {
 
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         paint_overlay(ctx, view);
+        // Last, so the beam is over the selection chrome as well as the drawing. It is
+        // pointing at the board, so nothing on the board should cover it.
+        paint_laser(ctx, view);
     }
+}
+
+/// Laser trails, filled.
+///
+/// Each outline arrives already shaped by the engine — a closed loop whose width varies
+/// along its length — so there is nothing to compute here and nothing a second host could
+/// get differently. Filled rather than stroked: a stroke has one width, and the whole
+/// point of the trail is that it tapers.
+fn paint_laser(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.laser.is_empty() {
+        return;
+    }
+    ctx.save();
+    set_fill(ctx, &view.laser_color);
+    for outline in &view.laser {
+        let Some(first) = outline.first() else {
+            continue;
+        };
+        let start = crate::world_to_screen(view.camera, first.x, first.y);
+        ctx.begin_path();
+        ctx.move_to(start.x, start.y);
+        for point in &outline[1..] {
+            let screen = crate::world_to_screen(view.camera, point.x, point.y);
+            ctx.line_to(screen.x, screen.y);
+        }
+        ctx.close_path();
+        ctx.fill();
+    }
+    ctx.restore();
 }
 
 /// Draws the grid, when there is one to draw.

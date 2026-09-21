@@ -26,6 +26,14 @@ pub struct PaintView<'a> {
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
     pub lasso: Vec<crate::camera::Point>,
+    /// Laser strokes to fill, oldest first, in world space.
+    ///
+    /// Already shaped: each is a closed outline whose width varies along its length, not
+    /// a centre line to be stroked. The engine computes them so that every host draws the
+    /// same beam, and so that none of them has to own the fade.
+    pub laser: Vec<Vec<crate::interaction::LaserPoint>>,
+    /// The colour laser strokes are filled with.
+    pub laser_color: String,
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
@@ -113,6 +121,8 @@ impl DrawEngine {
             selected,
             marquee,
             lasso,
+            laser: self.laser.outlines(self.now_ms, self.camera.scale),
+            laser_color: crate::interaction::DEFAULT_LASER_COLOR.to_string(),
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
@@ -131,7 +141,7 @@ impl DrawEngine {
         }
         self.dirty = false;
         painter.paint(&self.paint_view());
-        if self.in_motion() {
+        if self.needs_frame() {
             self.dirty = true;
         }
     }

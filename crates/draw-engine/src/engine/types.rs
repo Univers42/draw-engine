@@ -102,6 +102,12 @@ pub(crate) enum Interaction {
         path: Vec<crate::camera::Point>,
         base: std::collections::HashSet<String>,
     },
+    /// A laser stroke in progress.
+    ///
+    /// Carries nothing: the trail itself lives on the engine, because it has to outlive
+    /// the gesture. Releasing the pointer ends the stroke but not the fade, and a second
+    /// flick can start while the first is still on screen.
+    Laser,
     Marquee {
         start: Point,
         current: Point,

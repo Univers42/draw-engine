@@ -34,6 +34,15 @@ impl DrawEngine {
                 self.set_selection(expanded);
                 self.settle_tool();
             }
+            Interaction::Laser => {
+                // The stroke is finished, not gone: it keeps fading on its own, so the
+                // frame loop has to stay awake until it has.
+                self.laser.end();
+                self.request_draw();
+                // Deliberately no `settle_tool`. The laser is a mode you stay in while
+                // presenting — Excalidraw keeps it selected too — and a tool that
+                // reverted to Select after every flick would be unusable for it.
+            }
             Interaction::Marquee {
                 start,
                 current,
