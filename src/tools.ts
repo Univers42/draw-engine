@@ -33,6 +33,7 @@ const HOTKEYS: Record<string, DrawTool> = {
   f: "frame",
   "9": "image",
   w: "embed",
+  g: "autoshape",
   h: "hand",
 };
 

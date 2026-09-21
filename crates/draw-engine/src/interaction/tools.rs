@@ -26,6 +26,8 @@ pub enum DrawTool {
     /// Waiting for a URL. Like the image tool, the pointer draws nothing: the host asks
     /// for a link and calls `insert_embed`.
     Embed,
+    /// Draws freehand and converts the stroke into the shape it was meant to be.
+    AutoShape,
 }
 
 impl DrawTool {
@@ -46,6 +48,7 @@ impl DrawTool {
             Self::Frame => "frame",
             Self::Image => "image",
             Self::Embed => "embed",
+            Self::AutoShape => "autoshape",
         }
     }
 }
@@ -85,6 +88,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
         "f" => Some(DrawTool::Frame),
         "9" => Some(DrawTool::Image),
         "w" => Some(DrawTool::Embed),
+        "g" => Some(DrawTool::AutoShape),
         "h" => Some(DrawTool::Hand),
         _ => None,
     }
@@ -92,7 +96,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 15] = [
+pub const ALL_TOOLS: [DrawTool; 16] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -108,11 +112,14 @@ pub const ALL_TOOLS: [DrawTool; 15] = [
     DrawTool::Frame,
     DrawTool::Image,
     DrawTool::Embed,
+    DrawTool::AutoShape,
 ];
 
 pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementType> {
     use crate::scene::DrawElementType;
     match tool {
+        // Draws as a freehand stroke and is recognised on release; until then it is one.
+        DrawTool::AutoShape => Some(DrawElementType::Freedraw),
         DrawTool::Rectangle => Some(DrawElementType::Rectangle),
         DrawTool::Diamond => Some(DrawElementType::Diamond),
         DrawTool::Ellipse => Some(DrawElementType::Ellipse),
