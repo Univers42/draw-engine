@@ -20,6 +20,7 @@ const HOTKEYS: Record<string, DrawTool> = {
   p: "freedraw",
   "8": "text",
   t: "text",
+  "0": "eraser",
   e: "eraser",
   h: "hand",
 };

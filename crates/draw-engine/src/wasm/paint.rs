@@ -588,8 +588,17 @@ fn paint_text(
 
         set_fill(ctx, &element.stroke_color);
         let line_height = font_size * crate::TEXT_LINE_HEIGHT;
-        for (i, line) in text.split('\n').enumerate() {
-            let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
+        if element.container_id.is_some() {
+            ctx.set_text_align("center");
+            let center_x = element.width / 2.0;
+            for (i, line) in text.split('\n').enumerate() {
+                let _ = ctx.fill_text(line, center_x, i as f64 * line_height);
+            }
+        } else {
+            ctx.set_text_align("left");
+            for (i, line) in text.split('\n').enumerate() {
+                let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
+            }
         }
     });
 }

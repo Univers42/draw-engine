@@ -137,6 +137,8 @@ export interface TextEditRequest {
   fontSize: number;
   color: string;
   text: string;
+  width?: number;
+  containerId?: string | null;
 }
 
 export interface DrawEngineOptions {

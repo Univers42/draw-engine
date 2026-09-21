@@ -194,6 +194,12 @@ fn element_svg(element: &DrawElement) -> String {
 fn text_svg(element: &DrawElement, rect: &crate::scene::geometry::Rect, transform: &str) -> String {
     let font_size = element.font_size.unwrap_or(20.0);
     let lines = element.text.as_deref().unwrap_or("").split('\n');
+    let is_container_text = element.container_id.is_some();
+    let (text_anchor, base_x) = if is_container_text {
+        (" text-anchor=\"middle\"", rect.x + rect.width / 2.0)
+    } else {
+        ("", rect.x)
+    };
     let spans = lines
         .enumerate()
         .map(|(i, line)| {
@@ -203,8 +209,7 @@ fn text_svg(element: &DrawElement, rect: &crate::scene::geometry::Rect, transfor
                 font_size * 1.25
             };
             format!(
-                "<tspan x=\"{}\" dy=\"{dy}\">{}</tspan>",
-                rect.x,
+                "<tspan x=\"{base_x}\" dy=\"{dy}\">{}</tspan>",
                 escape_xml(line)
             )
         })
@@ -213,8 +218,7 @@ fn text_svg(element: &DrawElement, rect: &crate::scene::geometry::Rect, transfor
         // The family the canvas draws with, not a third opinion. Exporting in a different
         // face from the one the text was measured and laid out in makes every text box
         // the wrong size in the exported file.
-        "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{font_size}\" fill=\"{}\" opacity=\"{}\"{transform}>{spans}</text>",
-        rect.x,
+        "<text x=\"{base_x}\" y=\"{}\" font-family=\"{}\" font-size=\"{font_size}\" fill=\"{}\" opacity=\"{}\"{text_anchor}{transform}>{spans}</text>",
         rect.y,
         crate::FONT_FAMILY,
         element.stroke_color,

@@ -141,6 +141,8 @@ impl DrawEngine {
             font_size: self.next_font_size,
             color,
             text: String::new(),
+            width: None,
+            container_id: None,
         });
         self.settle_tool();
     }
