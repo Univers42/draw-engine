@@ -1,8 +1,12 @@
 #![allow(clippy::ptr_arg)]
 use draw_engine::*;
 
-fn sig(s: &String) -> String {
-    s.clone()
+/// The history dedups on a hash rather than a string, so the test signature hashes too.
+fn sig(s: &String) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
 }
 
 #[test]

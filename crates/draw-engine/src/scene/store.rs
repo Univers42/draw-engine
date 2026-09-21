@@ -27,6 +27,26 @@ pub struct Scene {
     elements: Vec<DrawElement>,
     /// Element id to its position in `elements`.
     index: HashMap<String, usize>,
+    /// Ids touched since the last [`Self::take_delta`].
+    ///
+    /// The host is told what changed rather than being handed the whole document: a
+    /// scene serialised on every mutation costs time proportional to the size of the
+    /// board, so drawing one shape on a large board became slower than drawing the
+    /// first one. Measured at 20k elements, that was ~60ms of JSON per shape.
+    dirty: std::collections::HashSet<String>,
+    /// Set when a change cannot be expressed as "these elements differ" — a z-order
+    /// rearrangement or a hard delete. The host then needs the whole scene.
+    structural: bool,
+}
+
+/// What changed since the host was last told.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneDelta {
+    /// Elements that were added or modified, in no particular order.
+    pub updated: Vec<DrawElement>,
+    /// Ids that were tombstoned.
+    pub removed: Vec<String>,
 }
 
 impl Scene {
@@ -84,6 +104,7 @@ impl Scene {
         match self.index.get(id) {
             Some(&i) => {
                 f(&mut self.elements[i]);
+                self.dirty.insert(id.to_string());
                 true
             }
             None => false,
@@ -101,6 +122,7 @@ impl Scene {
     /// Inserts or replaces an element, **keeping its existing z-position** when it is
     /// already present. A style change must not bring a shape to the front.
     pub fn put(&mut self, element: DrawElement) {
+        self.dirty.insert(element.id.clone());
         match self.index.get(&element.id) {
             Some(&i) => self.elements[i] = element,
             None => {
@@ -126,6 +148,8 @@ impl Scene {
         if let Some(&i) = self.index.get(id) {
             self.elements.remove(i);
             self.reindex();
+            // A hard delete leaves no tombstone, so a delta cannot express it.
+            self.structural = true;
         }
     }
 
@@ -135,6 +159,7 @@ impl Scene {
                 let element = self.elements.remove(i);
                 self.elements.push(element);
                 self.reindex();
+                self.structural = true;
             }
         }
     }
@@ -154,6 +179,40 @@ impl Scene {
         next.extend(live);
         self.elements = next;
         self.reindex();
+        self.structural = true;
+    }
+
+    /// Takes what changed since the last call, clearing the record.
+    ///
+    /// `None` means the change was structural — a reorder or a hard delete — and the
+    /// caller should send the whole scene instead. That is rare: it is a z-order
+    /// command or a discarded draft, never the common path of drawing or moving.
+    pub fn take_delta(&mut self) -> Option<SceneDelta> {
+        let structural = std::mem::take(&mut self.structural);
+        let dirty = std::mem::take(&mut self.dirty);
+        if structural {
+            return None;
+        }
+
+        let mut delta = SceneDelta::default();
+        for id in dirty {
+            match self.index.get(&id).map(|&i| &self.elements[i]) {
+                Some(element) if element.is_deleted => delta.removed.push(id),
+                Some(element) => delta.updated.push(element.clone()),
+                // Gone entirely — that is a hard delete, which sets `structural`, so
+                // reaching here means the id was never really in the scene.
+                None => {}
+            }
+        }
+        Some(delta)
+    }
+
+    /// Forgets any pending delta and demands a full sync next time.
+    ///
+    /// Used after the scene is replaced wholesale — a load, an undo, a paste.
+    pub fn invalidate_delta(&mut self) {
+        self.dirty.clear();
+        self.structural = true;
     }
 
     pub fn bounds(&self) -> Option<WorldBounds> {

@@ -1,22 +1,35 @@
+/// Undo/redo over whole-state snapshots, skipping pushes that change nothing.
+///
+/// The signature returns a **hash**, not a string. It used to build one: for a scene
+/// that meant a `format!` allocation per element, collected into a `Vec<String>` and
+/// joined — and `push` computed it *twice*, once for the incoming value and once for
+/// the current top of stack. At 20k elements that was several megabytes of string
+/// churn for the act of drawing one rectangle, which is why drawing got slower as a
+/// board filled up. Hashing allocates nothing.
 pub struct SnapshotHistory<T> {
     stack: Vec<T>,
     index: usize,
-    signature: fn(&T) -> String,
+    signature: fn(&T) -> u64,
+    /// The signature of `stack[index]`, so a push hashes only the incoming value.
+    current: u64,
     limit: usize,
 }
 
 impl<T: Clone> SnapshotHistory<T> {
-    pub fn new(initial: T, signature: fn(&T) -> String, limit: usize) -> Self {
+    pub fn new(initial: T, signature: fn(&T) -> u64, limit: usize) -> Self {
+        let current = signature(&initial);
         Self {
             stack: vec![initial],
             index: 0,
             signature,
+            current,
             limit,
         }
     }
 
     pub fn push(&mut self, value: T) {
-        if (self.signature)(&value) == (self.signature)(&self.stack[self.index]) {
+        let next = (self.signature)(&value);
+        if next == self.current {
             return;
         }
         self.stack.truncate(self.index + 1);
@@ -25,6 +38,7 @@ impl<T: Clone> SnapshotHistory<T> {
             self.stack.remove(0);
         }
         self.index = self.stack.len() - 1;
+        self.current = next;
     }
 
     pub fn can_undo(&self) -> bool {
@@ -40,6 +54,7 @@ impl<T: Clone> SnapshotHistory<T> {
             return None;
         }
         self.index -= 1;
+        self.current = (self.signature)(&self.stack[self.index]);
         Some(&self.stack[self.index])
     }
 
@@ -48,10 +63,12 @@ impl<T: Clone> SnapshotHistory<T> {
             return None;
         }
         self.index += 1;
+        self.current = (self.signature)(&self.stack[self.index]);
         Some(&self.stack[self.index])
     }
 
     pub fn reset(&mut self, value: T) {
+        self.current = (self.signature)(&value);
         self.stack = vec![value];
         self.index = 0;
     }

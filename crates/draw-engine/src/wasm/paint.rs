@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+
 use draw_rough::ops::{Op, OpSetKind};
 use draw_rough::Drawable;
 use wasm_bindgen::JsValue;
-use web_sys::CanvasRenderingContext2d;
+use web_sys::{CanvasRenderingContext2d, Path2d};
 
 use crate::engine::{PaintView, Painter};
 use crate::interaction::Axis;
 use crate::render::arrowheads::ArrowheadGeometry;
-use crate::render::cache::ShapeCache;
+use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
 use crate::render::opts::dash_array;
 use crate::scene::{DrawElement, DrawElementType};
@@ -27,46 +29,123 @@ thread_local! {
     static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::new());
 }
 
-/// Replays one rough drawable into the context.
+thread_local! {
+    /// One `Path2D` per op set, rebuilt only when the shape's geometry changes.
+    ///
+    /// This is the single biggest win in the render path. Replaying a drawable op by op
+    /// means a `move_to` / `line_to` / `bezier_curve_to` call **per op, per frame**, and
+    /// every one of those crosses the WASM-to-JS boundary. A hachure-filled rectangle is
+    /// a few thousand ops on its own; measured in the browser, a modest scene was
+    /// issuing ~9,700 canvas calls per frame at roughly 2.7us each — about 26ms, which
+    /// is a missed frame before any pixels are touched.
+    ///
+    /// A `Path2D` is built once and then drawn with a single `stroke`/`fill` call per op
+    /// set per frame. Because the geometry is in element-local space and position, zoom
+    /// and rotation are applied to the *context*, the same path object stays valid
+    /// through panning, zooming and dragging — it is only rebuilt when the element
+    /// genuinely changes shape.
+    static PATHS: std::cell::RefCell<HashMap<String, (u64, Vec<(OpSetKind, Path2d)>)>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Builds the `Path2D` objects for one drawable.
+fn build_paths(drawable: &Drawable) -> Vec<(OpSetKind, Path2d)> {
+    drawable
+        .sets
+        .iter()
+        .filter_map(|set| {
+            let path = Path2d::new().ok()?;
+            for op in &set.ops {
+                match *op {
+                    Op::Move([x, y]) => path.move_to(x, y),
+                    Op::LineTo([x, y]) => path.line_to(x, y),
+                    Op::BCurveTo([x1, y1, x2, y2, x, y]) => {
+                        path.bezier_curve_to(x1, y1, x2, y2, x, y)
+                    }
+                }
+            }
+            Some((set.kind, path))
+        })
+        .collect()
+}
+
+/// Draws one element's cached paths.
 ///
 /// Mirrors rough's own `RoughCanvas.draw`: a `path` is stroked with the element's
-/// stroke, a `fillPath` is filled with its background, and a `fillSketch` — which is
-/// how every pattern fill arrives — is *stroked* with the background colour at
-/// `fillWeight`, not filled. Treating a fillSketch as a fill is the classic way to turn
-/// a delicate hachure into a solid block.
-fn replay(ctx: &CanvasRenderingContext2d, drawable: &Drawable, element: &DrawElement) {
+/// stroke, a `fillPath` is filled with its background, and a `fillSketch` — which is how
+/// every pattern fill arrives — is *stroked* with the background colour at `fillWeight`,
+/// not filled. Treating a fillSketch as a fill turns a delicate hachure into a solid
+/// block.
+fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
+    let fingerprint = shape_fingerprint(element);
     let fill_weight = element.stroke_width / 2.0;
 
-    for set in &drawable.sets {
-        ctx.begin_path();
-        for op in &set.ops {
-            match *op {
-                Op::Move([x, y]) => ctx.move_to(x, y),
-                Op::LineTo([x, y]) => ctx.line_to(x, y),
-                Op::BCurveTo([x1, y1, x2, y2, x, y]) => ctx.bezier_curve_to(x1, y1, x2, y2, x, y),
-            }
+    PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+
+        let stale = match cache.get(&element.id) {
+            Some((cached, _)) => *cached != fingerprint,
+            None => true,
+        };
+        if stale {
+            let built = SHAPES.with(|shapes| {
+                shapes
+                    .borrow_mut()
+                    .get(element)
+                    .map(build_paths)
+                    .unwrap_or_default()
+            });
+            cache.insert(element.id.clone(), (fingerprint, built));
         }
 
-        match set.kind {
-            OpSetKind::Path => {
-                set_stroke(ctx, &element.stroke_color);
-                ctx.set_line_width(element.stroke_width);
-                let _ = ctx.set_line_dash(&dash_js(dash_array(element)));
-                ctx.stroke();
-            }
-            OpSetKind::FillPath => {
-                set_fill(ctx, &element.background_color);
-                let _ = ctx.set_line_dash(&js_sys::Array::new());
-                ctx.fill();
-            }
-            OpSetKind::FillSketch => {
-                set_stroke(ctx, &element.background_color);
-                ctx.set_line_width(fill_weight);
-                let _ = ctx.set_line_dash(&js_sys::Array::new());
-                ctx.stroke();
+        let Some((_, paths)) = cache.get(&element.id) else {
+            return;
+        };
+
+        for (kind, path) in paths {
+            match kind {
+                OpSetKind::Path => {
+                    set_stroke(ctx, &element.stroke_color);
+                    ctx.set_line_width(element.stroke_width);
+                    let _ = ctx.set_line_dash(&dash_js(dash_array(element)));
+                    ctx.stroke_with_path(path);
+                }
+                OpSetKind::FillPath => {
+                    set_fill(ctx, &element.background_color);
+                    let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
+                    ctx.fill_with_path_2d(path);
+                }
+                OpSetKind::FillSketch => {
+                    set_stroke(ctx, &element.background_color);
+                    ctx.set_line_width(fill_weight);
+                    let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
+                    ctx.stroke_with_path(path);
+                }
             }
         }
-    }
+    });
+}
+
+/// Drops cached paths for elements that are no longer in the scene.
+///
+/// Without this the cache is a leak, and a long editing session churns through a lot of
+/// elements. Run once per frame against what was actually drawn.
+fn evict_paths(live: &[&DrawElement]) {
+    PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        // Only worth the sweep once the cache has outgrown the scene by a clear margin;
+        // doing it every frame would cost more than it reclaims.
+        if cache.len() <= live.len().saturating_mul(2).max(64) {
+            return;
+        }
+        let ids: std::collections::HashSet<&str> = live.iter().map(|e| e.id.as_str()).collect();
+        cache.retain(|id, _| ids.contains(id.as_str()));
+    });
+}
+
+thread_local! {
+    /// The empty dash pattern, allocated once rather than per shape per frame.
+    static EMPTY_DASH: js_sys::Array = js_sys::Array::new();
 }
 
 fn dash_js(pattern: Option<[f64; 2]>) -> js_sys::Array {
@@ -99,16 +178,43 @@ fn with_element_transform(
     ctx.restore();
 }
 
+thread_local! {
+    /// Interned colour strings.
+    ///
+    /// `fillStyle` and `strokeStyle` are a union type in web-sys, so they can only be
+    /// set reflectively — and that used to allocate a fresh `JsValue` from a Rust `&str`
+    /// for every colour, on every element, on every frame. A scene has a handful of
+    /// distinct colours and they almost never change, so they are allocated once.
+    static COLORS: std::cell::RefCell<HashMap<String, JsValue>> =
+        std::cell::RefCell::new(HashMap::new());
+
+    /// The property-name keys, which were also being rebuilt per call.
+    static FILL_KEY: JsValue = JsValue::from_str("fillStyle");
+    static STROKE_KEY: JsValue = JsValue::from_str("strokeStyle");
+}
+
+fn color_value(color: &str) -> JsValue {
+    COLORS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache
+            .entry(color.to_string())
+            .or_insert_with(|| JsValue::from_str(color))
+            .clone()
+    })
+}
+
 fn set_fill(ctx: &CanvasRenderingContext2d, color: &str) {
-    let _ = js_sys::Reflect::set(ctx.as_ref(), &"fillStyle".into(), &JsValue::from_str(color));
+    let value = color_value(color);
+    FILL_KEY.with(|key| {
+        let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
+    });
 }
 
 fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
-    let _ = js_sys::Reflect::set(
-        ctx.as_ref(),
-        &"strokeStyle".into(),
-        &JsValue::from_str(color),
-    );
+    let value = color_value(color);
+    STROKE_KEY.with(|key| {
+        let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
+    });
 }
 
 impl Painter for CanvasPainter<'_> {
@@ -126,6 +232,7 @@ impl Painter for CanvasPainter<'_> {
         for element in &view.elements {
             paint_element(ctx, element, &view.theme.background);
         }
+        evict_paths(&view.elements);
         ctx.restore();
         paint_overlay(ctx, view);
     }
@@ -180,13 +287,7 @@ fn paint_shape(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     if element.width == 0.0 && element.height == 0.0 {
         return;
     }
-    with_element_transform(ctx, element, || {
-        SHAPES.with(|cache| {
-            if let Some(drawable) = cache.borrow_mut().get(element) {
-                replay(ctx, drawable, element);
-            }
-        });
-    });
+    with_element_transform(ctx, element, || replay(ctx, element));
 }
 
 /// Paints a line or arrow, including every point of a multi-point path.
@@ -197,12 +298,7 @@ fn paint_shape(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
 /// indistinguishable from lines on screen while the SVG export drew them correctly.
 fn paint_linear(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     with_element_transform(ctx, element, || {
-        SHAPES.with(|cache| {
-            if let Some(drawable) = cache.borrow_mut().get(element) {
-                replay(ctx, drawable, element);
-            }
-        });
-
+        replay(ctx, element);
         if element.kind == DrawElementType::Arrow {
             paint_arrowheads(ctx, element);
         }

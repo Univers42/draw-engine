@@ -431,11 +431,10 @@ fn history_undo_redo_dedupe() {
     let mut history = SnapshotHistory::new(
         Vec::<i32>::new(),
         |value: &Vec<i32>| {
-            value
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut h);
+            h.finish()
         },
         200,
     );

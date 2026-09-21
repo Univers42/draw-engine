@@ -35,6 +35,30 @@ struct ShapeKey {
 }
 
 impl ShapeKey {
+    /// Collapses the key to one integer.
+    ///
+    /// The painter caches a `Path2D` per shape and needs to know when to rebuild it,
+    /// but `Path2D` is browser-only and cannot live in this module. A fingerprint lets
+    /// the two caches agree on "same shape" without the platform-specific one having to
+    /// reach into this type.
+    pub fn fingerprint(&self) -> u64 {
+        // FNV-1a over the four fields. Collisions would show as a stale shape, so the
+        // full 64 bits are kept rather than truncated.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for part in [
+            u64::from(self.version),
+            u64::from(self.seed),
+            self.width,
+            self.height,
+        ] {
+            for byte in part.to_le_bytes() {
+                h ^= u64::from(byte);
+                h = h.wrapping_mul(0x1000_0000_01b3);
+            }
+        }
+        h
+    }
+
     fn of(element: &DrawElement) -> Self {
         Self {
             version: element.version,
@@ -43,6 +67,14 @@ impl ShapeKey {
             height: element.height.to_bits(),
         }
     }
+}
+
+/// The fingerprint of an element's current geometry.
+///
+/// Two elements with the same fingerprint produce identical rough output, so a painter
+/// may reuse anything it derived from that output.
+pub fn shape_fingerprint(element: &DrawElement) -> u64 {
+    ShapeKey::of(element).fingerprint()
 }
 
 /// Element id to its generated geometry.
@@ -176,6 +208,33 @@ mod tests {
 
         cache.retain_ids(std::iter::empty());
         assert!(cache.is_empty());
+    }
+
+    /// The painter's Path2D cache is keyed off this, so it must change exactly when
+    /// the geometry does — no more, no less.
+    #[test]
+    fn the_fingerprint_tracks_geometry_and_nothing_else() {
+        let base = element();
+
+        let mut moved = base.clone();
+        moved.x += 500.0;
+        assert_eq!(
+            shape_fingerprint(&base),
+            shape_fingerprint(&moved),
+            "moving does not change geometry"
+        );
+
+        let mut resized = base.clone();
+        resized.width += 1.0;
+        assert_ne!(shape_fingerprint(&base), shape_fingerprint(&resized));
+
+        let mut restyled = base.clone();
+        restyled.version += 1;
+        assert_ne!(shape_fingerprint(&base), shape_fingerprint(&restyled));
+
+        let mut reseeded = base.clone();
+        reseeded.seed = base.seed.wrapping_add(1);
+        assert_ne!(shape_fingerprint(&base), shape_fingerprint(&reseeded));
     }
 
     #[test]

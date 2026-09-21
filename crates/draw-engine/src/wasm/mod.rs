@@ -197,8 +197,32 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
         let json = serde_json::to_string(&req).unwrap_or_default();
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
     }
-    if let (Some(json), Some(cb)) = (events.scene_json, cbs.4) {
-        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    // One callback carries both shapes. A delta is tagged so the host can tell them
+    // apart, and the full form is kept for the structural changes a delta cannot
+    // express — a reorder, a hard delete, an undo.
+    if let Some(cb) = cbs.4 {
+        if let Some(delta) = events.scene_delta {
+            #[derive(serde::Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct DeltaEnvelope<'a> {
+                #[serde(rename = "type")]
+                kind: &'a str,
+                version: u32,
+                updated: &'a [crate::scene::DrawElement],
+                removed: &'a [String],
+            }
+            let envelope = DeltaEnvelope {
+                kind: "osidraw-delta",
+                version: 1,
+                updated: &delta.updated,
+                removed: &delta.removed,
+            };
+            if let Ok(json) = serde_json::to_string(&envelope) {
+                let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+            }
+        } else if let Some(json) = events.scene_json {
+            let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+        }
     }
 }
 

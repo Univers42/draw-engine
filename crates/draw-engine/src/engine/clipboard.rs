@@ -8,7 +8,24 @@ use crate::scene::DrawElement;
 impl DrawEngine {
     pub(super) fn push_history(&mut self) {
         self.history.push(self.scene.to_array());
-        self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
+        self.emit_scene_change();
+    }
+
+    /// Tells the host what changed, as briefly as it can.
+    ///
+    /// This used to serialise the entire scene as pretty-printed JSON on **every**
+    /// mutation. At 20k elements that was ~9.8MB and ~60ms per shape drawn, which is
+    /// four dropped frames for the act of drawing one rectangle — and it got worse as
+    /// the board filled up, which is exactly the shape of "it feels slow".
+    ///
+    /// A delta covers the common path. The rare structural changes — a z-order command,
+    /// a discarded draft, a wholesale replace — still send everything, because there is
+    /// no smaller honest answer for them.
+    pub(super) fn emit_scene_change(&mut self) {
+        match self.scene.take_delta() {
+            Some(delta) => self.events.scene_delta = Some(delta),
+            None => self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned())),
+        }
     }
 
     pub(super) fn reset_history(&mut self) {
@@ -23,6 +40,8 @@ impl DrawEngine {
         self.selected_ids.clear();
         self.events.selection = Some(Vec::new());
         self.request_draw();
+        // An undo replaces the whole scene; there is no delta that describes it.
+        self.scene.invalidate_delta();
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
     }
 
