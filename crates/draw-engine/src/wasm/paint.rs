@@ -604,7 +604,10 @@ fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
     FONT.with(|f| {
         let mut f = f.borrow_mut();
         if *f != Some(size) {
-            ctx.set_font(&format!("{size}px sans-serif"));
+            // The same string the measurer uses. Drawing with `sans-serif` while
+            // measuring with anything else is how a text box ends up the wrong size for
+            // the glyphs inside it.
+            ctx.set_font(&crate::font_string(size));
             *f = Some(size);
         }
     });

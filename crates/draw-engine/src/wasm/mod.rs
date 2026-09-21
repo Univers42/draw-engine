@@ -311,11 +311,73 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
+thread_local! {
+    /// A detached 2D context kept solely for measuring text.
+    ///
+    /// Detached because measuring must not disturb the canvas being drawn to: setting a
+    /// font on the live context would fight the painter's own font cache. One context is
+    /// created lazily and reused, so measuring a string costs a `measureText` call and
+    /// nothing else.
+    static MEASURE: std::cell::RefCell<Option<web_sys::CanvasRenderingContext2d>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `body` with a context whose font is already set to `font_size`.
+fn with_measure_ctx<T>(
+    font_size: f64,
+    body: impl FnOnce(&web_sys::CanvasRenderingContext2d) -> T,
+) -> Option<T> {
+    MEASURE.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.is_none() {
+            let canvas = web_sys::window()?
+                .document()?
+                .create_element("canvas")
+                .ok()?
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .ok()?;
+            *cell = canvas
+                .get_context("2d")
+                .ok()
+                .flatten()
+                .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok());
+        }
+        let ctx = cell.as_ref()?;
+        ctx.set_font(&crate::font_string(font_size));
+        Some(body(ctx))
+    })
+}
+
+/// The width of one line, as the browser will actually draw it.
+pub(crate) fn measure_line(line: &str, font_size: f64) -> f64 {
+    with_measure_ctx(font_size, |ctx| {
+        ctx.measure_text(line).map(|m| m.width()).unwrap_or(0.0)
+    })
+    .unwrap_or_else(|| estimate_line(line, font_size))
+}
+
+/// The fallback when there is no document to measure against — a server-side render, or
+/// a context the browser refused to hand over.
+///
+/// Counts **characters**, not bytes. `str::len()` is the UTF-8 byte length, so the old
+/// estimate made "café" a fifth too wide, "日本語" three times too wide, and every emoji
+/// four times too wide.
+fn estimate_line(line: &str, font_size: f64) -> f64 {
+    line.chars().count() as f64 * font_size * 0.6
+}
+
+/// Measures text with the font it will be drawn with.
+///
+/// This used to estimate `bytes * fontSize * 0.6` despite its name, and the error was not
+/// subtle: measured against a real canvas at 20px, "iiiiiiiiii" came out 170% too wide,
+/// "WWWWWWWWWW" 36% too narrow, "Ω≈ç√∫" 198% too wide, and even "Hello" 32% too wide.
+/// Everything downstream inherits that error — the selection frame, the hit test, where
+/// the editing overlay sits, how a bound label is laid out, and the exported SVG.
 fn measure_via_ctx(text: &str, font_size: f64) -> (f64, f64) {
     let lines: Vec<&str> = text.split('\n').collect();
     let width = lines
         .iter()
-        .map(|line| line.len() as f64 * font_size * 0.6)
+        .map(|line| measure_line(line, font_size))
         .fold(0.0, f64::max);
     (
         width.max(4.0),

@@ -105,6 +105,25 @@ export class DrawEngine {
     return HOVER_CURSORS[this.inner.hoverCursor(sx, sy)] ?? "default";
   }
 
+  /**
+   * The size a run of text will occupy, in world units.
+   *
+   * Measured against the font the canvas actually draws with, so anything sizing itself
+   * to text — the editing overlay, a label's box — agrees with what appears on screen.
+   */
+  measureText(text: string, fontSize: number): { width: number; height: number } {
+    // A `Float64Array` from WASM, so indexing is `number | undefined` under
+    // `noUncheckedIndexedAccess`. The engine always returns both, but the fallback keeps
+    // a truncated array from becoming `NaN` widths downstream.
+    const measured = this.inner.measureText(text, fontSize);
+    return { width: measured[0] ?? 4, height: measured[1] ?? fontSize };
+  }
+
+  /** The CSS font family the canvas draws text with. */
+  fontFamily(): string {
+    return this.inner.fontFamily();
+  }
+
   setTool(tool: DrawTool): void {
     this.inner.setTool(tool);
   }

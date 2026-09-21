@@ -44,6 +44,24 @@ pub fn dark_theme() -> DrawTheme {
 
 pub const TEXT_LINE_HEIGHT: f64 = 1.25;
 
+/// The font stack every piece of text is drawn and measured with.
+///
+/// One definition, because measuring with a different font from the one you draw with is
+/// how a text element ends up the wrong size. The painter, the measurer, the SVG exporter
+/// and the host's editing overlay all resolve their font through [`font_string`].
+///
+/// Excalidraw ships Excalifont, Nunito and Comic Shanns and lets each element choose.
+/// That needs the faces vendored, their licences checked individually, and measurement
+/// gated on `document.fonts.ready` — measure before a webfont loads and every text
+/// element is permanently mis-sized. Until then this is a single system stack, which at
+/// least measures and draws identically.
+pub const FONT_FAMILY: &str = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+
+/// The CSS font shorthand for a given size, as Canvas2D wants it.
+pub fn font_string(size: f64) -> String {
+    format!("{size}px {FONT_FAMILY}")
+}
+
 pub fn is_roughable(kind: DrawElementType) -> bool {
     matches!(
         kind,

@@ -126,6 +126,36 @@ impl WasmEngine {
         }
     }
 
+    /// The size of a run of text, in world units, using the font the canvas draws with.
+    ///
+    /// Exposed so the host's editing overlay can size itself from the same measurement
+    /// the element gets, instead of estimating. It had its own guess —
+    /// `maxLineLength * fontSize * 0.65` — so the textarea, the painted glyphs and the
+    /// element's own box were three different widths.
+    ///
+    /// Returns `[width, height]`.
+    #[wasm_bindgen(js_name = measureText)]
+    pub fn measure_text(&self, text: &str, font_size: f64) -> Vec<f64> {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let width = lines
+            .iter()
+            .map(|line| super::measure_line(line, font_size))
+            .fold(0.0_f64, f64::max);
+        vec![
+            width.max(4.0),
+            (lines.len() as f64 * font_size * crate::TEXT_LINE_HEIGHT).max(font_size),
+        ]
+    }
+
+    /// The CSS font family every piece of text is drawn with.
+    ///
+    /// The host needs it so its editing overlay renders in the same face; a textarea in
+    /// a different font shifts the text visibly the moment an edit is committed.
+    #[wasm_bindgen(js_name = fontFamily)]
+    pub fn font_family(&self) -> String {
+        crate::FONT_FAMILY.to_string()
+    }
+
     #[wasm_bindgen(js_name = zoomAt)]
     pub fn zoom_at(&self, sx: f64, sy: f64, factor: f64) {
         self.cell.borrow_mut().engine.zoom_at(sx, sy, factor);

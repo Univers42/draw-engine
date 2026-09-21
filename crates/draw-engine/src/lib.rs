@@ -37,7 +37,8 @@ pub use interaction::{
 };
 pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
 pub use render::{
-    dark_theme, default_arrowhead, is_roughable, light_theme, DrawTheme, TEXT_LINE_HEIGHT,
+    dark_theme, default_arrowhead, font_string, is_roughable, light_theme, DrawTheme, FONT_FAMILY,
+    TEXT_LINE_HEIGHT,
 };
 pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,

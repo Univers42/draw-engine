@@ -260,8 +260,31 @@ pub struct DrawElementStylePatch {
     pub roughness: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Three states, not two: absent (leave it alone), `null` (make it sharp), or a
+    /// value (make it round).
+    ///
+    /// The default serde mapping collapses the first two — an explicit `null` becomes the
+    /// *outer* `None`, which reads as "not present". So a patch could turn corners on and
+    /// never turn them off again: measured on the canvas, sharp gave 492 ink, round 468,
+    /// and sharp again stayed 468. `double_option` keeps the two apart.
+    #[serde(
+        default,
+        deserialize_with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub roundness: Option<Option<f64>>,
+}
+
+/// Lets an explicit `null` mean "set this to nothing" rather than "say nothing about it".
+///
+/// With `#[serde(default)]` supplying `None` for an absent field, this makes the three
+/// cases distinct: absent -> `None`, `null` -> `Some(None)`, value -> `Some(Some(v))`.
+fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(Some)
 }
 
 pub fn apply_style_patch(element: &mut DrawElement, patch: &DrawElementStylePatch) {

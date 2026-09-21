@@ -100,11 +100,18 @@ pub(crate) enum Interaction {
     },
 }
 
+/// The measurement used when no browser is available — host tests, and a server-side
+/// render.
+///
+/// An estimate, unavoidably, but over **characters** rather than bytes. `str::len()` is
+/// the UTF-8 byte length, which made "café" a fifth too wide, "日本語" three times too
+/// wide and every emoji four times too wide. In the browser this is replaced by a real
+/// `measureText` against the font the painter draws with.
 pub(crate) fn default_measure(text: &str, font_size: f64) -> (f64, f64) {
     let lines: Vec<&str> = text.split('\n').collect();
     let width = lines
         .iter()
-        .map(|line| line.len() as f64 * font_size * 0.6)
+        .map(|line| line.chars().count() as f64 * font_size * 0.6)
         .fold(0.0_f64, f64::max);
     (
         width.max(4.0),
