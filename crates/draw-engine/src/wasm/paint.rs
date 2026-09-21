@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use draw_rough::ops::{Op, OpSetKind};
 use draw_rough::Drawable;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{CanvasRenderingContext2d, Path2d};
 
 use crate::engine::{PaintView, Painter};
@@ -27,6 +27,94 @@ thread_local! {
     /// state in the renderer and it holds nothing but derived data, so dropping it at
     /// any moment is correct, just slower.
     static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::new());
+
+    /// Decoded images, by the `data:` URL that produced them.
+    ///
+    /// Decoding happens once and is reused for every frame afterwards. Without this the
+    /// painter would hand the canvas a fresh `HTMLImageElement` sixty times a second and
+    /// the browser would decode the same megabyte over and over.
+    static IMAGES: std::cell::RefCell<HashMap<String, web_sys::HtmlImageElement>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// The decoded image for a `data:` URL, if it is ready yet.
+///
+/// Decoding is asynchronous even for a `data:` URL, so the first frame after an image is
+/// inserted usually has nothing to draw. Rather than leave a hole until something else
+/// happens to repaint, loading asks the engine for another frame — see
+/// `super::request_repaint`.
+fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
+    IMAGES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(image) = cache.get(data_url) {
+            return image.complete().then(|| image.clone());
+        }
+        let Ok(image) = web_sys::HtmlImageElement::new() else {
+            return None;
+        };
+        let on_load = wasm_bindgen::closure::Closure::once_into_js(move || {
+            super::request_repaint();
+        });
+        image.set_onload(Some(on_load.unchecked_ref()));
+        image.set_src(data_url);
+        let ready = image.complete();
+        cache.insert(data_url.to_string(), image.clone());
+        ready.then_some(image)
+    })
+}
+
+/// How many decoded images to keep before dropping the ones that are off screen.
+const MAX_CACHED_IMAGES: usize = 32;
+
+/// Forget decoded images once there are too many of them.
+///
+/// Deliberately not "forget everything not on screen". The painter is handed the
+/// **culled** element list, so an image scrolled just out of view would be evicted and
+/// re-decoded the moment it came back — which is visible, as a blank where the picture
+/// should be. Waiting until there are enough of them to matter trades a little memory
+/// for a board that does not flicker while you pan.
+fn evict_images(live: &[&DrawElement]) {
+    IMAGES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() <= MAX_CACHED_IMAGES {
+            return;
+        }
+        let visible: std::collections::HashSet<&str> = live
+            .iter()
+            .filter_map(|element| element.data_url.as_deref())
+            .collect();
+        cache.retain(|url, _| visible.contains(url.as_str()));
+    });
+}
+
+/// Draws an image element, or a placeholder while it is still decoding.
+///
+/// The placeholder is the element's own box, faint: it shows that something is arriving
+/// and where it will land, so the board does not appear to have swallowed the file.
+fn paint_image(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
+    let rect = crate::scene::normalize_rect(element.x, element.y, element.width, element.height);
+    let decoded = element.data_url.as_deref().and_then(decoded_image);
+
+    with_element_transform(ctx, view, element, || match decoded {
+        Some(image) => {
+            let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                &image,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+            );
+        }
+        None => {
+            ctx.save();
+            set_stroke(ctx, "#bbbbbb");
+            ctx.set_line_width(1.0);
+            ctx.begin_path();
+            ctx.rect(rect.x, rect.y, rect.width, rect.height);
+            ctx.stroke();
+            ctx.restore();
+        }
+    });
 }
 
 thread_local! {
@@ -408,6 +496,7 @@ impl Painter for CanvasPainter<'_> {
             }
         }
         evict_paths(&view.elements);
+        evict_images(&view.elements);
         paint_frame_names(ctx, view);
 
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
@@ -551,6 +640,7 @@ fn paint_element(
     match element.kind {
         DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, view, element),
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
+        DrawElementType::Image => paint_image(ctx, view, element),
         DrawElementType::Text => paint_text(
             ctx,
             view,

@@ -134,6 +134,15 @@ pub struct DrawElement {
     /// A frame's label. Nothing else carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The image itself, as a `data:` URL.
+    ///
+    /// Carried on the element rather than keyed into a separate file store, which is
+    /// what Excalidraw does. Theirs keeps the scene small and is the better end state;
+    /// this one makes saving, loading, undo, copy/paste, export and realtime work with
+    /// no new plumbing at all, because the image travels wherever the element does. The
+    /// cost is scene size, and the swap is mechanical when a blob endpoint exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
     pub version: u32,
@@ -217,6 +226,7 @@ pub fn create_element(
         group_id: None,
         frame_id: None,
         name: None,
+        data_url: None,
         locked: None,
         version: 1,
         version_nonce: rand_int(),

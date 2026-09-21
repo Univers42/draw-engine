@@ -12,6 +12,7 @@ mod arrange;
 mod clipboard;
 mod frame;
 mod hover;
+mod image;
 mod pointer;
 mod pointer_end;
 mod pointer_move;

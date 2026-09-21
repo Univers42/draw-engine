@@ -147,6 +147,25 @@ export class DrawEngine {
     return this.inner.getTool() as DrawTool;
   }
 
+  /**
+   * Place a decoded image, centred on a screen point.
+   *
+   * The caller decodes the file, because only a browser can, and having done so already
+   * knows the natural size. Everything after that — how large the image should appear,
+   * where it lands, which frame it joins — is the engine's, so every frontend produces
+   * the same element. Returns the new element's id, or `null` if the image could not be
+   * measured.
+   */
+  insertImage(
+    dataUrl: string,
+    naturalWidth: number,
+    naturalHeight: number,
+    screenX: number,
+    screenY: number,
+  ): string | null {
+    return this.inner.insertImage(dataUrl, naturalWidth, naturalHeight, screenX, screenY) ?? null;
+  }
+
   setNextStyle(style: Partial<DrawElementStyle>): void {
     this.inner.setNextStyleJson(JSON.stringify(style));
   }

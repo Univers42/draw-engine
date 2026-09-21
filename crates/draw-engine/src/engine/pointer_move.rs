@@ -407,13 +407,17 @@ impl DrawEngine {
         from.y = origin.y;
         from.width = origin.width;
         from.height = origin.height;
+        // Images hold their proportions unless Shift is held; every other shape is the
+        // other way round. A photograph stretched by accident is a mistake you often do
+        // not notice until much later.
+        let lock = crate::scene::locks_aspect_ratio(&from, square);
         let geom = resize_element(
             &from,
             handle,
             world.x,
             world.y,
             1.0,
-            if square { ratio } else { None },
+            if lock { ratio } else { None },
         );
         element.x = geom.x;
         element.y = geom.y;
