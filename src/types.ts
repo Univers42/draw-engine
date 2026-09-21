@@ -50,7 +50,9 @@ export type DrawTool =
   /** A trail that follows the cursor and fades. Draws nothing into the scene. */
   | "laser"
   /** A named region that owns whatever is drawn inside it. */
-  | "frame";
+  | "frame"
+  /** Picks a file and places it. Never a drag: the picker decides, not the pointer. */
+  | "image";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";

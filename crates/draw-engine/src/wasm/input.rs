@@ -54,6 +54,33 @@ impl WasmEngine {
         }
     }
 
+    /// Put a decoded image on the board.
+    ///
+    /// The host decodes the file — only a browser can — and having done so already knows
+    /// the natural size. Everything after that is arithmetic and happens in the engine,
+    /// so two frontends dropping the same file in the same place produce the same
+    /// element. Returns the new element's id, or `undefined` if the image could not be
+    /// measured.
+    #[wasm_bindgen(js_name = insertImage)]
+    pub fn insert_image(
+        &self,
+        data_url: &str,
+        natural_width: f64,
+        natural_height: f64,
+        sx: f64,
+        sy: f64,
+    ) -> Option<String> {
+        let id = self.cell.borrow_mut().engine.insert_image(
+            data_url,
+            natural_width,
+            natural_height,
+            sx,
+            sy,
+        );
+        self.flush();
+        id
+    }
+
     #[wasm_bindgen(js_name = getTool)]
     pub fn get_tool(&self) -> String {
         self.cell.borrow().engine.get_tool().as_str().to_string()

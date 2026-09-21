@@ -19,6 +19,10 @@ pub enum DrawTool {
     Laser,
     /// A named region that owns whatever is drawn inside it.
     Frame,
+    /// Waiting for a file. Nothing is drawn with the pointer: the host opens a picker,
+    /// decodes what it gets, and calls `insert_image`. The tool exists so that the
+    /// shortcut, the toolbar state and the cursor all live where every other tool's do.
+    Image,
 }
 
 impl DrawTool {
@@ -37,6 +41,7 @@ impl DrawTool {
             Self::Eraser => "eraser",
             Self::Laser => "laser",
             Self::Frame => "frame",
+            Self::Image => "image",
         }
     }
 }
@@ -74,6 +79,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
         "s" => Some(DrawTool::Lasso),
         "k" => Some(DrawTool::Laser),
         "f" => Some(DrawTool::Frame),
+        "9" => Some(DrawTool::Image),
         "h" => Some(DrawTool::Hand),
         _ => None,
     }
@@ -81,7 +87,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 13] = [
+pub const ALL_TOOLS: [DrawTool; 14] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -95,6 +101,7 @@ pub const ALL_TOOLS: [DrawTool; 13] = [
     DrawTool::Eraser,
     DrawTool::Laser,
     DrawTool::Frame,
+    DrawTool::Image,
 ];
 
 pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementType> {

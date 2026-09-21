@@ -31,6 +31,7 @@ const HOTKEYS: Record<string, DrawTool> = {
   // Excalidraw's laser key, and the same reasoning as the lasso: "l" is the line.
   k: "laser",
   f: "frame",
+  "9": "image",
   h: "hand",
 };
 
