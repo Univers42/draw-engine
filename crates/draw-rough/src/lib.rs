@@ -29,7 +29,11 @@
 // Transcribed formulae read closest to the original when left as written.
 #![allow(clippy::excessive_precision)]
 
+pub mod fillers;
+pub mod generator;
 pub mod geometry;
+pub mod hachure;
+pub mod jsnum;
 pub mod ops;
 pub mod options;
 pub mod renderer;

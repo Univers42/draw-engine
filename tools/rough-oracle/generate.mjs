@@ -25,6 +25,10 @@ import {
   ellipseWithParams,
   solidFillPolygon,
 } from "roughjs/bin/renderer.js";
+import { RoughGenerator } from "roughjs/bin/generator.js";
+
+// One generator instance; it is stateless apart from defaultOptions, which we never set.
+const gen = new RoughGenerator();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(HERE, "..", "..", "crates", "draw-rough", "tests", "fixtures");
@@ -178,14 +182,169 @@ for (const seed of [1, 12345]) {
   emit("solidFillPolygon", quad, { seed }, solidFillPolygon(quad, opts({ seed })));
 }
 
+// --- pattern fills ---------------------------------------------------------------
+//
+// Fills go through RoughGenerator, never straight to a filler. The generator draws the
+// outline first, which is what creates the randomizer; a fill computed on its own falls
+// back to `Math.random()` for the hachure skipOffset and is non-deterministic *in
+// rough.js itself*. It is also how Excalidraw calls rough, so this exercises the real
+// path — including the ordering quirk that the outline is computed first but pushed last.
+//
+// `dots` is deliberately absent: DotFiller jitters every dot with Math.random(), so it
+// cannot be reproduced by anyone, us included. Excalidraw does not expose it either.
+const FILL_STYLES = ["hachure", "cross-hatch", "zigzag", "dashed", "zigzag-line", "solid"];
+
+const emitDrawable = (fn, args, over, drawable) => {
+  const o = opts(over);
+  const { stroke, randomizer, ...geometryOptions } = o;
+  cases.push({ fn, args, options: geometryOptions, sets: drawable.sets });
+};
+
+for (const fillStyle of FILL_STYLES) {
+  for (const seed of [1, 7, 12345, 2147483647]) {
+    // roughness crosses 1, the threshold at which polygonHachureLines draws from the
+    // random stream to pick skipOffset — so the stream position downstream differs
+    // above and below it.
+    for (const roughness of [0, 0.5, 1, 2]) {
+      for (const [w, h] of [[100, 60], [20, 20], [400, 300], [1200, 40]]) {
+        for (const strokeWidth of [1, 4]) {
+          const base = { seed, roughness, fillStyle, strokeWidth, fill: "#f00" };
+
+          emitDrawable("gen.rectangle", [0, 0, w, h], base,
+            gen.rectangle(0, 0, w, h, opts(base)));
+
+          emitDrawable("gen.ellipse", [0, 0, w, h], base,
+            gen.ellipse(0, 0, w, h, opts(base)));
+
+          // A diamond exercises sloped edges in the active-edge table, where the islope
+          // accumulation and the rounding of span endpoints actually bite.
+          const diamond = [[w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2]];
+          emitDrawable("gen.polygon", diamond, base,
+            gen.polygon(structuredClone(diamond), opts(base)));
+        }
+      }
+    }
+  }
+}
+
+// Hachure angle and gap drive the scanline directly; sweep them on one shape.
+for (const hachureAngle of [-41, 0, 45, 90, 137, -90]) {
+  for (const hachureGap of [-1, 2, 8, 30]) {
+    for (const fillStyle of ["hachure", "cross-hatch"]) {
+      const base = { seed: 12345, hachureAngle, hachureGap, fillStyle, fill: "#f00" };
+      emitDrawable("gen.rectangle", [0, 0, 120, 80], base,
+        gen.rectangle(0, 0, 120, 80, opts(base)));
+    }
+  }
+}
+
+// Unfilled shapes through the generator too, so the sets-shape is covered both ways.
+for (const seed of [1, 12345]) {
+  for (const roughness of [0, 1, 2]) {
+    const base = { seed, roughness };
+    emitDrawable("gen.rectangle", [0, 0, 100, 60], base, gen.rectangle(0, 0, 100, 60, opts(base)));
+    emitDrawable("gen.ellipse", [0, 0, 100, 60], base, gen.ellipse(0, 0, 100, 60, opts(base)));
+    emitDrawable("gen.linearPath", [[0, 0], [50, 30], [100, 0]], base,
+      gen.linearPath([[0, 0], [50, 30], [100, 0]], opts(base)));
+    emitDrawable("gen.curve", [[0, 0], [50, 30], [100, 0], [150, 40]], base,
+      gen.curve([[0, 0], [50, 30], [100, 0], [150, 40]], opts(base)));
+    emitDrawable("gen.line", [0, 0, 300, 220], base, gen.line(0, 0, 300, 220, opts(base)));
+  }
+}
+
 // --- write ----------------------------------------------------------------------
+//
+// The full sweep is ~1.4M ops / 136MB, which has no business in git. It is split two
+// ways, and the split is not merely a size trick — the two halves check different
+// things:
+//
+//   curated.json      full ops for a representative subset. The debugging surface:
+//                     when something breaks, this is what tells you which operand of
+//                     which op moved.
+//   sweep.summary.json  every case reduced to a structural signature plus numeric
+//                     aggregates. Broad coverage, small file.
+//
+// The signature deliberately hashes only op KINDS, never coordinates. Hashing floats
+// would make the test flake: a coordinate sitting within 1e-9 of a quantisation
+// boundary lands in a different bucket for a last-ulp difference, and across 1.4M
+// coordinates that is a near-certainty. Structure is exact and hashes cleanly;
+// magnitudes are checked as sums against a relative tolerance instead.
+
+// FNV-1a over the op-kind string. Deterministic, trivially reimplemented in Rust.
+const fnv1a = (str) => {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+};
+
+const KIND_LETTER = { move: "m", lineTo: "l", bcurveTo: "b" };
+
+const summariseSet = (opset) => {
+  let sum = 0;
+  let sumAbs = 0;
+  let maxAbs = 0;
+  let kinds = "";
+  for (const op of opset.ops) {
+    kinds += KIND_LETTER[op.op] ?? "?";
+    for (const v of op.data) {
+      sum += v;
+      sumAbs += Math.abs(v);
+      maxAbs = Math.max(maxAbs, Math.abs(v));
+    }
+  }
+  return { type: opset.type, opCount: opset.ops.length, kindHash: fnv1a(kinds), sum, sumAbs, maxAbs };
+};
+
+// A case is either a single renderer opset or a generator drawable's list of sets.
+const setsOf = (c) => (c.sets ? c.sets : [c.opset]);
+const summarise = (c) => setsOf(c).map(summariseSet);
+const opCountOf = (c) => setsOf(c).reduce((n, s) => n + s.ops.length, 0);
 
 mkdirSync(OUT_DIR, { recursive: true });
-const out = join(OUT_DIR, "renderer.json");
 
-// JSON.stringify emits the shortest decimal that round-trips a double, and serde_json
-// parses it back to the identical bit pattern — so plain JSON is lossless for f64.
-writeFileSync(out, JSON.stringify({ roughjs: "4.6.4", cases }, null, 0));
+// Curated: keep every distinct (fn, fillStyle) shape, capped per bucket and by op
+// count so one enormous hachure fill cannot dominate the file.
+const CURATED_PER_BUCKET = 40;
+const CURATED_MAX_OPS = 400;
+const bucketCount = new Map();
+const curated = [];
+for (const c of cases) {
+  if (opCountOf(c) > CURATED_MAX_OPS) continue;
+  const bucket = `${c.fn}:${c.options.fillStyle ?? ""}`;
+  const n = bucketCount.get(bucket) ?? 0;
+  if (n >= CURATED_PER_BUCKET) continue;
+  bucketCount.set(bucket, n + 1);
+  curated.push(c);
+}
 
-const ops = cases.reduce((n, c) => n + (c.opset?.ops?.length ?? 0), 0);
-console.log(`${cases.length} cases, ${ops} ops -> ${out}`);
+writeFileSync(
+  join(OUT_DIR, "curated.json"),
+  JSON.stringify({ roughjs: "4.6.4", cases: curated }, null, 0),
+);
+
+writeFileSync(
+  join(OUT_DIR, "sweep.summary.json"),
+  JSON.stringify(
+    {
+      roughjs: "4.6.4",
+      cases: cases.map((c) => ({
+        fn: c.fn,
+        args: c.args,
+        options: c.options,
+        ...(c.params ? { params: c.params } : {}),
+        summary: summarise(c),
+      })),
+    },
+    null,
+    0,
+  ),
+);
+
+const ops = cases.reduce((n, c) => n + opCountOf(c), 0);
+console.log(
+  `${cases.length} cases / ${ops} ops -> sweep.summary.json` +
+    ` (+ ${curated.length} cases with full ops -> curated.json)`,
+);
