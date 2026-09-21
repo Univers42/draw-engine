@@ -9,6 +9,7 @@ use crate::scene::{
 };
 
 mod arrange;
+mod autoshape;
 mod clipboard;
 mod frame;
 mod hover;

@@ -54,6 +54,13 @@ pub use scene::{
     LABEL_PADDING,
 };
 pub use scene::{
+    arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,
+    principal_axes, principal_coords, recognize_shape, resample, skewness, standardized_moment,
+    PrincipalAxes, RecognizedShape, StrokeFeatures, ARROW_MIN_SKEW, CLOSED_GAP_MAX_RATIO,
+    CLOSED_SHAPE_MAX_DISTANCE, LINEAR_MAX_ELONGATION, LINEAR_MAX_SHAFT_DEVIATION,
+    RECOGNITION_MIN_SCREEN_SIZE, RESAMPLE_N,
+};
+pub use scene::{
     default_frame_name, element_contains_frame, element_in_frame_bounds, element_intersects_frame,
     element_outline, element_overlaps_frame, elements_captured_by, fit_image, frame_children,
     frame_clip_bounds, frame_for_element, frame_name_anchor, frame_style, is_frame, is_image,

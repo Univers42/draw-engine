@@ -174,7 +174,14 @@ impl DrawEngine {
                     element.width = (max_x - min_x).max(1.0);
                     element.height = (max_y - min_y).max(1.0);
                     element.points = Some(shifted);
+                    let id = element.id.clone();
                     self.scene.put(element.clone());
+                    // The whole gesture is one history entry: the stroke is never
+                    // committed on its own, so one undo takes the shape away rather
+                    // than turning it back into a scribble nobody drew.
+                    if self.get_tool() == DrawTool::AutoShape {
+                        self.convert_to_shape(&id);
+                    }
                     self.settle_tool();
                     self.set_selection(vec![element.id]);
                     self.push_history();

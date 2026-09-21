@@ -54,7 +54,9 @@ export type DrawTool =
   /** Picks a file and places it. Never a drag: the picker decides, not the pointer. */
   | "image"
   /** Frames a live web page. Like the image tool, it asks rather than draws. */
-  | "embed";
+  | "embed"
+  /** Draws freehand and converts the stroke into the shape it was meant to be. */
+  | "autoshape";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";

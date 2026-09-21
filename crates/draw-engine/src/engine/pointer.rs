@@ -26,7 +26,7 @@ impl DrawEngine {
                 self.interaction = Some(Interaction::Erase);
                 self.erase_at(sx, sy);
             }
-            DrawTool::Freedraw => self.begin_freedraw(world),
+            DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
             DrawTool::Lasso => {
                 self.interaction = Some(Interaction::Lasso {
