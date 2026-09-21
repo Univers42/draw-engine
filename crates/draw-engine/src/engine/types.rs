@@ -58,6 +58,16 @@ pub(crate) enum Interaction {
     Rotate {
         id: String,
     },
+    /// Dragging one point of a line or arrow.
+    ///
+    /// Separate from `Resize` because a linear element is edited by its points, not by
+    /// its bounding box: scaling a box cannot express "point this end somewhere else",
+    /// and for a dead-horizontal or dead-vertical element the box is degenerate, so
+    /// every box handle collapses onto the same line.
+    LinearPoint {
+        id: String,
+        handle: crate::selection::LinearHandle,
+    },
     Marquee {
         start: Point,
         current: Point,

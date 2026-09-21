@@ -1,5 +1,6 @@
 use crate::camera::Point;
 use crate::engine::{DrawEngine, Interaction};
+use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::{bindable_at, scene_bounds, DrawElement};
 use crate::selection::{resize_element, rotate_element, HandleKind};
@@ -35,6 +36,21 @@ impl DrawEngine {
                     self.request_draw();
                 }
                 Some(it)
+            }
+            Interaction::LinearPoint { ref id, handle } => {
+                self.move_linear_point(id, handle, world, square);
+                // A midpoint drag inserts a point and then *becomes* a drag of that new
+                // point, or the next pointer move would insert another one.
+                let next = match handle {
+                    crate::selection::LinearHandle::Midpoint(i) => {
+                        crate::selection::LinearHandle::Point(i + 1)
+                    }
+                    point => point,
+                };
+                Some(Interaction::LinearPoint {
+                    id: id.clone(),
+                    handle: next,
+                })
             }
             Interaction::Linear { ref id, start } => {
                 self.move_linear(id, start, world, square);
@@ -85,6 +101,138 @@ impl DrawEngine {
                 base,
             }),
         }
+    }
+
+    /// Moves one point of a line or arrow to the pointer.
+    ///
+    /// Shift constrains the segment leading into the point to 45 degree steps, matching
+    /// what drawing one does — so an arrow can be made exactly horizontal after the
+    /// fact, not only while it is first drawn.
+    fn move_linear_point(
+        &mut self,
+        id: &str,
+        handle: crate::selection::LinearHandle,
+        world: Point,
+        square: bool,
+    ) {
+        let Some(element) = self.scene.get(id).cloned() else {
+            return;
+        };
+
+        let target = if square {
+            self.constrain_point(&element, handle, world)
+        } else {
+            world
+        };
+
+        let moved = crate::selection::linear::move_handle(&element, handle, target);
+
+        // Re-resolve the binding for whichever end moved, so dropping an endpoint on a
+        // shape attaches it and dragging it away releases it.
+        let moved = self.rebind_endpoint(moved, handle);
+
+        self.scene.put(moved);
+        self.refresh_binding_highlight(handle, target);
+        self.request_draw();
+    }
+
+    /// Quantises the dragged point to 45 degrees from its neighbour.
+    fn constrain_point(
+        &self,
+        element: &crate::scene::DrawElement,
+        handle: crate::selection::LinearHandle,
+        world: Point,
+    ) -> Point {
+        let points = crate::selection::linear::world_points(element);
+        let anchor = match handle {
+            crate::selection::LinearHandle::Point(0) => points.get(1),
+            crate::selection::LinearHandle::Point(i) => points.get(i.wrapping_sub(1)),
+            crate::selection::LinearHandle::Midpoint(i) => points.get(i),
+        };
+        let Some(anchor) = anchor else {
+            return world;
+        };
+
+        let (dx, dy) = constrain_to_angle(world.x - anchor.x, world.y - anchor.y);
+        Point {
+            x: anchor.x + dx,
+            y: anchor.y + dy,
+        }
+    }
+
+    /// Attaches or releases a binding for whichever end just moved.
+    ///
+    /// Only the two ends bind; a point in the middle of a path is not an endpoint and
+    /// has nothing to attach to. Dragging an end onto a shape binds it, dragging it
+    /// clear releases it — so the gesture is reversible, which the previous
+    /// bind-on-create-only behaviour was not.
+    fn rebind_endpoint(
+        &self,
+        mut element: crate::scene::DrawElement,
+        handle: crate::selection::LinearHandle,
+    ) -> crate::scene::DrawElement {
+        let points = element.points.as_ref().map(Vec::len).unwrap_or(0);
+        let which = match handle {
+            crate::selection::LinearHandle::Point(0) => Some(false),
+            crate::selection::LinearHandle::Point(i) if i + 1 == points => Some(true),
+            _ => None,
+        };
+        let Some(is_end) = which else {
+            return element;
+        };
+
+        let world = crate::selection::linear::world_points(&element);
+        let Some(tip) = (if is_end { world.last() } else { world.first() }) else {
+            return element;
+        };
+
+        let ordered = self.scene.ordered_cloned();
+        let target = crate::scene::binding::bindable_at(
+            &ordered,
+            tip.x,
+            tip.y,
+            self.binding_tolerance(),
+            Some(&element.id),
+        )
+        .map(|shape| shape.id.clone());
+
+        if is_end {
+            element.end_binding = target;
+        } else {
+            element.start_binding = target;
+        }
+        element
+    }
+
+    /// How far from a shape an endpoint may be dropped and still attach.
+    ///
+    /// A fixed world tolerance would shrink to nothing when zoomed out, so it is
+    /// derived from screen pixels. Excalidraw does the same — you do not have to land
+    /// *inside* a shape to bind to it, only near it, which is the difference between
+    /// binding feeling helpful and feeling fiddly.
+    fn binding_tolerance(&self) -> f64 {
+        super::BINDING_HOVER_PX / self.camera.scale
+    }
+
+    /// Records which shape, if any, the dragged endpoint would bind to.
+    ///
+    /// The painter reads this to outline that shape, so you can see the attachment
+    /// before you commit to it.
+    fn refresh_binding_highlight(&mut self, handle: crate::selection::LinearHandle, at: Point) {
+        let is_endpoint = matches!(handle, crate::selection::LinearHandle::Point(_));
+        if !is_endpoint {
+            self.binding_highlight = None;
+            return;
+        }
+        let ordered = self.scene.ordered_cloned();
+        self.binding_highlight = crate::scene::binding::bindable_at(
+            &ordered,
+            at.x,
+            at.y,
+            self.binding_tolerance(),
+            None,
+        )
+        .map(|shape| shape.id.clone());
     }
 
     fn move_linear(&mut self, id: &str, start: Point, world: Point, square: bool) {

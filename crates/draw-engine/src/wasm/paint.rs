@@ -12,7 +12,7 @@ use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
 use crate::render::opts::dash_array;
 use crate::scene::{DrawElement, DrawElementType};
-use crate::selection::{selection_corners, selection_handle_points};
+use crate::selection::{selection_corners, selection_handle_points, HandleKind};
 
 pub struct CanvasPainter<'a> {
     pub ctx: &'a CanvasRenderingContext2d,
@@ -415,9 +415,28 @@ fn paint_text(ctx: &CanvasRenderingContext2d, element: &DrawElement, backdrop: O
     ctx.restore();
 }
 
+/// Excalidraw's selection padding: the frame sits slightly outside the element.
+const SELECTION_PADDING_PX: f64 = 8.0;
+/// Radius of a point handle on a line or arrow.
+const POINT_HANDLE_R: f64 = 5.0;
+
+/// Draws everything that is not the document itself: the marquee, snap guides, the
+/// selection frame and handles, and the binding hint.
+///
+/// The selection UI is modelled on Excalidraw's, observed directly rather than guessed
+/// at, because the differences are not cosmetic:
+///
+/// - A **line or arrow gets no bounding box at all** — just a circle on each point and
+///   a filled circle at each midpoint. Scaling a box cannot express "point this end
+///   somewhere else", and for a dead-horizontal arrow the box is degenerate so every
+///   box handle lands on the same spot.
+/// - A **shape gets four corner handles and a rotation handle**, not eight. Excalidraw
+///   omits the cardinal handles by default; drawing them adds four targets that mostly
+///   get in the way of the corners.
 fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     set_stroke(ctx, &view.theme.accent);
     ctx.set_line_width(1.0);
+
     if let Some(rect) = view.marquee {
         let tl = crate::world_to_screen(view.camera, rect.min_x, rect.min_y);
         let br = crate::world_to_screen(view.camera, rect.max_x, rect.max_y);
@@ -429,6 +448,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
         ctx.restore();
     }
+
     for guide in &view.snap_guides {
         let (a, b) = if guide.axis == Axis::X {
             (
@@ -446,31 +466,146 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         ctx.line_to(b.x, b.y);
         ctx.stroke();
     }
+
+    paint_binding_highlight(ctx, view);
+
+    // A linear element is edited by its points; it gets no frame.
+    if !view.linear_handles.is_empty() {
+        paint_linear_handles(ctx, view);
+        return;
+    }
+
     if view.selected.len() == 1 {
-        let corners = selection_corners(&view.selected[0]);
-        ctx.begin_path();
-        let first = crate::world_to_screen(view.camera, corners[0].x, corners[0].y);
-        ctx.move_to(first.x, first.y);
-        for corner in &corners[1..] {
-            let p = crate::world_to_screen(view.camera, corner.x, corner.y);
-            ctx.line_to(p.x, p.y);
-        }
-        ctx.close_path();
-        ctx.stroke();
-        let half = view.handle_px / 2.0;
-        for point in selection_handle_points(&view.selected[0], view.rotate_gap) {
-            let s = crate::world_to_screen(view.camera, point.x, point.y);
-            ctx.begin_path();
-            ctx.rect(s.x - half, s.y - half, view.handle_px, view.handle_px);
-            set_fill(ctx, &view.theme.background);
-            ctx.fill();
-            ctx.stroke();
-        }
+        paint_shape_selection(ctx, view, view.selected[0]);
     } else if view.selected.len() > 1 {
         if let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) {
             let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
             let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
-            ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+            let pad = SELECTION_PADDING_PX;
+            ctx.stroke_rect(
+                tl.x - pad,
+                tl.y - pad,
+                (br.x - tl.x) + pad * 2.0,
+                (br.y - tl.y) + pad * 2.0,
+            );
         }
     }
+}
+
+/// The frame, four corner handles and the rotation handle for a single shape.
+fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
+    let corners = selection_corners(element);
+    ctx.begin_path();
+    let first = crate::world_to_screen(view.camera, corners[0].x, corners[0].y);
+    ctx.move_to(first.x, first.y);
+    for corner in &corners[1..] {
+        let p = crate::world_to_screen(view.camera, corner.x, corner.y);
+        ctx.line_to(p.x, p.y);
+    }
+    ctx.close_path();
+    ctx.stroke();
+
+    let half = view.handle_px / 2.0;
+    for point in selection_handle_points(element, view.rotate_gap) {
+        // Corners and the rotation handle only. The cardinal handles crowd the corners
+        // and Excalidraw omits them by default.
+        let corner_or_rotate = matches!(
+            point.kind,
+            HandleKind::Nw | HandleKind::Ne | HandleKind::Se | HandleKind::Sw | HandleKind::Rotate
+        );
+        if !corner_or_rotate {
+            continue;
+        }
+
+        let s = crate::world_to_screen(view.camera, point.x, point.y);
+        ctx.begin_path();
+        if point.kind == HandleKind::Rotate {
+            // A circle, so it reads as "turn" rather than "resize".
+            let _ = ctx.arc(s.x, s.y, half, 0.0, std::f64::consts::PI * 2.0);
+        } else {
+            ctx.rect(s.x - half, s.y - half, view.handle_px, view.handle_px);
+        }
+        set_fill(ctx, &view.theme.background);
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+/// A circle on each point of a line or arrow, filled at the midpoints.
+///
+/// Hollow for a real point, filled for a midpoint, which is how Excalidraw
+/// distinguishes "move this" from "add one here".
+fn paint_linear_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    for handle in &view.linear_handles {
+        let s = crate::world_to_screen(view.camera, handle.x, handle.y);
+        let is_midpoint = matches!(handle.handle, crate::selection::LinearHandle::Midpoint(_));
+
+        ctx.begin_path();
+        let _ = ctx.arc(s.x, s.y, POINT_HANDLE_R, 0.0, std::f64::consts::PI * 2.0);
+
+        if is_midpoint {
+            set_fill(ctx, &view.theme.accent);
+            ctx.save();
+            ctx.set_global_alpha(0.55);
+            ctx.fill();
+            ctx.restore();
+        } else {
+            set_fill(ctx, &view.theme.background);
+            ctx.fill();
+        }
+        ctx.stroke();
+    }
+}
+
+/// Outlines the shape a dragged arrow endpoint would attach to.
+///
+/// Excalidraw strokes the element's own outline with a thick translucent halo rather
+/// than boxing it, so the highlight hugs the shape and reads as "this edge", not "this
+/// area". Without any such hint, binding is invisible until after the fact and feels
+/// like a coincidence rather than a tool.
+fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    let Some(element) = view.binding_highlight else {
+        return;
+    };
+    let rect =
+        crate::scene::geometry::normalize_rect(element.x, element.y, element.width, element.height);
+
+    let tl = crate::world_to_screen(view.camera, rect.x, rect.y);
+    let br = crate::world_to_screen(view.camera, rect.x + rect.width, rect.y + rect.height);
+    let (w, h) = (br.x - tl.x, br.y - tl.y);
+    let (cx, cy) = (tl.x + w / 2.0, tl.y + h / 2.0);
+
+    ctx.save();
+    set_stroke(ctx, &view.theme.accent);
+    ctx.set_line_width(8.0);
+    ctx.set_global_alpha(0.35);
+    let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
+    ctx.begin_path();
+
+    match element.kind {
+        DrawElementType::Ellipse => {
+            let _ = ctx.ellipse(
+                cx,
+                cy,
+                (w / 2.0).abs(),
+                (h / 2.0).abs(),
+                0.0,
+                0.0,
+                std::f64::consts::PI * 2.0,
+            );
+        }
+        DrawElementType::Diamond => {
+            ctx.move_to(cx, tl.y);
+            ctx.line_to(br.x, cy);
+            ctx.line_to(cx, br.y);
+            ctx.line_to(tl.x, cy);
+            ctx.close_path();
+        }
+        _ => {
+            ctx.rect(tl.x, tl.y, w, h);
+        }
+    }
+
+    ctx.stroke();
+    ctx.restore();
 }

@@ -4,8 +4,15 @@ use crate::freehand::points_bounds;
 use crate::interaction::{is_degenerate_linear, DrawTool};
 use crate::selection::{elements_in_marquee, marquee_rect};
 
+/// World units the pointer must travel before a drag counts as a marquee rather than a
+/// click. Small enough that a deliberate rubber-band always registers, large enough to
+/// absorb the jitter of a mouse being clicked.
+const MARQUEE_MIN_DRAG: f64 = 2.0;
+
 impl DrawEngine {
     pub fn end_pointer(&mut self) {
+        // The binding hint belongs to the drag, not to the document.
+        self.binding_highlight = None;
         let Some(it) = self.interaction.take() else {
             return;
         };
@@ -19,12 +26,21 @@ impl DrawEngine {
                 current,
                 base,
             } => {
-                let hits = elements_in_marquee(
-                    &self.selectable(),
-                    marquee_rect(start.x, start.y, current.x, current.y),
-                );
+                let rect = marquee_rect(start.x, start.y, current.x, current.y);
+
+                // A click that hit nothing is not a marquee. Without this, releasing
+                // without dragging leaves a zero-area rect, and a zero-area rect
+                // "overlaps" any bounding box containing the point — so clicking empty
+                // space well away from a diagonal line still selected it, because the
+                // click fell inside the line's bounding box. Lines and arrows felt
+                // grabby for exactly this reason.
+                let dragged = (rect.max_x - rect.min_x).abs() > MARQUEE_MIN_DRAG
+                    || (rect.max_y - rect.min_y).abs() > MARQUEE_MIN_DRAG;
+
                 let mut ids = base;
-                ids.extend(hits);
+                if dragged {
+                    ids.extend(elements_in_marquee(&self.selectable(), rect));
+                }
                 self.set_selection(expand_to_groups(&self.scene.ordered_cloned(), ids));
             }
             _ => {

@@ -24,6 +24,13 @@ pub use types::{merge_style_patch, EngineEvents, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
 const HANDLE_HIT_PX: f64 = 10.0;
+/// How long a segment must be on screen before it gets its own midpoint handle.
+/// Two handles a few pixels apart cannot be aimed at deliberately.
+const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
+/// How close, in screen pixels, an endpoint must come to a shape to bind to it.
+/// Derived from pixels rather than world units so it does not shrink to nothing when
+/// zoomed out.
+const BINDING_HOVER_PX: f64 = 32.0;
 const ROTATE_GAP_PX: f64 = 26.0;
 const DEFAULT_FONT_SIZE: f64 = 20.0;
 const SNAP_PX: f64 = 6.0;
@@ -50,6 +57,12 @@ pub struct DrawEngine {
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
+    /// The shape a dragged arrow endpoint would attach to, if released now.
+    ///
+    /// The painter outlines it, so the attachment is visible before it is committed —
+    /// without that, binding is invisible until after the fact and feels like a
+    /// coincidence rather than a tool.
+    binding_highlight: Option<String>,
     history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
     events: EngineEvents,
 }
@@ -82,6 +95,7 @@ impl DrawEngine {
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
+            binding_highlight: None,
             history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
             events: EngineEvents::default(),
         }

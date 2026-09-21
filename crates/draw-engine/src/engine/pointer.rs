@@ -146,13 +146,36 @@ impl DrawEngine {
         if let Some(single) = self.single_selected() {
             if !single.locked() {
                 let world_tol = super::HANDLE_HIT_PX / self.camera.scale;
+
+                // A line or arrow is edited by its points, not its bounding box — so
+                // its handles are tested first and the box handles never apply to it.
+                // Excalidraw does the same: select an arrow there and you get circles
+                // on its ends, with no selection rectangle at all.
+                if crate::selection::linear::is_point_edited(&single) {
+                    let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
+                    let handles = crate::selection::linear::handle_points(&single, min_segment);
+                    if let Some(handle) =
+                        crate::selection::linear::hit_handle(&handles, world.x, world.y, world_tol)
+                    {
+                        self.interaction = Some(Interaction::LinearPoint {
+                            id: single.id,
+                            handle,
+                        });
+                        return;
+                    }
+                }
+
                 let gap = super::ROTATE_GAP_PX / self.camera.scale;
-                let handle = hit_handle(
-                    &selection_handle_points(&single, gap),
-                    world.x,
-                    world.y,
-                    world_tol,
-                );
+                let handle = if crate::selection::linear::is_point_edited(&single) {
+                    None
+                } else {
+                    hit_handle(
+                        &selection_handle_points(&single, gap),
+                        world.x,
+                        world.y,
+                        world_tol,
+                    )
+                };
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
                     return;
