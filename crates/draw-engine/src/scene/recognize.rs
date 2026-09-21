@@ -30,6 +30,9 @@
 //! turned 45 degrees *is* a diamond — Excalidraw's own note says the same.
 
 use crate::camera::Point;
+// The shoelace area is general polygon geometry rather than anything to do with
+// recognition, so it lives with the rest of it and the bucket fill uses the same one.
+use crate::scene::geometry::polygon_area;
 
 /// Every stroke is resampled to this many evenly spaced points before measuring.
 ///
@@ -292,20 +295,6 @@ pub fn convex_hull(points: &[Point]) -> Vec<Point> {
     } else {
         points.to_vec()
     }
-}
-
-/// Area of a polygon, by the shoelace formula. Always positive.
-pub fn polygon_area(points: &[Point]) -> f64 {
-    if points.len() < 3 {
-        return 0.0;
-    }
-    let mut sum = 0.0;
-    for i in 0..points.len() {
-        let a = points[i];
-        let b = points[(i + 1) % points.len()];
-        sum += a.x * b.y - b.x * a.y;
-    }
-    (sum / 2.0).abs()
 }
 
 /// Resample a stroke to exactly `n` points spread along its path.

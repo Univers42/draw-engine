@@ -472,3 +472,152 @@ pub fn hit_test(
     }
     None
 }
+
+// -----------------------------------------------------------------------------
+// polygon primitives
+//
+// Excalidraw's `packages/math/src/polygon.ts`, transcribed. These are the pieces the
+// bucket fill decides on, and two of them are decided by *sign*, so the winding
+// convention has to survive the port exactly — see `polygon_signed_area`.
+// -----------------------------------------------------------------------------
+
+/// Excalidraw's `PRECISION`: the tolerance at which two points count as the same.
+pub const PRECISION: f64 = 10e-5;
+
+/// Whether the ring already repeats its first vertex as its last.
+pub fn polygon_is_closed(polygon: &[Point], tolerance: f64) -> bool {
+    match (polygon.first(), polygon.last()) {
+        (Some(first), Some(last)) => {
+            (first.x - last.x).abs() <= tolerance && (first.y - last.y).abs() <= tolerance
+        }
+        _ => false,
+    }
+}
+
+/// The signed area of a polygon by the shoelace formula.
+///
+/// **Positive when the vertices wind counter-clockwise in a y-down system.** The bucket
+/// fill separates bounded faces from the outside contour by the sign of this and nothing
+/// else, so flipping the convention here does not make fills slightly wrong — it makes
+/// the tool select the outside of every region instead of the inside.
+///
+/// Accepts the ring open or closed; a repeated closing vertex is dropped first so it
+/// cannot contribute a zero-width term.
+pub fn polygon_signed_area(polygon: &[Point], tolerance: f64) -> f64 {
+    let pts = if polygon_is_closed(polygon, tolerance) {
+        &polygon[..polygon.len() - 1]
+    } else {
+        polygon
+    };
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        sum += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+        j = i;
+    }
+    sum / 2.0
+}
+
+/// The unsigned area of a polygon.
+///
+/// Wraps modulo rather than stripping a closing vertex, because a repeated vertex
+/// contributes a zero term either way — so this accepts a ring open or closed and answers
+/// the same for both.
+pub fn polygon_area(points: &[Point]) -> f64 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        sum += a.x * b.y - b.x * a.y;
+    }
+    (sum / 2.0).abs()
+}
+
+/// Even-odd containment, which is the rule the renderer fills with.
+///
+/// This is the one to ask when the question is "does the paint cover this point", because
+/// it answers *no* inside a keyhole's hole — matching what is actually painted.
+pub fn polygon_includes_point(point: Point, polygon: &[Point]) -> bool {
+    if polygon.is_empty() {
+        return false;
+    }
+    let (x, y) = (point.x, point.y);
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+    for i in 0..polygon.len() {
+        let (xi, yi) = (polygon[i].x, polygon[i].y);
+        let (xj, yj) = (polygon[j].x, polygon[j].y);
+        if ((yi > y && yj <= y) || (yi <= y && yj > y)) && x < (xj - xi) * (y - yi) / (yj - yi) + xi
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Non-zero winding containment.
+///
+/// Used for face selection, where the ring is a simple cell of the arrangement and the
+/// two rules agree — but a winding test is insensitive to which way the face was walked,
+/// and the walk hands back bounded and unbounded faces in opposite orientations.
+pub fn polygon_includes_point_non_zero(point: Point, polygon: &[Point]) -> bool {
+    let (x, y) = (point.x, point.y);
+    let mut winding = 0i32;
+    for i in 0..polygon.len() {
+        let j = (i + 1) % polygon.len();
+        let (xi, yi) = (polygon[i].x, polygon[i].y);
+        let (xj, yj) = (polygon[j].x, polygon[j].y);
+        if yi <= y {
+            if yj > y && (xj - xi) * (y - yi) - (x - xi) * (yj - yi) > 0.0 {
+                winding += 1;
+            }
+        } else if yj <= y && (xj - xi) * (y - yi) - (x - xi) * (yj - yi) < 0.0 {
+            winding -= 1;
+        }
+    }
+    winding != 0
+}
+
+/// Where two segments cross, if they do.
+///
+/// Excalidraw's `lineSegmentIntersectionPoints`: intersect the infinite lines, then keep
+/// the point only if it lies on *both* segments within `threshold`. Parallel lines give
+/// `None`, including collinear overlapping ones — those are handled instead by the
+/// T-junction pass, which finds the endpoint that necessarily lies on the other segment.
+pub fn segment_intersection_point(
+    a: (Point, Point),
+    b: (Point, Point),
+    threshold: f64,
+) -> Option<Point> {
+    let a1 = a.1.y - a.0.y;
+    let b1 = a.0.x - a.1.x;
+    let a2 = b.1.y - b.0.y;
+    let b2 = b.0.x - b.1.x;
+    let d = a1 * b2 - a2 * b1;
+    if d == 0.0 {
+        return None;
+    }
+    let c1 = a1 * a.0.x + b1 * a.0.y;
+    let c2 = a2 * b.0.x + b2 * b.0.y;
+    let candidate = Point {
+        x: (c1 * b2 - c2 * b1) / d,
+        y: (a1 * c2 - a2 * c1) / d,
+    };
+    let on = |seg: (Point, Point)| {
+        let distance =
+            distance_to_segment(candidate.x, candidate.y, seg.0.x, seg.0.y, seg.1.x, seg.1.y);
+        distance == 0.0 || distance < threshold
+    };
+    if on(a) && on(b) {
+        Some(candidate)
+    } else {
+        None
+    }
+}

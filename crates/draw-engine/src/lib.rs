@@ -61,6 +61,13 @@ pub use scene::{
     RECOGNITION_MIN_SCREEN_SIZE, RESAMPLE_N,
 };
 pub use scene::{
+    compute_bucket_fill, is_bucket_fill_compatible, is_restylable_fill, polygon_includes_point,
+    polygon_includes_point_non_zero, polygon_signed_area, renders_opaque_fill,
+    segment_intersection_point, BucketFill, BucketFillFailure, BucketFillInsertion,
+    BucketFillOptions, Placement, BUCKET_FILL_COVER_MARGIN, BUCKET_FILL_GAP_TOLERANCE,
+    BUCKET_FILL_REGION_MATCH_TOLERANCE, LINE_CONFIRM_THRESHOLD,
+};
+pub use scene::{
     default_frame_name, element_contains_frame, element_in_frame_bounds, element_intersects_frame,
     element_outline, element_overlaps_frame, elements_captured_by, fit_image, frame_children,
     frame_clip_bounds, frame_for_element, frame_name_anchor, frame_style, is_frame, is_image,

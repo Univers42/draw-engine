@@ -1,4 +1,5 @@
 pub mod binding;
+pub mod bucket_fill;
 pub mod element;
 pub mod embed;
 pub mod frame;
@@ -8,6 +9,7 @@ pub mod recognize;
 pub mod store;
 
 pub use binding::*;
+pub use bucket_fill::*;
 pub use element::*;
 pub use embed::*;
 pub use frame::*;
