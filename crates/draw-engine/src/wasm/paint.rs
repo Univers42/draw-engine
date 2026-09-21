@@ -490,7 +490,13 @@ impl Painter for CanvasPainter<'_> {
                 ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
                 ctx.clip();
             }
-            paint_element(ctx, view_transform, element, &view.theme.background);
+            paint_element(
+                ctx,
+                view_transform,
+                element,
+                &view.theme.background,
+                &view.elements,
+            );
             if clip.is_some() {
                 ctx.restore();
             }
@@ -636,17 +642,29 @@ fn paint_element(
     view: [f64; 6],
     element: &DrawElement,
     background: &str,
+    elements: &[&DrawElement],
 ) {
     match element.kind {
         DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, view, element),
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
-        DrawElementType::Text => paint_text(
-            ctx,
-            view,
-            element,
-            element.container_id.as_ref().map(|_| background),
-        ),
+        DrawElementType::Text => {
+            let is_linear_label = element
+                .container_id
+                .as_deref()
+                .and_then(|cid| elements.iter().find(|e| e.id == cid))
+                .is_some_and(|c| crate::is_linear_element(c));
+            paint_text(
+                ctx,
+                view,
+                element,
+                if is_linear_label {
+                    Some(background)
+                } else {
+                    None
+                },
+            )
+        }
         _ => paint_shape(ctx, view, element),
     }
 }
@@ -799,8 +817,17 @@ fn paint_text(
 
         set_fill(ctx, &element.stroke_color);
         let line_height = font_size * crate::TEXT_LINE_HEIGHT;
-        for (i, line) in text.split('\n').enumerate() {
-            let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
+        if element.container_id.is_some() {
+            ctx.set_text_align("center");
+            let center_x = element.width / 2.0;
+            for (i, line) in text.split('\n').enumerate() {
+                let _ = ctx.fill_text(line, center_x, i as f64 * line_height);
+            }
+        } else {
+            ctx.set_text_align("left");
+            for (i, line) in text.split('\n').enumerate() {
+                let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
+            }
         }
     });
 }

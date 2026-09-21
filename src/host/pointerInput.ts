@@ -24,6 +24,7 @@ function flushPendingMove(session: HostSession): void {
 
 export function attachPointerInput(session: HostSession): () => void {
   const { canvas, engine, callbacks } = session;
+  let intercepted = false;
 
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
@@ -39,6 +40,11 @@ export function attachPointerInput(session: HostSession): () => void {
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
     canvas.setPointerCapture(event.pointerId);
+    if (callbacks.onPointerDown?.({ x, y }, event)) {
+      intercepted = true;
+      return;
+    }
+    intercepted = false;
     if (event.button === 1 || session.spaceHeld) {
       event.preventDefault();
       engine.beginPan(x, y);
@@ -49,6 +55,9 @@ export function attachPointerInput(session: HostSession): () => void {
 
   const onPointerMove = (event: PointerEvent) => {
     if (!session.down) return;
+    const { x, y } = localPoint(canvas, event);
+    callbacks.onPointerMove?.({ x, y }, event);
+    if (intercepted) return;
     session.pendingMove = event;
     if (session.moveRaf) return;
     session.moveRaf = requestAnimationFrame(() => {
@@ -60,6 +69,14 @@ export function attachPointerInput(session: HostSession): () => void {
   };
 
   const onPointerUp = (event: PointerEvent) => {
+    const { x, y } = localPoint(canvas, event);
+    callbacks.onPointerUp?.({ x, y }, event);
+    if (intercepted) {
+      intercepted = false;
+      session.down = false;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      return;
+    }
     flushPendingMove(session);
     session.down = false;
     engine.endPointer();

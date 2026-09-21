@@ -26,6 +26,12 @@ export interface DrawCanvasProps {
   onContextMenu?: (point: { x: number; y: number }) => void;
   /** The keep-tool padlock was toggled (Q) — hosts mirror it in the toolbar. */
   onToolLockChange?: (locked: boolean) => void;
+  /** Pointer down on canvas. Return true to intercept and cancel engine pointer handling. */
+  onPointerDown?: (point: { x: number; y: number }, event: PointerEvent) => boolean | void;
+  /** Pointer move on canvas. */
+  onPointerMove?: (point: { x: number; y: number }, event: PointerEvent) => void;
+  /** Pointer up on canvas. */
+  onPointerUp?: (point: { x: number; y: number }, event: PointerEvent) => void;
 }
 
 /** Mutable callback bag so a one-shot bind still sees the latest host handlers. */
@@ -38,4 +44,7 @@ export type HostCallbacks = Pick<
   | "onSceneChange"
   | "onContextMenu"
   | "onToolLockChange"
+  | "onPointerDown"
+  | "onPointerMove"
+  | "onPointerUp"
 >;

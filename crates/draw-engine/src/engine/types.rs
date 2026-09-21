@@ -13,6 +13,10 @@ pub struct TextEditRequest {
     pub font_size: f64,
     pub color: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]

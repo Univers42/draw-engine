@@ -25,6 +25,9 @@ export function DrawCanvas({
   onSceneChange,
   onContextMenu,
   onToolLockChange,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
 }: DrawCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -44,6 +47,9 @@ export function DrawCanvas({
   callbacks.onSceneChange = onSceneChange;
   callbacks.onContextMenu = onContextMenu;
   callbacks.onToolLockChange = onToolLockChange;
+  callbacks.onPointerDown = onPointerDown;
+  callbacks.onPointerMove = onPointerMove;
+  callbacks.onPointerUp = onPointerUp;
 
   useEffect(() => {
     const canvas = canvasRef.current;
