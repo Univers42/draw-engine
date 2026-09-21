@@ -385,7 +385,13 @@ impl Painter for CanvasPainter<'_> {
         ];
 
         for element in &view.elements {
-            paint_element(ctx, view_transform, element, &view.theme.background);
+            paint_element(
+                ctx,
+                view_transform,
+                element,
+                &view.theme.background,
+                &view.elements,
+            );
         }
         evict_paths(&view.elements);
 
@@ -426,16 +432,28 @@ fn paint_element(
     view: [f64; 6],
     element: &DrawElement,
     background: &str,
+    elements: &[&DrawElement],
 ) {
     match element.kind {
         DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, view, element),
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
-        DrawElementType::Text => paint_text(
-            ctx,
-            view,
-            element,
-            element.container_id.as_ref().map(|_| background),
-        ),
+        DrawElementType::Text => {
+            let is_linear_label = element
+                .container_id
+                .as_deref()
+                .and_then(|cid| elements.iter().find(|e| e.id == cid))
+                .is_some_and(|c| crate::is_linear_element(c));
+            paint_text(
+                ctx,
+                view,
+                element,
+                if is_linear_label {
+                    Some(background)
+                } else {
+                    None
+                },
+            )
+        }
         _ => paint_shape(ctx, view, element),
     }
 }
