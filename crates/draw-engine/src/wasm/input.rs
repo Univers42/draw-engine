@@ -18,7 +18,7 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = setTheme)]
     pub fn set_theme(&self, json: &str) {
         if let Ok(theme) = serde_json::from_str(json) {
-            self.cell.borrow_mut().engine.set_theme(theme);
+            self.cell_mut().engine.set_theme(theme);
             self.flush();
         }
     }
@@ -36,20 +36,20 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = loadScene)]
     pub fn load_scene(&self, json: &str) -> bool {
-        let ok = self.cell.borrow_mut().engine.load_scene(json);
+        let ok = self.cell_mut().engine.load_scene(json);
         self.flush();
         ok
     }
 
     pub fn clear(&self) {
-        self.cell.borrow_mut().engine.clear();
+        self.cell_mut().engine.clear();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = setTool)]
     pub fn set_tool(&self, tool: &str) {
         if let Ok(tool) = serde_json::from_str(&format!("\"{tool}\"")) {
-            self.cell.borrow_mut().engine.set_tool(tool);
+            self.cell_mut().engine.set_tool(tool);
             self.flush();
         }
     }
@@ -90,12 +90,12 @@ impl WasmEngine {
     }
 
     pub fn undo(&self) {
-        self.cell.borrow_mut().engine.undo();
+        self.cell_mut().engine.undo();
         self.flush();
     }
 
     pub fn redo(&self) {
-        self.cell.borrow_mut().engine.redo();
+        self.cell_mut().engine.redo();
         self.flush();
     }
 
@@ -110,36 +110,36 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = zoomAt)]
     pub fn zoom_at(&self, sx: f64, sy: f64, factor: f64) {
-        self.cell.borrow_mut().engine.zoom_at(sx, sy, factor);
+        self.cell_mut().engine.zoom_at(sx, sy, factor);
         self.flush();
     }
 
     #[wasm_bindgen(js_name = panBy)]
     pub fn pan_by(&self, dx: f64, dy: f64) {
-        self.cell.borrow_mut().engine.pan_by(dx, dy);
+        self.cell_mut().engine.pan_by(dx, dy);
         self.flush();
     }
 
     pub fn fit(&self, padding: Option<f64>) {
-        self.cell.borrow_mut().engine.fit(padding.unwrap_or(96.0));
+        self.cell_mut().engine.fit(padding.unwrap_or(96.0));
         self.flush();
     }
 
     #[wasm_bindgen(js_name = zoomIn)]
     pub fn zoom_in(&self) {
-        self.cell.borrow_mut().engine.zoom_in();
+        self.cell_mut().engine.zoom_in();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = zoomOut)]
     pub fn zoom_out(&self) {
-        self.cell.borrow_mut().engine.zoom_out();
+        self.cell_mut().engine.zoom_out();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = zoomReset)]
     pub fn zoom_reset(&self) {
-        self.cell.borrow_mut().engine.zoom_reset();
+        self.cell_mut().engine.zoom_reset();
         self.flush();
     }
 
@@ -150,7 +150,7 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = setToolLocked)]
     pub fn set_tool_locked(&self, locked: bool) {
-        self.cell.borrow_mut().engine.set_tool_locked(locked);
+        self.cell_mut().engine.set_tool_locked(locked);
     }
 
     #[wasm_bindgen(js_name = getToolLocked)]
@@ -160,20 +160,20 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = editSelectedText)]
     pub fn edit_selected_text(&self) -> bool {
-        let ok = self.cell.borrow_mut().engine.edit_selected_text();
+        let ok = self.cell_mut().engine.edit_selected_text();
         self.flush();
         ok
     }
 
     #[wasm_bindgen(js_name = setElementText)]
     pub fn set_element_text(&self, id: &str, text: &str) {
-        self.cell.borrow_mut().engine.set_element_text(id, text);
+        self.cell_mut().engine.set_element_text(id, text);
         self.flush();
     }
 
     #[wasm_bindgen(js_name = setFontSize)]
     pub fn set_font_size(&self, size: f64) {
-        self.cell.borrow_mut().engine.set_font_size(size);
+        self.cell_mut().engine.set_font_size(size);
         self.flush();
     }
 

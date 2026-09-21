@@ -7,20 +7,20 @@ use crate::scene::DrawElementStylePatch;
 impl WasmEngine {
     #[wasm_bindgen(js_name = deleteSelection)]
     pub fn delete_selection(&self) {
-        self.cell.borrow_mut().engine.delete_selection();
+        self.cell_mut().engine.delete_selection();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = copySelection)]
     pub fn copy_selection(&self) -> Option<String> {
-        let json = self.cell.borrow_mut().engine.copy_selection();
+        let json = self.cell_mut().engine.copy_selection();
         self.flush();
         json
     }
 
     #[wasm_bindgen(js_name = cutSelection)]
     pub fn cut_selection(&self) -> Option<String> {
-        let json = self.cell.borrow_mut().engine.cut_selection();
+        let json = self.cell_mut().engine.cut_selection();
         self.flush();
         json
     }
@@ -31,7 +31,7 @@ impl WasmEngine {
     /// is right for a paste and catastrophic for a merge.
     #[wasm_bindgen(js_name = applyRemotePatch)]
     pub fn apply_remote_patch(&self, json: &str) -> bool {
-        let changed = self.cell.borrow_mut().engine.apply_remote_patch(json);
+        let changed = self.cell_mut().engine.apply_remote_patch(json);
         self.flush();
         changed
     }
@@ -62,14 +62,14 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = nudgeSelection)]
     pub fn nudge_selection(&self, dx: f64, dy: f64) {
-        self.cell.borrow_mut().engine.nudge_selection(dx, dy);
+        self.cell_mut().engine.nudge_selection(dx, dy);
         self.flush();
     }
 
     #[wasm_bindgen(js_name = reorderSelection)]
     pub fn reorder_selection(&self, mode: &str) {
         if let Some(mode) = crate::ZOrderMode::parse(mode) {
-            self.cell.borrow_mut().engine.reorder_selection(mode);
+            self.cell_mut().engine.reorder_selection(mode);
             self.flush();
         }
     }
@@ -77,7 +77,7 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = alignSelection)]
     pub fn align_selection(&self, mode: &str) {
         if let Some(mode) = crate::AlignMode::parse(mode) {
-            self.cell.borrow_mut().engine.align_selection(mode);
+            self.cell_mut().engine.align_selection(mode);
             self.flush();
         }
     }
@@ -85,27 +85,27 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = distributeSelection)]
     pub fn distribute_selection(&self, axis: &str) {
         let axis = axis.chars().next().unwrap_or('x');
-        self.cell.borrow_mut().engine.distribute_selection(axis);
+        self.cell_mut().engine.distribute_selection(axis);
         self.flush();
     }
 
     #[wasm_bindgen(js_name = flipSelection)]
     pub fn flip_selection(&self, axis: &str) {
         if let Some(axis) = crate::FlipAxis::parse(axis) {
-            self.cell.borrow_mut().engine.flip_selection(axis);
+            self.cell_mut().engine.flip_selection(axis);
             self.flush();
         }
     }
 
     #[wasm_bindgen(js_name = groupSelection)]
     pub fn group_selection(&self) {
-        self.cell.borrow_mut().engine.group_selection();
+        self.cell_mut().engine.group_selection();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = ungroupSelection)]
     pub fn ungroup_selection(&self) {
-        self.cell.borrow_mut().engine.ungroup_selection();
+        self.cell_mut().engine.ungroup_selection();
         self.flush();
     }
 
@@ -116,7 +116,7 @@ impl WasmEngine {
 
     #[wasm_bindgen(js_name = toggleLockSelection)]
     pub fn toggle_lock_selection(&self) {
-        self.cell.borrow_mut().engine.toggle_lock_selection();
+        self.cell_mut().engine.toggle_lock_selection();
         self.flush();
     }
 
@@ -128,7 +128,7 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = applyStyleJson)]
     pub fn apply_style_json(&self, json: &str) {
         if let Ok(patch) = serde_json::from_str::<DrawElementStylePatch>(json) {
-            self.cell.borrow_mut().engine.apply_style(patch);
+            self.cell_mut().engine.apply_style(patch);
             self.flush();
         }
     }
@@ -136,7 +136,7 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = setNextStyleJson)]
     pub fn set_next_style_json(&self, json: &str) {
         if let Ok(patch) = serde_json::from_str::<DrawElementStylePatch>(json) {
-            self.cell.borrow_mut().engine.set_next_style(patch);
+            self.cell_mut().engine.set_next_style(patch);
         }
     }
 
@@ -161,20 +161,20 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = selectJson)]
     pub fn select_json(&self, json: &str) {
         if let Ok(ids) = serde_json::from_str::<Vec<String>>(json) {
-            self.cell.borrow_mut().engine.select(ids);
+            self.cell_mut().engine.select(ids);
             self.flush();
         }
     }
 
     #[wasm_bindgen(js_name = clearSelection)]
     pub fn clear_selection(&self) {
-        self.cell.borrow_mut().engine.clear_selection();
+        self.cell_mut().engine.clear_selection();
         self.flush();
     }
 
     #[wasm_bindgen(js_name = selectAll)]
     pub fn select_all(&self) {
-        self.cell.borrow_mut().engine.select_all();
+        self.cell_mut().engine.select_all();
         self.flush();
     }
 }

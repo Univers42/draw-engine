@@ -106,19 +106,19 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
             match kind {
                 OpSetKind::Path => {
                     set_stroke(ctx, &element.stroke_color);
-                    ctx.set_line_width(element.stroke_width);
-                    let _ = ctx.set_line_dash(&dash_js(dash_array(element)));
+                    set_line_width_cached(ctx, element.stroke_width);
+                    set_dash_cached(ctx, dash_array(element));
                     ctx.stroke_with_path(path);
                 }
                 OpSetKind::FillPath => {
                     set_fill(ctx, &element.background_color);
-                    let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
+                    set_dash_cached(ctx, None);
                     ctx.fill_with_path_2d(path);
                 }
                 OpSetKind::FillSketch => {
                     set_stroke(ctx, &element.background_color);
-                    ctx.set_line_width(fill_weight);
-                    let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
+                    set_line_width_cached(ctx, fill_weight);
+                    set_dash_cached(ctx, None);
                     ctx.stroke_with_path(path);
                 }
             }
@@ -155,27 +155,114 @@ fn dash_js(pattern: Option<[f64; 2]>) -> js_sys::Array {
     }
 }
 
-/// Positions an element-local shape in world space: translate to the element's origin,
-/// then rotate about its centre. Geometry is never regenerated for either.
+/// Positions an element-local shape in world space.
+///
+/// This used to be `save` / `translate` / `rotate` / `restore` around every element —
+/// four to six boundary crossings each, which at 8,000 elements is tens of thousands of
+/// calls a frame doing nothing but bookkeeping. The whole chain is one 2x3 matrix, so it
+/// is multiplied out in Rust and applied with a single `setTransform`.
+///
+/// `view_transform` is the device-pixel-ratio and camera part, computed once per frame.
 fn with_element_transform(
     ctx: &CanvasRenderingContext2d,
+    view: [f64; 6],
     element: &DrawElement,
     body: impl FnOnce(),
 ) {
-    ctx.save();
-    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
+    set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0));
 
-    if element.angle != 0.0 {
-        let cx = element.x + element.width / 2.0;
-        let cy = element.y + element.height / 2.0;
-        let _ = ctx.translate(cx, cy);
-        let _ = ctx.rotate(element.angle);
-        let _ = ctx.translate(-cx, -cy);
-    }
-    let _ = ctx.translate(element.x, element.y);
+    // Element-local: translate to the origin, and rotate about the centre if turned.
+    let (a, b, c, d, e, f) = if element.angle == 0.0 {
+        (1.0, 0.0, 0.0, 1.0, element.x, element.y)
+    } else {
+        let cx = element.width / 2.0;
+        let cy = element.height / 2.0;
+        let (sin, cos) = element.angle.sin_cos();
+        // T(x,y) * T(cx,cy) * R * T(-cx,-cy)
+        (
+            cos,
+            sin,
+            -sin,
+            cos,
+            element.x + cx - (cx * cos - cy * sin),
+            element.y + cy - (cx * sin + cy * cos),
+        )
+    };
+
+    let m = mul(view, [a, b, c, d, e, f]);
+    let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
 
     body();
-    ctx.restore();
+}
+
+/// Multiplies two 2x3 affine transforms in Canvas2D's `[a, b, c, d, e, f]` order.
+fn mul(p: [f64; 6], q: [f64; 6]) -> [f64; 6] {
+    [
+        p[0] * q[0] + p[2] * q[1],
+        p[1] * q[0] + p[3] * q[1],
+        p[0] * q[2] + p[2] * q[3],
+        p[1] * q[2] + p[3] * q[3],
+        p[0] * q[4] + p[2] * q[5] + p[4],
+        p[1] * q[4] + p[3] * q[5] + p[5],
+    ]
+}
+
+/// The canvas state the painter believes is currently set.
+///
+/// Every `strokeStyle`, `lineWidth` and `setLineDash` is a call across the WASM
+/// boundary, and a scene overwhelmingly uses a handful of styles — 8,000 elements
+/// sharing one stroke colour were setting it 8,000 times a frame. Tracking what is
+/// already set turns that into one call.
+#[derive(Default)]
+struct PaintState {
+    stroke: Option<String>,
+    fill: Option<String>,
+    line_width: Option<f64>,
+    dash: Option<Option<[f64; 2]>>,
+    alpha: Option<f64>,
+}
+
+impl PaintState {
+    /// Forgets everything. Called once per frame, because the context's state is not
+    /// ours to assume across frames.
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+thread_local! {
+    static STATE: std::cell::RefCell<PaintState> =
+        std::cell::RefCell::new(PaintState::default());
+}
+
+fn set_line_width_cached(ctx: &CanvasRenderingContext2d, width: f64) {
+    STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.line_width != Some(width) {
+            ctx.set_line_width(width);
+            s.line_width = Some(width);
+        }
+    });
+}
+
+fn set_alpha_cached(ctx: &CanvasRenderingContext2d, alpha: f64) {
+    STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.alpha != Some(alpha) {
+            ctx.set_global_alpha(alpha);
+            s.alpha = Some(alpha);
+        }
+    });
+}
+
+fn set_dash_cached(ctx: &CanvasRenderingContext2d, dash: Option<[f64; 2]>) {
+    STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.dash != Some(dash) {
+            let _ = ctx.set_line_dash(&dash_js(dash));
+            s.dash = Some(dash);
+        }
+    });
 }
 
 thread_local! {
@@ -204,6 +291,17 @@ fn color_value(color: &str) -> JsValue {
 }
 
 fn set_fill(ctx: &CanvasRenderingContext2d, color: &str) {
+    let changed = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.fill.as_deref() == Some(color) {
+            return false;
+        }
+        s.fill = Some(color.to_string());
+        true
+    });
+    if !changed {
+        return;
+    }
     let value = color_value(color);
     FILL_KEY.with(|key| {
         let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
@@ -211,6 +309,17 @@ fn set_fill(ctx: &CanvasRenderingContext2d, color: &str) {
 }
 
 fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
+    let changed = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.stroke.as_deref() == Some(color) {
+            return false;
+        }
+        s.stroke = Some(color.to_string());
+        true
+    });
+    if !changed {
+        return;
+    }
     let value = color_value(color);
     STROKE_KEY.with(|key| {
         let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
@@ -221,19 +330,35 @@ impl Painter for CanvasPainter<'_> {
     fn paint(&mut self, view: &PaintView) {
         let ctx = self.ctx;
         let dpr = view.dpr;
+
+        // The context's state is not ours to assume across frames.
+        STATE.with(|s| s.borrow_mut().reset());
+        FONT.with(|f| *f.borrow_mut() = None);
+
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         ctx.clear_rect(0.0, 0.0, view.width, view.height);
         set_fill(ctx, &view.theme.background);
         ctx.fill_rect(0.0, 0.0, view.width, view.height);
         paint_grid(ctx, view);
-        ctx.save();
-        let _ = ctx.translate(view.camera.x, view.camera.y);
-        let _ = ctx.scale(view.camera.scale, view.camera.scale);
+
+        // Device pixel ratio and camera, folded into one matrix and combined with each
+        // element's own transform rather than pushed and popped around every element.
+        let s = view.camera.scale;
+        let view_transform = [
+            dpr * s,
+            0.0,
+            0.0,
+            dpr * s,
+            dpr * view.camera.x,
+            dpr * view.camera.y,
+        ];
+
         for element in &view.elements {
-            paint_element(ctx, element, &view.theme.background);
+            paint_element(ctx, view_transform, element, &view.theme.background);
         }
         evict_paths(&view.elements);
-        ctx.restore();
+
+        let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         paint_overlay(ctx, view);
     }
 }
@@ -265,16 +390,22 @@ fn paint_grid(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     ctx.restore();
 }
 
-fn paint_element(ctx: &CanvasRenderingContext2d, element: &DrawElement, background: &str) {
+fn paint_element(
+    ctx: &CanvasRenderingContext2d,
+    view: [f64; 6],
+    element: &DrawElement,
+    background: &str,
+) {
     match element.kind {
-        DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, element),
-        DrawElementType::Freedraw => paint_freedraw(ctx, element),
+        DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, view, element),
+        DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Text => paint_text(
             ctx,
+            view,
             element,
             element.container_id.as_ref().map(|_| background),
         ),
-        _ => paint_shape(ctx, element),
+        _ => paint_shape(ctx, view, element),
     }
 }
 
@@ -283,11 +414,11 @@ fn paint_element(ctx: &CanvasRenderingContext2d, element: &DrawElement, backgrou
 /// Previously this issued `ctx.rect()` / `ctx.ellipse()` directly, which is why every
 /// shape came out with crisp CAD edges and why `seed`, `roughness` and `fillStyle` were
 /// stored on the element and read by nothing.
-fn paint_shape(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
+fn paint_shape(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     if element.width == 0.0 && element.height == 0.0 {
         return;
     }
-    with_element_transform(ctx, element, || replay(ctx, element));
+    with_element_transform(ctx, view, element, || replay(ctx, element));
 }
 
 /// Paints a line or arrow, including every point of a multi-point path.
@@ -296,8 +427,8 @@ fn paint_shape(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
 /// so a multi-point line rendered as a straight segment, dashes were ignored, and
 /// `default_arrowhead` was computed and discarded (`let _ = ...`) so arrows were
 /// indistinguishable from lines on screen while the SVG export drew them correctly.
-fn paint_linear(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
-    with_element_transform(ctx, element, || {
+fn paint_linear(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
+    with_element_transform(ctx, view, element, || {
         replay(ctx, element);
         if element.kind == DrawElementType::Arrow {
             paint_arrowheads(ctx, element);
@@ -316,10 +447,10 @@ fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     }
 
     set_stroke(ctx, &element.stroke_color);
-    ctx.set_line_width(element.stroke_width);
+    set_line_width_cached(ctx, element.stroke_width);
     // An arrowhead is always solid, even on a dashed arrow — a dashed head reads as
     // noise at any realistic size.
-    let _ = ctx.set_line_dash(&js_sys::Array::new());
+    set_dash_cached(ctx, None);
 
     for (end, tip_idx, from_idx) in [
         ("start", 0usize, 1usize),
@@ -370,49 +501,82 @@ fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     }
 }
 
-fn paint_freedraw(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
+fn paint_freedraw(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     let points = element.points.as_deref().unwrap_or(&[]);
     if points.len() < 2 {
         return;
     }
-    ctx.save();
-    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
-    set_stroke(ctx, &element.stroke_color);
-    ctx.set_line_width(element.stroke_width);
-    let _ = ctx.translate(element.x, element.y);
-    ctx.begin_path();
-    ctx.move_to(points[0][0], points[0][1]);
-    for point in &points[1..] {
-        ctx.line_to(point[0], point[1]);
-    }
-    ctx.stroke();
-    ctx.restore();
+    with_element_transform(ctx, view, element, || {
+        set_stroke(ctx, &element.stroke_color);
+        set_line_width_cached(ctx, element.stroke_width);
+        set_dash_cached(ctx, None);
+        ctx.begin_path();
+        ctx.move_to(points[0][0], points[0][1]);
+        for point in &points[1..] {
+            ctx.line_to(point[0], point[1]);
+        }
+        ctx.stroke();
+    });
 }
 
-fn paint_text(ctx: &CanvasRenderingContext2d, element: &DrawElement, backdrop: Option<&str>) {
+/// Draws a text element.
+///
+/// # The baseline
+///
+/// `textBaseline` was never set, so Canvas2D's default of `"alphabetic"` applied and
+/// the first line's *baseline* sat on the element's top edge — meaning the glyphs
+/// rendered entirely **above** their own bounding box. Three things followed from that:
+/// text jumped by a line height when you committed an edit, clicking on visible text
+/// did not select it (the hit test uses the box, which was empty), and a bound label's
+/// backdrop was painted below its glyphs instead of behind them. The SVG exporter got
+/// it right, so canvas and export disagreed about where text was.
+///
+/// `"top"` puts the top of the line on the top of the box, which is what the box means.
+/// Excalidraw reaches the same result via `alphabetic` plus a computed vertical offset;
+/// matching that exactly needs real font metrics, which is tracked separately.
+fn paint_text(
+    ctx: &CanvasRenderingContext2d,
+    view: [f64; 6],
+    element: &DrawElement,
+    backdrop: Option<&str>,
+) {
     let text = element.text.as_deref().unwrap_or("");
     if text.is_empty() {
         return;
     }
     let font_size = element.font_size.unwrap_or(20.0);
-    ctx.save();
-    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
-    ctx.set_font(&format!("{font_size}px sans-serif"));
-    if let Some(backdrop) = backdrop {
-        set_fill(ctx, backdrop);
-        ctx.fill_rect(
-            element.x - 4.0,
-            element.y - 2.0,
-            element.width + 8.0,
-            element.height + 4.0,
-        );
-    }
-    set_fill(ctx, &element.stroke_color);
-    let line_height = font_size * crate::TEXT_LINE_HEIGHT;
-    for (i, line) in text.split('\n').enumerate() {
-        let _ = ctx.fill_text(line, element.x, element.y + i as f64 * line_height);
-    }
-    ctx.restore();
+
+    with_element_transform(ctx, view, element, || {
+        set_font_cached(ctx, font_size);
+        ctx.set_text_baseline("top");
+
+        if let Some(backdrop) = backdrop {
+            set_fill(ctx, backdrop);
+            ctx.fill_rect(-4.0, -2.0, element.width + 8.0, element.height + 4.0);
+        }
+
+        set_fill(ctx, &element.stroke_color);
+        let line_height = font_size * crate::TEXT_LINE_HEIGHT;
+        for (i, line) in text.split('\n').enumerate() {
+            let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
+        }
+    });
+}
+
+thread_local! {
+    /// The font string currently set, so `format!` and the property write only happen
+    /// when the size actually changes.
+    static FONT: std::cell::RefCell<Option<f64>> = const { std::cell::RefCell::new(None) };
+}
+
+fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
+    FONT.with(|f| {
+        let mut f = f.borrow_mut();
+        if *f != Some(size) {
+            ctx.set_font(&format!("{size}px sans-serif"));
+            *f = Some(size);
+        }
+    });
 }
 
 /// Excalidraw's selection padding: the frame sits slightly outside the element.

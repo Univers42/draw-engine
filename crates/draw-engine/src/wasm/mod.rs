@@ -42,6 +42,21 @@ fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, Js
 
 #[wasm_bindgen(js_class = DrawEngine)]
 impl WasmEngine {
+    /// Mutable access to the engine cell.
+    ///
+    /// Every entry point goes through here rather than `borrow_mut` directly. A panic
+    /// in WASM aborts the whole instance — the canvas dies with no way back — and these
+    /// are all reachable re-entrantly from a host callback. Skipping the operation is
+    /// always the better failure.
+    ///
+    /// Returns a guard over a scratch cell when the real one is busy, so callers need
+    /// no error handling and a re-entrant call simply has no effect.
+    fn cell_mut(&self) -> std::cell::RefMut<'_, EngineCell> {
+        self.cell
+            .try_borrow_mut()
+            .unwrap_or_else(|_| self.scratch())
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: HtmlCanvasElement) -> Result<WasmEngine, JsValue> {
         let ctx = context_2d(&canvas)?;
@@ -119,11 +134,18 @@ impl WasmEngine {
 
     fn schedule(&self) {
         let cell = self.cell.clone();
-        if cell.borrow().raf.is_some() || cell.borrow().engine.is_disposed() {
-            return;
-        }
-        if !cell.borrow().engine.is_dirty() && !cell.borrow().engine.in_motion() {
-            return;
+        {
+            // A single borrow for all three checks, and a failed borrow means a frame
+            // is already in flight — which is exactly when there is nothing to do.
+            let Ok(c) = cell.try_borrow() else {
+                return;
+            };
+            if c.raf.is_some() || c.engine.is_disposed() {
+                return;
+            }
+            if !c.engine.is_dirty() && !c.engine.in_motion() {
+                return;
+            }
         }
         let window = match web_sys::window() {
             Some(window) => window,
@@ -131,24 +153,45 @@ impl WasmEngine {
         };
         let cloned = cell.clone();
         let closure = Closure::once_into_js(move || {
-            cloned.borrow_mut().raf = None;
+            if let Ok(mut c) = cloned.try_borrow_mut() {
+                c.raf = None;
+            }
             paint_frame(&cloned);
-            let more = {
-                let cell = cloned.borrow();
-                !cell.engine.is_disposed() && (cell.engine.is_dirty() || cell.engine.in_motion())
+            let more = match cloned.try_borrow() {
+                Ok(cell) => {
+                    !cell.engine.is_disposed()
+                        && (cell.engine.is_dirty() || cell.engine.in_motion())
+                }
+                // Busy: assume there is more to do rather than stalling the loop.
+                Err(_) => true,
             };
             if more {
                 WasmEngine { cell: cloned }.schedule();
             }
         });
         if let Ok(id) = window.request_animation_frame(closure.as_ref().unchecked_ref()) {
-            cell.borrow_mut().raf = Some(id);
+            if let Ok(mut c) = cell.try_borrow_mut() {
+                c.raf = Some(id);
+            }
         }
     }
 }
 
+/// Paints one frame.
+///
+/// Uses `try_borrow_mut` rather than `borrow_mut` because this holds the cell for the
+/// whole paint, and the paint calls into JavaScript hundreds of times. Anything that
+/// re-enters during those calls — a wrapped canvas method from an extension or an
+/// analytics shim, a synchronously dispatched event, a devtools override — would hit a
+/// second `borrow_mut` and **panic**, and a panic in WASM aborts the instance: the
+/// canvas is dead for the rest of the session with no way back.
+///
+/// Skipping a frame is always the better failure. The engine stays dirty, so the next
+/// animation frame repaints it and nothing is lost but one frame.
 fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
-    let mut cell = cell.borrow_mut();
+    let Ok(mut cell) = cell.try_borrow_mut() else {
+        return;
+    };
     if cell.engine.is_disposed() {
         return;
     }
@@ -169,7 +212,12 @@ fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
 
 fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
     let (events, cbs) = {
-        let mut cell = cell.borrow_mut();
+        // Draining events calls host callbacks, which routinely call back into the
+        // engine. Borrow only long enough to take the events, and never panic if a
+        // callback is already inside us.
+        let Ok(mut cell) = cell.try_borrow_mut() else {
+            return;
+        };
         let events = cell.engine.drain_events();
         (
             events,
