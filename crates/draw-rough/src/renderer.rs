@@ -190,6 +190,126 @@ pub fn double_line_fill_ops(x1: f64, y1: f64, x2: f64, y2: f64, c: &mut Ctx) -> 
     double_line(x1, y1, x2, y2, c, true)
 }
 
+/// One normalized SVG path segment.
+///
+/// rough parses a path string with `path-data-parser` and normalizes it to just these
+/// four commands. We skip the string entirely and construct the segments directly —
+/// Excalidraw builds its rounded-rectangle path programmatically anyway, so round-
+/// tripping it through text would only add a parser and a source of divergence.
+///
+/// `Q` is not represented because `normalize()` converts it: from the current point
+/// `(cx, cy)`, `Q(x1, y1, x, y)` becomes
+/// `C(cx + 2(x1-cx)/3, cy + 2(y1-cy)/3, x + 2(x1-x)/3, y + 2(y1-y)/3, x, y)`.
+/// Use [`Segment::quad_to_cubic`] rather than doing it by hand.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Segment {
+    MoveTo([f64; 2]),
+    LineTo([f64; 2]),
+    CurveTo([f64; 6]),
+    Close,
+}
+
+impl Segment {
+    /// `normalize()`'s quadratic-to-cubic elevation, transcribed operation for
+    /// operation from `path-data-parser/lib/normalize.js`.
+    pub fn quad_to_cubic(current: [f64; 2], x1: f64, y1: f64, x: f64, y: f64) -> Segment {
+        let [cx, cy] = current;
+        let cx1 = cx + 2.0 * (x1 - cx) / 3.0;
+        let cy1 = cy + 2.0 * (y1 - cy) / 3.0;
+        let cx2 = x + 2.0 * (x1 - x) / 3.0;
+        let cy2 = y + 2.0 * (y1 - y) / 3.0;
+        Segment::CurveTo([cx1, cy1, cx2, cy2, x, y])
+    }
+}
+
+/// `svgPath(path, o)`, taking segments that are already parsed and normalized.
+pub fn svg_path(segments: &[Segment], c: &mut Ctx) -> OpSet {
+    let mut ops = Vec::new();
+    let mut first = [0.0, 0.0];
+    let mut current = [0.0, 0.0];
+
+    for seg in segments {
+        match *seg {
+            Segment::MoveTo(p) => {
+                current = p;
+                first = p;
+            }
+            Segment::LineTo(p) => {
+                ops.extend(double_line(current[0], current[1], p[0], p[1], c, false));
+                current = p;
+            }
+            Segment::CurveTo([x1, y1, x2, y2, x, y]) => {
+                ops.extend(bezier_to(x1, y1, x2, y2, x, y, current, c));
+                current = [x, y];
+            }
+            Segment::Close => {
+                ops.extend(double_line(
+                    current[0], current[1], first[0], first[1], c, false,
+                ));
+                current = first;
+            }
+        }
+    }
+
+    OpSet::path(ops)
+}
+
+/// `_bezierTo(x1, y1, x2, y2, x, y, current, o)`
+#[allow(clippy::too_many_arguments)]
+fn bezier_to(
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    x: f64,
+    y: f64,
+    current: [f64; 2],
+    c: &mut Ctx,
+) -> Vec<Op> {
+    let mut ops = Vec::new();
+    // `[o.maxRandomnessOffset || 1, (o.maxRandomnessOffset || 1) + 0.3]` — note the
+    // fallback is 1 here, not 0 as it is elsewhere.
+    let base = js_or(c.o.max_randomness_offset, 1.0);
+    let ros = [base, base + 0.3];
+    let iterations = if c.o.disable_multi_stroke { 1 } else { 2 };
+    let preserve = c.o.preserve_vertices;
+
+    for i in 0..iterations {
+        if i == 0 {
+            ops.push(Op::Move([current[0], current[1]]));
+        } else {
+            let dx = if preserve {
+                0.0
+            } else {
+                c.offset_opt(ros[0], 1.0)
+            };
+            let dy = if preserve {
+                0.0
+            } else {
+                c.offset_opt(ros[0], 1.0)
+            };
+            ops.push(Op::Move([current[0] + dx, current[1] + dy]));
+        }
+
+        // `f` is computed BEFORE the control points in the JS, so its draws come first.
+        let f = if preserve {
+            [x, y]
+        } else {
+            let fx = c.offset_opt(ros[i], 1.0);
+            let fy = c.offset_opt(ros[i], 1.0);
+            [x + fx, y + fy]
+        };
+
+        let a = c.offset_opt(ros[i], 1.0);
+        let b = c.offset_opt(ros[i], 1.0);
+        let d = c.offset_opt(ros[i], 1.0);
+        let e = c.offset_opt(ros[i], 1.0);
+        ops.push(Op::BCurveTo([x1 + a, y1 + b, x2 + d, y2 + e, f[0], f[1]]));
+    }
+
+    ops
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------

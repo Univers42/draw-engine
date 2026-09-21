@@ -24,7 +24,9 @@ import {
   generateEllipseParams,
   ellipseWithParams,
   solidFillPolygon,
+  svgPath,
 } from "roughjs/bin/renderer.js";
+import { parsePath, absolutize, normalize } from "path-data-parser";
 import { RoughGenerator } from "roughjs/bin/generator.js";
 
 // One generator instance; it is stateless apart from defaultOptions, which we never set.
@@ -252,6 +254,48 @@ for (const seed of [1, 12345]) {
   }
 }
 
+// --- rounded paths ---------------------------------------------------------------
+//
+// Excalidraw's DEFAULT rectangle is rounded, and rounded shapes go through
+// generator.path() with an SVG string. Rather than port a path parser, the Rust side
+// constructs the normalized segments directly — so the fixture records those segments
+// alongside the ops, and the Rust test replays them through svg_path.
+//
+// The `d` Excalidraw builds (packages/element/src/shape.ts, case "rectangle"):
+//   M r 0 L w-r 0 Q w 0, w r L w h-r Q w h, w-r h L r h Q 0 h, 0 h-r L 0 r Q 0 0, r 0
+// Note it never closes: there is no Z.
+const roundedRectPath = (w, h, r) =>
+  `M ${r} 0 L ${w - r} 0 Q ${w} 0, ${w} ${r} L ${w} ${h - r} Q ${w} ${h}, ${w - r} ${h} ` +
+  `L ${r} ${h} Q 0 ${h}, 0 ${h - r} L 0 ${r} Q 0 0, ${r} 0`;
+
+for (const seed of [1, 7, 12345, 2147483647]) {
+  for (const roughness of [0, 0.5, 1, 2]) {
+    for (const [w, h, r] of [
+      [100, 60, 8],
+      [20, 20, 5],
+      [400, 300, 32],
+      [1200, 40, 10],
+      [50, 50, 25], // r == min/2: the corners meet and the straight runs vanish
+    ]) {
+      for (const preserveVertices of [false, true]) {
+        const base = { seed, roughness, preserveVertices };
+        const d = roundedRectPath(w, h, r);
+        const segments = normalize(absolutize(parsePath(d)));
+        const o = opts(base);
+        const opset = svgPath(d, o);
+        const { stroke, randomizer, ...geometryOptions } = o;
+        cases.push({
+          fn: "svgPath",
+          args: [w, h, r],
+          segments: segments.map((s) => ({ key: s.key, data: s.data })),
+          options: geometryOptions,
+          opset,
+        });
+      }
+    }
+  }
+}
+
 // --- write ----------------------------------------------------------------------
 //
 // The full sweep is ~1.4M ops / 136MB, which has no business in git. It is split two
@@ -335,6 +379,8 @@ writeFileSync(
         args: c.args,
         options: c.options,
         ...(c.params ? { params: c.params } : {}),
+        // svgPath cases replay from their segments, so the sweep needs them too.
+        ...(c.segments ? { segments: c.segments } : {}),
         summary: summarise(c),
       })),
     },

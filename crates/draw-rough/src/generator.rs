@@ -25,6 +25,7 @@ use crate::fillers::pattern_fill_polygons;
 use crate::ops::{Drawable, Op, OpSet, OpSetKind};
 use crate::options::{Ctx, FillStyle, Options};
 use crate::renderer;
+use crate::renderer::Segment;
 
 /// `_mergedShape(input)` — drops every `move` after the first, so a multi-pass stroke
 /// becomes one continuous fillable path instead of several disjoint ones.
@@ -180,6 +181,115 @@ pub fn curve(points: &[[f64; 2]], o: Options) -> Drawable {
         shape: "curve",
         sets: paths,
     }
+}
+
+/// `generator.path(d, options)`, taking pre-normalized segments instead of a string.
+///
+/// Excalidraw builds its rounded-rectangle and rounded-diamond `d` programmatically and
+/// hands it to rough, which parses it straight back. We skip the round trip: the caller
+/// supplies the segments `normalize(absolutize(parsePath(d)))` would have produced,
+/// which is faster and removes a parser from the trust chain.
+///
+/// # Known gap: pattern fill
+///
+/// A **solid** fill matches rough exactly. A **pattern** fill (hachure and friends) does
+/// not: rough flattens the path to a polygon with `pointsOnPath`, whose adaptive Bézier
+/// subdivision is not ported yet, so the polygon this uses is a uniform flattening
+/// instead. The fill therefore sits very slightly differently inside a rounded shape
+/// with a non-solid background. The outline — which is what the eye reads — is exact,
+/// and the oracle covers it; this gap is tracked rather than hidden.
+pub fn path(segments: &[Segment], o: Options) -> Drawable {
+    let mut c = Ctx::new(o);
+    let mut paths = Vec::new();
+
+    if segments.is_empty() {
+        return Drawable {
+            shape: "path",
+            sets: paths,
+        };
+    }
+
+    let outline = renderer::svg_path(segments, &mut c);
+
+    if c.o.filled {
+        if c.o.fill_style == FillStyle::Solid {
+            let saved = c.o;
+            c.o.disable_multi_stroke = true;
+            c.o.roughness = if saved.roughness != 0.0 {
+                saved.roughness + saved.fill_shape_roughness_gain
+            } else {
+                0.0
+            };
+            let fill_shape = renderer::svg_path(segments, &mut c);
+            // No restore: `c` is not consulted again, and the fill deliberately shares
+            // (and advances) the same random stream the outline used.
+            let _ = saved;
+
+            paths.push(OpSet {
+                kind: OpSetKind::FillPath,
+                ops: merged_shape(fill_shape.ops),
+            });
+        } else {
+            let polygon = flatten_segments(segments, 16);
+            paths.push(pattern_fill_polygons(&[polygon], &mut c));
+        }
+    }
+
+    paths.push(outline);
+    Drawable {
+        shape: "path",
+        sets: paths,
+    }
+}
+
+/// Flattens path segments into a polygon by sampling each cubic uniformly.
+///
+/// See the note on [`path`]: rough uses `pointsOnPath`'s adaptive subdivision here, so
+/// this is an approximation used only to decide where a pattern fill's hachure lines are
+/// clipped. `steps` is fixed rather than tolerance-driven precisely so the result is
+/// deterministic and cheap; the visible effect is confined to the corners of a
+/// hachure-filled rounded shape.
+fn flatten_segments(segments: &[Segment], steps: usize) -> Vec<[f64; 2]> {
+    let mut out: Vec<[f64; 2]> = Vec::new();
+    let mut cur = [0.0, 0.0];
+    let mut first = [0.0, 0.0];
+
+    for seg in segments {
+        match *seg {
+            Segment::MoveTo(p) => {
+                cur = p;
+                first = p;
+                out.push(p);
+            }
+            Segment::LineTo(p) => {
+                out.push(p);
+                cur = p;
+            }
+            Segment::CurveTo([x1, y1, x2, y2, x, y]) => {
+                for i in 1..=steps {
+                    let t = i as f64 / steps as f64;
+                    let mt = 1.0 - t;
+                    // de Casteljau, written out: B(t) = (1-t)^3 P0 + 3(1-t)^2 t P1 +
+                    // 3(1-t) t^2 P2 + t^3 P3
+                    let a = mt * mt * mt;
+                    let b = 3.0 * mt * mt * t;
+                    let c2 = 3.0 * mt * t * t;
+                    let d = t * t * t;
+                    out.push([
+                        a * cur[0] + b * x1 + c2 * x2 + d * x,
+                        a * cur[1] + b * y1 + c2 * y2 + d * y,
+                    ]);
+                }
+                cur = [x, y];
+            }
+            Segment::Close => {
+                out.push(first);
+                cur = first;
+            }
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]

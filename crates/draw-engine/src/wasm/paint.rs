@@ -1,16 +1,102 @@
+use draw_rough::ops::{Op, OpSetKind};
+use draw_rough::Drawable;
 use wasm_bindgen::JsValue;
 use web_sys::CanvasRenderingContext2d;
 
 use crate::engine::{PaintView, Painter};
 use crate::interaction::Axis;
+use crate::render::arrowheads::ArrowheadGeometry;
+use crate::render::cache::ShapeCache;
 use crate::render::default_arrowhead;
-use crate::scene::binding::linear_endpoints;
-use crate::scene::geometry::normalize_rect;
-use crate::scene::{DrawElement, DrawElementType, StrokeStyle};
+use crate::render::opts::dash_array;
+use crate::scene::{DrawElement, DrawElementType};
 use crate::selection::{selection_corners, selection_handle_points};
 
 pub struct CanvasPainter<'a> {
     pub ctx: &'a CanvasRenderingContext2d,
+}
+
+thread_local! {
+    /// Rough geometry, kept between frames.
+    ///
+    /// A thread-local rather than a field on the engine because the painter is
+    /// constructed fresh each frame behind the `Painter` trait, and the cache must not
+    /// be. WASM is single-threaded, so this is safe; it is the one piece of global
+    /// state in the renderer and it holds nothing but derived data, so dropping it at
+    /// any moment is correct, just slower.
+    static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::new());
+}
+
+/// Replays one rough drawable into the context.
+///
+/// Mirrors rough's own `RoughCanvas.draw`: a `path` is stroked with the element's
+/// stroke, a `fillPath` is filled with its background, and a `fillSketch` — which is
+/// how every pattern fill arrives — is *stroked* with the background colour at
+/// `fillWeight`, not filled. Treating a fillSketch as a fill is the classic way to turn
+/// a delicate hachure into a solid block.
+fn replay(ctx: &CanvasRenderingContext2d, drawable: &Drawable, element: &DrawElement) {
+    let fill_weight = element.stroke_width / 2.0;
+
+    for set in &drawable.sets {
+        ctx.begin_path();
+        for op in &set.ops {
+            match *op {
+                Op::Move([x, y]) => ctx.move_to(x, y),
+                Op::LineTo([x, y]) => ctx.line_to(x, y),
+                Op::BCurveTo([x1, y1, x2, y2, x, y]) => ctx.bezier_curve_to(x1, y1, x2, y2, x, y),
+            }
+        }
+
+        match set.kind {
+            OpSetKind::Path => {
+                set_stroke(ctx, &element.stroke_color);
+                ctx.set_line_width(element.stroke_width);
+                let _ = ctx.set_line_dash(&dash_js(dash_array(element)));
+                ctx.stroke();
+            }
+            OpSetKind::FillPath => {
+                set_fill(ctx, &element.background_color);
+                let _ = ctx.set_line_dash(&js_sys::Array::new());
+                ctx.fill();
+            }
+            OpSetKind::FillSketch => {
+                set_stroke(ctx, &element.background_color);
+                ctx.set_line_width(fill_weight);
+                let _ = ctx.set_line_dash(&js_sys::Array::new());
+                ctx.stroke();
+            }
+        }
+    }
+}
+
+fn dash_js(pattern: Option<[f64; 2]>) -> js_sys::Array {
+    match pattern {
+        None => js_sys::Array::new(),
+        Some([a, b]) => [a, b].into_iter().map(JsValue::from_f64).collect(),
+    }
+}
+
+/// Positions an element-local shape in world space: translate to the element's origin,
+/// then rotate about its centre. Geometry is never regenerated for either.
+fn with_element_transform(
+    ctx: &CanvasRenderingContext2d,
+    element: &DrawElement,
+    body: impl FnOnce(),
+) {
+    ctx.save();
+    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
+
+    if element.angle != 0.0 {
+        let cx = element.x + element.width / 2.0;
+        let cy = element.y + element.height / 2.0;
+        let _ = ctx.translate(cx, cy);
+        let _ = ctx.rotate(element.angle);
+        let _ = ctx.translate(-cx, -cy);
+    }
+    let _ = ctx.translate(element.x, element.y);
+
+    body();
+    ctx.restore();
 }
 
 fn set_fill(ctx: &CanvasRenderingContext2d, color: &str) {
@@ -23,14 +109,6 @@ fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
         &"strokeStyle".into(),
         &JsValue::from_str(color),
     );
-}
-
-fn dash(style: StrokeStyle) -> Vec<f64> {
-    match style {
-        StrokeStyle::Solid => vec![],
-        StrokeStyle::Dashed => vec![8.0, 6.0],
-        StrokeStyle::Dotted => vec![2.0, 4.0],
-    }
 }
 
 impl Painter for CanvasPainter<'_> {
@@ -93,78 +171,107 @@ fn paint_element(ctx: &CanvasRenderingContext2d, element: &DrawElement, backgrou
     }
 }
 
+/// Paints a rectangle, diamond or ellipse as rough.js would.
+///
+/// Previously this issued `ctx.rect()` / `ctx.ellipse()` directly, which is why every
+/// shape came out with crisp CAD edges and why `seed`, `roughness` and `fillStyle` were
+/// stored on the element and read by nothing.
 fn paint_shape(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
-    let rect = normalize_rect(element.x, element.y, element.width, element.height);
-    if rect.width == 0.0 && rect.height == 0.0 {
+    if element.width == 0.0 && element.height == 0.0 {
         return;
     }
-    ctx.save();
-    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
-    if element.angle != 0.0 {
-        let cx = rect.x + rect.width / 2.0;
-        let cy = rect.y + rect.height / 2.0;
-        let _ = ctx.translate(cx, cy);
-        let _ = ctx.rotate(element.angle);
-        let _ = ctx.translate(-cx, -cy);
-    }
-    ctx.begin_path();
-    match element.kind {
-        DrawElementType::Ellipse => {
-            let _ = ctx.ellipse(
-                rect.x + rect.width / 2.0,
-                rect.y + rect.height / 2.0,
-                rect.width / 2.0,
-                rect.height / 2.0,
-                0.0,
-                0.0,
-                std::f64::consts::PI * 2.0,
-            );
-        }
-        DrawElementType::Diamond => {
-            ctx.move_to(rect.x + rect.width / 2.0, rect.y);
-            ctx.line_to(rect.x + rect.width, rect.y + rect.height / 2.0);
-            ctx.line_to(rect.x + rect.width / 2.0, rect.y + rect.height);
-            ctx.line_to(rect.x, rect.y + rect.height / 2.0);
-            ctx.close_path();
-        }
-        _ => {
-            ctx.rect(rect.x, rect.y, rect.width, rect.height);
-        }
-    }
-    if !element.background_color.is_empty() && element.background_color != "transparent" {
-        set_fill(ctx, &element.background_color);
-        ctx.fill();
-    }
-    ctx.set_line_width(element.stroke_width);
-    set_stroke(ctx, &element.stroke_color);
-    let _ = ctx.set_line_dash(
-        &dash(element.stroke_style)
-            .into_iter()
-            .map(JsValue::from_f64)
-            .collect::<js_sys::Array>(),
-    );
-    ctx.stroke();
-    ctx.restore();
+    with_element_transform(ctx, element, || {
+        SHAPES.with(|cache| {
+            if let Some(drawable) = cache.borrow_mut().get(element) {
+                replay(ctx, drawable, element);
+            }
+        });
+    });
 }
 
+/// Paints a line or arrow, including every point of a multi-point path.
+///
+/// The previous implementation drew one `move_to`/`line_to` between the two endpoints,
+/// so a multi-point line rendered as a straight segment, dashes were ignored, and
+/// `default_arrowhead` was computed and discarded (`let _ = ...`) so arrows were
+/// indistinguishable from lines on screen while the SVG export drew them correctly.
 fn paint_linear(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
-    let (start, end) = linear_endpoints(element);
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
-    let length = dx.hypot(dy);
-    if length < 0.5 {
+    with_element_transform(ctx, element, || {
+        SHAPES.with(|cache| {
+            if let Some(drawable) = cache.borrow_mut().get(element) {
+                replay(ctx, drawable, element);
+            }
+        });
+
+        if element.kind == DrawElementType::Arrow {
+            paint_arrowheads(ctx, element);
+        }
+    });
+}
+
+/// Strokes the arrowhead geometry at each end that has one.
+///
+/// Runs inside the element transform, so the points are element-local — the same space
+/// the SVG exporter works in, which is what lets both consume one source.
+fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
+    let points = element.points.as_deref().unwrap_or(&[]);
+    if points.len() < 2 {
         return;
     }
-    ctx.save();
-    ctx.set_global_alpha((element.opacity / 100.0).clamp(0.0, 1.0));
+
     set_stroke(ctx, &element.stroke_color);
     ctx.set_line_width(element.stroke_width);
-    ctx.begin_path();
-    ctx.move_to(start.x, start.y);
-    ctx.line_to(end.x, end.y);
-    ctx.stroke();
-    let _ = default_arrowhead(element, "end");
-    ctx.restore();
+    // An arrowhead is always solid, even on a dashed arrow — a dashed head reads as
+    // noise at any realistic size.
+    let _ = ctx.set_line_dash(&js_sys::Array::new());
+
+    for (end, tip_idx, from_idx) in [
+        ("start", 0usize, 1usize),
+        ("end", points.len() - 1, points.len() - 2),
+    ] {
+        let kind = default_arrowhead(element, end);
+        let Some(head) = crate::render::arrowheads::arrowhead_geometry(
+            kind,
+            points[tip_idx],
+            points[from_idx],
+            element.stroke_width,
+        ) else {
+            continue;
+        };
+
+        match head {
+            ArrowheadGeometry::Polyline(pts) => {
+                ctx.begin_path();
+                ctx.move_to(pts[0][0], pts[0][1]);
+                for p in &pts[1..] {
+                    ctx.line_to(p[0], p[1]);
+                }
+                ctx.stroke();
+            }
+            ArrowheadGeometry::Polygon(pts) => {
+                set_fill(ctx, &element.stroke_color);
+                ctx.begin_path();
+                ctx.move_to(pts[0][0], pts[0][1]);
+                for p in &pts[1..] {
+                    ctx.line_to(p[0], p[1]);
+                }
+                ctx.close_path();
+                ctx.fill();
+            }
+            ArrowheadGeometry::Dot { center, radius } => {
+                set_fill(ctx, &element.stroke_color);
+                ctx.begin_path();
+                let _ = ctx.arc(
+                    center[0],
+                    center[1],
+                    radius,
+                    0.0,
+                    std::f64::consts::PI * 2.0,
+                );
+                ctx.fill();
+            }
+        }
+    }
 }
 
 fn paint_freedraw(ctx: &CanvasRenderingContext2d, element: &DrawElement) {

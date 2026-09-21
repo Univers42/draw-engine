@@ -69,6 +69,29 @@ struct Case {
     sets: Option<Vec<JsOpSet>>,
     #[serde(default)]
     params: Option<JsEllipseParams>,
+    #[serde(default)]
+    segments: Option<Vec<JsSegment>>,
+}
+
+/// A normalized path segment as `path-data-parser` emits it.
+#[derive(Deserialize, Clone)]
+struct JsSegment {
+    key: String,
+    data: Vec<f64>,
+}
+
+fn segments(js: &[JsSegment]) -> Vec<renderer::Segment> {
+    js.iter()
+        .map(|s| match s.key.as_str() {
+            "M" => renderer::Segment::MoveTo([s.data[0], s.data[1]]),
+            "L" => renderer::Segment::LineTo([s.data[0], s.data[1]]),
+            "C" => renderer::Segment::CurveTo([
+                s.data[0], s.data[1], s.data[2], s.data[3], s.data[4], s.data[5],
+            ]),
+            "Z" => renderer::Segment::Close,
+            other => panic!("normalize() should not emit {other}"),
+        })
+        .collect()
 }
 
 impl Case {
@@ -90,6 +113,8 @@ struct SweepCase {
     options: JsOptions,
     #[serde(default)]
     params: Option<JsEllipseParams>,
+    #[serde(default)]
+    segments: Option<Vec<JsSegment>>,
     summary: Vec<JsSummary>,
 }
 
@@ -227,6 +252,7 @@ fn run(
     args: &serde_json::Value,
     options: &JsOptions,
     params: Option<&JsEllipseParams>,
+    segs: Option<&Vec<JsSegment>>,
 ) -> Vec<OpSet> {
     let o = options.to_options();
 
@@ -269,6 +295,10 @@ fn run(
         "linearPath" => renderer::linear_path(&points(args), false, &mut c),
         "curve" => renderer::curve(&points(args), &mut c),
         "solidFillPolygon" => renderer::solid_fill_polygon(&polygons(args), &mut c),
+        "svgPath" => {
+            let js = segs.expect("an svgPath case carries its normalized segments");
+            renderer::svg_path(&segments(js), &mut c)
+        }
         "patternFillPolygons" => {
             draw_rough::fillers::pattern_fill_polygons(&polygons(args), &mut c)
         }
@@ -339,7 +369,13 @@ fn matches_roughjs_op_for_op() {
     let mut ops = 0usize;
 
     for case in &fixture.cases {
-        let got = run(&case.func, &case.args, &case.options, case.params.as_ref());
+        let got = run(
+            &case.func,
+            &case.args,
+            &case.options,
+            case.params.as_ref(),
+            case.segments.as_ref(),
+        );
         let want = case.expected();
         let what = label(&case.func, &case.options, &case.args);
 
@@ -438,7 +474,13 @@ fn matches_roughjs_across_the_sweep() {
     let mut by_fn: BTreeMap<String, usize> = BTreeMap::new();
 
     for case in &fixture.cases {
-        let got = run(&case.func, &case.args, &case.options, case.params.as_ref());
+        let got = run(
+            &case.func,
+            &case.args,
+            &case.options,
+            case.params.as_ref(),
+            case.segments.as_ref(),
+        );
         let want = &case.summary;
         let what = label(&case.func, &case.options, &case.args);
 
