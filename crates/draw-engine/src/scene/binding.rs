@@ -243,6 +243,55 @@ fn attach_targets(
     )
 }
 
+/// Both endpoints of a bound linear element, resolved against the shapes it attaches to.
+///
+/// Shared by the in-place and detached refreshers so the two cannot drift apart.
+///
+/// # Not through the shapes
+///
+/// Each end is placed on its shape's outline, a gap clear of it, aimed along the line the
+/// arrow arrives on. That is right while the two shapes are apart. Once they touch, the
+/// two points cross over each other: the tail sits on the far side of the head, so the
+/// arrow runs **backwards** and is drawn almost entirely inside both shapes.
+///
+/// Excalidraw does not allow that, and neither does this now. Measured on excalidraw.com
+/// with one rectangle slid onto another, their arrow goes 228 long, 128, 48, then 0 and
+/// stays 0 — never once entering either shape. When the endpoints would cross, the arrow
+/// collapses onto its start anchor rather than turning itself inside out.
+fn resolve_endpoints(
+    element: &DrawElement,
+    start_shape: Option<&DrawElement>,
+    end_shape: Option<&DrawElement>,
+) -> (Point, Point) {
+    let (start, end) = linear_endpoints(element);
+    let (start_target, end_target) = attach_targets(element, start, end, start_shape, end_shape);
+
+    let next_start = start_shape
+        .map(|shape| attach_point(shape, start_target, BINDING_GAP))
+        .unwrap_or(start);
+    let next_end = end_shape
+        .map(|shape| attach_point(shape, end_target, BINDING_GAP))
+        .unwrap_or(end);
+
+    // Only a pair of bound ends can cross: a free end is where the user put it, and is
+    // allowed to be anywhere, including inside a shape.
+    let (Some(from), Some(to)) = (start_shape, end_shape) else {
+        return (next_start, next_end);
+    };
+
+    let a = element_center(from);
+    let b = element_center(to);
+    let axis = (b.x - a.x, b.y - a.y);
+    let run = (next_end.x - next_start.x, next_end.y - next_start.y);
+    if run.0 * axis.0 + run.1 * axis.1 < 0.0 {
+        // Inverted: the shapes have closed on each other far enough that no arrow fits
+        // between them. Collapse onto the start anchor, which is where Excalidraw leaves
+        // it, rather than drawing a reversed arrow through the middle of both.
+        return (next_start, next_start);
+    }
+    (next_start, next_end)
+}
+
 /// Recomputes bound geometry **in place**, touching only the elements that change.
 ///
 /// [`refresh_bindings`] rebuilds the whole scene: it clones every element into a map,
@@ -278,15 +327,7 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
             continue;
         }
 
-        let (start, end) = linear_endpoints(element);
-        let (start_target, end_target) =
-            attach_targets(element, start, end, start_shape, end_shape);
-        let next_start = start_shape
-            .map(|shape| attach_point(shape, start_target, BINDING_GAP))
-            .unwrap_or(start);
-        let next_end = end_shape
-            .map(|shape| attach_point(shape, end_target, BINDING_GAP))
-            .unwrap_or(end);
+        let (next_start, next_end) = resolve_endpoints(element, start_shape, end_shape);
 
         // `linear_retarget`, not `linear_from_endpoints`: the latter rewrites the point
         // list as a straight pair, so every bend a user had put in an arrow vanished the
@@ -346,22 +387,8 @@ pub fn refresh_bindings(elements: &[DrawElement]) -> Vec<DrawElement> {
             linears_done.push(element.clone());
             continue;
         }
-        let (start, end) = linear_endpoints(element);
-        let (start_target, end_target) = attach_targets(
-            element,
-            start,
-            end,
-            start_shape.as_ref(),
-            end_shape.as_ref(),
-        );
-        let next_start = start_shape
-            .as_ref()
-            .map(|shape| attach_point(shape, start_target, BINDING_GAP))
-            .unwrap_or(start);
-        let next_end = end_shape
-            .as_ref()
-            .map(|shape| attach_point(shape, end_target, BINDING_GAP))
-            .unwrap_or(end);
+        let (next_start, next_end) =
+            resolve_endpoints(element, start_shape.as_ref(), end_shape.as_ref());
         let next = linear_retarget(element.clone(), next_start, next_end);
         by_id.insert(next.id.clone(), next.clone());
         linears_done.push(next);
