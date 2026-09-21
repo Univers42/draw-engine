@@ -157,7 +157,11 @@ impl WasmEngine {
             if c.raf.is_some() || c.engine.is_disposed() {
                 return;
             }
-            if !c.engine.is_dirty() && !c.engine.in_motion() {
+            // One question, asked of the engine. This used to spell out `dirty ||
+            // in_motion` here and again below, which meant the browser loop held its own
+            // opinion about when the engine still had work — and so never learned about
+            // anything that animates on its own.
+            if !c.engine.needs_frame() {
                 return;
             }
         }
@@ -172,10 +176,7 @@ impl WasmEngine {
             }
             paint_frame(&cloned);
             let more = match cloned.try_borrow() {
-                Ok(cell) => {
-                    !cell.engine.is_disposed()
-                        && (cell.engine.is_dirty() || cell.engine.in_motion())
-                }
+                Ok(cell) => cell.engine.needs_frame(),
                 // Busy: assume there is more to do rather than stalling the loop.
                 Err(_) => true,
             };

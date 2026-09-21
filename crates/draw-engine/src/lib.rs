@@ -31,14 +31,16 @@ pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
 pub use interaction::{
-    constrain_to_angle, is_degenerate_linear, is_degenerate_rect, is_linear_tool, is_shape_tool,
-    linear_from_drag, rect_from_drag, snap_move, tool_for_key, Axis, DrawTool, LinearDrag,
-    SnapGuide, SnapResult,
+    constrain_to_angle, ease_out, is_degenerate_linear, is_degenerate_rect, is_linear_tool,
+    is_shape_tool, linear_from_drag, rect_from_drag, size_mapping, snap_move, tool_for_key, Axis,
+    DrawTool, LaserOptions, LaserPoint, LaserStroke, LaserTrails, LinearDrag, SnapGuide,
+    SnapResult, ALL_TOOLS, CORNER_DETECTION_MAX_ANGLE_DEG, DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH,
+    LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH, LASER_SIZE, LASER_STREAMLINE,
 };
 pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
 pub use render::{
-    dark_theme, default_arrowhead, font_string, is_roughable, light_theme, DrawTheme, FONT_FAMILY,
-    TEXT_LINE_HEIGHT,
+    dark_theme, default_arrowhead, font_string, is_roughable, light_theme, DrawTheme, GridSettings,
+    DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP, FONT_FAMILY, TEXT_LINE_HEIGHT,
 };
 pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,
@@ -50,9 +52,17 @@ pub use scene::{
     DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP,
     LABEL_PADDING,
 };
+pub use scene::{
+    default_frame_name, element_contains_frame, element_in_frame_bounds, element_intersects_frame,
+    element_outline, element_overlaps_frame, elements_captured_by, frame_children,
+    frame_clip_bounds, frame_for_element, frame_name_anchor, frame_style, is_frame,
+    needs_frame_clip, outline_edges, outline_is_closed, segments_intersect, FRAME_MIN_SIZE,
+    FRAME_NAME_COLOR_DARK, FRAME_NAME_COLOR_LIGHT, FRAME_NAME_FONT_SIZE, FRAME_NAME_LINE_HEIGHT,
+    FRAME_NAME_OFFSET_Y, FRAME_RADIUS, FRAME_STROKE, FRAME_STROKE_WIDTH,
+};
 pub use selection::{
-    elements_in_marquee, elements_in_marquee_among, handle_local_point, hit_handle, marquee_rect,
-    resize_element, rotate_element, rotate_point, selection_corners, selection_corners_padded,
-    selection_handle_points, selection_handles, HandleKind, HandleLayout, HandlePoint,
-    RESIZE_HANDLES,
+    elements_in_lasso, elements_in_marquee, elements_in_marquee_among, handle_local_point,
+    hit_handle, marquee_rect, polygon_contains_point, resize_element, rotate_element, rotate_point,
+    selection_corners, selection_corners_padded, selection_handle_points, selection_handles,
+    simplify_path, HandleKind, HandleLayout, HandlePoint, LassoMode, RESIZE_HANDLES,
 };

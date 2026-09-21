@@ -10,7 +10,9 @@ use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
     pub fn begin_pointer(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
-        let world = self.screen_to_world(sx, sy);
+        // Snapped once, here, so every gesture that starts from a pointer position lands
+        // on the grid together. Applying it per-tool is how one of them ends up exempt.
+        let world = self.snap(self.screen_to_world(sx, sy));
         if is_shape_tool(self.tool) {
             self.begin_shape(world);
             return;
@@ -26,6 +28,30 @@ impl DrawEngine {
             }
             DrawTool::Freedraw => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
+            DrawTool::Lasso => {
+                self.interaction = Some(Interaction::Lasso {
+                    path: vec![world],
+                    base: if additive {
+                        self.selected_ids.clone()
+                    } else {
+                        Default::default()
+                    },
+                });
+                if !additive {
+                    self.clear_selection();
+                }
+                self.request_draw();
+            }
+            DrawTool::Frame => self.begin_frame(world),
+            DrawTool::Laser => {
+                // Deliberately the unsnapped point. A laser follows the cursor; snapping
+                // it to the grid would make the beam jump between intersections while the
+                // hand it is meant to be tracking moves smoothly.
+                let exact = self.screen_to_world(sx, sy);
+                self.interaction = Some(Interaction::Laser);
+                self.laser.start(exact.x, exact.y, self.now_ms);
+                self.request_draw();
+            }
             DrawTool::Hand => {
                 self.interaction = Some(Interaction::Pan {
                     last_x: sx,
@@ -34,6 +60,30 @@ impl DrawEngine {
             }
             _ => self.begin_select(sx, sy, world, additive, duplicate),
         }
+    }
+
+    /// A frame is dragged out like a shape, but it is chrome rather than a drawing.
+    ///
+    /// It takes none of the current element style: a frame is always the same grey, at
+    /// the same weight, with the same corners, so it reads as a boundary rather than as
+    /// something someone drew. That is why this cannot just be another shape tool.
+    fn begin_frame(&mut self, world: Point) {
+        let mut element = create_element(
+            DrawElementType::Frame,
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            crate::scene::frame_style(),
+            self.now_ms,
+        );
+        element.name = Some(crate::scene::default_frame_name(self.scene.iter_ordered()));
+        let id = element.id.clone();
+        self.scene.add(element);
+        self.interaction = Some(Interaction::Draft { id, start: world });
+        self.request_draw();
     }
 
     fn begin_shape(&mut self, world: Point) {
@@ -330,7 +380,28 @@ impl DrawEngine {
 
     fn begin_move(&mut self, world: Point) {
         let mut origins = std::collections::HashMap::new();
-        for element in self.get_selected_elements() {
+        // A frame carries what it contains. Expanding the set here rather than moving
+        // children separately means one code path moves everything: the children snap,
+        // re-bind and undo exactly as they would if you had selected them yourself.
+        let mut moving_elements = self.get_selected_elements();
+        let frame_ids: Vec<String> = moving_elements
+            .iter()
+            .filter(|el| crate::scene::is_frame(el))
+            .map(|el| el.id.clone())
+            .collect();
+        for frame_id in frame_ids {
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame_id) {
+                if origins.contains_key(&child_id) {
+                    continue;
+                }
+                if let Some(child) = self.scene.get(&child_id) {
+                    if !moving_elements.iter().any(|el| el.id == child_id) {
+                        moving_elements.push(child.clone());
+                    }
+                }
+            }
+        }
+        for element in moving_elements {
             if !element.locked() {
                 origins.insert(
                     element.id.clone(),

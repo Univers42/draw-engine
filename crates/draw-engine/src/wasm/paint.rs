@@ -385,6 +385,23 @@ impl Painter for CanvasPainter<'_> {
         ];
 
         for element in &view.elements {
+            // A child that pokes out of its frame is cut off at the frame's edge — that
+            // is what makes a frame read as a window onto a region rather than as a
+            // rectangle drawn behind things. The engine decides which children need it.
+            let clip = view.frame_clips.get(&element.id);
+            if let Some(bounds) = clip {
+                ctx.save();
+                // Set under the plain device transform, because the previous element
+                // left its own matrix on the context. A clip region is fixed in device
+                // space once applied, so the element is free to set its own transform
+                // afterwards without escaping it.
+                let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+                let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
+                let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
+                ctx.begin_path();
+                ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+                ctx.clip();
+            }
             paint_element(
                 ctx,
                 view_transform,
@@ -392,39 +409,143 @@ impl Painter for CanvasPainter<'_> {
                 &view.theme.background,
                 &view.elements,
             );
+            if clip.is_some() {
+                ctx.restore();
+            }
         }
         evict_paths(&view.elements);
+        paint_frame_names(ctx, view);
 
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         paint_overlay(ctx, view);
+        // Last, so the beam is over the selection chrome as well as the drawing. It is
+        // pointing at the board, so nothing on the board should cover it.
+        paint_laser(ctx, view);
     }
 }
 
-fn paint_grid(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    let step = 40.0 * view.camera.scale;
-    if step < 6.0 {
+/// Frame names, written above each frame.
+///
+/// At a fixed size on screen rather than in world units, because a name is a label on the
+/// board rather than something drawn on it — zooming out to see the whole layout is
+/// exactly when you most need to read which frame is which.
+fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.frame_names.is_empty() {
         return;
     }
     ctx.save();
-    set_stroke(ctx, &view.theme.grid);
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    let mut x = view.camera.x % step;
-    while x < view.width {
-        let px = x.round() + 0.5;
-        ctx.move_to(px, 0.0);
-        ctx.line_to(px, view.height);
-        x += step;
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    set_fill(ctx, &view.theme.frame_name);
+    ctx.set_font(&crate::render::font_string(
+        crate::scene::FRAME_NAME_FONT_SIZE,
+    ));
+    ctx.set_text_baseline("alphabetic");
+    for (anchor, name) in &view.frame_names {
+        let at = crate::world_to_screen(view.camera, anchor.x, anchor.y);
+        let _ = ctx.fill_text(name, at.x, at.y);
     }
-    let mut y = view.camera.y % step;
-    while y < view.height {
-        let py = y.round() + 0.5;
-        ctx.move_to(0.0, py);
-        ctx.line_to(view.width, py);
-        y += step;
-    }
-    ctx.stroke();
     ctx.restore();
+    // The cached font no longer matches what the context holds.
+    FONT.with(|f| *f.borrow_mut() = None);
+}
+
+/// Laser trails, filled.
+///
+/// Each outline arrives already shaped by the engine — a closed loop whose width varies
+/// along its length — so there is nothing to compute here and nothing a second host could
+/// get differently. Filled rather than stroked: a stroke has one width, and the whole
+/// point of the trail is that it tapers.
+fn paint_laser(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.laser.is_empty() {
+        return;
+    }
+    ctx.save();
+    set_fill(ctx, &view.laser_color);
+    for outline in &view.laser {
+        let Some(first) = outline.first() else {
+            continue;
+        };
+        let start = crate::world_to_screen(view.camera, first.x, first.y);
+        ctx.begin_path();
+        ctx.move_to(start.x, start.y);
+        for point in &outline[1..] {
+            let screen = crate::world_to_screen(view.camera, point.x, point.y);
+            ctx.line_to(screen.x, screen.y);
+        }
+        ctx.close_path();
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+/// Draws the grid, when there is one to draw.
+///
+/// Two passes, minor lines then major, so every `step`-th line reads as heavier. A single
+/// uniform weight is what makes a fine grid turn into a grey wash at anything but the
+/// coarsest spacing — the emphasis is what you count squares against.
+///
+/// The spacing is in **world** units and converted here, so the grid belongs to the
+/// drawing rather than to the viewport: zoom in and the squares grow with the shapes,
+/// and a line stays on the same world coordinate while you pan.
+fn paint_grid(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if !view.grid.enabled {
+        return;
+    }
+
+    let world_size = view.grid.effective_size();
+    let spacing = world_size * view.camera.scale;
+    // Below a few pixels apart the lines merge into a solid field, which is worse than
+    // no grid at all.
+    if spacing < 4.0 {
+        return;
+    }
+
+    let step = view.grid.step.max(1) as i64;
+    let is_major = |n: i64| step > 1 && n.rem_euclid(step) == 0;
+    // When the minor lines would be too dense to tell apart, draw only the majors —
+    // those are `step` times further apart, so they stay legible.
+    let draw_minors = spacing >= 8.0 || step == 1;
+
+    let to_screen_x = |wx: f64| wx * view.camera.scale + view.camera.x;
+    let to_screen_y = |wy: f64| wy * view.camera.scale + view.camera.y;
+
+    // The inclusive index range whose lines fall inside the viewport.
+    let i0 = ((-view.camera.x / view.camera.scale) / world_size).floor() as i64;
+    let i1 = (((view.width - view.camera.x) / view.camera.scale) / world_size).ceil() as i64;
+    let j0 = ((-view.camera.y / view.camera.scale) / world_size).floor() as i64;
+    let j1 = (((view.height - view.camera.y) / view.camera.scale) / world_size).ceil() as i64;
+
+    for major in [false, true] {
+        if (!major && !draw_minors) || (major && step == 1) {
+            continue;
+        }
+
+        ctx.save();
+        set_stroke(ctx, &view.theme.grid);
+        // The theme colour is tuned for the minor lines; a major is the same hue drawn
+        // heavier rather than a second colour, so a custom grid colour stays coherent.
+        ctx.set_line_width(if major { 1.6 } else { 1.0 });
+        ctx.set_global_alpha(if major { 1.0 } else { 0.6 });
+        ctx.begin_path();
+
+        for i in i0..=i1 {
+            if is_major(i) == major {
+                let px = to_screen_x(i as f64 * world_size).round() + 0.5;
+                ctx.move_to(px, 0.0);
+                ctx.line_to(px, view.height);
+            }
+        }
+        for j in j0..=j1 {
+            if is_major(j) == major {
+                let py = to_screen_y(j as f64 * world_size).round() + 0.5;
+                ctx.move_to(0.0, py);
+                ctx.line_to(view.width, py);
+            }
+        }
+
+        ctx.stroke();
+        ctx.restore();
+    }
 }
 
 fn paint_element(
@@ -690,6 +811,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         ctx.stroke();
     }
 
+    paint_lasso(ctx, view);
     paint_binding_highlight(ctx, view);
 
     // A linear element is edited by its points; it gets no frame.
@@ -703,6 +825,52 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     } else if view.selected.len() > 1 {
         paint_group_selection(ctx, view);
     }
+}
+
+/// The free-form selection loop, while one is being drawn.
+///
+/// Drawn closed — the segment back to the start is shown dashed — because that is the
+/// loop the engine will actually test against. Leaving it open would let someone aim a
+/// gap that does not exist.
+fn paint_lasso(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.lasso.len() < 2 {
+        return;
+    }
+    ctx.save();
+    set_stroke(ctx, &view.theme.accent);
+    ctx.set_line_width(1.0);
+
+    ctx.begin_path();
+    let first = crate::world_to_screen(view.camera, view.lasso[0].x, view.lasso[0].y);
+    ctx.move_to(first.x, first.y);
+    for p in &view.lasso[1..] {
+        let s = crate::world_to_screen(view.camera, p.x, p.y);
+        ctx.line_to(s.x, s.y);
+    }
+    ctx.stroke();
+
+    // The closing segment, dashed so it reads as implied rather than drawn.
+    let last = view.lasso[view.lasso.len() - 1];
+    let end = crate::world_to_screen(view.camera, last.x, last.y);
+    let _ = ctx.set_line_dash(&dash_js(Some([4.0, 4.0])));
+    ctx.begin_path();
+    ctx.move_to(end.x, end.y);
+    ctx.line_to(first.x, first.y);
+    ctx.stroke();
+
+    // Shade the enclosed area, as the marquee does, so what is caught is visible.
+    let _ = ctx.set_line_dash(&dash_js(None));
+    ctx.set_global_alpha(0.1);
+    set_fill(ctx, &view.theme.accent);
+    ctx.begin_path();
+    ctx.move_to(first.x, first.y);
+    for p in &view.lasso[1..] {
+        let s = crate::world_to_screen(view.camera, p.x, p.y);
+        ctx.line_to(s.x, s.y);
+    }
+    ctx.close_path();
+    ctx.fill();
+    ctx.restore();
 }
 
 /// The frame and its handles for a single shape.

@@ -36,6 +36,8 @@ export const ARROWHEADS: Arrowhead[] = ["none", "arrow", "triangle", "dot", "dia
 
 export type DrawTool =
   | "select"
+  /** Free-form selection: draw a loop, take what it encloses. */
+  | "lasso"
   | "hand"
   | "rectangle"
   | "diamond"
@@ -44,7 +46,11 @@ export type DrawTool =
   | "arrow"
   | "freedraw"
   | "text"
-  | "eraser";
+  | "eraser"
+  /** A trail that follows the cursor and fades. Draws nothing into the scene. */
+  | "laser"
+  /** A named region that owns whatever is drawn inside it. */
+  | "frame";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
@@ -97,6 +103,27 @@ export interface DrawElement extends DrawElementStyle {
   updated: number;
   isDeleted: boolean;
 }
+
+/**
+ * The canvas grid: whether it is drawn, how coarse, how often a line is emphasised, and
+ * whether gestures land on it.
+ *
+ * Mirrors the engine's `GridSettings`. Defaults are Excalidraw's — off, 20 units, every
+ * 5th line major.
+ */
+export interface GridSettings {
+  enabled: boolean;
+  size: number;
+  step: number;
+  snap: boolean;
+}
+
+export const DEFAULT_GRID: GridSettings = {
+  enabled: false,
+  size: 20,
+  step: 5,
+  snap: true,
+};
 
 export interface DrawTheme {
   background: string;

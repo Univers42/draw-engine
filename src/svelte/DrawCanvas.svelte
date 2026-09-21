@@ -102,10 +102,17 @@
   tabindex={0}
   style="position: relative; width: 100%; height: 100%; touch-action: none; outline: none;"
 >
+  <!--
+    No tabindex. `tabindex="-1"` is not "unfocusable" — it only removes an element from
+    tab order while leaving it focusable by pointer, so a click focused this canvas and
+    took focus straight back off the container `onPointerDown` had just focused. Focus
+    then sat on an `aria-hidden` node: a screen reader announces nothing, and the
+    `role="application"` label never reaches the user. Shortcuts still worked by
+    bubbling, which is what hid this.
+  -->
   <canvas
     bind:this={canvasEl}
     aria-hidden="true"
-    tabindex={-1}
     style="display: block; width: 100%; height: 100%;"
   ></canvas>
 </div>

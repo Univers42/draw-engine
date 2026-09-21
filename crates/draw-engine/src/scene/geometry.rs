@@ -215,6 +215,122 @@ pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
     }
 }
 
+/// How many points a curve is sampled at when it has to be described as a polygon.
+///
+/// Four box corners would let a loop drawn snugly around a circle miss it, and would let
+/// a frame's edge appear to cross an ellipse it never touches.
+const OUTLINE_SAMPLES: usize = 24;
+
+/// The element's own outline, as a closed ring of world-space points.
+///
+/// The single answer to "what shape is this element, really" — used by the lasso to
+/// decide what a loop encloses and by frames to decide what they contain. Two
+/// definitions of an element's outline would eventually disagree, and the disagreement
+/// would look like a selection bug rather than a geometry one.
+///
+/// A line, arrow or freehand stroke is its own path and comes back open; everything else
+/// is its box, turned if it is turned.
+pub fn element_outline(element: &DrawElement) -> Vec<Point> {
+    if is_point_based(element) {
+        let points = crate::selection::linear::world_points(element);
+        if !points.is_empty() {
+            return points;
+        }
+    }
+
+    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    let centre = rotation_center(element);
+    let (sin, cos) = element.angle.sin_cos();
+    let turn = |x: f64, y: f64| {
+        let (dx, dy) = (x - centre.x, y - centre.y);
+        Point {
+            x: centre.x + dx * cos - dy * sin,
+            y: centre.y + dx * sin + dy * cos,
+        }
+    };
+
+    match element.kind {
+        DrawElementType::Ellipse => {
+            let (rx, ry) = (rect.width / 2.0, rect.height / 2.0);
+            let (cx, cy) = (rect.x + rx, rect.y + ry);
+            (0..OUTLINE_SAMPLES)
+                .map(|i| {
+                    let t = i as f64 / OUTLINE_SAMPLES as f64 * std::f64::consts::TAU;
+                    turn(cx + rx * t.cos(), cy + ry * t.sin())
+                })
+                .collect()
+        }
+        DrawElementType::Diamond => {
+            let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+            vec![
+                turn(cx, rect.y),
+                turn(rect.x + rect.width, cy),
+                turn(cx, rect.y + rect.height),
+                turn(rect.x, cy),
+            ]
+        }
+        _ => vec![
+            turn(rect.x, rect.y),
+            turn(rect.x + rect.width, rect.y),
+            turn(rect.x + rect.width, rect.y + rect.height),
+            turn(rect.x, rect.y + rect.height),
+        ],
+    }
+}
+
+/// Whether the outline of this element closes back on itself.
+///
+/// Open paths must not have their last point joined to their first, or a line drawn
+/// across a frame would appear to enclose the triangle between its ends.
+pub fn outline_is_closed(element: &DrawElement) -> bool {
+    !is_point_based(element)
+}
+
+/// `> 0` when `p` is left of the directed line `a -> b`.
+pub fn cross(a: Point, b: Point, p: Point) -> f64 {
+    (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
+}
+
+/// Whether two segments cross, touching included.
+///
+/// Collinear touching counts, so a loop drawn exactly along an edge still catches it and
+/// an element laid exactly on a frame's border still counts as meeting it.
+pub fn segments_intersect(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
+    let d1 = cross(p3, p4, p1);
+    let d2 = cross(p3, p4, p2);
+    let d3 = cross(p1, p2, p3);
+    let d4 = cross(p1, p2, p4);
+
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+    let on = |a: Point, b: Point, p: Point, d: f64| {
+        d == 0.0
+            && p.x >= a.x.min(b.x)
+            && p.x <= a.x.max(b.x)
+            && p.y >= a.y.min(b.y)
+            && p.y <= a.y.max(b.y)
+    };
+    on(p3, p4, p1, d1) || on(p3, p4, p2, d2) || on(p1, p2, p3, d3) || on(p1, p2, p4, d4)
+}
+
+/// The edges of an outline, respecting whether it closes.
+pub fn outline_edges(outline: &[Point], closed: bool) -> Vec<(Point, Point)> {
+    if outline.len() < 2 {
+        return Vec::new();
+    }
+    let count = if closed {
+        outline.len()
+    } else {
+        outline.len() - 1
+    };
+    (0..count)
+        .map(|i| (outline[i], outline[(i + 1) % outline.len()]))
+        .collect()
+}
+
 /// Whether a colour paints nothing.
 ///
 /// Excalidraw's `isTransparent`: the literal keyword, or any hex that carries a fully
@@ -239,10 +355,17 @@ pub fn is_transparent(color: &str) -> bool {
 /// canvas showing through.
 ///
 /// The hollow/solid distinction only means anything for the three shapes that have a
-/// fill to leave out. Text, freehand strokes, images and frames are their own content:
-/// their "background" being transparent says nothing about whether their middle is
-/// clickable, and treating a line of text as an outline would make it unselectable
-/// except at its edges.
+/// fill to leave out. Text, freehand strokes and images are their own content: their
+/// "background" being transparent says nothing about whether their middle is clickable,
+/// and treating a line of text as an outline would make it unselectable except at its
+/// edges.
+///
+/// A **frame** is the exception in the other direction, and has to be stated rather than
+/// left to the default. It is a boundary you reach through: its middle belongs to
+/// whatever is inside it, so it is grabbed by its border. Counted as solid — which is
+/// what the fall-through did, since a frame is not one of the three fillable shapes — a
+/// frame swallows every click that lands in it, and the moment you framed a diagram its
+/// contents became unselectable.
 ///
 /// **Known divergence.** Excalidraw also treats a shape as solid when it carries bound
 /// text, via `hasBoundTextElement`. That needs the container's `boundElements`
@@ -250,6 +373,9 @@ pub fn is_transparent(color: &str) -> bool {
 /// way, from the label's `container_id`. So a *transparent* shape with a label is hollow
 /// here and solid there. Its label is still clickable, so the shape is still reachable.
 fn has_solid_interior(element: &DrawElement) -> bool {
+    if element.kind == DrawElementType::Frame {
+        return false;
+    }
     if !matches!(
         element.kind,
         DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse

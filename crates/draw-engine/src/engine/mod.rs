@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
 use crate::interaction::{DrawTool, SnapGuide};
-use crate::render::{light_theme, DrawTheme};
+use crate::render::{light_theme, DrawTheme, GridSettings};
 use crate::scene::{
     default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene,
 };
@@ -47,6 +47,7 @@ const MOTION_MS: f64 = 140.0;
 pub struct DrawEngine {
     scene: Scene,
     theme: DrawTheme,
+    grid: GridSettings,
     pub camera: Camera,
     width: f64,
     height: f64,
@@ -70,6 +71,12 @@ pub struct DrawEngine {
     /// without that, binding is invisible until after the fact and feels like a
     /// coincidence rather than a tool.
     binding_highlight: Option<String>,
+    /// Laser strokes on screen, drawn and fading.
+    ///
+    /// Not part of the scene and never serialized: a laser mark is a gesture, like a
+    /// finger pointed at a slide, and putting it in the document would put it in the
+    /// undo stack, the autosave and every other participant's board.
+    laser: crate::interaction::LaserTrails,
     history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
     events: EngineEvents,
 }
@@ -85,6 +92,7 @@ impl DrawEngine {
         Self {
             scene: Scene::default(),
             theme: light_theme(),
+            grid: GridSettings::default(),
             camera: IDENTITY,
             width: 0.0,
             height: 0.0,
@@ -103,6 +111,7 @@ impl DrawEngine {
             clipboard_buffer: None,
             snap_guides: Vec::new(),
             binding_highlight: None,
+            laser: crate::interaction::LaserTrails::default(),
             history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
             events: EngineEvents::default(),
         }
@@ -110,6 +119,10 @@ impl DrawEngine {
 
     pub fn set_now(&mut self, now_ms: f64) {
         self.now_ms = now_ms;
+        // Faded laser strokes are dropped here rather than while painting, so the paint
+        // view can stay borrow-only. Without it a long presentation keeps one dead stroke
+        // per flick and walks all of them every frame to draw nothing.
+        self.laser.prune(now_ms);
     }
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
@@ -139,6 +152,24 @@ impl DrawEngine {
         &self.theme
     }
 
+    pub fn set_grid(&mut self, grid: GridSettings) {
+        self.grid = grid;
+        self.request_draw();
+    }
+
+    pub fn grid(&self) -> GridSettings {
+        self.grid
+    }
+
+    /// A world point rounded onto the grid, or unchanged when the grid is not snapping.
+    ///
+    /// Every gesture that positions something goes through this, so turning the grid on
+    /// changes drawing, dragging and resizing together rather than only one of them.
+    pub(crate) fn snap(&self, point: Point) -> Point {
+        let (x, y) = self.grid.snap_point(point.x, point.y);
+        Point { x, y }
+    }
+
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {
         self.width = width;
         self.height = height;
@@ -156,6 +187,19 @@ impl DrawEngine {
 
     pub fn in_motion(&self) -> bool {
         self.now_ms < self.motion_until
+    }
+
+    /// Whether another frame is owed, for any reason.
+    ///
+    /// The single question a host's frame loop should ask. `is_dirty` alone is not it:
+    /// dirtiness means "something changed", and a fading laser changes with no input at
+    /// all, so a loop that stopped at `dirty || in_motion` would freeze a trail
+    /// part-faded until something unrelated happened to repaint.
+    ///
+    /// Answering here rather than in each host is the point — otherwise every frontend
+    /// has to learn, separately, every reason the engine might still have work to do.
+    pub fn needs_frame(&self) -> bool {
+        !self.disposed && (self.dirty || self.in_motion() || self.laser.is_active(self.now_ms))
     }
 
     pub fn is_disposed(&self) -> bool {

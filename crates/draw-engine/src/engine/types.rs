@@ -97,6 +97,21 @@ pub(crate) enum Interaction {
         id: String,
         handle: crate::selection::LinearHandle,
     },
+    /// A free-form selection loop in progress.
+    ///
+    /// The path is world-space and accumulates as the pointer moves; the engine
+    /// simplifies it when deciding what it selects, so the raw trail is kept here and
+    /// the host never has to thin it.
+    Lasso {
+        path: Vec<crate::camera::Point>,
+        base: std::collections::HashSet<String>,
+    },
+    /// A laser stroke in progress.
+    ///
+    /// Carries nothing: the trail itself lives on the engine, because it has to outlive
+    /// the gesture. Releasing the pointer ends the stroke but not the fade, and a second
+    /// flick can start while the first is still on screen.
+    Laser,
     Marquee {
         start: Point,
         current: Point,

@@ -199,6 +199,20 @@ impl DrawEngine {
                 }
             }
         }
+        // Deleting a frame deletes what it holds, as Excalidraw's does. A frame is the
+        // thing those elements live in, not a label on them: leaving the contents behind
+        // would scatter a diagram you had deliberately gathered.
+        //
+        // Collected before the removals rather than inside the loop above, because
+        // reading a frame's children needs the scene while the loop above is already
+        // writing to it.
+        let orphaned: Vec<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .collect();
+        doomed.extend(orphaned);
         for id in doomed {
             self.scene.remove(&id, now);
         }
