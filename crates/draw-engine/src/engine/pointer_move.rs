@@ -11,7 +11,7 @@ impl DrawEngine {
         let Some(it) = self.interaction.take() else {
             return;
         };
-        let world = self.screen_to_world(sx, sy);
+        let world = self.snap(self.screen_to_world(sx, sy));
         let next = self.advance_interaction(it, sx, sy, world, square, bypass_snap);
         self.interaction = next;
     }
@@ -324,7 +324,11 @@ impl DrawEngine {
         let mut dx = world.x - start.x;
         let mut dy = world.y - start.y;
         self.snap_guides.clear();
-        if !bypass_snap {
+        // Alignment guides pull toward other elements' edges, which is a different answer
+        // from the grid's. Running both makes the result depend on which won by a pixel,
+        // so the grid takes precedence while it is snapping.
+        let grid_snapping = self.grid().enabled && self.grid().snap;
+        if !bypass_snap && !grid_snapping {
             let moving: Vec<DrawElement> = ids
                 .iter()
                 .filter_map(|id| self.scene.get(id).cloned())
