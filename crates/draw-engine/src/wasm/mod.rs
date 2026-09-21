@@ -42,21 +42,6 @@ fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, Js
 
 #[wasm_bindgen(js_class = DrawEngine)]
 impl WasmEngine {
-    /// Mutable access to the engine cell.
-    ///
-    /// Every entry point goes through here rather than `borrow_mut` directly. A panic
-    /// in WASM aborts the whole instance — the canvas dies with no way back — and these
-    /// are all reachable re-entrantly from a host callback. Skipping the operation is
-    /// always the better failure.
-    ///
-    /// Returns a guard over a scratch cell when the real one is busy, so callers need
-    /// no error handling and a re-entrant call simply has no effect.
-    fn cell_mut(&self) -> std::cell::RefMut<'_, EngineCell> {
-        self.cell
-            .try_borrow_mut()
-            .unwrap_or_else(|_| self.scratch())
-    }
-
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: HtmlCanvasElement) -> Result<WasmEngine, JsValue> {
         let ctx = context_2d(&canvas)?;
