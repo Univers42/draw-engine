@@ -756,3 +756,55 @@ fn a_different_region_is_not_restylable() {
     ];
     assert!(!is_restylable_fill(&paint, &small));
 }
+
+// -----------------------------------------------------------------------------
+// through the engine
+// -----------------------------------------------------------------------------
+
+#[test]
+fn a_click_with_the_bucket_leaves_visible_paint() {
+    // The style starts with a transparent background, and taking it literally produced an
+    // element that was there, selected and undoable — but invisible. A bucket that paints
+    // nothing reads as a tool that silently failed, which is the worst of the failures
+    // available to it.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    let painted: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted && e.kind == DrawElementType::Line)
+        .collect();
+    assert_eq!(painted.len(), 1, "one fill, not none and not two");
+    assert!(
+        !is_transparent(&painted[0].background_color),
+        "the fill must be visible, got {:?}",
+        painted[0].background_color
+    );
+    assert!(
+        is_transparent(&painted[0].stroke_color),
+        "the fill must not draw its own outline over the strokes it came from"
+    );
+}
+
+#[test]
+fn the_fill_lands_beneath_the_outline_it_came_from() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    let order: Vec<DrawElementType> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .map(|e| e.kind)
+        .collect();
+    assert_eq!(
+        order,
+        vec![DrawElementType::Line, DrawElementType::Rectangle],
+        "the paint goes under the stroke, or filling a shape erases its outline"
+    );
+}

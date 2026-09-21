@@ -1,4 +1,5 @@
 use crate::engine::DrawEngine;
+use crate::scene::is_transparent;
 use crate::scene::{
     bump_version, compute_bucket_fill, create_element_default, is_restylable_fill, BucketFill,
     BucketFillFailure, BucketFillOptions, DrawElement, DrawElementType, FillStyle, Geometry,
@@ -35,7 +36,7 @@ impl DrawEngine {
         {
             let mut next = existing.clone();
             let style = self.get_next_style();
-            next.background_color = style.background_color.clone();
+            next.background_color = fill_color(&style.background_color);
             next.fill_style = style.fill_style;
             let id = next.id.clone();
             self.push_history();
@@ -78,7 +79,7 @@ impl DrawEngine {
                 .collect(),
         );
         let style = self.get_next_style();
-        element.background_color = style.background_color.clone();
+        element.background_color = fill_color(&style.background_color);
         element.fill_style = match style.fill_style {
             // A fill is paint. Asking for a hatched one would leave the region looking
             // half-filled, which is never what a bucket is for.
@@ -111,5 +112,24 @@ impl DrawEngine {
         };
         order.insert(target.min(order.len()), element);
         self.scene.set_order(order);
+    }
+}
+
+/// Default paint for the bucket, for when nothing else is chosen.
+///
+/// Excalidraw's first background swatch.
+pub const DEFAULT_BUCKET_FILL_COLOR: &str = "#a5d8ff";
+
+/// The colour a fill should actually paint with.
+///
+/// The current background is used when there is one, but it starts out transparent — and
+/// a bucket that produces invisible paint reads as a tool that silently did nothing. The
+/// element is there, selected, and undoable; it just cannot be seen, which is the worst
+/// of the available failures.
+fn fill_color(background: &str) -> String {
+    if is_transparent(background) {
+        DEFAULT_BUCKET_FILL_COLOR.to_string()
+    } else {
+        background.to_string()
     }
 }
