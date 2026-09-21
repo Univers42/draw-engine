@@ -394,31 +394,74 @@ impl Painter for CanvasPainter<'_> {
     }
 }
 
+/// Draws the grid, when there is one to draw.
+///
+/// Two passes, minor lines then major, so every `step`-th line reads as heavier. A single
+/// uniform weight is what makes a fine grid turn into a grey wash at anything but the
+/// coarsest spacing — the emphasis is what you count squares against.
+///
+/// The spacing is in **world** units and converted here, so the grid belongs to the
+/// drawing rather than to the viewport: zoom in and the squares grow with the shapes,
+/// and a line stays on the same world coordinate while you pan.
 fn paint_grid(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    let step = 40.0 * view.camera.scale;
-    if step < 6.0 {
+    if !view.grid.enabled {
         return;
     }
-    ctx.save();
-    set_stroke(ctx, &view.theme.grid);
-    ctx.set_line_width(1.0);
-    ctx.begin_path();
-    let mut x = view.camera.x % step;
-    while x < view.width {
-        let px = x.round() + 0.5;
-        ctx.move_to(px, 0.0);
-        ctx.line_to(px, view.height);
-        x += step;
+
+    let world_size = view.grid.effective_size();
+    let spacing = world_size * view.camera.scale;
+    // Below a few pixels apart the lines merge into a solid field, which is worse than
+    // no grid at all.
+    if spacing < 4.0 {
+        return;
     }
-    let mut y = view.camera.y % step;
-    while y < view.height {
-        let py = y.round() + 0.5;
-        ctx.move_to(0.0, py);
-        ctx.line_to(view.width, py);
-        y += step;
+
+    let step = view.grid.step.max(1) as i64;
+    let is_major = |n: i64| step > 1 && n.rem_euclid(step) == 0;
+    // When the minor lines would be too dense to tell apart, draw only the majors —
+    // those are `step` times further apart, so they stay legible.
+    let draw_minors = spacing >= 8.0 || step == 1;
+
+    let to_screen_x = |wx: f64| wx * view.camera.scale + view.camera.x;
+    let to_screen_y = |wy: f64| wy * view.camera.scale + view.camera.y;
+
+    // The inclusive index range whose lines fall inside the viewport.
+    let i0 = ((-view.camera.x / view.camera.scale) / world_size).floor() as i64;
+    let i1 = (((view.width - view.camera.x) / view.camera.scale) / world_size).ceil() as i64;
+    let j0 = ((-view.camera.y / view.camera.scale) / world_size).floor() as i64;
+    let j1 = (((view.height - view.camera.y) / view.camera.scale) / world_size).ceil() as i64;
+
+    for major in [false, true] {
+        if (!major && !draw_minors) || (major && step == 1) {
+            continue;
+        }
+
+        ctx.save();
+        set_stroke(ctx, &view.theme.grid);
+        // The theme colour is tuned for the minor lines; a major is the same hue drawn
+        // heavier rather than a second colour, so a custom grid colour stays coherent.
+        ctx.set_line_width(if major { 1.6 } else { 1.0 });
+        ctx.set_global_alpha(if major { 1.0 } else { 0.6 });
+        ctx.begin_path();
+
+        for i in i0..=i1 {
+            if is_major(i) == major {
+                let px = to_screen_x(i as f64 * world_size).round() + 0.5;
+                ctx.move_to(px, 0.0);
+                ctx.line_to(px, view.height);
+            }
+        }
+        for j in j0..=j1 {
+            if is_major(j) == major {
+                let py = to_screen_y(j as f64 * world_size).round() + 0.5;
+                ctx.move_to(0.0, py);
+                ctx.line_to(view.width, py);
+            }
+        }
+
+        ctx.stroke();
+        ctx.restore();
     }
-    ctx.stroke();
-    ctx.restore();
 }
 
 fn paint_element(

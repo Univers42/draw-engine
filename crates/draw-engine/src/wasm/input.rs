@@ -156,6 +156,23 @@ impl WasmEngine {
         crate::FONT_FAMILY.to_string()
     }
 
+    /// Replaces the grid settings.
+    ///
+    /// Takes JSON so the shape can gain fields without breaking the binding — the grid
+    /// gained `snap` separately from `enabled` for exactly that reason.
+    #[wasm_bindgen(js_name = setGridJson)]
+    pub fn set_grid_json(&self, json: &str) {
+        if let Ok(grid) = serde_json::from_str(json) {
+            self.cell.borrow_mut().engine.set_grid(grid);
+            self.flush();
+        }
+    }
+
+    #[wasm_bindgen(js_name = getGridJson)]
+    pub fn get_grid_json(&self) -> String {
+        serde_json::to_string(&self.cell.borrow().engine.grid()).unwrap_or_default()
+    }
+
     #[wasm_bindgen(js_name = zoomAt)]
     pub fn zoom_at(&self, sx: f64, sy: f64, factor: f64) {
         self.cell.borrow_mut().engine.zoom_at(sx, sy, factor);

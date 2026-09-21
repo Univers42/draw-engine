@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
 use crate::interaction::{DrawTool, SnapGuide};
-use crate::render::{light_theme, DrawTheme};
+use crate::render::{light_theme, DrawTheme, GridSettings};
 use crate::scene::{
     default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene,
 };
@@ -47,6 +47,7 @@ const MOTION_MS: f64 = 140.0;
 pub struct DrawEngine {
     scene: Scene,
     theme: DrawTheme,
+    grid: GridSettings,
     pub camera: Camera,
     width: f64,
     height: f64,
@@ -85,6 +86,7 @@ impl DrawEngine {
         Self {
             scene: Scene::default(),
             theme: light_theme(),
+            grid: GridSettings::default(),
             camera: IDENTITY,
             width: 0.0,
             height: 0.0,
@@ -137,6 +139,24 @@ impl DrawEngine {
 
     pub fn theme(&self) -> &DrawTheme {
         &self.theme
+    }
+
+    pub fn set_grid(&mut self, grid: GridSettings) {
+        self.grid = grid;
+        self.request_draw();
+    }
+
+    pub fn grid(&self) -> GridSettings {
+        self.grid
+    }
+
+    /// A world point rounded onto the grid, or unchanged when the grid is not snapping.
+    ///
+    /// Every gesture that positions something goes through this, so turning the grid on
+    /// changes drawing, dragging and resizing together rather than only one of them.
+    pub(crate) fn snap(&self, point: Point) -> Point {
+        let (x, y) = self.grid.snap_point(point.x, point.y);
+        Point { x, y }
     }
 
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {

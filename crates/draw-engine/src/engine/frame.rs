@@ -1,7 +1,7 @@
 use crate::camera::{Camera, WorldBounds};
 use crate::engine::DrawEngine;
 use crate::interaction::SnapGuide;
-use crate::render::DrawTheme;
+use crate::render::{DrawTheme, GridSettings};
 use crate::scene::DrawElement;
 use crate::selection::marquee_rect;
 
@@ -15,6 +15,7 @@ use crate::selection::marquee_rect;
 pub struct PaintView<'a> {
     pub camera: Camera,
     pub theme: DrawTheme,
+    pub grid: GridSettings,
     pub width: f64,
     pub height: f64,
     pub dpr: f64,
@@ -90,6 +91,7 @@ impl DrawEngine {
         PaintView {
             camera: self.camera,
             theme: self.theme.clone(),
+            grid: self.grid,
             width: self.width,
             height: self.height,
             dpr,

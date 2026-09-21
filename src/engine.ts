@@ -1,5 +1,5 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
-import { DEFAULT_ELEMENT_STYLE, Scene } from "./types";
+import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, Scene } from "./types";
 import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
@@ -11,6 +11,7 @@ import type {
   DrawTheme,
   DrawTool,
   FlipAxis,
+  GridSettings,
   ZOrderMode,
 } from "./types";
 
@@ -122,6 +123,20 @@ export class DrawEngine {
   /** The CSS font family the canvas draws text with. */
   fontFamily(): string {
     return this.inner.fontFamily();
+  }
+
+  /**
+   * Show, size and snap to the canvas grid.
+   *
+   * `enabled` and `snap` are separate: a grid can be a visual reference you draw freely
+   * over, which is a different request from being held to it.
+   */
+  setGrid(grid: Partial<GridSettings>): void {
+    this.inner.setGridJson(JSON.stringify({ ...this.getGrid(), ...grid }));
+  }
+
+  getGrid(): GridSettings {
+    return parseJson<GridSettings>(this.inner.getGridJson(), DEFAULT_GRID);
   }
 
   setTool(tool: DrawTool): void {

@@ -98,6 +98,27 @@ export interface DrawElement extends DrawElementStyle {
   isDeleted: boolean;
 }
 
+/**
+ * The canvas grid: whether it is drawn, how coarse, how often a line is emphasised, and
+ * whether gestures land on it.
+ *
+ * Mirrors the engine's `GridSettings`. Defaults are Excalidraw's — off, 20 units, every
+ * 5th line major.
+ */
+export interface GridSettings {
+  enabled: boolean;
+  size: number;
+  step: number;
+  snap: boolean;
+}
+
+export const DEFAULT_GRID: GridSettings = {
+  enabled: false,
+  size: 20,
+  step: 5,
+  snap: true,
+};
+
 export interface DrawTheme {
   background: string;
   grid: string;
