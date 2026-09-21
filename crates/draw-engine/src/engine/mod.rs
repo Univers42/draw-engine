@@ -37,6 +37,8 @@ const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
 /// zoomed out.
 const BINDING_HOVER_PX: f64 = 32.0;
 const ROTATE_GAP_PX: f64 = 26.0;
+/// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`: how near a click must be to an element.
+const COLLISION_PX: f64 = 10.0;
 const DEFAULT_FONT_SIZE: f64 = 20.0;
 const SNAP_PX: f64 = 6.0;
 const PASTE_OFFSET: f64 = 12.0;
@@ -214,6 +216,16 @@ impl DrawEngine {
             .rev()
             .find(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, tolerance))
             .cloned()
+    }
+
+    /// How close a click has to be to count as landing on an element.
+    ///
+    /// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`, in screen pixels so it does not shrink
+    /// to nothing when zoomed out. It matters more than it used to: a transparent shape
+    /// is hit only on its outline, and a two-pixel band around a hand-drawn stroke is not
+    /// something anyone can aim at.
+    pub(crate) fn collision_tolerance(&self) -> f64 {
+        COLLISION_PX / self.camera.scale
     }
 
     /// Where the selection frame and handles sit, for both painting and hit testing.

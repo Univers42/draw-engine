@@ -19,7 +19,9 @@ fn engine_with(elements: Vec<DrawElement>) -> DrawEngine {
 /// Screen coordinates equal world coordinates at the identity camera, so the probes below
 /// read directly.
 fn probe() -> DrawEngine {
-    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    // Given a background, so its whole interior is a hit target. These tests are about
+    // which cursor each region claims, not about the transparent-fill rule.
+    let mut element = filled(box_at(400.0, 300.0, 300.0, 200.0));
     element.id = "r1".into();
     let mut engine = engine_with(vec![element]);
     engine.select(vec!["r1".to_string()]);
@@ -81,7 +83,7 @@ fn the_rotation_handle_offers_a_grab() {
 /// so — otherwise every handle on a rotated shape lies about its direction.
 #[test]
 fn cursors_turn_with_the_element() {
-    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    let mut element = filled(box_at(400.0, 300.0, 300.0, 200.0));
     element.id = "r1".into();
     element.angle = std::f64::consts::FRAC_PI_2;
     let mut engine = engine_with(vec![element]);
@@ -100,7 +102,7 @@ fn a_half_turn_returns_the_same_cursors() {
     let plain = probe();
     let upright = plain.hover_cursor(550.0, 292.0);
 
-    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    let mut element = filled(box_at(400.0, 300.0, 300.0, 200.0));
     element.id = "r1".into();
     element.angle = std::f64::consts::PI;
     let mut engine = engine_with(vec![element]);
@@ -112,7 +114,7 @@ fn a_half_turn_returns_the_same_cursors() {
 /// Excalidraw's own version uses a plain JS remainder here and yields `undefined`.
 #[test]
 fn a_counter_clockwise_angle_still_names_a_cursor() {
-    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    let mut element = filled(box_at(400.0, 300.0, 300.0, 200.0));
     element.id = "r1".into();
     element.angle = -std::f64::consts::FRAC_PI_2;
     let mut engine = engine_with(vec![element]);
@@ -148,7 +150,7 @@ fn a_linear_element_offers_point_handles() {
 /// A locked element cannot be dragged, so promising a move would be a lie.
 #[test]
 fn a_locked_element_does_not_offer_a_move() {
-    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    let mut element = filled(box_at(400.0, 300.0, 300.0, 200.0));
     element.id = "r1".into();
     element.locked = Some(true);
     let engine = engine_with(vec![element]);
@@ -219,4 +221,18 @@ fn the_codes_are_stable() {
     assert_eq!(HoverCursor::PointHandle.code(), 8);
     assert_eq!(HoverCursor::Crosshair.code(), 9);
     assert_eq!(HoverCursor::Text.code(), 10);
+}
+
+/// A transparent shape is an outline, so only its outline offers to move. Saying "move"
+/// over its hollow middle would promise a drag that does not happen — and would hide the
+/// fact that the click belongs to whatever is drawn inside it.
+#[test]
+fn a_hollow_shape_only_offers_a_move_on_its_outline() {
+    let mut element = box_at(400.0, 300.0, 300.0, 200.0);
+    element.id = "r1".into();
+    let mut engine = engine_with(vec![element]);
+    engine.select(vec!["r1".to_string()]);
+
+    assert_eq!(engine.hover_cursor(550.0, 400.0), HoverCursor::Default);
+    assert_eq!(engine.hover_cursor(550.0, 300.0), HoverCursor::Move);
 }

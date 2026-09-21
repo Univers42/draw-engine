@@ -22,6 +22,17 @@ pub fn assert_rect_close(a: Rect, b: Rect) {
     assert_close(a.height, b.height);
 }
 
+/// A shape with a background, so its whole interior is a hit target.
+///
+/// The default style is a transparent fill, and a transparent shape is hit only on its
+/// outline — so a test about *shape* maths (is this point inside the ellipse or merely
+/// inside its box?) has to say it means a solid shape, or it ends up asserting the fill
+/// rule by accident.
+pub fn filled(mut element: DrawElement) -> DrawElement {
+    element.background_color = "#ffec99".into();
+    element
+}
+
 pub fn box_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
     create_element_default(
         DrawElementType::Rectangle,

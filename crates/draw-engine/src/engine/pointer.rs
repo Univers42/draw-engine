@@ -287,7 +287,7 @@ impl DrawEngine {
             }
         }
 
-        if let Some(hit) = self.selectable_hit(sx, sy, 2.0) {
+        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
             let hit_ids = expand_to_groups_among(self.scene.iter_ordered(), [hit.id.clone()]);
             if additive {
                 let has = self.selected_ids.contains(&hit.id);
@@ -358,7 +358,7 @@ impl DrawEngine {
     }
 
     pub(crate) fn erase_at(&mut self, sx: f64, sy: f64) {
-        if let Some(hit) = self.selectable_hit(sx, sy, 4.0) {
+        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
             self.scene.remove(&hit.id, self.now_ms);
             if self.selected_ids.remove(&hit.id) {
                 self.events.selection = Some(self.get_selection());

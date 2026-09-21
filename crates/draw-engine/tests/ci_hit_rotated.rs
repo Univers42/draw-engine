@@ -14,7 +14,9 @@ const EIGHTH: f64 = std::f64::consts::FRAC_PI_4;
 /// A long rectangle turned upright is hit where it now is, not where it was.
 #[test]
 fn a_quarter_turn_moves_the_hit_area_with_the_shape() {
-    let mut element = box_at(0.0, 40.0, 200.0, 20.0);
+    // Filled: this is about where the shape is, not about whether its middle counts,
+    // which `ci_hit_fill` covers.
+    let mut element = filled(box_at(0.0, 40.0, 200.0, 20.0));
     element.angle = QUARTER;
     // Centre is (100, 50); upright, the bar now runs from y=-50 to y=150 at x=100.
     assert!(hit_test_element(&element, 100.0, 0.0, 0.0), "now covered");
@@ -28,7 +30,7 @@ fn a_quarter_turn_moves_the_hit_area_with_the_shape() {
 /// The case that reads as broken: a square turned 45 degrees.
 #[test]
 fn a_square_turned_45_degrees_is_hit_on_its_points_not_its_old_corners() {
-    let mut element = box_at(0.0, 0.0, 100.0, 100.0);
+    let mut element = filled(box_at(0.0, 0.0, 100.0, 100.0));
     element.angle = EIGHTH;
     // Centre (50, 50). The diamond's points reach ~70.7 from the centre along the axes.
     assert!(
@@ -45,7 +47,7 @@ fn a_square_turned_45_degrees_is_hit_on_its_points_not_its_old_corners() {
 /// sign error in the rotation.
 #[test]
 fn whole_turns_change_nothing() {
-    let plain = box_at(0.0, 0.0, 80.0, 40.0);
+    let plain = filled(box_at(0.0, 0.0, 80.0, 40.0));
     let mut turned = plain.clone();
     turned.angle = std::f64::consts::TAU;
     for (x, y) in [(5.0, 5.0), (79.0, 39.0), (-5.0, 20.0), (40.0, 20.0)] {
@@ -61,7 +63,7 @@ fn whole_turns_change_nothing() {
 /// not against a circle or the enclosing box.
 #[test]
 fn a_turned_ellipse_keeps_its_shape() {
-    let mut element = ellipse_at(0.0, 0.0, 200.0, 40.0);
+    let mut element = filled(ellipse_at(0.0, 0.0, 200.0, 40.0));
     element.angle = QUARTER;
     // Centre (100, 20); upright it is 40 wide and 200 tall.
     assert!(hit_test_element(&element, 100.0, -70.0, 0.0), "tall now");
@@ -127,7 +129,7 @@ fn rotated_bounds_match_plain_bounds_without_rotation() {
 /// A square turned 45 degrees spans its diagonal.
 #[test]
 fn rotated_bounds_span_the_diagonal() {
-    let mut element = box_at(0.0, 0.0, 100.0, 100.0);
+    let mut element = filled(box_at(0.0, 0.0, 100.0, 100.0));
     element.angle = EIGHTH;
     let b = element_rotated_bounds(&element);
     assert_close(b.max_x - b.min_x, 100.0 * std::f64::consts::SQRT_2);

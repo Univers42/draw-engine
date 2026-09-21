@@ -81,14 +81,21 @@ impl DrawEngine {
         if let Some(shape) = bindable_at(&selectable, wx, wy, 0.0, None) {
             return Some(shape.clone());
         }
-        crate::hit_test(&selectable, wx, wy, 2.0)
+        crate::hit_test(&selectable, wx, wy, self.collision_tolerance())
             .filter(|hit| is_linear_element(hit))
             .cloned()
     }
 
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
         let world = self.screen_to_world(sx, sy);
-        if let Some(hit) = crate::hit_test(&self.selectable(), world.x, world.y, 2.0).cloned() {
+        if let Some(hit) = crate::hit_test(
+            &self.selectable(),
+            world.x,
+            world.y,
+            self.collision_tolerance(),
+        )
+        .cloned()
+        {
             if hit.kind == DrawElementType::Text {
                 self.set_selection(vec![hit.id.clone()]);
                 self.request_text_edit(&hit);

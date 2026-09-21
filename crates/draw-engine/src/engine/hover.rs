@@ -124,6 +124,7 @@ impl DrawEngine {
             }
         }
 
+        let reach = self.collision_tolerance();
         // Anything grabbable under the pointer reads as movable. Locked elements
         // deliberately do not: they are not draggable, so promising otherwise is worse
         // than saying nothing.
@@ -131,7 +132,7 @@ impl DrawEngine {
             .scene
             .iter_ordered()
             .rev()
-            .any(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, 2.0))
+            .any(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, reach))
         {
             return HoverCursor::Move;
         }
