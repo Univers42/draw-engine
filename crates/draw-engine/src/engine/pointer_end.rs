@@ -72,6 +72,11 @@ impl DrawEngine {
                 self.set_selection(expanded);
             }
             _ => {
+                // Membership follows position, so it is settled once the gesture is:
+                // re-deriving it per pointer move would make an element flicker between
+                // frames as it crossed a border mid-drag, and would put a history-worthy
+                // change behind every sample.
+                self.refresh_frame_membership();
                 self.apply_bindings();
                 self.push_history();
                 self.request_draw();
@@ -79,14 +84,58 @@ impl DrawEngine {
         }
     }
 
-    fn end_draft(&mut self, id: &str) {
-        if let Some(element) = self.scene.get(id) {
-            if element.width < 2.0 && element.height < 2.0 {
-                self.scene.discard(id);
-                self.set_tool(DrawTool::Select);
-                self.request_draw();
-                return;
+    /// Re-derive which frame owns what, across the whole scene.
+    ///
+    /// Derived rather than remembered. A drag can change membership in both directions
+    /// at once — a shape leaves one frame as the frame it is leaving grows over another
+    /// — and tracking only the elements that moved would miss the second half of that.
+    pub(crate) fn refresh_frame_membership(&mut self) {
+        if !self.scene.iter_ordered().any(crate::scene::is_frame) {
+            return;
+        }
+        let mut changes: Vec<(String, Option<String>)> = Vec::new();
+        for element in self.scene.iter_ordered() {
+            if element.is_deleted || crate::scene::is_frame(element) {
+                continue;
             }
+            let owner = crate::scene::frame_for_element(self.scene.iter_ordered(), element);
+            if owner != element.frame_id {
+                changes.push((element.id.clone(), owner));
+            }
+        }
+        for (id, frame_id) in changes {
+            if let Some(mut element) = self.scene.get(&id).cloned() {
+                element.frame_id = frame_id;
+                self.scene
+                    .put(crate::scene::bump_version(element, self.now_ms));
+            }
+        }
+    }
+
+    fn end_draft(&mut self, id: &str) {
+        let is_frame = self.scene.get(id).is_some_and(crate::scene::is_frame);
+        // A frame needs more than a click's worth of drag to be worth keeping: below
+        // this it captures nothing and is almost impossible to grab again.
+        let too_small = match self.scene.get(id) {
+            Some(element) if is_frame => {
+                element.width.abs() < crate::scene::FRAME_MIN_SIZE
+                    && element.height.abs() < crate::scene::FRAME_MIN_SIZE
+            }
+            Some(element) => element.width < 2.0 && element.height < 2.0,
+            None => false,
+        };
+        if too_small {
+            self.scene.discard(id);
+            self.set_tool(DrawTool::Select);
+            self.request_draw();
+            return;
+        }
+        if is_frame {
+            // Drawing a frame over existing work adopts it. This is the whole point of
+            // the tool, and it is why capture is on containment rather than overlap:
+            // a frame that swept in everything it merely touched would take the
+            // neighbouring diagram with it.
+            self.refresh_frame_membership();
         }
         self.settle_tool();
         self.set_selection(vec![id.to_string()]);

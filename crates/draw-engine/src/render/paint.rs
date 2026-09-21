@@ -11,6 +11,18 @@ pub struct DrawTheme {
     pub background: String,
     pub grid: String,
     pub accent: String,
+    /// The colour a frame's name is written in.
+    ///
+    /// Part of the theme rather than a constant because it is the one piece of frame
+    /// chrome that sits on the canvas background instead of on the frame, so it is the
+    /// one piece that has to change when the background does.
+    #[serde(default = "default_frame_name_color")]
+    pub frame_name: String,
+}
+
+/// Excalidraw's `FRAME_STYLE.nameColorLightTheme`.
+fn default_frame_name_color() -> String {
+    crate::scene::FRAME_NAME_COLOR_LIGHT.into()
 }
 
 /// Excalidraw's `BINDING_HIGHLIGHT_RGB`, light theme.
@@ -30,6 +42,7 @@ pub fn light_theme() -> DrawTheme {
         // the selection frame was a different violet from the panels around it.
         accent: "#6965db".into(),
         binding_highlight: default_binding_highlight(),
+        frame_name: crate::scene::FRAME_NAME_COLOR_LIGHT.into(),
     }
 }
 
@@ -39,6 +52,7 @@ pub fn dark_theme() -> DrawTheme {
         grid: "rgba(255, 255, 255, 0.06)".into(),
         accent: "#a8a5ff".into(),
         binding_highlight: "rgb(104, 182, 240)".into(),
+        frame_name: crate::scene::FRAME_NAME_COLOR_DARK.into(),
     }
 }
 

@@ -48,7 +48,9 @@ export type DrawTool =
   | "text"
   | "eraser"
   /** A trail that follows the cursor and fades. Draws nothing into the scene. */
-  | "laser";
+  | "laser"
+  /** A named region that owns whatever is drawn inside it. */
+  | "frame";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";

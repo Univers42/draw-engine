@@ -52,6 +52,14 @@ pub use scene::{
     DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP,
     LABEL_PADDING,
 };
+pub use scene::{
+    default_frame_name, element_contains_frame, element_in_frame_bounds, element_intersects_frame,
+    element_outline, element_overlaps_frame, elements_captured_by, frame_children,
+    frame_clip_bounds, frame_for_element, frame_name_anchor, frame_style, is_frame,
+    needs_frame_clip, outline_edges, outline_is_closed, segments_intersect, FRAME_MIN_SIZE,
+    FRAME_NAME_COLOR_DARK, FRAME_NAME_COLOR_LIGHT, FRAME_NAME_FONT_SIZE, FRAME_NAME_LINE_HEIGHT,
+    FRAME_NAME_OFFSET_Y, FRAME_RADIUS, FRAME_STROKE, FRAME_STROKE_WIDTH,
+};
 pub use selection::{
     elements_in_lasso, elements_in_marquee, elements_in_marquee_among, handle_local_point,
     hit_handle, marquee_rect, polygon_contains_point, resize_element, rotate_element, rotate_point,

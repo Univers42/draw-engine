@@ -42,6 +42,7 @@ impl DrawEngine {
                 }
                 self.request_draw();
             }
+            DrawTool::Frame => self.begin_frame(world),
             DrawTool::Laser => {
                 // Deliberately the unsnapped point. A laser follows the cursor; snapping
                 // it to the grid would make the beam jump between intersections while the
@@ -59,6 +60,30 @@ impl DrawEngine {
             }
             _ => self.begin_select(sx, sy, world, additive, duplicate),
         }
+    }
+
+    /// A frame is dragged out like a shape, but it is chrome rather than a drawing.
+    ///
+    /// It takes none of the current element style: a frame is always the same grey, at
+    /// the same weight, with the same corners, so it reads as a boundary rather than as
+    /// something someone drew. That is why this cannot just be another shape tool.
+    fn begin_frame(&mut self, world: Point) {
+        let mut element = create_element(
+            DrawElementType::Frame,
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            crate::scene::frame_style(),
+            self.now_ms,
+        );
+        element.name = Some(crate::scene::default_frame_name(self.scene.iter_ordered()));
+        let id = element.id.clone();
+        self.scene.add(element);
+        self.interaction = Some(Interaction::Draft { id, start: world });
+        self.request_draw();
     }
 
     fn begin_shape(&mut self, world: Point) {
@@ -353,7 +378,28 @@ impl DrawEngine {
 
     fn begin_move(&mut self, world: Point) {
         let mut origins = std::collections::HashMap::new();
-        for element in self.get_selected_elements() {
+        // A frame carries what it contains. Expanding the set here rather than moving
+        // children separately means one code path moves everything: the children snap,
+        // re-bind and undo exactly as they would if you had selected them yourself.
+        let mut moving_elements = self.get_selected_elements();
+        let frame_ids: Vec<String> = moving_elements
+            .iter()
+            .filter(|el| crate::scene::is_frame(el))
+            .map(|el| el.id.clone())
+            .collect();
+        for frame_id in frame_ids {
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame_id) {
+                if origins.contains_key(&child_id) {
+                    continue;
+                }
+                if let Some(child) = self.scene.get(&child_id) {
+                    if !moving_elements.iter().any(|el| el.id == child_id) {
+                        moving_elements.push(child.clone());
+                    }
+                }
+            }
+        }
+        for element in moving_elements {
             if !element.locked() {
                 origins.insert(
                     element.id.clone(),
