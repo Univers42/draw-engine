@@ -37,6 +37,35 @@ impl DrawEngine {
                 }
                 Some(it)
             }
+            Interaction::ResizeGroup {
+                ref ids,
+                handle,
+                ref frame,
+            } => {
+                let elements: Vec<DrawElement> = ids
+                    .iter()
+                    .filter_map(|id| self.scene.get(id).cloned())
+                    .collect();
+                for next in crate::selection::group_transform::resize_group(
+                    &elements, frame, handle, world, square,
+                ) {
+                    self.scene.put(next);
+                }
+                self.request_draw();
+                Some(it)
+            }
+            Interaction::RotateGroup { ref ids, ref frame } => {
+                let elements: Vec<DrawElement> = ids
+                    .iter()
+                    .filter_map(|id| self.scene.get(id).cloned())
+                    .collect();
+                for next in crate::selection::group_transform::rotate_group(&elements, frame, world)
+                {
+                    self.scene.put(next);
+                }
+                self.request_draw();
+                Some(it)
+            }
             Interaction::LinearPoint { ref id, handle } => {
                 self.move_linear_point(id, handle, world, square);
                 // A midpoint drag inserts a point and then *becomes* a drag of that new

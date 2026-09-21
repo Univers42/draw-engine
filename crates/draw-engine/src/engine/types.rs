@@ -58,6 +58,21 @@ pub(crate) enum Interaction {
     Rotate {
         id: String,
     },
+    /// Resizing a multi-element selection within its frame.
+    ///
+    /// Carries the frame captured at the start of the gesture rather than recomputing
+    /// it per move: recomputing from the elements as they change compounds rounding on
+    /// every pointer event, and the group slowly drifts.
+    ResizeGroup {
+        ids: Vec<String>,
+        handle: HandleKind,
+        frame: crate::selection::GroupFrame,
+    },
+    /// Rotating a multi-element selection about its centre.
+    RotateGroup {
+        ids: Vec<String>,
+        frame: crate::selection::GroupFrame,
+    },
     /// Dragging one point of a line or arrow.
     ///
     /// Separate from `Resize` because a linear element is edited by its points, not by

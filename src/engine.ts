@@ -122,6 +122,20 @@ export class DrawEngine {
     return this.inner.cutSelection() ?? null;
   }
 
+  /**
+   * Merges a peer's elements into the scene by id, last-writer-wins.
+   *
+   * Use this for anything arriving over the wire. `pasteJson` mints a new id for every
+   * element — correct for a paste, catastrophic for a merge: it turns each incoming
+   * edit into a duplicate, and the resulting change is broadcast back, so two clients
+   * grow the board without bound.
+   *
+   * Returns whether anything actually changed, so an echo costs nothing.
+   */
+  applyRemotePatch(json: string): boolean {
+    return this.inner.applyRemotePatch(json);
+  }
+
   pasteJson(json?: string | null, at?: { x: number; y: number }): boolean {
     return this.inner.pasteJson(json ?? undefined, at?.x, at?.y);
   }

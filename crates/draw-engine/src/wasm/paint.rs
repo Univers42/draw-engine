@@ -478,17 +478,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     if view.selected.len() == 1 {
         paint_shape_selection(ctx, view, view.selected[0]);
     } else if view.selected.len() > 1 {
-        if let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) {
-            let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
-            let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
-            let pad = SELECTION_PADDING_PX;
-            ctx.stroke_rect(
-                tl.x - pad,
-                tl.y - pad,
-                (br.x - tl.x) + pad * 2.0,
-                (br.y - tl.y) + pad * 2.0,
-            );
-        }
+        paint_group_selection(ctx, view);
     }
 }
 
@@ -531,6 +521,44 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
     }
 }
 
+/// The frame, corner handles and rotation handle for a multi-element selection.
+///
+/// These used to be absent entirely: a multi-selection got a bare rectangle with no
+/// handles, so dragging its corner fell through to the hit test and started a marquee.
+/// A group could only ever be moved, never scaled or turned.
+fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) else {
+        return;
+    };
+
+    let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
+    let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
+    ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+    let half = view.handle_px / 2.0;
+    // `rotate_gap` is in world units; the overlay paints in screen space.
+    let rotate_y = tl.y - view.rotate_gap * view.camera.scale;
+
+    // Corners, matching what a single shape gets, plus the rotation circle above.
+    for (x, y, is_rotate) in [
+        (tl.x, tl.y, false),
+        (br.x, tl.y, false),
+        (br.x, br.y, false),
+        (tl.x, br.y, false),
+        ((tl.x + br.x) / 2.0, rotate_y, true),
+    ] {
+        ctx.begin_path();
+        if is_rotate {
+            let _ = ctx.arc(x, y, half, 0.0, std::f64::consts::PI * 2.0);
+        } else {
+            ctx.rect(x - half, y - half, view.handle_px, view.handle_px);
+        }
+        set_fill(ctx, &view.theme.background);
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
 /// A circle on each point of a line or arrow, filled at the midpoints.
 ///
 /// Hollow for a real point, filled for a midpoint, which is how Excalidraw
@@ -559,53 +587,152 @@ fn paint_linear_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 
 /// Outlines the shape a dragged arrow endpoint would attach to.
 ///
-/// Excalidraw strokes the element's own outline with a thick translucent halo rather
-/// than boxing it, so the highlight hugs the shape and reads as "this edge", not "this
-/// area". Without any such hint, binding is invisible until after the fact and feels
-/// like a coincidence rather than a tool.
+/// Transcribed from Excalidraw's `renderBindingHighlightForBindableElement`, after
+/// sampling the real thing: the highlight is a **thin, fully opaque stroke that traces
+/// the element's own outline**, not a glow and not a box. Reading their source gives
+/// `lineWidth = clamp(1.75, strokeWidth, 4)` and `rgba(BINDING_HIGHLIGHT_RGB, 1)`;
+/// sampling excalidraw.com's interactive canvas gives rgb(106, 189, 252), which is
+/// exactly their light-theme constant.
+///
+/// It reuses the same segment builders the shape itself is drawn from, so the highlight
+/// follows a rounded rectangle's actual corners rather than a sharp box around it —
+/// they cannot drift apart.
 fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     let Some(element) = view.binding_highlight else {
         return;
     };
+
     let rect =
         crate::scene::geometry::normalize_rect(element.x, element.y, element.width, element.height);
-
-    let tl = crate::world_to_screen(view.camera, rect.x, rect.y);
-    let br = crate::world_to_screen(view.camera, rect.x + rect.width, rect.y + rect.height);
-    let (w, h) = (br.x - tl.x, br.y - tl.y);
-    let (cx, cy) = (tl.x + w / 2.0, tl.y + h / 2.0);
+    let scale = view.camera.scale;
 
     ctx.save();
-    set_stroke(ctx, &view.theme.accent);
-    ctx.set_line_width(8.0);
-    ctx.set_global_alpha(0.35);
+    set_stroke(ctx, view.theme.binding_highlight.as_str());
+    // Excalidraw: clamp(1.75, strokeWidth, 4), held constant in screen pixels.
+    ctx.set_line_width(element.stroke_width.max(1.75).min(4.0));
     let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
-    ctx.begin_path();
 
+    // The overlay paints in screen space, so the element transform is applied here
+    // rather than to the context in world units.
+    let to_screen = |x: f64, y: f64| {
+        let (x, y) = if element.angle == 0.0 {
+            (x, y)
+        } else {
+            let cx = rect.x + rect.width / 2.0;
+            let cy = rect.y + rect.height / 2.0;
+            let (sin, cos) = element.angle.sin_cos();
+            let dx = x - cx;
+            let dy = y - cy;
+            (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+        };
+        crate::world_to_screen(view.camera, x, y)
+    };
+
+    ctx.begin_path();
     match element.kind {
         DrawElementType::Ellipse => {
-            let _ = ctx.ellipse(
-                cx,
-                cy,
-                (w / 2.0).abs(),
-                (h / 2.0).abs(),
-                0.0,
-                0.0,
-                std::f64::consts::PI * 2.0,
-            );
+            // Traced as a polyline so the element's rotation can be applied per point;
+            // ctx.ellipse cannot express a rotation about a different centre.
+            let steps = 64;
+            for i in 0..=steps {
+                let t = (i as f64 / steps as f64) * std::f64::consts::PI * 2.0;
+                let p = to_screen(
+                    rect.x + rect.width / 2.0 + (rect.width / 2.0) * t.cos(),
+                    rect.y + rect.height / 2.0 + (rect.height / 2.0) * t.sin(),
+                );
+                if i == 0 {
+                    ctx.move_to(p.x, p.y);
+                } else {
+                    ctx.line_to(p.x, p.y);
+                }
+            }
         }
         DrawElementType::Diamond => {
-            ctx.move_to(cx, tl.y);
-            ctx.line_to(br.x, cy);
-            ctx.line_to(cx, br.y);
-            ctx.line_to(tl.x, cy);
+            let pts = crate::render::shape::diamond_points(rect.width, rect.height);
+            let first = to_screen(rect.x + pts[0][0], rect.y + pts[0][1]);
+            ctx.move_to(first.x, first.y);
+            for p in &pts[1..] {
+                let s = to_screen(rect.x + p[0], rect.y + p[1]);
+                ctx.line_to(s.x, s.y);
+            }
             ctx.close_path();
         }
         _ => {
-            ctx.rect(tl.x, tl.y, w, h);
+            if element.roundness.is_some() {
+                // The same path the shape itself is generated from, so the highlight
+                // hugs the real rounded corners.
+                let r = crate::render::shape::corner_radius(rect.width.min(rect.height), element);
+                replay_segments(
+                    ctx,
+                    &crate::render::shape::rounded_rect_segments(rect.width, rect.height, r),
+                    rect.x,
+                    rect.y,
+                    &to_screen,
+                );
+                ctx.close_path();
+            } else {
+                let tl = to_screen(rect.x, rect.y);
+                let tr = to_screen(rect.x + rect.width, rect.y);
+                let br = to_screen(rect.x + rect.width, rect.y + rect.height);
+                let bl = to_screen(rect.x, rect.y + rect.height);
+                ctx.move_to(tl.x, tl.y);
+                ctx.line_to(tr.x, tr.y);
+                ctx.line_to(br.x, br.y);
+                ctx.line_to(bl.x, bl.y);
+                ctx.close_path();
+            }
         }
     }
 
     ctx.stroke();
     ctx.restore();
+    let _ = scale;
+}
+
+/// Replays path segments into the context, mapped through `to_screen`.
+///
+/// Cubics are flattened rather than passed to `bezier_curve_to`, because each control
+/// point has to go through the same world-to-screen mapping and a rotation cannot be
+/// applied to a bezier by transforming its endpoints alone.
+fn replay_segments(
+    ctx: &CanvasRenderingContext2d,
+    segments: &[draw_rough::renderer::Segment],
+    ox: f64,
+    oy: f64,
+    to_screen: &dyn Fn(f64, f64) -> crate::camera::Point,
+) {
+    use draw_rough::renderer::Segment;
+    let mut cur = [0.0f64, 0.0];
+
+    for seg in segments {
+        match *seg {
+            Segment::MoveTo(p) => {
+                let s = to_screen(ox + p[0], oy + p[1]);
+                ctx.move_to(s.x, s.y);
+                cur = p;
+            }
+            Segment::LineTo(p) => {
+                let s = to_screen(ox + p[0], oy + p[1]);
+                ctx.line_to(s.x, s.y);
+                cur = p;
+            }
+            Segment::CurveTo([x1, y1, x2, y2, x, y]) => {
+                const STEPS: usize = 12;
+                for i in 1..=STEPS {
+                    let t = i as f64 / STEPS as f64;
+                    let mt = 1.0 - t;
+                    let a = mt * mt * mt;
+                    let b = 3.0 * mt * mt * t;
+                    let c = 3.0 * mt * t * t;
+                    let d = t * t * t;
+                    let px = a * cur[0] + b * x1 + c * x2 + d * x;
+                    let py = a * cur[1] + b * y1 + c * y2 + d * y;
+                    let s = to_screen(ox + px, oy + py);
+                    ctx.line_to(s.x, s.y);
+                }
+                cur = [x, y];
+            }
+            Segment::Close => ctx.close_path(),
+        }
+    }
 }

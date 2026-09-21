@@ -142,6 +142,51 @@ impl DrawEngine {
         });
     }
 
+    /// Corner and rotation handles for a multi-element selection.
+    ///
+    /// Without this a group could only be moved: dragging its corner fell through to
+    /// the hit test and started a marquee instead, so a multi-selection could never be
+    /// scaled or turned.
+    fn begin_group_transform(&self, world: Point) -> Option<Interaction> {
+        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
+        let elements: Vec<crate::scene::DrawElement> = ids
+            .iter()
+            .filter_map(|id| self.scene.get(id).cloned())
+            .filter(|e| !e.locked())
+            .collect();
+        if elements.len() < 2 {
+            return None;
+        }
+
+        let frame = crate::selection::GroupFrame::capture(elements.iter())?;
+        let b = frame.bounds;
+        let tol = super::HANDLE_HIT_PX / self.camera.scale;
+        let gap = super::ROTATE_GAP_PX / self.camera.scale;
+
+        let candidates = [
+            (HandleKind::Nw, b.min_x, b.min_y),
+            (HandleKind::Ne, b.max_x, b.min_y),
+            (HandleKind::Se, b.max_x, b.max_y),
+            (HandleKind::Sw, b.min_x, b.max_y),
+            (HandleKind::Rotate, (b.min_x + b.max_x) / 2.0, b.min_y - gap),
+        ];
+
+        for (kind, hx, hy) in candidates {
+            if (world.x - hx).hypot(world.y - hy) <= tol {
+                return Some(if kind == HandleKind::Rotate {
+                    Interaction::RotateGroup { ids, frame }
+                } else {
+                    Interaction::ResizeGroup {
+                        ids,
+                        handle: kind,
+                        frame,
+                    }
+                });
+            }
+        }
+        None
+    }
+
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         if let Some(single) = self.single_selected() {
             if !single.locked() {
@@ -195,6 +240,14 @@ impl DrawEngine {
                 }
             }
         }
+        // More than one element selected: the handles belong to the group's frame.
+        if self.selected_ids.len() > 1 {
+            if let Some(interaction) = self.begin_group_transform(world) {
+                self.interaction = Some(interaction);
+                return;
+            }
+        }
+
         if let Some(hit) = self.selectable_hit(sx, sy, 2.0) {
             let hit_ids = expand_to_groups(&self.scene.ordered_cloned(), [hit.id.clone()]);
             if additive {
