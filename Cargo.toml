@@ -1,7 +1,11 @@
 [workspace]
-members = ["crates/draw-engine"]
+members = ["crates/draw-engine", "crates/draw-rough"]
 resolver = "2"
 
+# opt-level "s" costs roughly 1.5-2x on the geometry loops this engine is made of, and
+# the size saving is small once wasm-opt has run. Shape generation is the hot path;
+# optimise it for speed.
 [profile.release]
-lto = true
-opt-level = "s"
+lto = "fat"
+codegen-units = 1
+opt-level = 3

@@ -1,0 +1,18 @@
+[package]
+name = "draw-rough"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A faithful Rust port of rough.js 4.6.4, bit-compatible with the JS original."
+
+[lib]
+crate-type = ["rlib"]
+
+# Deliberately dependency-free. This crate knows nothing about DrawElement, the scene,
+# or wasm — it is a pure transcription whose only job is to agree with rough.js. serde is
+# test-only, for replaying the oracle fixtures.
+[dependencies]
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
