@@ -50,7 +50,7 @@ pub struct DrawEngine {
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
-    history: SnapshotHistory<Vec<DrawElement>>,
+    history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
     events: EngineEvents,
 }
 

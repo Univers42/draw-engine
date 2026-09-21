@@ -14,8 +14,22 @@
 //!
 //! Tombstones stay in the `Vec` — deletion is soft, so the merge rule can tell "deleted"
 //! from "never seen" — and are skipped by the ordered iterators.
+//!
+//! # Why the elements are behind `Rc`
+//!
+//! Undo takes a snapshot of the whole scene on every mutation. Holding elements
+//! directly meant deep-copying every one of them — three `String`s and a point vector
+//! apiece — for the act of drawing a single shape, so the cost of drawing grew with the
+//! size of the board.
+//!
+//! Behind an `Rc`, a snapshot is a vector of refcount bumps. Mutation goes through
+//! `Rc::make_mut`, which clones an element only when a snapshot still refers to it —
+//! so the first change after a snapshot copies that one element and nothing else. This
+//! engine is single-threaded (it runs in one WASM instance), so `Rc` is the right tool
+//! and `Arc` would only add atomics.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::camera::WorldBounds;
 use crate::scene::element::DrawElement;
@@ -24,7 +38,7 @@ use crate::scene::geometry::scene_bounds;
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     /// Every element, live and tombstoned, in z-order.
-    elements: Vec<DrawElement>,
+    elements: Vec<Rc<DrawElement>>,
     /// Element id to its position in `elements`.
     index: HashMap<String, usize>,
     /// Ids touched since the last [`Self::take_delta`].
@@ -73,7 +87,10 @@ impl Scene {
     /// This is the accessor for every per-frame and per-event path. Prefer it to
     /// [`Self::ordered_cloned`] anywhere that runs more than once per user action.
     pub fn iter_ordered(&self) -> impl Iterator<Item = &DrawElement> {
-        self.elements.iter().filter(|element| !element.is_deleted)
+        self.elements
+            .iter()
+            .map(Rc::as_ref)
+            .filter(|element| !element.is_deleted)
     }
 
     /// Live elements in z-order, cloned.
@@ -93,17 +110,21 @@ impl Scene {
     }
 
     pub fn get(&self, id: &str) -> Option<&DrawElement> {
-        self.index.get(id).map(|&i| &self.elements[i])
+        self.index.get(id).map(|&i| self.elements[i].as_ref())
     }
 
     /// Mutable access to one element, without disturbing z-order or the index.
     ///
     /// This is how a drag should move an element: no clone, no reinsert, no
     /// invalidation of anything.
+    /// Mutable access to one element, without disturbing z-order or the index.
+    ///
+    /// Copy-on-write: `Rc::make_mut` clones the element only if a history snapshot
+    /// still holds it, so a drag that touches one shape copies one shape.
     pub fn update<F: FnOnce(&mut DrawElement)>(&mut self, id: &str, f: F) -> bool {
         match self.index.get(id) {
             Some(&i) => {
-                f(&mut self.elements[i]);
+                f(Rc::make_mut(&mut self.elements[i]));
                 self.dirty.insert(id.to_string());
                 true
             }
@@ -124,10 +145,10 @@ impl Scene {
     pub fn put(&mut self, element: DrawElement) {
         self.dirty.insert(element.id.clone());
         match self.index.get(&element.id) {
-            Some(&i) => self.elements[i] = element,
+            Some(&i) => self.elements[i] = Rc::new(element),
             None => {
                 self.index.insert(element.id.clone(), self.elements.len());
-                self.elements.push(element);
+                self.elements.push(Rc::new(element));
             }
         }
     }
@@ -169,14 +190,14 @@ impl Scene {
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
-        let mut next: Vec<DrawElement> = self
+        let mut next: Vec<Rc<DrawElement>> = self
             .elements
             .iter()
             .filter(|element| element.is_deleted)
             .filter(|element| !live.iter().any(|l| l.id == element.id))
             .cloned()
             .collect();
-        next.extend(live);
+        next.extend(live.into_iter().map(Rc::new));
         self.elements = next;
         self.reindex();
         self.structural = true;
@@ -196,7 +217,7 @@ impl Scene {
 
         let mut delta = SceneDelta::default();
         for id in dirty {
-            match self.index.get(&id).map(|&i| &self.elements[i]) {
+            match self.index.get(&id).map(|&i| self.elements[i].as_ref()) {
                 Some(element) if element.is_deleted => delta.removed.push(id),
                 Some(element) => delta.updated.push(element.clone()),
                 // Gone entirely — that is a hard delete, which sets `structural`, so
@@ -219,9 +240,31 @@ impl Scene {
         scene_bounds(self.iter_ordered())
     }
 
-    /// Everything, tombstones included, in z-order.
+    /// Everything, tombstones included, in z-order, as owned elements.
+    ///
+    /// Deep-copies. For an undo snapshot use [`Self::snapshot`], which does not.
     pub fn to_array(&self) -> Vec<DrawElement> {
+        self.elements.iter().map(|e| (**e).clone()).collect()
+    }
+
+    /// A snapshot of the whole scene for undo.
+    ///
+    /// Cheap: a vector of refcount bumps, not a deep copy. The elements stay shared
+    /// until something modifies one, at which point [`Self::update`] copies just that
+    /// element.
+    pub fn snapshot(&self) -> Vec<Rc<DrawElement>> {
         self.elements.clone()
+    }
+
+    /// Restores a snapshot taken by [`Self::snapshot`].
+    pub fn from_snapshot(snapshot: Vec<Rc<DrawElement>>) -> Self {
+        let mut scene = Self {
+            elements: snapshot,
+            ..Default::default()
+        };
+        scene.reindex();
+        scene.structural = true;
+        scene
     }
 }
 

@@ -86,7 +86,7 @@ pub(crate) fn default_measure(text: &str, font_size: f64) -> (f64, f64) {
 ///
 /// Coordinates are rounded before hashing, as before, so a sub-pixel jitter does not
 /// create a history entry.
-pub(crate) fn history_signature(elements: &[DrawElement]) -> u64 {
+pub(crate) fn history_signature(elements: &[std::rc::Rc<DrawElement>]) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

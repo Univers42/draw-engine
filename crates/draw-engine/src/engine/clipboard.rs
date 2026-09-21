@@ -7,7 +7,7 @@ use crate::scene::DrawElement;
 
 impl DrawEngine {
     pub(super) fn push_history(&mut self) {
-        self.history.push(self.scene.to_array());
+        self.history.push(self.scene.snapshot());
         self.emit_scene_change();
     }
 
@@ -29,14 +29,14 @@ impl DrawEngine {
     }
 
     pub(super) fn reset_history(&mut self) {
-        self.history.reset(self.scene.to_array());
+        self.history.reset(self.scene.snapshot());
     }
 
-    fn apply_snapshot(&mut self, snapshot: Option<Vec<DrawElement>>) {
+    fn apply_snapshot(&mut self, snapshot: Option<Vec<std::rc::Rc<DrawElement>>>) {
         let Some(snapshot) = snapshot else {
             return;
         };
-        self.scene = crate::scene::Scene::new(snapshot);
+        self.scene = crate::scene::Scene::from_snapshot(snapshot);
         self.selected_ids.clear();
         self.events.selection = Some(Vec::new());
         self.request_draw();
