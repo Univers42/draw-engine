@@ -270,10 +270,17 @@ impl DrawEngine {
                     } else {
                         None
                     };
+                    let origin = crate::selection::Geometry {
+                        x: single.x,
+                        y: single.y,
+                        width: single.width,
+                        height: single.height,
+                    };
                     self.interaction = Some(Interaction::Resize {
                         id: single.id,
                         handle,
                         ratio,
+                        origin,
                     });
                     return;
                 }

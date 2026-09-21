@@ -119,8 +119,9 @@ impl DrawEngine {
                 ref id,
                 handle,
                 ratio,
+                origin,
             } => {
-                self.move_resize(id, handle, world, square, ratio);
+                self.move_resize(id, handle, world, square, ratio, origin);
                 Some(it)
             }
             Interaction::Rotate { ref id } => {
@@ -368,12 +369,21 @@ impl DrawEngine {
         world: Point,
         square: bool,
         ratio: Option<f64>,
+        origin: crate::selection::Geometry,
     ) {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
+        // Measured from where the element was when the drag started, so the anchor is
+        // fixed for the whole gesture. Reading the live element instead let the anchor
+        // follow the pointer the moment the element turned through it.
+        let mut from = element.clone();
+        from.x = origin.x;
+        from.y = origin.y;
+        from.width = origin.width;
+        from.height = origin.height;
         let geom = resize_element(
-            &element,
+            &from,
             handle,
             world.x,
             world.y,

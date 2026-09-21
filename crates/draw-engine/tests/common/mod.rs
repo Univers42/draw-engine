@@ -116,10 +116,20 @@ pub fn opposite_handle(handle: HandleKind) -> HandleKind {
     }
 }
 
+/// Where a handle sits, matching what the engine's `selection_handles` computes.
+///
+/// The half-extents are **absolute**. A negative extent means the element is mirrored,
+/// not that it is inside out: it occupies the same box and its north-west handle is still
+/// visually north-west. Using the signed value here put the handles on mirrored positions
+/// and made this helper disagree with the code it is used to check.
 pub fn handle_world(element: &DrawElement, handle: HandleKind) -> Point {
     let cx = element.x + element.width / 2.0;
     let cy = element.y + element.height / 2.0;
-    let local = handle_local_point(handle, element.width / 2.0, element.height / 2.0);
+    let local = handle_local_point(
+        handle,
+        element.width.abs() / 2.0,
+        element.height.abs() / 2.0,
+    );
     let cos = element.angle.cos();
     let sin = element.angle.sin();
     Point {

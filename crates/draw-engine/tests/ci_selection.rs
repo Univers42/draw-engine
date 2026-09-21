@@ -2,20 +2,50 @@ mod common;
 use common::*;
 use draw_engine::*;
 
+/// The corner opposite the handle is the anchor, and resizing must not move it.
+///
+/// Asserted as a **point**, not as a named handle. If the drag carries the pointer past
+/// the anchor the element turns through and comes out mirrored, and the anchor point is
+/// then the opposite corner of the new box — still in exactly the same place, but no
+/// longer the corner it started as. Checking `handle_world(resized, opposite)` would
+/// report that legitimate flip as the anchor having moved.
 fn assert_resize_anchor(handle: HandleKind, target: Point, aspect: Option<f64>, angle: f64) {
     let mut element = box_at(20.0, 10.0, 80.0, 40.0);
     element.angle = angle;
-    let before = handle_world(&element, opposite_handle(handle));
+    let anchor = handle_world(&element, opposite_handle(handle));
+
     let geom = resize_element(&element, handle, target.x, target.y, 4.0, aspect);
     let mut resized = element.clone();
     resized.x = geom.x;
     resized.y = geom.y;
     resized.width = geom.width;
     resized.height = geom.height;
-    let after = handle_world(&resized, opposite_handle(handle));
-    assert_point_close(before, after);
-    assert!(geom.width >= 4.0);
-    assert!(geom.height >= 4.0);
+
+    assert!(
+        corner_stays_put(&resized, anchor),
+        "the anchor at ({}, {}) moved; box is now {:?}",
+        anchor.x,
+        anchor.y,
+        (geom.x, geom.y, geom.width, geom.height)
+    );
+    // Magnitude, not value: a negative extent is a mirror, and it is still that size.
+    assert!(geom.width.abs() >= 4.0);
+    assert!(geom.height.abs() >= 4.0);
+}
+
+/// Whether `point` is still one of the element's four corners.
+fn corner_stays_put(element: &DrawElement, point: Point) -> bool {
+    [
+        HandleKind::Nw,
+        HandleKind::Ne,
+        HandleKind::Se,
+        HandleKind::Sw,
+    ]
+    .into_iter()
+    .any(|kind| {
+        let c = handle_world(element, kind);
+        (c.x - point.x).abs() < EPS && (c.y - point.y).abs() < EPS
+    })
 }
 
 #[test]
@@ -70,13 +100,87 @@ fn resize_w_handle_preserves_height() {
     assert_close(geom.width, 120.0);
 }
 
+/// Dragging a handle past its anchor turns the element through and out the other side,
+/// mirrored — it does not stop dead against the anchor.
+///
+/// This used to assert a clamp to the minimum size on the *original* side, which is what
+/// the rebound was: the element shrank to nothing as the pointer approached the anchor
+/// and then grew again on the side it started from, so it appeared to bounce off.
 #[test]
-fn resize_clamped_to_min_size() {
+fn a_handle_dragged_past_its_anchor_turns_the_element_through() {
     let element = box_at(50.0, 50.0, 60.0, 60.0);
-    // Drag handle past opposite side:
-    let geom = resize_element(&element, HandleKind::Se, 51.0, 51.0, 4.0, None);
-    assert_close(geom.width, 4.0);
-    assert_close(geom.height, 4.0);
+
+    // Just short of the anchor: still the right way round, nearly collapsed.
+    let near = resize_element(&element, HandleKind::Se, 54.0, 54.0, 1.0, None);
+    assert!(near.width > 0.0 && near.width < 6.0);
+
+    // Well past it: the same size, on the other side, and mirrored.
+    let through = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+    assert_close(through.width, -40.0);
+    assert_close(through.height, -40.0);
+    assert_close(
+        normalize_rect(through.x, through.y, through.width, through.height).x,
+        10.0,
+    );
+
+    // The anchor stays exactly where it was through all of it — though once the element
+    // has turned through, the point it sits on is the box's opposite corner.
+    let anchor = handle_world(&element, HandleKind::Nw);
+    for geom in [near, through] {
+        let mut probe = element.clone();
+        probe.x = geom.x;
+        probe.y = geom.y;
+        probe.width = geom.width;
+        probe.height = geom.height;
+        assert!(corner_stays_put(&probe, anchor));
+    }
+}
+
+/// Turning through a second time returns the element the right way round.
+#[test]
+fn turning_through_twice_comes_back() {
+    let element = box_at(50.0, 50.0, 60.0, 60.0);
+    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+
+    let mut mirrored = element.clone();
+    mirrored.x = once.x;
+    mirrored.y = once.y;
+    mirrored.width = once.width;
+    mirrored.height = once.height;
+    assert!(mirrored.width < 0.0 && mirrored.height < 0.0);
+
+    // It now occupies [10, 50]; its south-east handle is at (50, 50) and the anchor
+    // opposite that is (10, 10). Drag the handle out through *that* anchor.
+    let twice = resize_element(&mirrored, HandleKind::Se, -30.0, -30.0, 1.0, None);
+    assert!(twice.width > 0.0, "back the right way round");
+    assert!(twice.height > 0.0);
+}
+
+/// Growing a mirrored element does not quietly un-mirror it. Only turning it back
+/// through its anchor does that.
+#[test]
+fn growing_a_mirrored_element_keeps_it_mirrored() {
+    let element = box_at(50.0, 50.0, 60.0, 60.0);
+    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+    let mut mirrored = element.clone();
+    mirrored.x = once.x;
+    mirrored.y = once.y;
+    mirrored.width = once.width;
+    mirrored.height = once.height;
+
+    // Away from the anchor at (10, 10), so no flip.
+    let bigger = resize_element(&mirrored, HandleKind::Se, 110.0, 110.0, 1.0, None);
+    assert!(bigger.width < 0.0, "still mirrored");
+    assert_close(bigger.width.abs(), 100.0);
+}
+
+/// The minimum is a floor on size, not a wall the pointer collides with.
+#[test]
+fn the_minimum_size_applies_to_either_side() {
+    let element = box_at(50.0, 50.0, 60.0, 60.0);
+    let geom = resize_element(&element, HandleKind::Se, 49.0, 49.0, 4.0, None);
+    assert_close(geom.width.abs(), 4.0);
+    assert!(geom.width < 0.0, "and on the far side of the anchor");
 }
 
 #[test]
@@ -148,4 +252,60 @@ fn hit_handle_detection() {
     let nw = &handles[0];
     assert_eq!(hit_handle(&handles, nw.x, nw.y, 5.0), Some(nw.kind));
     assert_eq!(hit_handle(&handles, 500.0, 500.0, 5.0), None);
+}
+
+/// A whole drag, not a single call: the anchor must hold still for the entire gesture.
+///
+/// `resize_element` is given the element's geometry as it was when the drag began. Read
+/// from the *live* element instead and the anchor is fine while the element stays the
+/// right way round, then walks along with the pointer the moment it turns through — the
+/// box stops growing and creeps sideways, one step per pointer move.
+#[test]
+fn the_anchor_holds_still_across_a_drag_that_turns_the_element_through() {
+    let mut element = box_at(400.0, 300.0, 200.0, 150.0);
+    element.id = "r".into();
+    let mut engine = engine_with_scene(vec![element]);
+    engine.select(vec!["r".to_string()]);
+
+    // Grab the south-east handle; the anchor is the north-west corner at (400, 300).
+    engine.begin_pointer(608.0, 458.0, false, false);
+
+    let visible = |engine: &DrawEngine| {
+        let el = engine
+            .get_scene()
+            .into_iter()
+            .find(|e| e.id == "r")
+            .unwrap();
+        let lo = el.x.min(el.x + el.width);
+        (lo, lo + el.width.abs())
+    };
+
+    let mut previous = f64::INFINITY;
+    let mut x = 600.0;
+    while x >= 160.0 {
+        engine.move_pointer(x, 458.0, false, false);
+        let (lo, hi) = visible(&engine);
+
+        assert!(
+            (lo - 400.0).abs() < 1.0 || (hi - 400.0).abs() < 1.0,
+            "the anchor left x=400 at pointer {x}: box is [{lo}, {hi}]"
+        );
+        assert!(
+            lo <= previous + 1.0,
+            "the left edge went backwards at pointer {x}: {lo} after {previous}"
+        );
+        previous = lo;
+        x -= 20.0;
+    }
+    engine.end_pointer();
+
+    // Well past the anchor, and mirrored.
+    let el = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| e.id == "r")
+        .unwrap();
+    assert!(el.width < 0.0, "turned through, so mirrored");
+    assert_close(el.x, 400.0);
+    assert_close(el.width, -240.0);
 }

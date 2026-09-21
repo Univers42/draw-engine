@@ -54,6 +54,16 @@ pub(crate) enum Interaction {
         id: String,
         handle: HandleKind,
         ratio: Option<f64>,
+        /// The element's geometry when the drag began.
+        ///
+        /// Resizing reads from this, never from the live element. The anchor is the
+        /// corner opposite the handle, and deriving it from the *current* geometry works
+        /// only while the element stays the right way round: once a drag carries the
+        /// pointer past the anchor and the element turns through, "the corner opposite
+        /// the handle" names the far side of the new box, so the anchor walks along with
+        /// the pointer and the element can never grow past it. Holding the original also
+        /// keeps a long drag free of accumulated rounding.
+        origin: crate::selection::Geometry,
     },
     Rotate {
         id: String,
