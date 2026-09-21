@@ -2,7 +2,7 @@ use crate::edit::expand_to_groups_among;
 use crate::engine::{DrawEngine, Interaction};
 use crate::freehand::points_bounds;
 use crate::interaction::{is_degenerate_linear, DrawTool};
-use crate::selection::{elements_in_marquee_among, marquee_rect};
+use crate::selection::{elements_in_lasso, elements_in_marquee_among, marquee_rect, LassoMode};
 
 /// World units the pointer must travel before a drag counts as a marquee rather than a
 /// click. Small enough that a deliberate rubber-band always registers, large enough to
@@ -21,6 +21,19 @@ impl DrawEngine {
             Interaction::Draft { id, .. } => self.end_draft(&id),
             Interaction::Linear { id, .. } => self.end_linear(&id),
             Interaction::Freedraw { id, .. } => self.end_freedraw(&id),
+            Interaction::Lasso { path, base } => {
+                // The engine decides what the loop caught, not the host: this is
+                // geometry, and every frontend on this engine must answer it the same.
+                let mut ids = base;
+                ids.extend(elements_in_lasso(
+                    self.scene.iter_ordered(),
+                    &path,
+                    LassoMode::Contain,
+                ));
+                let expanded = expand_to_groups_among(self.scene.iter_ordered(), ids);
+                self.set_selection(expanded);
+                self.settle_tool();
+            }
             Interaction::Marquee {
                 start,
                 current,

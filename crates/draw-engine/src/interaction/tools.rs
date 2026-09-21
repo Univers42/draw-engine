@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum DrawTool {
     Select,
+    /// Free-form selection: draw a loop, take what it encloses.
+    Lasso,
     Hand,
     Rectangle,
     Diamond,
@@ -19,6 +21,7 @@ impl DrawTool {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Select => "select",
+            Self::Lasso => "lasso",
             Self::Hand => "hand",
             Self::Rectangle => "rectangle",
             Self::Diamond => "diamond",

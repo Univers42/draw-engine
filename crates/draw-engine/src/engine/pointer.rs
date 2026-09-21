@@ -28,6 +28,20 @@ impl DrawEngine {
             }
             DrawTool::Freedraw => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
+            DrawTool::Lasso => {
+                self.interaction = Some(Interaction::Lasso {
+                    path: vec![world],
+                    base: if additive {
+                        self.selected_ids.clone()
+                    } else {
+                        Default::default()
+                    },
+                });
+                if !additive {
+                    self.clear_selection();
+                }
+                self.request_draw();
+            }
             DrawTool::Hand => {
                 self.interaction = Some(Interaction::Pan {
                     last_x: sx,

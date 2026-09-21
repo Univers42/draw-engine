@@ -134,6 +134,18 @@ impl DrawEngine {
                 }
                 Some(it)
             }
+            Interaction::Lasso { mut path, base } => {
+                // Sub-pixel moves add nothing the simplifier would keep, and a
+                // high-polling pointer emits a great many of them.
+                let keep = path
+                    .last()
+                    .is_none_or(|last| (last.x - world.x).hypot(last.y - world.y) >= 0.5);
+                if keep {
+                    path.push(world);
+                }
+                self.request_draw();
+                Some(Interaction::Lasso { path, base })
+            }
             Interaction::Marquee { start, base, .. } => Some(Interaction::Marquee {
                 start,
                 current: world,
