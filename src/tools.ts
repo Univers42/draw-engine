@@ -32,6 +32,7 @@ const HOTKEYS: Record<string, DrawTool> = {
   k: "laser",
   f: "frame",
   "9": "image",
+  w: "embed",
   h: "hand",
 };
 

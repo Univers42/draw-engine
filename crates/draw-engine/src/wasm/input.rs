@@ -81,6 +81,49 @@ impl WasmEngine {
         id
     }
 
+    /// Put an embed on the board. `raw_url` is whatever the person pasted.
+    ///
+    /// Whether the host may be framed at all, and what the pasted page rewrites to, are
+    /// the engine's to decide — a host that resolved links itself could frame something
+    /// the rules would have refused. Returns the new element's id, or `undefined`.
+    #[wasm_bindgen(js_name = insertEmbed)]
+    pub fn insert_embed(&self, raw_url: &str, sx: f64, sy: f64) -> Option<String> {
+        let id = self.cell.borrow_mut().engine.insert_embed(raw_url, sx, sy);
+        self.flush();
+        id
+    }
+
+    /// Whether a pasted link can be embedded, and what it resolves to, as JSON.
+    ///
+    /// Lets a host tell someone their link will not work *before* it puts an empty box
+    /// on the board for them.
+    #[wasm_bindgen(js_name = resolveEmbed)]
+    pub fn resolve_embed(&self, raw_url: &str) -> Option<String> {
+        let resolved = crate::scene::embed_link(raw_url)?;
+        serde_json::to_string(&serde_json::json!({
+            "url": resolved.url,
+            "intrinsicWidth": resolved.intrinsic_width,
+            "intrinsicHeight": resolved.intrinsic_height,
+            "kind": match resolved.kind {
+                crate::scene::EmbedKind::Video => "video",
+                crate::scene::EmbedKind::Generic => "generic",
+            },
+            "allowSameOrigin": resolved.allow_same_origin,
+        }))
+        .ok()
+    }
+
+    /// The embeds on screen and where their frames go, as JSON.
+    ///
+    /// Screen pixels, because the host positions real `<iframe>` elements over the
+    /// canvas and the camera is the engine's. A host doing this conversion itself would
+    /// drift away from the rectangle drawn under it as soon as anyone panned.
+    #[wasm_bindgen(js_name = embedFrames)]
+    pub fn embed_frames(&self) -> String {
+        let frames = self.cell.borrow().engine.embed_frames();
+        serde_json::to_string(&frames).unwrap_or_else(|_| "[]".into())
+    }
+
     #[wasm_bindgen(js_name = getTool)]
     pub fn get_tool(&self) -> String {
         self.cell.borrow().engine.get_tool().as_str().to_string()
