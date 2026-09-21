@@ -13,6 +13,7 @@ mod clipboard;
 mod frame;
 mod hover;
 mod image;
+pub use image::EmbedFrame;
 mod pointer;
 mod pointer_end;
 mod pointer_move;

@@ -156,6 +156,38 @@ export class DrawEngine {
    * the same element. Returns the new element's id, or `null` if the image could not be
    * measured.
    */
+  /**
+   * Place an embed, resolving the pasted link first.
+   *
+   * Whether the host may be framed at all, and what the page rewrites to, are the
+   * engine's: a caller that resolved links itself could frame something the rules would
+   * have refused. Returns the new element's id, or `null` if the link is not embeddable.
+   */
+  insertEmbed(rawUrl: string, screenX: number, screenY: number): string | null {
+    return this.inner.insertEmbed(rawUrl, screenX, screenY) ?? null;
+  }
+
+  /**
+   * What a pasted link resolves to, or `null` if it cannot be embedded.
+   *
+   * Lets a caller say so *before* putting an empty box on the board.
+   */
+  resolveEmbed(rawUrl: string): {
+    url: string;
+    intrinsicWidth: number;
+    intrinsicHeight: number;
+    kind: "video" | "generic";
+    allowSameOrigin: boolean;
+  } | null {
+    const json = this.inner.resolveEmbed(rawUrl);
+    return json ? JSON.parse(json) : null;
+  }
+
+  /** The embeds on screen and where their frames go, in screen pixels. */
+  embedFramesJson(): string {
+    return this.inner.embedFrames();
+  }
+
   insertImage(
     dataUrl: string,
     naturalWidth: number,
