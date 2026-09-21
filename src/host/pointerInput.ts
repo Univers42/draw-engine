@@ -39,6 +39,9 @@ export function attachPointerInput(session: HostSession): () => void {
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
     canvas.setPointerCapture(event.pointerId);
+    if (callbacks.onPointerDown?.({ x, y }, event)) {
+      return;
+    }
     if (event.button === 1 || session.spaceHeld) {
       event.preventDefault();
       engine.beginPan(x, y);
@@ -49,6 +52,8 @@ export function attachPointerInput(session: HostSession): () => void {
 
   const onPointerMove = (event: PointerEvent) => {
     if (!session.down) return;
+    const { x, y } = localPoint(canvas, event);
+    callbacks.onPointerMove?.({ x, y }, event);
     session.pendingMove = event;
     if (session.moveRaf) return;
     session.moveRaf = requestAnimationFrame(() => {
@@ -60,6 +65,8 @@ export function attachPointerInput(session: HostSession): () => void {
   };
 
   const onPointerUp = (event: PointerEvent) => {
+    const { x, y } = localPoint(canvas, event);
+    callbacks.onPointerUp?.({ x, y }, event);
     flushPendingMove(session);
     session.down = false;
     engine.endPointer();

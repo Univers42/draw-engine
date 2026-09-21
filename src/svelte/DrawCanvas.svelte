@@ -24,6 +24,9 @@
     onSceneChange,
     onContextMenu,
     onToolLockChange,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
   }: DrawCanvasProps = $props();
 
   let containerEl: HTMLDivElement | undefined;
@@ -41,6 +44,9 @@
     callbacks.onSceneChange = onSceneChange;
     callbacks.onContextMenu = onContextMenu;
     callbacks.onToolLockChange = onToolLockChange;
+    callbacks.onPointerDown = onPointerDown;
+    callbacks.onPointerMove = onPointerMove;
+    callbacks.onPointerUp = onPointerUp;
   });
 
   onMount(() => {
