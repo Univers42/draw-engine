@@ -93,7 +93,10 @@ export function DrawCanvas({
       tabIndex={0}
       style={{ position: "relative", width: "100%", height: "100%", touchAction: "none", outline: "none" }}
     >
-      <canvas ref={canvasRef} aria-hidden="true" tabIndex={-1} style={{ display: "block", width: "100%", height: "100%" }} />
+      {/* No tabIndex: `-1` still leaves an element focusable by pointer, so a click
+          moved focus off the container onto this `aria-hidden` canvas. See the Svelte
+          adapter for the full note. */}
+      <canvas ref={canvasRef} aria-hidden="true" style={{ display: "block", width: "100%", height: "100%" }} />
     </div>
   );
 }
