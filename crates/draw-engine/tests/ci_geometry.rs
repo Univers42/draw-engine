@@ -118,7 +118,7 @@ fn element_bounds_diamond() {
 
 #[test]
 fn hit_test_rectangle_exact_center() {
-    let rect = box_at(10.0, 10.0, 100.0, 60.0);
+    let rect = filled(box_at(10.0, 10.0, 100.0, 60.0));
     assert!(hit_test_element(&rect, 60.0, 40.0, 0.0));
 }
 
@@ -131,7 +131,7 @@ fn hit_test_rectangle_outside_margin() {
 
 #[test]
 fn hit_test_ellipse_outside_corner() {
-    let el = ellipse_at(0.0, 0.0, 100.0, 100.0);
+    let el = filled(ellipse_at(0.0, 0.0, 100.0, 100.0));
     assert!(hit_test_element(&el, 50.0, 50.0, 0.0));
     // The point (5, 5) is inside the bounding box [0, 100]x[0, 100], but outside the inscribed ellipse:
     assert!(!hit_test_element(&el, 5.0, 5.0, 0.0));
@@ -139,7 +139,7 @@ fn hit_test_ellipse_outside_corner() {
 
 #[test]
 fn hit_test_diamond_outside_corner() {
-    let dia = diamond_at(0.0, 0.0, 100.0, 100.0);
+    let dia = filled(diamond_at(0.0, 0.0, 100.0, 100.0));
     assert!(hit_test_element(&dia, 50.0, 50.0, 0.0));
     // The point (10, 10) is inside the bounding box, but outside the inscribed diamond:
     assert!(!hit_test_element(&dia, 10.0, 10.0, 0.0));
@@ -147,7 +147,7 @@ fn hit_test_diamond_outside_corner() {
 
 #[test]
 fn hit_test_with_tolerance_padding() {
-    let rect = box_at(20.0, 20.0, 60.0, 40.0);
+    let rect = filled(box_at(20.0, 20.0, 60.0, 40.0));
     assert!(!hit_test_element(&rect, 15.0, 30.0, 0.0));
     // With 10.0 padding, 15.0 is within reach (distance is 5.0):
     assert!(hit_test_element(&rect, 15.0, 30.0, 10.0));

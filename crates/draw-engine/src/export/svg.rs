@@ -210,9 +210,13 @@ fn text_svg(element: &DrawElement, rect: &crate::scene::geometry::Rect, transfor
         })
         .collect::<String>();
     format!(
-        "<text x=\"{}\" y=\"{}\" font-family=\"sans-serif\" font-size=\"{font_size}\" fill=\"{}\" opacity=\"{}\"{transform}>{spans}</text>",
+        // The family the canvas draws with, not a third opinion. Exporting in a different
+        // face from the one the text was measured and laid out in makes every text box
+        // the wrong size in the exported file.
+        "<text x=\"{}\" y=\"{}\" font-family=\"{}\" font-size=\"{font_size}\" fill=\"{}\" opacity=\"{}\"{transform}>{spans}</text>",
         rect.x,
         rect.y,
+        crate::FONT_FAMILY,
         element.stroke_color,
         element.opacity / 100.0
     )

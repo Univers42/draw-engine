@@ -175,3 +175,81 @@ fn measure_text_long_line_expands_width() {
     let (long_w, _) = measure_text("This is a significantly longer string of text", 20.0);
     assert!(long_w > short_w);
 }
+
+/// Text is measured over **characters**, not bytes.
+///
+/// `str::len()` is the UTF-8 byte length, and the old estimate used it: "café" came out a
+/// fifth too wide, "日本語" three times too wide, and every emoji four times. Everything
+/// downstream inherits the error — the selection frame, the hit test, where the editing
+/// overlay sits, how a bound label is laid out, and the exported SVG.
+///
+/// In the browser this estimate is replaced by a real `measureText` against the font the
+/// painter draws with; this covers the host fallback, which has to be sane on its own.
+#[test]
+fn the_host_estimate_counts_characters_not_bytes() {
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+
+    let width_of = |engine: &mut DrawEngine, text: &str| {
+        let mut el = create_element_default(
+            DrawElementType::Text,
+            Geometry {
+                x: 0.0,
+                y: 0.0,
+                width: 4.0,
+                height: 20.0,
+            },
+        );
+        el.id = "t".into();
+        el.font_size = Some(20.0);
+        el.text = Some(String::new());
+        engine.set_scene(Scene::new(vec![el]));
+        engine.set_element_text("t", text);
+        engine
+            .get_scene()
+            .into_iter()
+            .find(|e| e.id == "t")
+            .map(|e| e.width)
+            .unwrap_or(0.0)
+    };
+
+    // Same number of characters, wildly different byte counts.
+    let ascii = width_of(&mut engine, "abcd");
+    let accented = width_of(&mut engine, "café");
+    let cjk = width_of(&mut engine, "日本語で");
+    assert_close(ascii, accented);
+    assert_close(ascii, cjk);
+
+    // And twice the characters is twice the width.
+    assert_close(width_of(&mut engine, "abcdabcd"), ascii * 2.0);
+}
+
+/// An empty line still occupies a line's height, so a blank line in the middle of a
+/// paragraph does not collapse.
+#[test]
+fn blank_lines_keep_their_height() {
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+    let mut el = create_element_default(
+        DrawElementType::Text,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 4.0,
+            height: 20.0,
+        },
+    );
+    el.id = "t".into();
+    el.font_size = Some(20.0);
+    el.text = Some(String::new());
+    engine.set_scene(Scene::new(vec![el]));
+
+    engine.set_element_text("t", "one\n\nthree");
+    let height = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| e.id == "t")
+        .map(|e| e.height)
+        .unwrap();
+    assert_close(height, 3.0 * 20.0 * TEXT_LINE_HEIGHT);
+}

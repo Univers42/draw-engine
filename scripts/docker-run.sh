@@ -36,13 +36,21 @@ run_cargo_test() {
 run_quality() {
   cargo fmt --all --check
   cargo clippy --all-targets --all-features -- -D warnings
+  # The browser target as well. `src/wasm/` is behind `#[cfg(target_arch = "wasm32")]`,
+  # so a host-only clippy pass never compiles a line of it: the painter, the JS bindings
+  # and the input plumbing all escaped the gate entirely, and dead code there surfaced
+  # only as a warning during `make wasm`, which nothing was checking.
+  cargo clippy --target wasm32-unknown-unknown -p draw-engine --all-features -- -D warnings
   run_cargo_test "$@"
   run_host_tests "$@"
 }
 
 run_wasm() {
   local target_dir="${CARGO_TARGET_DIR:-target}"
-  cargo build --release --target wasm32-unknown-unknown -p draw-engine
+  # Warnings are errors here too, so a warning cannot reach a shipped artifact even when
+  # someone builds the bundle without running `quality` first.
+  RUSTFLAGS="${RUSTFLAGS:-} -D warnings" \
+    cargo build --release --target wasm32-unknown-unknown -p draw-engine
   mkdir -p pkg
   wasm-bindgen --target web --out-dir pkg \
     "${target_dir}/wasm32-unknown-unknown/release/draw_engine.wasm"

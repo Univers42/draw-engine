@@ -143,7 +143,9 @@ fn pointer_hand_tool_pans_camera() {
 
 #[test]
 fn pointer_select_tool_click_element() {
-    let rect = box_at(20.0, 20.0, 60.0, 40.0);
+    // Filled, so a click in the middle lands on it: a transparent shape is hit only on
+    // its outline. This test is about which tool does what, not about that rule.
+    let rect = filled(box_at(20.0, 20.0, 60.0, 40.0));
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.set_tool(DrawTool::Select);
     engine.begin_pointer(40.0, 40.0, false, false);
@@ -153,7 +155,9 @@ fn pointer_select_tool_click_element() {
 
 #[test]
 fn pointer_select_tool_click_empty_canvas_clears_selection() {
-    let rect = box_at(20.0, 20.0, 60.0, 40.0);
+    // Filled, so a click in the middle lands on it: a transparent shape is hit only on
+    // its outline. This test is about which tool does what, not about that rule.
+    let rect = filled(box_at(20.0, 20.0, 60.0, 40.0));
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.select(vec![rect.id]);
     assert_eq!(engine.get_selection().len(), 1);
@@ -166,7 +170,9 @@ fn pointer_select_tool_click_empty_canvas_clears_selection() {
 
 #[test]
 fn pointer_eraser_tool_deletes_clicked_element() {
-    let rect = box_at(20.0, 20.0, 60.0, 40.0);
+    // Filled, so a click in the middle lands on it: a transparent shape is hit only on
+    // its outline. This test is about which tool does what, not about that rule.
+    let rect = filled(box_at(20.0, 20.0, 60.0, 40.0));
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.set_tool(DrawTool::Eraser);
     engine.begin_pointer(40.0, 40.0, false, false);

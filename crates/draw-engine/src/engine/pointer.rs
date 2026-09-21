@@ -1,12 +1,12 @@
 use crate::camera::Point;
-use crate::edit::expand_to_groups;
+use crate::edit::expand_to_groups_among;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
+use crate::scene::binding::bindable_among;
 use crate::scene::{
-    bindable_at, create_element, default_element_style, element_bounds, merge_style,
-    DrawElementType, Geometry,
+    create_element, default_element_style, element_bounds, merge_style, DrawElementType, Geometry,
 };
-use crate::selection::{hit_handle, selection_handle_points, HandleKind};
+use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
     pub fn begin_pointer(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
@@ -74,10 +74,20 @@ impl DrawEngine {
             style,
             self.now_ms,
         );
-        let ordered = self.scene.ordered_cloned();
-        let anchor = bindable_at(&ordered, world.x, world.y, 0.0, None);
+        // Same tolerance the far end gets, so both ends of an arrow attach on the same
+        // terms. A zero tolerance here meant the tail only bound when the gesture started
+        // strictly inside a shape.
+        let tolerance = self.binding_tolerance();
+        let anchor = bindable_among(
+            self.scene.iter_ordered().rev(),
+            world.x,
+            world.y,
+            tolerance,
+            None,
+        )
+        .map(|el| el.id.clone());
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
-        element.start_binding = anchor.map(|el| el.id.clone());
+        element.start_binding = anchor;
         element.end_binding = None;
         let id = element.id.clone();
         self.scene.add(element);
@@ -142,17 +152,114 @@ impl DrawEngine {
         });
     }
 
+    /// The unlocked members of the current multi-selection, with their shared frame.
+    fn group_frame(&self) -> Option<(Vec<String>, crate::selection::GroupFrame)> {
+        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
+        let elements: Vec<crate::scene::DrawElement> = ids
+            .iter()
+            .filter_map(|id| self.scene.get(id).cloned())
+            .filter(|e| !e.locked())
+            .collect();
+        if elements.len() < 2 {
+            return None;
+        }
+        let frame = crate::selection::GroupFrame::capture(elements.iter())?;
+        Some((ids, frame))
+    }
+
+    /// Which handle of the multi-selection's frame sits under `world`.
+    ///
+    /// Shared with the hover cursor, so what the pointer reports and what a press
+    /// actually starts are decided by one piece of code.
+    pub(crate) fn group_handle_at(&self, world: Point) -> Option<HandleKind> {
+        let (_, frame) = self.group_frame()?;
+        let b = frame.bounds;
+        let layout = self.handle_layout();
+        // Offset exactly as the painter offsets them, and exactly as a single shape's
+        // are, so the inside of a group stays a move target.
+        let (min_x, min_y) = (
+            b.min_x - layout.handle_offset,
+            b.min_y - layout.handle_offset,
+        );
+        let (max_x, max_y) = (
+            b.max_x + layout.handle_offset,
+            b.max_y + layout.handle_offset,
+        );
+
+        let candidates = [
+            (HandleKind::Nw, min_x, min_y),
+            (HandleKind::Ne, max_x, min_y),
+            (HandleKind::Se, max_x, max_y),
+            (HandleKind::Sw, min_x, max_y),
+            (
+                HandleKind::Rotate,
+                (min_x + max_x) / 2.0,
+                min_y - layout.rotate_gap,
+            ),
+        ];
+
+        candidates
+            .into_iter()
+            .find(|&(_, hx, hy)| (world.x - hx).hypot(world.y - hy) <= layout.hit)
+            .map(|(kind, _, _)| kind)
+    }
+
+    /// Corner and rotation handles for a multi-element selection.
+    ///
+    /// Without this a group could only be moved: dragging its corner fell through to
+    /// the hit test and started a marquee instead, so a multi-selection could never be
+    /// scaled or turned.
+    fn begin_group_transform(&self, world: Point) -> Option<Interaction> {
+        let kind = self.group_handle_at(world)?;
+        let (ids, frame) = self.group_frame()?;
+        Some(if kind == HandleKind::Rotate {
+            Interaction::RotateGroup { ids, frame }
+        } else {
+            Interaction::ResizeGroup {
+                ids,
+                handle: kind,
+                frame,
+            }
+        })
+    }
+
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         if let Some(single) = self.single_selected() {
             if !single.locked() {
                 let world_tol = super::HANDLE_HIT_PX / self.camera.scale;
-                let gap = super::ROTATE_GAP_PX / self.camera.scale;
-                let handle = hit_handle(
-                    &selection_handle_points(&single, gap),
-                    world.x,
-                    world.y,
-                    world_tol,
-                );
+
+                // A line or arrow is edited by its points, not its bounding box — so
+                // its handles are tested first and the box handles never apply to it.
+                // Excalidraw does the same: select an arrow there and you get circles
+                // on its ends, with no selection rectangle at all.
+                if crate::selection::linear::is_point_edited(&single) {
+                    let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
+                    let handles = crate::selection::linear::handle_points(&single, min_segment);
+                    if let Some(handle) =
+                        crate::selection::linear::hit_handle(&handles, world.x, world.y, world_tol)
+                    {
+                        self.interaction = Some(Interaction::LinearPoint {
+                            id: single.id,
+                            handle,
+                        });
+                        return;
+                    }
+                }
+
+                let handle = if crate::selection::linear::is_point_edited(&single) {
+                    None
+                } else {
+                    // The same layout the painter uses, so a grab can only land on a
+                    // handle that is actually on screen — and its own reach, which is
+                    // sized to stay clear of the element so the outline still moves it.
+                    let layout = self.handle_layout();
+                    hit_handle(
+                        &selection_handles(&single, layout),
+                        world.x,
+                        world.y,
+                        layout.hit,
+                    )
+                };
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
                     return;
@@ -163,17 +270,32 @@ impl DrawEngine {
                     } else {
                         None
                     };
+                    let origin = crate::selection::Geometry {
+                        x: single.x,
+                        y: single.y,
+                        width: single.width,
+                        height: single.height,
+                    };
                     self.interaction = Some(Interaction::Resize {
                         id: single.id,
                         handle,
                         ratio,
+                        origin,
                     });
                     return;
                 }
             }
         }
-        if let Some(hit) = self.selectable_hit(sx, sy, 2.0) {
-            let hit_ids = expand_to_groups(&self.scene.ordered_cloned(), [hit.id.clone()]);
+        // More than one element selected: the handles belong to the group's frame.
+        if self.selected_ids.len() > 1 {
+            if let Some(interaction) = self.begin_group_transform(world) {
+                self.interaction = Some(interaction);
+                return;
+            }
+        }
+
+        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
+            let hit_ids = expand_to_groups_among(self.scene.iter_ordered(), [hit.id.clone()]);
             if additive {
                 let has = self.selected_ids.contains(&hit.id);
                 for id in hit_ids {
@@ -218,10 +340,12 @@ impl DrawEngine {
             }
         }
         let moving: std::collections::HashSet<_> = origins.keys().cloned().collect();
+        // By reference: this runs once per drag-start but touches every element in the
+        // document, and cloning them only to read four numbers off each was the single
+        // most expensive thing about picking up a shape on a large board.
         let static_bounds = self
             .scene
-            .ordered_cloned()
-            .into_iter()
+            .iter_ordered()
             .filter(|el| {
                 !moving.contains(&el.id)
                     && el
@@ -229,7 +353,7 @@ impl DrawEngine {
                         .as_ref()
                         .is_none_or(|id| !moving.contains(id))
             })
-            .map(|el| element_bounds(&el))
+            .map(element_bounds)
             .collect();
         self.interaction = Some(Interaction::Move {
             ids: origins.keys().cloned().collect(),
@@ -241,7 +365,7 @@ impl DrawEngine {
     }
 
     pub(crate) fn erase_at(&mut self, sx: f64, sy: f64) {
-        if let Some(hit) = self.selectable_hit(sx, sy, 4.0) {
+        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
             self.scene.remove(&hit.id, self.now_ms);
             if self.selected_ids.remove(&hit.id) {
                 self.events.selection = Some(self.get_selection());

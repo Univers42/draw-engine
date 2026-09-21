@@ -189,6 +189,16 @@ fn geometry_hit_test_shape() {
             height: 100.0,
         },
     );
+    // Given a background, because this is about which points each shape encloses, not
+    // about the transparent-fill rule that `ci_hit_fill` covers: a transparent shape is
+    // hit only on its outline, so leaving the default fill here would quietly turn this
+    // into a test of something else.
+    let mut rect = rect;
+    let mut ellipse = ellipse;
+    let mut diamond = diamond;
+    for el in [&mut rect, &mut ellipse, &mut diamond] {
+        el.background_color = "#ffec99".into();
+    }
     assert!(hit_test_element(&rect, 5.0, 5.0, 0.0));
     assert!(!hit_test_element(&ellipse, 5.0, 5.0, 0.0));
     assert!(!hit_test_element(&diamond, 5.0, 5.0, 0.0));
@@ -199,8 +209,12 @@ fn geometry_hit_test_shape() {
 
 #[test]
 fn geometry_hit_test_topmost() {
-    let bottom = box_at(0.0, 0.0, 100.0, 100.0);
-    let top = box_at(0.0, 0.0, 100.0, 100.0);
+    // Both given a background: this is about z-order, and a transparent shape would not
+    // be hit in the middle at all.
+    let mut bottom = box_at(0.0, 0.0, 100.0, 100.0);
+    let mut top = box_at(0.0, 0.0, 100.0, 100.0);
+    bottom.background_color = "#ffec99".into();
+    top.background_color = "#ffec99".into();
     assert_eq!(
         hit_test(&[bottom.clone(), top.clone()], 50.0, 50.0, 0.0).map(|e| e.id.clone()),
         Some(top.id)
@@ -397,7 +411,7 @@ fn transform_rotate_handle() {
 }
 
 #[test]
-fn marquee_selects_overlapping() {
+fn marquee_selects_what_it_encloses() {
     assert_eq!(
         marquee_rect(40.0, 60.0, 10.0, 20.0),
         WorldBounds {
@@ -431,11 +445,10 @@ fn history_undo_redo_dedupe() {
     let mut history = SnapshotHistory::new(
         Vec::<i32>::new(),
         |value: &Vec<i32>| {
-            value
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut h);
+            h.finish()
         },
         200,
     );

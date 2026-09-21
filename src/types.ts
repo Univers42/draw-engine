@@ -102,10 +102,33 @@ export interface DrawTheme {
   background: string;
   grid: string;
   accent: string;
+  /**
+   * The colour a bindable element's outline is traced with while an arrow endpoint
+   * hovers it. Excalidraw's BINDING_HIGHLIGHT_RGB — taken from their source and
+   * confirmed by sampling excalidraw.com's interactive canvas, which returned exactly
+   * rgb(106, 189, 252).
+   *
+   * Optional so a theme stored before this field existed still loads; the engine
+   * substitutes the light value.
+   */
+  bindingHighlight?: string;
 }
 
-export const LIGHT_THEME: DrawTheme = { background: "#ffffff", grid: "rgba(17, 17, 17, 0.06)", accent: "#4c6ef5" };
-export const DARK_THEME: DrawTheme = { background: "#191919", grid: "rgba(255, 255, 255, 0.06)", accent: "#748ffc" };
+// The accent is Excalidraw's primary, and the same one the chrome uses. The engine
+// previously had its own (#4c6ef5), so the selection frame was a different violet from
+// the panels drawn around it.
+export const LIGHT_THEME: DrawTheme = {
+  background: "#ffffff",
+  grid: "rgba(17, 17, 17, 0.06)",
+  accent: "#6965db",
+  bindingHighlight: "rgb(106, 189, 252)",
+};
+export const DARK_THEME: DrawTheme = {
+  background: "#191919",
+  grid: "rgba(255, 255, 255, 0.06)",
+  accent: "#a8a5ff",
+  bindingHighlight: "rgb(104, 182, 240)",
+};
 
 export interface TextEditRequest {
   id: string;

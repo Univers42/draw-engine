@@ -25,6 +25,17 @@ impl WasmEngine {
         json
     }
 
+    /// Merges a peer's elements into the scene by id, last-writer-wins.
+    ///
+    /// Use this for anything arriving over the wire. `pasteJson` mints new ids, which
+    /// is right for a paste and catastrophic for a merge.
+    #[wasm_bindgen(js_name = applyRemotePatch)]
+    pub fn apply_remote_patch(&self, json: &str) -> bool {
+        let changed = self.cell.borrow_mut().engine.apply_remote_patch(json);
+        self.flush();
+        changed
+    }
+
     #[wasm_bindgen(js_name = pasteJson)]
     pub fn paste_json(&self, json: Option<String>, x: Option<f64>, y: Option<f64>) -> bool {
         let at = match (x, y) {

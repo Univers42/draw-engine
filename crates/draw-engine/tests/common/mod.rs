@@ -22,6 +22,17 @@ pub fn assert_rect_close(a: Rect, b: Rect) {
     assert_close(a.height, b.height);
 }
 
+/// A shape with a background, so its whole interior is a hit target.
+///
+/// The default style is a transparent fill, and a transparent shape is hit only on its
+/// outline — so a test about *shape* maths (is this point inside the ellipse or merely
+/// inside its box?) has to say it means a solid shape, or it ends up asserting the fill
+/// rule by accident.
+pub fn filled(mut element: DrawElement) -> DrawElement {
+    element.background_color = "#ffec99".into();
+    element
+}
+
 pub fn box_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
     create_element_default(
         DrawElementType::Rectangle,
@@ -105,10 +116,20 @@ pub fn opposite_handle(handle: HandleKind) -> HandleKind {
     }
 }
 
+/// Where a handle sits, matching what the engine's `selection_handles` computes.
+///
+/// The half-extents are **absolute**. A negative extent means the element is mirrored,
+/// not that it is inside out: it occupies the same box and its north-west handle is still
+/// visually north-west. Using the signed value here put the handles on mirrored positions
+/// and made this helper disagree with the code it is used to check.
 pub fn handle_world(element: &DrawElement, handle: HandleKind) -> Point {
     let cx = element.x + element.width / 2.0;
     let cy = element.y + element.height / 2.0;
-    let local = handle_local_point(handle, element.width / 2.0, element.height / 2.0);
+    let local = handle_local_point(
+        handle,
+        element.width.abs() / 2.0,
+        element.height.abs() / 2.0,
+    );
     let cos = element.angle.cos();
     let sin = element.angle.sin();
     Point {

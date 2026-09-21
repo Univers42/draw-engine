@@ -16,6 +16,26 @@ import type {
 
 export { loadDrawEngine } from "./wasmLoad";
 
+/**
+ * CSS cursors, indexed by the engine's `HoverCursor` discriminant.
+ *
+ * The order is the contract with `engine/hover.rs` and is append-only — inserting in the
+ * middle silently reassigns every cursor after it. `ci_ts_parity` asserts the two agree.
+ */
+const HOVER_CURSORS = [
+  "default", // Default
+  "move", // Move
+  "ns-resize", // ResizeNs
+  "ew-resize", // ResizeEw
+  "nesw-resize", // ResizeNesw
+  "nwse-resize", // ResizeNwse
+  "grab", // Grab
+  "grabbing", // Grabbing
+  "pointer", // PointHandle
+  "crosshair", // Crosshair
+  "text", // Text
+] as const;
+
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
 export class DrawEngine {
   private readonly inner: InstanceType<typeof WasmDrawEngine>;
@@ -70,6 +90,40 @@ export class DrawEngine {
     return json ? parseJson<DrawElement | null>(json, null) : null;
   }
 
+  /**
+   * The CSS cursor for the pointer at this position.
+   *
+   * The engine decides, not the host: what the pointer is over — a resize handle, a
+   * rotation handle, a movable element — is the engine's own hit-test state, and a host
+   * that guessed at it from the tool alone is how a shape ends up silently resizing when
+   * you meant to move it.
+   *
+   * Crosses the boundary as a small integer and is mapped here, so a hover costs no
+   * allocation on either side.
+   */
+  hoverCursor(sx: number, sy: number): string {
+    return HOVER_CURSORS[this.inner.hoverCursor(sx, sy)] ?? "default";
+  }
+
+  /**
+   * The size a run of text will occupy, in world units.
+   *
+   * Measured against the font the canvas actually draws with, so anything sizing itself
+   * to text — the editing overlay, a label's box — agrees with what appears on screen.
+   */
+  measureText(text: string, fontSize: number): { width: number; height: number } {
+    // A `Float64Array` from WASM, so indexing is `number | undefined` under
+    // `noUncheckedIndexedAccess`. The engine always returns both, but the fallback keeps
+    // a truncated array from becoming `NaN` widths downstream.
+    const measured = this.inner.measureText(text, fontSize);
+    return { width: measured[0] ?? 4, height: measured[1] ?? fontSize };
+  }
+
+  /** The CSS font family the canvas draws text with. */
+  fontFamily(): string {
+    return this.inner.fontFamily();
+  }
+
   setTool(tool: DrawTool): void {
     this.inner.setTool(tool);
   }
@@ -120,6 +174,20 @@ export class DrawEngine {
 
   cutSelection(): string | null {
     return this.inner.cutSelection() ?? null;
+  }
+
+  /**
+   * Merges a peer's elements into the scene by id, last-writer-wins.
+   *
+   * Use this for anything arriving over the wire. `pasteJson` mints a new id for every
+   * element — correct for a paste, catastrophic for a merge: it turns each incoming
+   * edit into a duplicate, and the resulting change is broadcast back, so two clients
+   * grow the board without bound.
+   *
+   * Returns whether anything actually changed, so an echo costs nothing.
+   */
+  applyRemotePatch(json: string): boolean {
+    return this.inner.applyRemotePatch(json);
   }
 
   pasteJson(json?: string | null, at?: { x: number; y: number }): boolean {

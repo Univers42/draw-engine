@@ -20,11 +20,13 @@ pub use camera::{
     Camera, Point, WorldBounds, IDENTITY, MAX_ZOOM, MIN_ZOOM,
 };
 pub use edit::{
-    align_elements, distribute_elements, expand_for_copy, expand_to_groups, flip_elements,
-    group_patches, is_single_group, materialize_elements, reorder_elements, serialize_selection,
-    ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    align_elements, distribute_elements, expand_for_copy, expand_to_groups, expand_to_groups_among,
+    flip_elements, group_patches, is_single_group, materialize_elements, reorder_elements,
+    serialize_selection, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
 };
-pub use engine::{DrawEngine, EngineEvents, NoopPainter, PaintView, Painter, TextEditRequest};
+pub use engine::{
+    DrawEngine, EngineEvents, HoverCursor, NoopPainter, PaintView, Painter, TextEditRequest,
+};
 pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
@@ -35,18 +37,22 @@ pub use interaction::{
 };
 pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
 pub use render::{
-    dark_theme, default_arrowhead, is_roughable, light_theme, DrawTheme, TEXT_LINE_HEIGHT,
+    dark_theme, default_arrowhead, font_string, is_roughable, light_theme, DrawTheme, FONT_FAMILY,
+    TEXT_LINE_HEIGHT,
 };
 pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,
-    create_element_default, default_element_style, element_bounds, element_center, hit_test,
-    hit_test_element, is_bindable_element, is_linear_element, layout_label, linear_endpoints,
-    linear_from_endpoints, merge_style, new_element_id, normalize_rect, refresh_bindings,
-    scene_bounds, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch, DrawElementType,
-    FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP, LABEL_PADDING,
+    create_element_default, default_element_style, element_bounds, element_center,
+    element_rotated_bounds, hit_test, hit_test_element, is_bindable_element, is_linear_element,
+    is_transparent, layout_label, linear_endpoints, linear_from_endpoints, linear_retarget,
+    local_box, local_center, merge_style, new_element_id, normalize_rect, refresh_bindings,
+    rotation_center, scene_bounds, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
+    DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP,
+    LABEL_PADDING,
 };
 pub use selection::{
-    elements_in_marquee, handle_local_point, hit_handle, marquee_rect, resize_element,
-    rotate_element, rotate_point, selection_corners, selection_handle_points, HandleKind,
-    HandlePoint, RESIZE_HANDLES,
+    elements_in_marquee, elements_in_marquee_among, handle_local_point, hit_handle, marquee_rect,
+    resize_element, rotate_element, rotate_point, selection_corners, selection_corners_padded,
+    selection_handle_points, selection_handles, HandleKind, HandleLayout, HandlePoint,
+    RESIZE_HANDLES,
 };

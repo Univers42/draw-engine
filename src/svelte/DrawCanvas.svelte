@@ -80,6 +80,14 @@
   });
 </script>
 
+<!--
+  The rule assumes a nonnegative tabindex on a non-widget role is a mistake. Here it is
+  the point: this is the drawing surface, it carries `role="application"` precisely
+  because it handles its own keys, and every shortcut — tool selection, delete, nudge,
+  undo — needs it focusable. Removing the tabindex would make the whole board
+  keyboard-inaccessible, which is the opposite of what the rule is for.
+-->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
   bind:this={containerEl}
   class={className}

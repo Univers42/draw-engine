@@ -1,4 +1,4 @@
-use crate::camera::WorldBounds;
+use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{DrawElement, DrawElementType};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,7 +18,107 @@ pub fn normalize_rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
     }
 }
 
+/// Whether the element's geometry lives in its point list rather than in a width and
+/// height.
+///
+/// For these, `x`/`y` is the position of the **first point**, not a corner of a box, and
+/// `width`/`height` are the size of the point cloud rather than an offset from `x`. So
+/// `x + width` is not the right edge and never was: an arrow whose tail is dragged past
+/// its head has points running negative, and reading its box as `[x, x + width]` puts it
+/// entirely to the right of where it is drawn.
+pub fn is_point_based(element: &DrawElement) -> bool {
+    matches!(
+        element.kind,
+        DrawElementType::Line | DrawElementType::Arrow | DrawElementType::Freedraw
+    )
+}
+
+/// The element's own coordinate box, relative to `element.x` / `element.y`.
+///
+/// This is the region the geometry is generated into, and it is the single place that
+/// knows how each kind of element is anchored. Everything that needs an element's extent
+/// or its centre of rotation derives it from here, so the painter, the hit test and the
+/// selection frame cannot disagree about where a shape is.
+pub fn local_box(element: &DrawElement) -> Rect {
+    if is_point_based(element) {
+        if let Some(points) = element.points.as_deref() {
+            if !points.is_empty() {
+                let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+                let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for p in points {
+                    min_x = min_x.min(p[0]);
+                    min_y = min_y.min(p[1]);
+                    max_x = max_x.max(p[0]);
+                    max_y = max_y.max(p[1]);
+                }
+                return Rect {
+                    x: min_x,
+                    y: min_y,
+                    width: max_x - min_x,
+                    height: max_y - min_y,
+                };
+            }
+        }
+    }
+    // A shape is generated at the origin spanning its absolute size; the sign of the
+    // extent is a mirror, applied by the painter, and does not move the local box.
+    Rect {
+        x: 0.0,
+        y: 0.0,
+        width: element.width.abs(),
+        height: element.height.abs(),
+    }
+}
+
+/// Where the element turns about, in its own coordinates.
+///
+/// Rotation happens about the centre of [`local_box`]. For a shape that is the middle of
+/// its box, as before. For a line or arrow it is the middle of the points — which for a
+/// leftward arrow is **behind** `x`, where `x + width / 2` would have put the pivot a
+/// full width beyond its own tip.
+pub fn local_center(element: &DrawElement) -> (f64, f64) {
+    let b = local_box(element);
+    (b.x + b.width / 2.0, b.y + b.height / 2.0)
+}
+
+/// Which axes the element is mirrored on, as a scale of +1 or -1.
+///
+/// A negative extent means "mirrored" **only for shapes**, where the extent is the whole
+/// description of the geometry. A line or arrow carries its shape in its points, so
+/// mirroring one reverses those points; the sign its width happens to have is a leftover
+/// of how it was last written and means nothing. Reading it as a mirror would flip the
+/// element twice, and would move its pivot outside itself.
+pub fn mirror_signs(element: &DrawElement) -> (f64, f64) {
+    if is_point_based(element) {
+        return (1.0, 1.0);
+    }
+    (
+        if element.width < 0.0 { -1.0 } else { 1.0 },
+        if element.height < 0.0 { -1.0 } else { 1.0 },
+    )
+}
+
+/// The element's world-space centre of rotation.
+pub fn rotation_center(element: &DrawElement) -> Point {
+    let (lcx, lcy) = local_center(element);
+    let (sx, sy) = mirror_signs(element);
+    Point {
+        x: element.x + sx * lcx,
+        y: element.y + sy * lcy,
+    }
+}
+
+/// The unrotated box the element occupies in the world.
 pub fn element_bounds(element: &DrawElement) -> WorldBounds {
+    if is_point_based(element) {
+        let b = local_box(element);
+        return WorldBounds {
+            min_x: element.x + b.x,
+            min_y: element.y + b.y,
+            max_x: element.x + b.x + b.width,
+            max_y: element.y + b.y + b.height,
+        };
+    }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
     WorldBounds {
         min_x: rect.x,
@@ -28,7 +128,14 @@ pub fn element_bounds(element: &DrawElement) -> WorldBounds {
     }
 }
 
-pub fn scene_bounds(elements: &[DrawElement]) -> Option<WorldBounds> {
+/// The union of every live element's bounds.
+///
+/// Generic over the iterable so it accepts both an owned slice and a list of borrowed
+/// elements — the render path holds `&DrawElement` to avoid cloning the scene, and
+/// should not have to clone it back just to measure it.
+pub fn scene_bounds<'a>(
+    elements: impl IntoIterator<Item = &'a DrawElement>,
+) -> Option<WorldBounds> {
     let mut bounds: Option<WorldBounds> = None;
     for element in elements {
         if element.is_deleted {
@@ -60,33 +167,146 @@ pub fn distance_to_segment(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64)
     (px - (ax + t * dx)).hypot(py - (ay + t * dy))
 }
 
-pub fn hit_test_element(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
-    if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
-        return hit_linear(element, wx, wy, tolerance);
+/// The pointer expressed in the element's own frame.
+///
+/// Every shape is defined unrotated and then turned about its centre by `angle`, so a hit
+/// test only has to turn the *query* back by the same amount and can then work in the
+/// simple axis-aligned space the shape is described in. Without this a rotated element is
+/// tested against the box it would occupy if it had never been turned: a square rotated
+/// 45 degrees is selectable from the empty space beyond its flat corners and dead along
+/// its actual points.
+pub fn to_element_local(element: &DrawElement, wx: f64, wy: f64) -> (f64, f64) {
+    if element.angle == 0.0 {
+        return (wx, wy);
     }
+    // The same pivot the painter uses. Computing it here as `x + width / 2` is what put
+    // the hit test a full width away from a leftward arrow.
+    let c = rotation_center(element);
+    let (sin, cos) = (-element.angle).sin_cos();
+    let dx = wx - c.x;
+    let dy = wy - c.y;
+    (c.x + dx * cos - dy * sin, c.y + dx * sin + dy * cos)
+}
+
+/// The axis-aligned box an element occupies once its rotation is taken into account.
+///
+/// [`element_bounds`] deliberately returns the *unrotated* box, which is what resize and
+/// the stored geometry are expressed in. Anything asking "where is this on the board" —
+/// a marquee, a fit-to-content — wants this one instead.
+pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
+    let plain = element_bounds(element);
+    if element.angle == 0.0 {
+        return plain;
+    }
+    let c = rotation_center(element);
+    let (cx, cy) = (c.x, c.y);
+    let (sin, cos) = element.angle.sin_cos();
+    let hw = (plain.max_x - plain.min_x) / 2.0;
+    let hh = (plain.max_y - plain.min_y) / 2.0;
+    // For an axis-aligned box turned by `angle`, the half-extent of the result has this
+    // closed form — no need to walk the four corners.
+    let ex = hw * cos.abs() + hh * sin.abs();
+    let ey = hw * sin.abs() + hh * cos.abs();
+    WorldBounds {
+        min_x: cx - ex,
+        min_y: cy - ey,
+        max_x: cx + ex,
+        max_y: cy + ey,
+    }
+}
+
+/// Whether a colour paints nothing.
+///
+/// Excalidraw's `isTransparent`: the literal keyword, or any hex that carries a fully
+/// zero alpha channel. A shape painted in one of these is an outline and nothing more.
+pub fn is_transparent(color: &str) -> bool {
+    let c = color.trim();
+    if c.eq_ignore_ascii_case("transparent") {
+        return true;
+    }
+    // #RRGGBBAA and #RGBA, the two hex forms that can carry alpha.
+    match c.len() {
+        9 => c.starts_with('#') && c[7..].eq_ignore_ascii_case("00"),
+        5 => c.starts_with('#') && c[4..].eq_ignore_ascii_case("0"),
+        _ => false,
+    }
+}
+
+/// Whether the element's inside is part of it, or only its outline is.
+///
+/// Excalidraw's `shouldTestInside`. A shape with a background is a solid object and can
+/// be picked up anywhere; a transparent one is a drawn outline, and its middle is the
+/// canvas showing through.
+///
+/// The hollow/solid distinction only means anything for the three shapes that have a
+/// fill to leave out. Text, freehand strokes, images and frames are their own content:
+/// their "background" being transparent says nothing about whether their middle is
+/// clickable, and treating a line of text as an outline would make it unselectable
+/// except at its edges.
+///
+/// **Known divergence.** Excalidraw also treats a shape as solid when it carries bound
+/// text, via `hasBoundTextElement`. That needs the container's `boundElements`
+/// back-reference, which this schema does not have yet — the link only runs the other
+/// way, from the label's `container_id`. So a *transparent* shape with a label is hollow
+/// here and solid there. Its label is still clickable, so the shape is still reachable.
+fn has_solid_interior(element: &DrawElement) -> bool {
+    if !matches!(
+        element.kind,
+        DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse
+    ) {
+        return true;
+    }
+    !is_transparent(&element.background_color)
+}
+
+/// Whether the point is inside the element's shape, grown by `grow`.
+///
+/// `grow` is signed: positive inflates the shape, negative shrinks it. Testing both
+/// gives the band around the outline without needing a separate distance function per
+/// shape.
+fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -> bool {
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
-    let t = tolerance;
-    if wx < rect.x - t
-        || wx > rect.x + rect.width + t
-        || wy < rect.y - t
-        || wy > rect.y + rect.height + t
-    {
-        return false;
-    }
     let cx = rect.x + rect.width / 2.0;
     let cy = rect.y + rect.height / 2.0;
-    let rx = rect.width / 2.0 + t;
-    let ry = rect.height / 2.0 + t;
+    let rx = rect.width / 2.0 + grow;
+    let ry = rect.height / 2.0 + grow;
     if rx <= 0.0 || ry <= 0.0 {
-        return true;
+        // Shrunk past nothing: the shape has no interior left at this inset.
+        return false;
     }
     let nx = (wx - cx) / rx;
     let ny = (wy - cy) / ry;
     match element.kind {
         DrawElementType::Ellipse => nx * nx + ny * ny <= 1.0,
         DrawElementType::Diamond => nx.abs() + ny.abs() <= 1.0,
-        _ => true,
+        _ => nx.abs() <= 1.0 && ny.abs() <= 1.0,
     }
+}
+
+/// Whether a click at `(wx, wy)` lands on the element.
+///
+/// A filled shape is solid: anywhere within it, plus `tolerance` beyond its edge. A
+/// transparent one is only its outline, so the test is the band of width `tolerance`
+/// either side of that outline and its middle belongs to whatever is behind it.
+///
+/// This is Excalidraw's rule, checked against the running app rather than inferred:
+/// on a clean board holding one transparent rectangle, clicking its dead centre selects
+/// nothing and clicking its border selects it. Treating the hollow middle as a hit meant
+/// a large transparent shape swallowed every click meant for the things drawn inside it.
+pub fn hit_test_element(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
+    let (wx, wy) = to_element_local(element, wx, wy);
+    if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
+        return hit_linear(element, wx, wy, tolerance);
+    }
+
+    if !within_shape(element, wx, wy, tolerance) {
+        return false;
+    }
+    if has_solid_interior(element) {
+        return true;
+    }
+    // Outline only: inside the grown shape but not inside the shrunken one.
+    !within_shape(element, wx, wy, -tolerance)
 }
 
 fn hit_linear(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
@@ -94,7 +314,10 @@ fn hit_linear(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
         Some(points) if points.len() >= 2 => points,
         _ => return false,
     };
-    let reach = tolerance.max(element.stroke_width) + 4.0;
+    // Half the stroke sits either side of the path, so that much is genuinely part of
+    // the line; the tolerance is the aiming margin on top. This used to be
+    // `max(tolerance, stroke) + 4`, which conflated the two and grew faster than either.
+    let reach = tolerance + element.stroke_width / 2.0;
     for window in points.windows(2) {
         let ax = element.x + window[0][0];
         let ay = element.y + window[0][1];

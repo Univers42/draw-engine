@@ -15,7 +15,18 @@ mod paint;
 
 use paint::CanvasPainter;
 
+/// Timings for the most recent frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PaintStats {
+    /// Assembling the display list: culling, and the scene walk behind it.
+    pub build_ms: f64,
+    /// Issuing the drawing itself.
+    pub paint_ms: f64,
+    pub visible: usize,
+}
+
 pub(crate) struct EngineCell {
+    pub stats: PaintStats,
     pub(crate) engine: DrawEngine,
     pub(crate) canvas: HtmlCanvasElement,
     pub(crate) ctx: CanvasRenderingContext2d,
@@ -42,12 +53,30 @@ fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, Js
 
 #[wasm_bindgen(js_class = DrawEngine)]
 impl WasmEngine {
+    /// Timings for the most recent frame, as JSON.
+    ///
+    /// Exists because a frame measured from outside is just the rAF interval — the
+    /// display cadence plus everything else on the page — which cannot tell our paint
+    /// apart from the browser's own work. Three separate guesses at a slow frame were
+    /// wrong before this existed.
+    #[wasm_bindgen(js_name = paintStats)]
+    pub fn paint_stats(&self) -> String {
+        match self.cell.try_borrow() {
+            Ok(cell) => format!(
+                r#"{{"buildMs":{:.3},"paintMs":{:.3},"visible":{}}}"#,
+                cell.stats.build_ms, cell.stats.paint_ms, cell.stats.visible
+            ),
+            Err(_) => String::from(r#"{"buildMs":0,"paintMs":0,"visible":0}"#),
+        }
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new(canvas: HtmlCanvasElement) -> Result<WasmEngine, JsValue> {
         let ctx = context_2d(&canvas)?;
         let mut engine = DrawEngine::new();
         engine.set_measure_text(measure_via_ctx);
         let cell = Rc::new(RefCell::new(EngineCell {
+            stats: PaintStats::default(),
             engine,
             canvas,
             ctx,
@@ -119,11 +148,18 @@ impl WasmEngine {
 
     fn schedule(&self) {
         let cell = self.cell.clone();
-        if cell.borrow().raf.is_some() || cell.borrow().engine.is_disposed() {
-            return;
-        }
-        if !cell.borrow().engine.is_dirty() && !cell.borrow().engine.in_motion() {
-            return;
+        {
+            // A single borrow for all three checks, and a failed borrow means a frame
+            // is already in flight — which is exactly when there is nothing to do.
+            let Ok(c) = cell.try_borrow() else {
+                return;
+            };
+            if c.raf.is_some() || c.engine.is_disposed() {
+                return;
+            }
+            if !c.engine.is_dirty() && !c.engine.in_motion() {
+                return;
+            }
         }
         let window = match web_sys::window() {
             Some(window) => window,
@@ -131,27 +167,49 @@ impl WasmEngine {
         };
         let cloned = cell.clone();
         let closure = Closure::once_into_js(move || {
-            cloned.borrow_mut().raf = None;
+            if let Ok(mut c) = cloned.try_borrow_mut() {
+                c.raf = None;
+            }
             paint_frame(&cloned);
-            let more = {
-                let cell = cloned.borrow();
-                !cell.engine.is_disposed() && (cell.engine.is_dirty() || cell.engine.in_motion())
+            let more = match cloned.try_borrow() {
+                Ok(cell) => {
+                    !cell.engine.is_disposed()
+                        && (cell.engine.is_dirty() || cell.engine.in_motion())
+                }
+                // Busy: assume there is more to do rather than stalling the loop.
+                Err(_) => true,
             };
             if more {
                 WasmEngine { cell: cloned }.schedule();
             }
         });
         if let Ok(id) = window.request_animation_frame(closure.as_ref().unchecked_ref()) {
-            cell.borrow_mut().raf = Some(id);
+            if let Ok(mut c) = cell.try_borrow_mut() {
+                c.raf = Some(id);
+            }
         }
     }
 }
 
+/// Paints one frame.
+///
+/// Uses `try_borrow_mut` rather than `borrow_mut` because this holds the cell for the
+/// whole paint, and the paint calls into JavaScript hundreds of times. Anything that
+/// re-enters during those calls — a wrapped canvas method from an extension or an
+/// analytics shim, a synchronously dispatched event, a devtools override — would hit a
+/// second `borrow_mut` and **panic**, and a panic in WASM aborts the instance: the
+/// canvas is dead for the rest of the session with no way back.
+///
+/// Skipping a frame is always the better failure. The engine stays dirty, so the next
+/// animation frame repaints it and nothing is lost but one frame.
 fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
-    let mut cell = cell.borrow_mut();
+    let Ok(mut cell) = cell.try_borrow_mut() else {
+        return;
+    };
     if cell.engine.is_disposed() {
         return;
     }
+    let started = now_ms();
     cell.engine.set_now(now_ms());
     let view = cell.engine.paint_view();
     let dpr = view.dpr;
@@ -163,13 +221,33 @@ fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
     if cell.canvas.height() != bh {
         cell.canvas.set_height(bh);
     }
+    let built = now_ms();
+    let visible = view.elements.len();
     CanvasPainter { ctx: &cell.ctx }.paint(&view);
+    let painted = now_ms();
+    drop(view);
+
     cell.engine.take_dirty();
+
+    // Recorded so a slow frame can be attributed rather than guessed at. Measuring a
+    // frame from outside only gives the rAF interval — the display cadence plus
+    // everything else on the page — which cannot tell our paint apart from the
+    // browser's own work.
+    cell.stats = PaintStats {
+        build_ms: built - started,
+        paint_ms: painted - built,
+        visible,
+    };
 }
 
 fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
     let (events, cbs) = {
-        let mut cell = cell.borrow_mut();
+        // Draining events calls host callbacks, which routinely call back into the
+        // engine. Borrow only long enough to take the events, and never panic if a
+        // callback is already inside us.
+        let Ok(mut cell) = cell.try_borrow_mut() else {
+            return;
+        };
         let events = cell.engine.drain_events();
         (
             events,
@@ -197,8 +275,32 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
         let json = serde_json::to_string(&req).unwrap_or_default();
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
     }
-    if let (Some(json), Some(cb)) = (events.scene_json, cbs.4) {
-        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    // One callback carries both shapes. A delta is tagged so the host can tell them
+    // apart, and the full form is kept for the structural changes a delta cannot
+    // express — a reorder, a hard delete, an undo.
+    if let Some(cb) = cbs.4 {
+        if let Some(delta) = events.scene_delta {
+            #[derive(serde::Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct DeltaEnvelope<'a> {
+                #[serde(rename = "type")]
+                kind: &'a str,
+                version: u32,
+                updated: &'a [crate::scene::DrawElement],
+                removed: &'a [String],
+            }
+            let envelope = DeltaEnvelope {
+                kind: "osidraw-delta",
+                version: 1,
+                updated: &delta.updated,
+                removed: &delta.removed,
+            };
+            if let Ok(json) = serde_json::to_string(&envelope) {
+                let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+            }
+        } else if let Some(json) = events.scene_json {
+            let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+        }
     }
 }
 
@@ -209,11 +311,73 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
+thread_local! {
+    /// A detached 2D context kept solely for measuring text.
+    ///
+    /// Detached because measuring must not disturb the canvas being drawn to: setting a
+    /// font on the live context would fight the painter's own font cache. One context is
+    /// created lazily and reused, so measuring a string costs a `measureText` call and
+    /// nothing else.
+    static MEASURE: std::cell::RefCell<Option<web_sys::CanvasRenderingContext2d>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `body` with a context whose font is already set to `font_size`.
+fn with_measure_ctx<T>(
+    font_size: f64,
+    body: impl FnOnce(&web_sys::CanvasRenderingContext2d) -> T,
+) -> Option<T> {
+    MEASURE.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if cell.is_none() {
+            let canvas = web_sys::window()?
+                .document()?
+                .create_element("canvas")
+                .ok()?
+                .dyn_into::<web_sys::HtmlCanvasElement>()
+                .ok()?;
+            *cell = canvas
+                .get_context("2d")
+                .ok()
+                .flatten()
+                .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok());
+        }
+        let ctx = cell.as_ref()?;
+        ctx.set_font(&crate::font_string(font_size));
+        Some(body(ctx))
+    })
+}
+
+/// The width of one line, as the browser will actually draw it.
+pub(crate) fn measure_line(line: &str, font_size: f64) -> f64 {
+    with_measure_ctx(font_size, |ctx| {
+        ctx.measure_text(line).map(|m| m.width()).unwrap_or(0.0)
+    })
+    .unwrap_or_else(|| estimate_line(line, font_size))
+}
+
+/// The fallback when there is no document to measure against — a server-side render, or
+/// a context the browser refused to hand over.
+///
+/// Counts **characters**, not bytes. `str::len()` is the UTF-8 byte length, so the old
+/// estimate made "café" a fifth too wide, "日本語" three times too wide, and every emoji
+/// four times too wide.
+fn estimate_line(line: &str, font_size: f64) -> f64 {
+    line.chars().count() as f64 * font_size * 0.6
+}
+
+/// Measures text with the font it will be drawn with.
+///
+/// This used to estimate `bytes * fontSize * 0.6` despite its name, and the error was not
+/// subtle: measured against a real canvas at 20px, "iiiiiiiiii" came out 170% too wide,
+/// "WWWWWWWWWW" 36% too narrow, "Ω≈ç√∫" 198% too wide, and even "Hello" 32% too wide.
+/// Everything downstream inherits that error — the selection frame, the hit test, where
+/// the editing overlay sits, how a bound label is laid out, and the exported SVG.
 fn measure_via_ctx(text: &str, font_size: f64) -> (f64, f64) {
     let lines: Vec<&str> = text.split('\n').collect();
     let width = lines
         .iter()
-        .map(|line| line.len() as f64 * font_size * 0.6)
+        .map(|line| measure_line(line, font_size))
         .fold(0.0, f64::max);
     (
         width.max(4.0),

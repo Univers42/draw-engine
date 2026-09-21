@@ -2,13 +2,22 @@ use std::collections::HashSet;
 
 use crate::scene::element::DrawElement;
 
-pub fn expand_to_groups(
-    elements: &[DrawElement],
+/// Grows a set of ids to cover every element of every group it touches.
+///
+/// Generic over the iterator, and `Clone` rather than a slice, so the selection path can
+/// walk the scene by reference instead of deep-copying every element on the board just to
+/// answer "is this one in a group?". The two passes are inherent: the first learns which
+/// groups are involved, the second collects their members.
+pub fn expand_to_groups_among<'a, I>(
+    elements: I,
     ids: impl IntoIterator<Item = String>,
-) -> HashSet<String> {
+) -> HashSet<String>
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
     let mut out: HashSet<String> = ids.into_iter().collect();
     let mut groups = HashSet::new();
-    for element in elements {
+    for element in elements.clone() {
         if out.contains(&element.id) {
             if let Some(group) = &element.group_id {
                 groups.insert(group.clone());
@@ -25,6 +34,13 @@ pub fn expand_to_groups(
         }
     }
     out
+}
+
+pub fn expand_to_groups(
+    elements: &[DrawElement],
+    ids: impl IntoIterator<Item = String>,
+) -> HashSet<String> {
+    expand_to_groups_among(elements.iter(), ids)
 }
 
 pub fn group_patches(
