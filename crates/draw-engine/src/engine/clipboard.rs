@@ -5,6 +5,22 @@ use crate::interaction::DrawTool;
 use crate::scene::geometry::scene_bounds;
 use crate::scene::DrawElement;
 
+/// Last-writer-wins between two versions of the same element.
+///
+/// Higher `version` wins; a tie is broken by higher `versionNonce`, then by `updated`.
+/// Comparing in that order means a skewed clock can only ever decide a tie that the
+/// edit counts could not — the ordering is deterministic, so every client reaches the
+/// same answer regardless of the order patches arrive in.
+fn remote_wins(incoming: &DrawElement, existing: &DrawElement) -> bool {
+    if incoming.version != existing.version {
+        return incoming.version > existing.version;
+    }
+    if incoming.version_nonce != existing.version_nonce {
+        return incoming.version_nonce > existing.version_nonce;
+    }
+    incoming.updated > existing.updated
+}
+
 impl DrawEngine {
     pub(super) fn push_history(&mut self) {
         self.history.push(self.scene.snapshot());
@@ -65,6 +81,49 @@ impl DrawEngine {
         let json = self.copy_selection()?;
         self.delete_selection();
         Some(json)
+    }
+
+    /// Merges elements from another client into this scene.
+    ///
+    /// This is **not** a paste, and the difference is the whole point: `paste_json`
+    /// mints a fresh id for every element and offsets it, because that is what pasting
+    /// means. Feeding remote edits through it turned every incoming element into a
+    /// duplicate — and because the resulting change was then broadcast back, two
+    /// clients grew a board without bound. A four-element board reached 8,273 elements
+    /// and three frames a second that way.
+    ///
+    /// Merge is by id, last-writer-wins on `(version, versionNonce)` — Excalidraw's
+    /// reconciliation rule, and the same one `packages/contract` applies server-side,
+    /// so a client and the server converge on the same answer.
+    ///
+    /// No history entry: a remote edit is not a step in *your* undo stack. No scene
+    /// event either — the caller is told through the return value, so nothing
+    /// re-broadcasts what it was just sent.
+    pub fn apply_remote_patch(&mut self, json: &str) -> bool {
+        let Some(incoming) = crate::export::elements_from_json(json) else {
+            return false;
+        };
+
+        let mut changed = false;
+        for element in incoming {
+            let accept = match self.scene.get(&element.id) {
+                None => true,
+                Some(existing) => remote_wins(&element, existing),
+            };
+            if accept {
+                self.scene.put(element);
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.apply_bindings();
+            // Drop the delta this produced: the host already has these elements, and
+            // emitting them would send them straight back to the peer that sent them.
+            let _ = self.scene.take_delta();
+            self.request_draw();
+        }
+        changed
     }
 
     pub fn paste_json(&mut self, json: Option<&str>, at: Option<(f64, f64)>) -> bool {
