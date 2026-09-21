@@ -63,8 +63,10 @@ impl ShapeKey {
         Self {
             version: element.version,
             seed: element.seed,
-            width: element.width.to_bits(),
-            height: element.height.to_bits(),
+            // Absolute, so mirroring an element reuses its geometry rather than
+            // regenerating it. The sign is a property of the transform, not of the shape.
+            width: element.width.abs().to_bits(),
+            height: element.height.abs().to_bits(),
         }
     }
 }

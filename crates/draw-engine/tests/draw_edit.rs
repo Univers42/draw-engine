@@ -212,14 +212,73 @@ fn flip_horizontal() {
     let a = box_at(0.0, 0.0, 100.0, 60.0);
     let b = box_at(300.0, 0.0, 100.0, 60.0);
     let flipped = flip_elements(&[a.clone(), b.clone()], &ids(&[a, b]), FlipAxis::Horizontal);
-    assert_eq!(flipped[0].x, 300.0);
-    assert_eq!(flipped[1].x, 0.0);
+
+    // The two swap places. Asserted through the bounds rather than through `x`, because
+    // a mirrored element's `x` is its *right* edge: the sign of the extent is what the
+    // painter reads as the mirror, so a flip has to change it.
+    assert_eq!(element_bounds(&flipped[0]).min_x, 300.0);
+    assert_eq!(element_bounds(&flipped[0]).max_x, 400.0);
+    assert_eq!(element_bounds(&flipped[1]).min_x, 0.0);
+    assert!(flipped[0].width < 0.0, "mirrored on the horizontal axis");
+    assert_eq!(flipped[0].height, 60.0, "and untouched on the vertical one");
+
     let link = arrow(0.0, 0.0, 400.0, 100.0);
     let flipped = flip_elements(&[link.clone()], &ids(&[link]), FlipAxis::Horizontal);
     let (start, end) = linear_endpoints(&flipped[0]);
     assert_eq!(start.x, 400.0);
     assert_eq!(end.x, 0.0);
     assert_eq!(start.y, 0.0);
+}
+
+/// A reflection is its own inverse, so flipping twice has to land on the original
+/// numbers exactly — not merely in the same place. Repositioning without changing the
+/// extent looked like an involution while doing nothing at all.
+#[test]
+fn flipping_twice_restores_the_original() {
+    for axis in [FlipAxis::Horizontal, FlipAxis::Vertical] {
+        let shape = box_at(120.0, 40.0, 200.0, 90.0);
+        let once = flip_elements(&[shape.clone()], &ids(&[shape.clone()]), axis);
+        let twice = flip_elements(&once, &ids(&once), axis);
+
+        assert_eq!(twice[0].x, shape.x, "{axis:?}");
+        assert_eq!(twice[0].y, shape.y, "{axis:?}");
+        assert_eq!(twice[0].width, shape.width, "{axis:?}");
+        assert_eq!(twice[0].height, shape.height, "{axis:?}");
+
+        // And one flip genuinely reverses the shape rather than leaving it be.
+        let mirrored = if axis == FlipAxis::Horizontal {
+            once[0].width
+        } else {
+            once[0].height
+        };
+        assert!(mirrored < 0.0, "{axis:?} must actually mirror the shape");
+    }
+}
+
+/// Text is repositioned but never mirrored — reversed glyphs are a rendering bug, not a
+/// drawing operation.
+#[test]
+fn flipping_text_moves_it_without_reversing_it() {
+    let mut label = create_element_default(
+        DrawElementType::Text,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 80.0,
+            height: 25.0,
+        },
+    );
+    label.text = Some("hello".into());
+    let other = box_at(300.0, 0.0, 100.0, 60.0);
+
+    let flipped = flip_elements(
+        &[label.clone(), other.clone()],
+        &ids(&[label.clone(), other]),
+        FlipAxis::Horizontal,
+    );
+    let moved = flipped.iter().find(|e| e.id == label.id).unwrap();
+    assert!(moved.width > 0.0, "glyphs must not be reversed");
+    assert_eq!(moved.x, 320.0);
 }
 
 #[test]

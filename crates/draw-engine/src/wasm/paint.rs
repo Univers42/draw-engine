@@ -169,6 +169,21 @@ fn dash_js(pattern: Option<[f64; 2]>) -> js_sys::Array {
 /// is multiplied out in Rust and applied with a single `setTransform`.
 ///
 /// `view_transform` is the device-pixel-ratio and camera part, computed once per frame.
+///
+/// # Mirroring
+///
+/// A negative `width` or `height` means the element is mirrored on that axis, and the
+/// mirror is applied **here**, as a sign in the matrix. The geometry is generated from
+/// the absolute size, so a flip regenerates nothing at all: the cached rough ops and the
+/// cached `Path2D` both stay valid and the whole operation is one sign change per axis.
+/// Baking the mirror into the geometry instead would rebuild every op — and, because
+/// rough's jitter depends on the coordinates it is handed, would produce a *different*
+/// hand-drawn stroke rather than the same one reversed.
+///
+/// `element.x` is the anchor corner, which is the left edge when the width is positive
+/// and the right edge when it is negative. That is the same convention
+/// [`crate::scene::geometry::normalize_rect`] already implements, so bounds, hit testing
+/// and binding need no special case.
 fn with_element_transform(
     ctx: &CanvasRenderingContext2d,
     view: [f64; 6],
@@ -177,21 +192,32 @@ fn with_element_transform(
 ) {
     set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0));
 
-    // Element-local: translate to the origin, and rotate about the centre if turned.
+    // `signum` would give +1 for 0.0 and -1 for -0.0; the sign only matters when there is
+    // a real extent, so test the value directly.
+    let sx = if element.width < 0.0 { -1.0 } else { 1.0 };
+    let sy = if element.height < 0.0 { -1.0 } else { 1.0 };
+
+    // Element-local: mirror, then translate to the origin, and rotate about the centre
+    // if turned.
     let (a, b, c, d, e, f) = if element.angle == 0.0 {
-        (1.0, 0.0, 0.0, 1.0, element.x, element.y)
+        (sx, 0.0, 0.0, sy, element.x, element.y)
     } else {
-        let cx = element.width / 2.0;
-        let cy = element.height / 2.0;
+        // Half-extents in *local* space, which is always positive; the centre in world
+        // space uses the signed width, and the two agree because
+        // `x + width/2 == x + sx * |width|/2`.
+        let hw = element.width.abs() / 2.0;
+        let hh = element.height.abs() / 2.0;
+        let cx = element.x + element.width / 2.0;
+        let cy = element.y + element.height / 2.0;
         let (sin, cos) = element.angle.sin_cos();
-        // T(x,y) * T(cx,cy) * R * T(-cx,-cy)
+        // T(centre) * R * S(sx, sy) * T(-half extents)
         (
-            cos,
-            sin,
-            -sin,
-            cos,
-            element.x + cx - (cx * cos - cy * sin),
-            element.y + cy - (cx * sin + cy * cos),
+            sx * cos,
+            sx * sin,
+            -sy * sin,
+            sy * cos,
+            cx - sx * cos * hw + sy * sin * hh,
+            cy - sx * sin * hw - sy * cos * hh,
         )
     };
 

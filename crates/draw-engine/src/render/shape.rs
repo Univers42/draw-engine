@@ -134,8 +134,13 @@ fn linear_points(element: &DrawElement) -> Vec<[f64; 2]> {
 /// laid out and filled directly, and freedraw uses a stroke outline rather than a
 /// sketched path.
 pub fn element_drawable(element: &DrawElement) -> Option<Drawable> {
-    let w = element.width;
-    let h = element.height;
+    // Absolute: a negative extent means the element is mirrored on that axis, and the
+    // mirror is a sign in the painter's transform, not a different shape. Generating from
+    // the signed value would rebuild every op on a flip and — because rough's jitter is
+    // derived from the coordinates it is given — would hand back a different hand-drawn
+    // stroke instead of the same one reversed.
+    let w = element.width.abs();
+    let h = element.height.abs();
 
     match element.kind {
         DrawElementType::Rectangle
