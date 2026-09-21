@@ -28,6 +28,8 @@ const HOTKEYS: Record<string, DrawTool> = {
   // so without the digit the badge promised a key that did nothing.
   "0": "eraser",
   e: "eraser",
+  // Excalidraw's laser key, and the same reasoning as the lasso: "l" is the line.
+  k: "laser",
   h: "hand",
 };
 

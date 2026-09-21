@@ -160,6 +160,9 @@ impl DrawEngine {
             Interaction::Erase => HoverCursor::Crosshair,
             Interaction::Marquee { .. } => HoverCursor::Default,
             Interaction::Lasso { .. } => HoverCursor::Crosshair,
+            // The trail is the pointer here, so a crosshair marks exactly where the beam
+            // comes from — an arrow would sit beside its own tip.
+            Interaction::Laser => HoverCursor::Crosshair,
         })
     }
 }
