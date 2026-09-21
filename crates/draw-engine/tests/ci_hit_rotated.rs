@@ -92,8 +92,12 @@ fn a_turned_arrow_is_hit_along_its_painted_path() {
     assert!(!hit_test_element(&arrow, 95.0, 0.0, 4.0));
 }
 
-/// The marquee measures the box a shape really occupies. On the unrotated box a turned
-/// shape was caught by a marquee over empty space and missed over the part sticking out.
+/// The marquee measures the box a shape really occupies.
+///
+/// A 200x20 bar turned upright occupies x 90..110, y -50..150. On the *unrotated* box it
+/// would have looked like x 0..200, y 40..60 — so a rectangle enclosing where the bar now
+/// stands would have missed it, and one enclosing where it used to lie would have taken
+/// it. Both are checked.
 #[test]
 fn the_marquee_uses_the_rotated_box() {
     let mut element = box_at(0.0, 40.0, 200.0, 20.0);
@@ -101,16 +105,17 @@ fn the_marquee_uses_the_rotated_box() {
     let id = element.id.clone();
     let elements = vec![element];
 
-    // Upright, the bar reaches up to y = -50 at x = 100. Nothing was there before.
-    let over_the_new_top = marquee_rect(90.0, -60.0, 110.0, -40.0);
+    let round_where_it_stands = marquee_rect(80.0, -60.0, 120.0, 160.0);
     assert_eq!(
-        elements_in_marquee(&elements, over_the_new_top),
-        vec![id.clone()]
+        elements_in_marquee(&elements, round_where_it_stands),
+        vec![id]
     );
 
-    // And the far end of the old horizontal extent is now empty.
-    let over_the_old_end = marquee_rect(180.0, 42.0, 199.0, 58.0);
-    assert!(elements_in_marquee(&elements, over_the_old_end).is_empty());
+    let round_where_it_used_to_lie = marquee_rect(-10.0, 30.0, 210.0, 70.0);
+    assert!(
+        elements_in_marquee(&elements, round_where_it_used_to_lie).is_empty(),
+        "the bar is no longer horizontal, so it is not inside its old footprint"
+    );
 }
 
 /// The rotated box of an unturned element is just its box — the fast path must agree with

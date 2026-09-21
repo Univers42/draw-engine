@@ -652,7 +652,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 
 /// The frame and its handles for a single shape.
 ///
-/// The frame sits `layout.pad` outside the element, not on it, so the element's own
+/// The frame sits `frame_pad` outside the element, not on it, so the element's own
 /// outline is still a move target — and every handle drawn here comes from the same
 /// [`selection_handles`] call the pointer code hit-tests against, so the two cannot
 /// drift. They did: the cardinal handles were hit-testable but never painted, which made
@@ -677,12 +677,40 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
             // A circle, so it reads as "turn" rather than "resize".
             let _ = ctx.arc(s.x, s.y, half, 0.0, std::f64::consts::PI * 2.0);
         } else {
-            ctx.rect(s.x - half, s.y - half, view.handle_px, view.handle_px);
+            // Square to the *element*, not to the screen. Handle positions already turn
+            // with the shape; leaving the boxes axis-aligned left them visibly askew
+            // against a rotated frame, as if they belonged to something else.
+            handle_square(ctx, s.x, s.y, half, element.angle);
         }
         set_fill(ctx, &view.theme.background);
         ctx.fill();
         ctx.stroke();
     }
+}
+
+/// A `half`-radius square centred on `(cx, cy)` and turned by `angle`.
+///
+/// Built as an explicit path rather than `save`/`rotate`/`rect`/`restore`, which would be
+/// four boundary crossings per handle instead of five cheap ones.
+fn handle_square(ctx: &CanvasRenderingContext2d, cx: f64, cy: f64, half: f64, angle: f64) {
+    if angle == 0.0 {
+        ctx.rect(cx - half, cy - half, half * 2.0, half * 2.0);
+        return;
+    }
+    let (sin, cos) = angle.sin_cos();
+    let corners = [(-half, -half), (half, -half), (half, half), (-half, half)];
+    let mut first = true;
+    for (dx, dy) in corners {
+        let x = cx + dx * cos - dy * sin;
+        let y = cy + dx * sin + dy * cos;
+        if first {
+            ctx.move_to(x, y);
+            first = false;
+        } else {
+            ctx.line_to(x, y);
+        }
+    }
+    ctx.close_path();
 }
 
 /// The frame, corner handles and rotation handle for a multi-element selection.

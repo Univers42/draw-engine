@@ -1,8 +1,8 @@
-use crate::edit::expand_to_groups;
+use crate::edit::expand_to_groups_among;
 use crate::engine::{DrawEngine, Interaction};
 use crate::freehand::points_bounds;
 use crate::interaction::{is_degenerate_linear, DrawTool};
-use crate::selection::{elements_in_marquee, marquee_rect};
+use crate::selection::{elements_in_marquee_among, marquee_rect};
 
 /// World units the pointer must travel before a drag counts as a marquee rather than a
 /// click. Small enough that a deliberate rubber-band always registers, large enough to
@@ -39,9 +39,15 @@ impl DrawEngine {
 
                 let mut ids = base;
                 if dragged {
-                    ids.extend(elements_in_marquee(&self.selectable(), rect));
+                    // By reference: this used to clone the whole document twice, once to
+                    // test the rectangle against it and once to expand groups.
+                    ids.extend(elements_in_marquee_among(
+                        self.scene.iter_ordered().filter(|el| !el.locked()),
+                        rect,
+                    ));
                 }
-                self.set_selection(expand_to_groups(&self.scene.ordered_cloned(), ids));
+                let expanded = expand_to_groups_among(self.scene.iter_ordered(), ids);
+                self.set_selection(expanded);
             }
             _ => {
                 self.apply_bindings();

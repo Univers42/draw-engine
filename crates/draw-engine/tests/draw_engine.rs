@@ -411,7 +411,7 @@ fn transform_rotate_handle() {
 }
 
 #[test]
-fn marquee_selects_overlapping() {
+fn marquee_selects_what_it_encloses() {
     assert_eq!(
         marquee_rect(40.0, 60.0, 10.0, 20.0),
         WorldBounds {

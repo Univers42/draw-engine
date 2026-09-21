@@ -159,3 +159,55 @@ fn a_hollow_shape_does_not_swallow_what_is_inside_it() {
         "the click belongs to the shape that is actually there"
     );
 }
+
+/// The marquee takes what it **encloses**, not what it brushes past.
+///
+/// Confirmed against excalidraw.com: a rectangle drawn fully around a shape selects it,
+/// while one that clips its corner, crosses its middle or touches its edge selects
+/// nothing. On overlap, a small drag across a large background shape quietly picked the
+/// background up too.
+#[test]
+fn the_marquee_requires_containment() {
+    let mut shape = box_at(500.0, 300.0, 300.0, 200.0);
+    shape.id = "s".into();
+    let scene = vec![shape];
+
+    let take = |r| elements_in_marquee(&scene, r);
+    assert_eq!(take(marquee_rect(450.0, 250.0, 860.0, 560.0)), vec!["s"]);
+    assert!(
+        take(marquee_rect(430.0, 240.0, 600.0, 380.0)).is_empty(),
+        "clips a corner"
+    );
+    assert!(
+        take(marquee_rect(400.0, 380.0, 900.0, 420.0)).is_empty(),
+        "crosses the middle"
+    );
+    assert!(
+        take(marquee_rect(780.0, 480.0, 900.0, 600.0)).is_empty(),
+        "touches a corner"
+    );
+    // Exactly coincident counts as enclosed.
+    assert_eq!(take(marquee_rect(500.0, 300.0, 800.0, 500.0)), vec!["s"]);
+}
+
+/// A label is carried by its container, so a marquee must not pick it up on its own —
+/// dragging it alone would pull the text out of the shape it labels.
+#[test]
+fn the_marquee_leaves_bound_labels_to_their_container() {
+    let mut label = create_element_default(
+        DrawElementType::Text,
+        Geometry {
+            x: 520.0,
+            y: 380.0,
+            width: 100.0,
+            height: 25.0,
+        },
+    );
+    label.id = "label".into();
+    label.container_id = Some("s".into());
+    let mut shape = box_at(500.0, 300.0, 300.0, 200.0);
+    shape.id = "s".into();
+
+    let got = elements_in_marquee(&[label, shape], marquee_rect(450.0, 250.0, 860.0, 560.0));
+    assert_eq!(got, vec!["s"]);
+}
