@@ -240,9 +240,7 @@ impl DrawEngine {
     }
 
     fn apply_bindings(&mut self) {
-        for element in crate::refresh_bindings(&self.scene.ordered_cloned()) {
-            self.scene.put(element);
-        }
+        crate::scene::binding::refresh_bindings_in_place(&mut self.scene);
     }
 
     fn settle_tool(&mut self) {

@@ -1,4 +1,5 @@
 pub mod arrowheads;
+pub mod bounds;
 pub mod cache;
 pub mod opts;
 pub mod paint;

@@ -28,7 +28,14 @@ pub fn element_bounds(element: &DrawElement) -> WorldBounds {
     }
 }
 
-pub fn scene_bounds(elements: &[DrawElement]) -> Option<WorldBounds> {
+/// The union of every live element's bounds.
+///
+/// Generic over the iterable so it accepts both an owned slice and a list of borrowed
+/// elements — the render path holds `&DrawElement` to avoid cloning the scene, and
+/// should not have to clone it back just to measure it.
+pub fn scene_bounds<'a>(
+    elements: impl IntoIterator<Item = &'a DrawElement>,
+) -> Option<WorldBounds> {
     let mut bounds: Option<WorldBounds> = None;
     for element in elements {
         if element.is_deleted {

@@ -371,7 +371,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
             ctx.stroke();
         }
     } else if view.selected.len() > 1 {
-        if let Some(bounds) = crate::scene_bounds(&view.selected) {
+        if let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) {
             let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
             let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
             ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
