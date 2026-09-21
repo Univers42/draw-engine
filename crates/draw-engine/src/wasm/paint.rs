@@ -192,32 +192,31 @@ fn with_element_transform(
 ) {
     set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0));
 
-    // `signum` would give +1 for 0.0 and -1 for -0.0; the sign only matters when there is
-    // a real extent, so test the value directly.
-    let sx = if element.width < 0.0 { -1.0 } else { 1.0 };
-    let sy = if element.height < 0.0 { -1.0 } else { 1.0 };
+    // Shapes only: a line or arrow carries its mirror in its points, so the sign of its
+    // width means nothing and applying it would reverse the element a second time.
+    let (sx, sy) = crate::scene::geometry::mirror_signs(element);
 
     // Element-local: mirror, then translate to the origin, and rotate about the centre
     // if turned.
     let (a, b, c, d, e, f) = if element.angle == 0.0 {
         (sx, 0.0, 0.0, sy, element.x, element.y)
     } else {
-        // Half-extents in *local* space, which is always positive; the centre in world
-        // space uses the signed width, and the two agree because
-        // `x + width/2 == x + sx * |width|/2`.
-        let hw = element.width.abs() / 2.0;
-        let hh = element.height.abs() / 2.0;
-        let cx = element.x + element.width / 2.0;
-        let cy = element.y + element.height / 2.0;
+        // The pivot in the element's own coordinates, and the same pivot in world space.
+        // For a shape this is the middle of its box, as before. For a line or arrow it is
+        // the middle of its *points*: reading it as `x + width / 2` put the pivot outside
+        // a leftward arrow altogether, so turning one swung it around a point past its
+        // own tip.
+        let (lcx, lcy) = crate::scene::geometry::local_center(element);
+        let centre = crate::scene::geometry::rotation_center(element);
         let (sin, cos) = element.angle.sin_cos();
-        // T(centre) * R * S(sx, sy) * T(-half extents)
+        // T(centre) * R * S(sx, sy) * T(-local centre)
         (
             sx * cos,
             sx * sin,
             -sy * sin,
             sy * cos,
-            cx - sx * cos * hw + sy * sin * hh,
-            cy - sx * sin * hw - sy * cos * hh,
+            centre.x - sx * cos * lcx + sy * sin * lcy,
+            centre.y - sx * sin * lcx - sy * cos * lcy,
         )
     };
 

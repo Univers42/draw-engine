@@ -121,12 +121,67 @@ pub fn linear_endpoints(element: &DrawElement) -> (Point, Point) {
     )
 }
 
+/// Replaces a linear element's geometry with a straight run from `start` to `end`.
+///
+/// Destroys any intermediate points, which is correct only while the line *is* two
+/// points — drawing one, or rebuilding one from its ends. Anything re-anchoring an
+/// existing line wants [`linear_retarget`].
 pub fn linear_from_endpoints(mut element: DrawElement, start: Point, end: Point) -> DrawElement {
     element.x = start.x;
     element.y = start.y;
     element.width = end.x - start.x;
     element.height = end.y - start.y;
     element.points = Some(vec![[0.0, 0.0], [end.x - start.x, end.y - start.y]]);
+    element
+}
+
+/// Moves a linear element's two ends, leaving everything between them where it is.
+///
+/// Binding used to go through [`linear_from_endpoints`], which rewrites the point list as
+/// a straight pair. So the moment a bound shape was nudged, an arrow that had been given
+/// midpoints collapsed to a straight line and the user's edits were gone — silently, and
+/// unrecoverably once the history entry was folded.
+///
+/// Interior points keep their **world** positions: the line bends exactly as it did, only
+/// its ends have moved. The origin is re-pinned to the first point, which is the invariant
+/// the rest of the engine relies on, and the extent is recomputed from the points, which
+/// is what [`crate::scene::geometry::element_bounds`] measures.
+pub fn linear_retarget(mut element: DrawElement, start: Point, end: Point) -> DrawElement {
+    let Some(points) = element.points.as_deref() else {
+        return linear_from_endpoints(element, start, end);
+    };
+    if points.len() < 3 {
+        // Two points are entirely defined by their ends; nothing to preserve.
+        return linear_from_endpoints(element, start, end);
+    }
+
+    let (ox, oy) = (element.x, element.y);
+    let last = points.len() - 1;
+    let mut next: Vec<[f64; 2]> = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        if i == 0 {
+            next.push([0.0, 0.0]);
+        } else if i == last {
+            next.push([end.x - start.x, end.y - start.y]);
+        } else {
+            // Same place on the board, expressed against the new origin.
+            next.push([ox + p[0] - start.x, oy + p[1] - start.y]);
+        }
+    }
+
+    element.x = start.x;
+    element.y = start.y;
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in &next {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    element.width = max_x - min_x;
+    element.height = max_y - min_y;
+    element.points = Some(next);
     element
 }
 
@@ -158,6 +213,34 @@ fn live<'a>(
     } else {
         Some(found)
     }
+}
+
+/// Where each end of a linear element should aim when it attaches.
+///
+/// Excalidraw aims an endpoint from its **adjacent point**, which is what keeps a bent
+/// arrow attaching along the direction it actually arrives from. With only two points the
+/// adjacent point *is* the other end, and when that other end is itself bound the two
+/// would chase each other, so the far shape's centre is used instead — it is fixed, which
+/// makes the result stable.
+fn attach_targets(
+    element: &DrawElement,
+    start: Point,
+    end: Point,
+    start_shape: Option<&DrawElement>,
+    end_shape: Option<&DrawElement>,
+) -> (Point, Point) {
+    let points = element.points.as_deref().unwrap_or(&[]);
+    if points.len() > 2 {
+        let world = |p: &[f64; 2]| Point {
+            x: element.x + p[0],
+            y: element.y + p[1],
+        };
+        return (world(&points[1]), world(&points[points.len() - 2]));
+    }
+    (
+        end_shape.map(element_center).unwrap_or(end),
+        start_shape.map(element_center).unwrap_or(start),
+    )
 }
 
 /// Recomputes bound geometry **in place**, touching only the elements that change.
@@ -196,8 +279,8 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
         }
 
         let (start, end) = linear_endpoints(element);
-        let start_target = end_shape.map(element_center).unwrap_or(end);
-        let end_target = start_shape.map(element_center).unwrap_or(start);
+        let (start_target, end_target) =
+            attach_targets(element, start, end, start_shape, end_shape);
         let next_start = start_shape
             .map(|shape| attach_point(shape, start_target, BINDING_GAP))
             .unwrap_or(start);
@@ -205,7 +288,10 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
             .map(|shape| attach_point(shape, end_target, BINDING_GAP))
             .unwrap_or(end);
 
-        let next = linear_from_endpoints(element.clone(), next_start, next_end);
+        // `linear_retarget`, not `linear_from_endpoints`: the latter rewrites the point
+        // list as a straight pair, so every bend a user had put in an arrow vanished the
+        // moment the shape it pointed at was nudged.
+        let next = linear_retarget(element.clone(), next_start, next_end);
         if &next != element {
             moved.push(next);
         }
@@ -261,8 +347,13 @@ pub fn refresh_bindings(elements: &[DrawElement]) -> Vec<DrawElement> {
             continue;
         }
         let (start, end) = linear_endpoints(element);
-        let start_target = end_shape.as_ref().map(element_center).unwrap_or(end);
-        let end_target = start_shape.as_ref().map(element_center).unwrap_or(start);
+        let (start_target, end_target) = attach_targets(
+            element,
+            start,
+            end,
+            start_shape.as_ref(),
+            end_shape.as_ref(),
+        );
         let next_start = start_shape
             .as_ref()
             .map(|shape| attach_point(shape, start_target, BINDING_GAP))
@@ -271,7 +362,7 @@ pub fn refresh_bindings(elements: &[DrawElement]) -> Vec<DrawElement> {
             .as_ref()
             .map(|shape| attach_point(shape, end_target, BINDING_GAP))
             .unwrap_or(end);
-        let next = linear_from_endpoints(element.clone(), next_start, next_end);
+        let next = linear_retarget(element.clone(), next_start, next_end);
         by_id.insert(next.id.clone(), next.clone());
         linears_done.push(next);
     }

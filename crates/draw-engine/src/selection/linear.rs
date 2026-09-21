@@ -63,8 +63,10 @@ pub fn world_points(element: &DrawElement) -> Vec<Point> {
             .collect();
     }
 
-    let cx = element.x + element.width / 2.0;
-    let cy = element.y + element.height / 2.0;
+    // The pivot is the centre of the *points*, which is what the painter turns about.
+    // `x + width / 2` sits outside a leftward arrow entirely.
+    let c = crate::scene::geometry::rotation_center(element);
+    let (cx, cy) = (c.x, c.y);
     let (sin, cos) = element.angle.sin_cos();
     points
         .iter()
@@ -90,13 +92,13 @@ pub fn to_local(element: &DrawElement, world: Point) -> [f64; 2] {
         return [world.x - element.x, world.y - element.y];
     }
 
-    let cx = element.x + element.width / 2.0;
-    let cy = element.y + element.height / 2.0;
+    // The same pivot `world_points` turns about, or the round trip does not close.
+    let c = crate::scene::geometry::rotation_center(element);
     let (sin, cos) = (-element.angle).sin_cos();
-    let dx = world.x - cx;
-    let dy = world.y - cy;
-    let ux = cx + dx * cos - dy * sin;
-    let uy = cy + dx * sin + dy * cos;
+    let dx = world.x - c.x;
+    let dy = world.y - c.y;
+    let ux = c.x + dx * cos - dy * sin;
+    let uy = c.y + dx * sin + dy * cos;
     [ux - element.x, uy - element.y]
 }
 
@@ -273,21 +275,41 @@ mod tests {
         assert_eq!((w[1].x, w[1].y), (300.0, 150.0));
     }
 
+    /// `to_local` is the inverse of the local-to-world mapping `world_points` performs.
+    ///
+    /// The probe keeps the element's whole point list, because the pivot is the centre of
+    /// the points: handing a one-point element to `world_points` would turn it about a
+    /// different centre and the round trip would drift for that reason alone, testing the
+    /// harness rather than the code.
     #[test]
     fn local_and_world_round_trip_under_rotation() {
         let mut a = arrow(vec![[0.0, 0.0], [200.0, 50.0]]);
         a.angle = 0.7;
 
-        for world in world_points(&a) {
+        for (i, world) in world_points(&a).into_iter().enumerate() {
             let local = to_local(&a, world);
-            let back = {
-                let mut probe = a.clone();
-                probe.points = Some(vec![local]);
-                world_points(&probe)[0]
-            };
+            let mut probe = a.clone();
+            let mut points = a.points.clone().unwrap();
+            points[i] = local;
+            probe.points = Some(points);
+
+            let back = world_points(&probe)[i];
             assert!((back.x - world.x).abs() < 1e-9, "x drifted");
             assert!((back.y - world.y).abs() < 1e-9, "y drifted");
         }
+    }
+
+    /// A leftward arrow turns about the middle of its own points.
+    ///
+    /// Reading the pivot as `x + width / 2` put it a full width past the arrow's own tip,
+    /// so rotating one swung it round a point in empty space beside it.
+    #[test]
+    fn the_pivot_is_the_middle_of_the_points() {
+        let leftward = arrow(vec![[0.0, 0.0], [-200.0, 0.0]]);
+        let centre = crate::scene::geometry::rotation_center(&leftward);
+        // The arrow runs from x=100 back to x=-100, so its middle is x=0.
+        assert!((centre.x - 0.0).abs() < 1e-9, "got {}", centre.x);
+        assert!((centre.y - 100.0).abs() < 1e-9);
     }
 
     /// The case box handles cannot express: a dead-horizontal arrow.

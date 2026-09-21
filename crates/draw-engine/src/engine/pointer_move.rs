@@ -52,6 +52,11 @@ impl DrawEngine {
                 ) {
                     self.scene.put(next);
                 }
+                // Bound arrows have to keep up with the shapes they point at. Without
+                // this they held their old attachment for the whole gesture and jumped
+                // only on release, so a group could be scaled while its arrows sat
+                // detached in mid-air.
+                self.apply_bindings();
                 self.request_draw();
                 Some(it)
             }
@@ -64,6 +69,7 @@ impl DrawEngine {
                 {
                     self.scene.put(next);
                 }
+                self.apply_bindings();
                 self.request_draw();
                 Some(it)
             }
@@ -121,6 +127,8 @@ impl DrawEngine {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     element.angle = rotate_element(&element, world.x, world.y);
                     self.scene.put(element);
+                    // Turning a shape moves the perimeter its arrows attach to.
+                    self.apply_bindings();
                     self.request_draw();
                 }
                 Some(it)

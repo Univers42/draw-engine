@@ -10,7 +10,7 @@
 use crate::camera::WorldBounds;
 use crate::render::arrowheads::arrowhead_size;
 use crate::scene::element::{DrawElement, DrawElementType};
-use crate::scene::geometry::normalize_rect;
+use crate::scene::geometry::Rect;
 
 /// rough's `maxRandomnessOffset` default, the amplitude its jitter is scaled from.
 const MAX_RANDOMNESS_OFFSET: f64 = 2.0;
@@ -25,7 +25,16 @@ const SAFETY: f64 = 2.0;
 /// aligned box of the result is returned, which is what the painter's transform
 /// actually sweeps.
 pub fn render_bounds(element: &DrawElement) -> WorldBounds {
-    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    // Through `element_bounds`, so a line or arrow is measured by its points. Reading a
+    // leftward arrow's box as `[x, x + width]` put it a full width to the right of where
+    // it is drawn, which culled it from view while it was still on screen.
+    let plain = crate::scene::geometry::element_bounds(element);
+    let rect = Rect {
+        x: plain.min_x,
+        y: plain.min_y,
+        width: plain.max_x - plain.min_x,
+        height: plain.max_y - plain.min_y,
+    };
 
     let mut pad =
         element.stroke_width / 2.0 + MAX_RANDOMNESS_OFFSET * element.roughness.max(0.0) + SAFETY;
@@ -38,8 +47,8 @@ pub fn render_bounds(element: &DrawElement) -> WorldBounds {
     let (min_x, min_y, max_x, max_y) = if element.angle == 0.0 {
         (rect.x, rect.y, rect.x + rect.width, rect.y + rect.height)
     } else {
-        let cx = rect.x + rect.width / 2.0;
-        let cy = rect.y + rect.height / 2.0;
+        let centre = crate::scene::geometry::rotation_center(element);
+        let (cx, cy) = (centre.x, centre.y);
         let (sin, cos) = element.angle.sin_cos();
 
         let corners = [

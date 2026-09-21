@@ -43,10 +43,11 @@ pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,
     create_element_default, default_element_style, element_bounds, element_center,
     element_rotated_bounds, hit_test, hit_test_element, is_bindable_element, is_linear_element,
-    is_transparent, layout_label, linear_endpoints, linear_from_endpoints, merge_style,
-    new_element_id, normalize_rect, refresh_bindings, scene_bounds, Arrowhead, DrawElement,
-    DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene,
-    StrokeStyle, ARROWHEADS, BINDING_GAP, LABEL_PADDING,
+    is_transparent, layout_label, linear_endpoints, linear_from_endpoints, linear_retarget,
+    local_box, local_center, merge_style, new_element_id, normalize_rect, refresh_bindings,
+    rotation_center, scene_bounds, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
+    DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP,
+    LABEL_PADDING,
 };
 pub use selection::{
     elements_in_marquee, elements_in_marquee_among, handle_local_point, hit_handle, marquee_rect,

@@ -1,4 +1,4 @@
-use crate::camera::WorldBounds;
+use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{DrawElement, DrawElementType};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -18,7 +18,107 @@ pub fn normalize_rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
     }
 }
 
+/// Whether the element's geometry lives in its point list rather than in a width and
+/// height.
+///
+/// For these, `x`/`y` is the position of the **first point**, not a corner of a box, and
+/// `width`/`height` are the size of the point cloud rather than an offset from `x`. So
+/// `x + width` is not the right edge and never was: an arrow whose tail is dragged past
+/// its head has points running negative, and reading its box as `[x, x + width]` puts it
+/// entirely to the right of where it is drawn.
+pub fn is_point_based(element: &DrawElement) -> bool {
+    matches!(
+        element.kind,
+        DrawElementType::Line | DrawElementType::Arrow | DrawElementType::Freedraw
+    )
+}
+
+/// The element's own coordinate box, relative to `element.x` / `element.y`.
+///
+/// This is the region the geometry is generated into, and it is the single place that
+/// knows how each kind of element is anchored. Everything that needs an element's extent
+/// or its centre of rotation derives it from here, so the painter, the hit test and the
+/// selection frame cannot disagree about where a shape is.
+pub fn local_box(element: &DrawElement) -> Rect {
+    if is_point_based(element) {
+        if let Some(points) = element.points.as_deref() {
+            if !points.is_empty() {
+                let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+                let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for p in points {
+                    min_x = min_x.min(p[0]);
+                    min_y = min_y.min(p[1]);
+                    max_x = max_x.max(p[0]);
+                    max_y = max_y.max(p[1]);
+                }
+                return Rect {
+                    x: min_x,
+                    y: min_y,
+                    width: max_x - min_x,
+                    height: max_y - min_y,
+                };
+            }
+        }
+    }
+    // A shape is generated at the origin spanning its absolute size; the sign of the
+    // extent is a mirror, applied by the painter, and does not move the local box.
+    Rect {
+        x: 0.0,
+        y: 0.0,
+        width: element.width.abs(),
+        height: element.height.abs(),
+    }
+}
+
+/// Where the element turns about, in its own coordinates.
+///
+/// Rotation happens about the centre of [`local_box`]. For a shape that is the middle of
+/// its box, as before. For a line or arrow it is the middle of the points — which for a
+/// leftward arrow is **behind** `x`, where `x + width / 2` would have put the pivot a
+/// full width beyond its own tip.
+pub fn local_center(element: &DrawElement) -> (f64, f64) {
+    let b = local_box(element);
+    (b.x + b.width / 2.0, b.y + b.height / 2.0)
+}
+
+/// Which axes the element is mirrored on, as a scale of +1 or -1.
+///
+/// A negative extent means "mirrored" **only for shapes**, where the extent is the whole
+/// description of the geometry. A line or arrow carries its shape in its points, so
+/// mirroring one reverses those points; the sign its width happens to have is a leftover
+/// of how it was last written and means nothing. Reading it as a mirror would flip the
+/// element twice, and would move its pivot outside itself.
+pub fn mirror_signs(element: &DrawElement) -> (f64, f64) {
+    if is_point_based(element) {
+        return (1.0, 1.0);
+    }
+    (
+        if element.width < 0.0 { -1.0 } else { 1.0 },
+        if element.height < 0.0 { -1.0 } else { 1.0 },
+    )
+}
+
+/// The element's world-space centre of rotation.
+pub fn rotation_center(element: &DrawElement) -> Point {
+    let (lcx, lcy) = local_center(element);
+    let (sx, sy) = mirror_signs(element);
+    Point {
+        x: element.x + sx * lcx,
+        y: element.y + sy * lcy,
+    }
+}
+
+/// The unrotated box the element occupies in the world.
 pub fn element_bounds(element: &DrawElement) -> WorldBounds {
+    if is_point_based(element) {
+        let b = local_box(element);
+        return WorldBounds {
+            min_x: element.x + b.x,
+            min_y: element.y + b.y,
+            max_x: element.x + b.x + b.width,
+            max_y: element.y + b.y + b.height,
+        };
+    }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
     WorldBounds {
         min_x: rect.x,
@@ -79,12 +179,13 @@ pub fn to_element_local(element: &DrawElement, wx: f64, wy: f64) -> (f64, f64) {
     if element.angle == 0.0 {
         return (wx, wy);
     }
-    let cx = element.x + element.width / 2.0;
-    let cy = element.y + element.height / 2.0;
+    // The same pivot the painter uses. Computing it here as `x + width / 2` is what put
+    // the hit test a full width away from a leftward arrow.
+    let c = rotation_center(element);
     let (sin, cos) = (-element.angle).sin_cos();
-    let dx = wx - cx;
-    let dy = wy - cy;
-    (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+    let dx = wx - c.x;
+    let dy = wy - c.y;
+    (c.x + dx * cos - dy * sin, c.y + dx * sin + dy * cos)
 }
 
 /// The axis-aligned box an element occupies once its rotation is taken into account.
@@ -93,20 +194,15 @@ pub fn to_element_local(element: &DrawElement, wx: f64, wy: f64) -> (f64, f64) {
 /// the stored geometry are expressed in. Anything asking "where is this on the board" —
 /// a marquee, a fit-to-content — wants this one instead.
 pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
-    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    let plain = element_bounds(element);
     if element.angle == 0.0 {
-        return WorldBounds {
-            min_x: rect.x,
-            min_y: rect.y,
-            max_x: rect.x + rect.width,
-            max_y: rect.y + rect.height,
-        };
+        return plain;
     }
-    let cx = rect.x + rect.width / 2.0;
-    let cy = rect.y + rect.height / 2.0;
+    let c = rotation_center(element);
+    let (cx, cy) = (c.x, c.y);
     let (sin, cos) = element.angle.sin_cos();
-    let hw = rect.width / 2.0;
-    let hh = rect.height / 2.0;
+    let hw = (plain.max_x - plain.min_x) / 2.0;
+    let hh = (plain.max_y - plain.min_y) / 2.0;
     // For an axis-aligned box turned by `angle`, the half-extent of the result has this
     // closed form — no need to walk the four corners.
     let ex = hw * cos.abs() + hh * sin.abs();
