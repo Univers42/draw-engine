@@ -2,7 +2,8 @@ use crate::camera::Point;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
-use crate::scene::{bindable_at, scene_bounds, DrawElement};
+use crate::scene::binding::bindable_among;
+use crate::scene::{scene_bounds, DrawElement};
 use crate::selection::{resize_element, rotate_element, HandleKind};
 
 impl DrawEngine {
@@ -215,12 +216,15 @@ impl DrawEngine {
             return element;
         };
 
-        let ordered = self.scene.ordered_cloned();
-        let target = crate::scene::binding::bindable_at(
-            &ordered,
+        // Walked by reference. This used to clone the whole document, and so did the
+        // highlight refresh immediately after it — two deep copies of every element on
+        // the board for every single pointer move while dragging one endpoint.
+        let tolerance = self.binding_tolerance();
+        let target = crate::scene::binding::bindable_among(
+            self.scene.iter_ordered().rev(),
             tip.x,
             tip.y,
-            self.binding_tolerance(),
+            tolerance,
             Some(&element.id),
         )
         .map(|shape| shape.id.clone());
@@ -239,7 +243,7 @@ impl DrawEngine {
     /// derived from screen pixels. Excalidraw does the same — you do not have to land
     /// *inside* a shape to bind to it, only near it, which is the difference between
     /// binding feeling helpful and feeling fiddly.
-    fn binding_tolerance(&self) -> f64 {
+    pub(crate) fn binding_tolerance(&self) -> f64 {
         super::BINDING_HOVER_PX / self.camera.scale
     }
 
@@ -253,32 +257,47 @@ impl DrawEngine {
             self.binding_highlight = None;
             return;
         }
-        let ordered = self.scene.ordered_cloned();
-        self.binding_highlight = crate::scene::binding::bindable_at(
-            &ordered,
+        let tolerance = self.binding_tolerance();
+        self.binding_highlight = crate::scene::binding::bindable_among(
+            self.scene.iter_ordered().rev(),
             at.x,
             at.y,
-            self.binding_tolerance(),
+            tolerance,
             None,
         )
         .map(|shape| shape.id.clone());
     }
 
+    /// Extends the arrow or line currently being drawn to the pointer.
+    ///
+    /// The endpoint binds on the same terms as one dragged later: within
+    /// [`Self::binding_tolerance`] of a shape, not strictly inside it. It used to require
+    /// a tolerance of zero here and a generous one everywhere else, so an arrow drawn
+    /// onto a shape refused to attach while the identical gesture performed a moment
+    /// later did. The shape it would attach to is recorded for the painter, so the
+    /// perimeter lights up **while** the arrow is being drawn, not only afterwards.
     fn move_linear(&mut self, id: &str, start: Point, world: Point, square: bool) {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
-        let ordered = self.scene.ordered_cloned();
-        let over = bindable_at(&ordered, world.x, world.y, 0.0, Some(id));
+        let tolerance = self.binding_tolerance();
+        let over = bindable_among(
+            self.scene.iter_ordered().rev(),
+            world.x,
+            world.y,
+            tolerance,
+            Some(id),
+        )
+        .map(|el| el.id.clone());
+
         let drag = linear_from_drag(start.x, start.y, world.x, world.y, square);
         element.x = drag.x;
         element.y = drag.y;
         element.width = drag.width;
         element.height = drag.height;
         element.points = Some(drag.points);
-        element.end_binding = over
-            .filter(|el| Some(&el.id) != element.start_binding.as_ref())
-            .map(|el| el.id.clone());
+        element.end_binding = over.filter(|hit| Some(hit) != element.start_binding.as_ref());
+        self.binding_highlight = element.end_binding.clone();
         self.scene.put(element);
         self.request_draw();
     }

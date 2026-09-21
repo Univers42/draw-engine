@@ -67,7 +67,60 @@ pub fn distance_to_segment(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64)
     (px - (ax + t * dx)).hypot(py - (ay + t * dy))
 }
 
+/// The pointer expressed in the element's own frame.
+///
+/// Every shape is defined unrotated and then turned about its centre by `angle`, so a hit
+/// test only has to turn the *query* back by the same amount and can then work in the
+/// simple axis-aligned space the shape is described in. Without this a rotated element is
+/// tested against the box it would occupy if it had never been turned: a square rotated
+/// 45 degrees is selectable from the empty space beyond its flat corners and dead along
+/// its actual points.
+pub fn to_element_local(element: &DrawElement, wx: f64, wy: f64) -> (f64, f64) {
+    if element.angle == 0.0 {
+        return (wx, wy);
+    }
+    let cx = element.x + element.width / 2.0;
+    let cy = element.y + element.height / 2.0;
+    let (sin, cos) = (-element.angle).sin_cos();
+    let dx = wx - cx;
+    let dy = wy - cy;
+    (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+}
+
+/// The axis-aligned box an element occupies once its rotation is taken into account.
+///
+/// [`element_bounds`] deliberately returns the *unrotated* box, which is what resize and
+/// the stored geometry are expressed in. Anything asking "where is this on the board" —
+/// a marquee, a fit-to-content — wants this one instead.
+pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
+    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    if element.angle == 0.0 {
+        return WorldBounds {
+            min_x: rect.x,
+            min_y: rect.y,
+            max_x: rect.x + rect.width,
+            max_y: rect.y + rect.height,
+        };
+    }
+    let cx = rect.x + rect.width / 2.0;
+    let cy = rect.y + rect.height / 2.0;
+    let (sin, cos) = element.angle.sin_cos();
+    let hw = rect.width / 2.0;
+    let hh = rect.height / 2.0;
+    // For an axis-aligned box turned by `angle`, the half-extent of the result has this
+    // closed form — no need to walk the four corners.
+    let ex = hw * cos.abs() + hh * sin.abs();
+    let ey = hw * sin.abs() + hh * cos.abs();
+    WorldBounds {
+        min_x: cx - ex,
+        min_y: cy - ey,
+        max_x: cx + ex,
+        max_y: cy + ey,
+    }
+}
+
 pub fn hit_test_element(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
+    let (wx, wy) = to_element_local(element, wx, wy);
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
         return hit_linear(element, wx, wy, tolerance);
     }

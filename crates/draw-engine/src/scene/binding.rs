@@ -62,14 +62,18 @@ pub fn attach_point(shape: &DrawElement, toward: Point, gap: f64) -> Point {
     }
 }
 
-pub fn bindable_at<'a>(
-    elements: &'a [DrawElement],
+/// Topmost shape an endpoint at `(x, y)` would attach to.
+///
+/// Generic over the iterator so the hot paths can walk the scene by reference.
+/// `candidates` must already run **top of the z-order first**.
+pub fn bindable_among<'a>(
+    candidates: impl Iterator<Item = &'a DrawElement>,
     x: f64,
     y: f64,
     tolerance: f64,
     exclude_id: Option<&str>,
 ) -> Option<&'a DrawElement> {
-    for element in elements.iter().rev() {
+    for element in candidates {
         if element.is_deleted
             || Some(element.id.as_str()) == exclude_id
             || !is_bindable_element(element)
@@ -86,6 +90,16 @@ pub fn bindable_at<'a>(
         }
     }
     None
+}
+
+pub fn bindable_at<'a>(
+    elements: &'a [DrawElement],
+    x: f64,
+    y: f64,
+    tolerance: f64,
+    exclude_id: Option<&str>,
+) -> Option<&'a DrawElement> {
+    bindable_among(elements.iter().rev(), x, y, tolerance, exclude_id)
 }
 
 pub fn linear_endpoints(element: &DrawElement) -> (Point, Point) {

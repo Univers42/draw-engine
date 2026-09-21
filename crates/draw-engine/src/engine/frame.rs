@@ -26,6 +26,9 @@ pub struct PaintView<'a> {
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
+    /// Where the frame and handles sit. Shared with the hit test so the painter can only
+    /// ever draw handles that are actually grabbable, and vice versa.
+    pub handle_layout: crate::selection::HandleLayout,
     /// The shape a dragged arrow endpoint would bind to. Painted as a halo on its
     /// outline, so the attachment is visible before it is committed.
     pub binding_highlight: Option<&'a DrawElement>,
@@ -104,6 +107,7 @@ impl DrawEngine {
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
+            handle_layout: self.handle_layout(),
             binding_highlight: self
                 .binding_highlight
                 .as_deref()

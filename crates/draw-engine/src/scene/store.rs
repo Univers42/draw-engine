@@ -86,7 +86,9 @@ impl Scene {
     ///
     /// This is the accessor for every per-frame and per-event path. Prefer it to
     /// [`Self::ordered_cloned`] anywhere that runs more than once per user action.
-    pub fn iter_ordered(&self) -> impl Iterator<Item = &DrawElement> {
+    /// Double-ended so a hit test can walk from the top of the z-order down, and `Clone`
+    /// so a two-pass scan can restart without materialising the list first.
+    pub fn iter_ordered(&self) -> impl DoubleEndedIterator<Item = &DrawElement> + Clone {
         self.elements
             .iter()
             .map(Rc::as_ref)

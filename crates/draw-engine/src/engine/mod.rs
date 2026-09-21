@@ -11,6 +11,7 @@ use crate::scene::{
 mod arrange;
 mod clipboard;
 mod frame;
+mod hover;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -19,10 +20,14 @@ mod text;
 mod types;
 
 pub use frame::{NoopPainter, PaintView, Painter};
+pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, history_signature, Interaction};
 pub use types::{merge_style_patch, EngineEvents, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
+/// Reach for the handles that are not laid out by [`crate::selection::HandleLayout`] —
+/// the point handles on a line or arrow, which sit *on* the geometry and so have no
+/// element interior to stay clear of.
 const HANDLE_HIT_PX: f64 = 10.0;
 /// How long a segment must be on screen before it gets its own midpoint handle.
 /// Two handles a few pixels apart cannot be aimed at deliberately.
@@ -174,22 +179,46 @@ impl DrawEngine {
         crate::screen_to_world(self.camera, sx, sy)
     }
 
+    /// Topmost element under the pointer, locked ones included.
+    ///
+    /// By reference, like [`Self::selectable_hit`]: this is called from JS on hover and
+    /// on every click, and cloning the document to answer one question about one element
+    /// made the cost of a click scale with the size of the board.
     pub fn hit_test(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
         let world = self.screen_to_world(sx, sy);
-        crate::hit_test(&self.scene.ordered_cloned(), world.x, world.y, tolerance).cloned()
+        self.scene
+            .iter_ordered()
+            .rev()
+            .find(|el| crate::hit_test_element(el, world.x, world.y, tolerance))
+            .cloned()
     }
 
     fn selectable(&self) -> Vec<DrawElement> {
         self.scene
-            .ordered_cloned()
-            .into_iter()
+            .iter_ordered()
             .filter(|el| !el.locked())
+            .cloned()
             .collect()
     }
 
+    /// Topmost unlocked element under the pointer.
+    ///
+    /// Walks the scene by reference. This used to clone every element in the document —
+    /// three `String`s and a point vector each — on every click and on every pointer move
+    /// while erasing, which made a single click cost more the larger the board got.
     fn selectable_hit(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
         let world = self.screen_to_world(sx, sy);
-        crate::hit_test(&self.selectable(), world.x, world.y, tolerance).cloned()
+        // Reversed: the topmost element in z-order wins.
+        self.scene
+            .iter_ordered()
+            .rev()
+            .find(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, tolerance))
+            .cloned()
+    }
+
+    /// Where the selection frame and handles sit, for both painting and hit testing.
+    pub(crate) fn handle_layout(&self) -> crate::selection::HandleLayout {
+        crate::selection::HandleLayout::screen(HANDLE_PX, ROTATE_GAP_PX, self.camera.scale)
     }
 
     pub fn set_tool(&mut self, tool: DrawTool) {

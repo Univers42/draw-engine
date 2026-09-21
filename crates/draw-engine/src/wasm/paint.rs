@@ -12,7 +12,7 @@ use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
 use crate::render::opts::dash_array;
 use crate::scene::{DrawElement, DrawElementType};
-use crate::selection::{selection_corners, selection_handle_points, HandleKind};
+use crate::selection::{selection_corners_padded, selection_handles, HandleKind};
 
 pub struct CanvasPainter<'a> {
     pub ctx: &'a CanvasRenderingContext2d,
@@ -44,9 +44,15 @@ thread_local! {
     /// and rotation are applied to the *context*, the same path object stays valid
     /// through panning, zooming and dragging — it is only rebuilt when the element
     /// genuinely changes shape.
-    static PATHS: std::cell::RefCell<HashMap<String, (u64, Vec<(OpSetKind, Path2d)>)>> =
+    static PATHS: std::cell::RefCell<HashMap<String, CachedPaths>> =
         std::cell::RefCell::new(HashMap::new());
 }
+
+/// One element's built paths, tagged with the shape fingerprint they were built from.
+///
+/// The fingerprint is what makes a translate free: it covers geometry only, so panning,
+/// zooming and dragging leave it untouched and the cached paths stay valid.
+type CachedPaths = (u64, Vec<(OpSetKind, Path2d)>);
 
 /// Builds the `Path2D` objects for one drawable.
 fn build_paths(drawable: &Drawable) -> Vec<(OpSetKind, Path2d)> {
@@ -579,8 +585,6 @@ fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
     });
 }
 
-/// Excalidraw's selection padding: the frame sits slightly outside the element.
-const SELECTION_PADDING_PX: f64 = 8.0;
 /// Radius of a point handle on a line or arrow.
 const POINT_HANDLE_R: f64 = 5.0;
 
@@ -646,9 +650,15 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     }
 }
 
-/// The frame, four corner handles and the rotation handle for a single shape.
+/// The frame and its handles for a single shape.
+///
+/// The frame sits `layout.pad` outside the element, not on it, so the element's own
+/// outline is still a move target — and every handle drawn here comes from the same
+/// [`selection_handles`] call the pointer code hit-tests against, so the two cannot
+/// drift. They did: the cardinal handles were hit-testable but never painted, which made
+/// grabbing the middle of an edge resize a shape you were only trying to move.
 fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
-    let corners = selection_corners(element);
+    let corners = selection_corners_padded(element, view.handle_layout.frame_pad);
     ctx.begin_path();
     let first = crate::world_to_screen(view.camera, corners[0].x, corners[0].y);
     ctx.move_to(first.x, first.y);
@@ -660,17 +670,7 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
     ctx.stroke();
 
     let half = view.handle_px / 2.0;
-    for point in selection_handle_points(element, view.rotate_gap) {
-        // Corners and the rotation handle only. The cardinal handles crowd the corners
-        // and Excalidraw omits them by default.
-        let corner_or_rotate = matches!(
-            point.kind,
-            HandleKind::Nw | HandleKind::Ne | HandleKind::Se | HandleKind::Sw | HandleKind::Rotate
-        );
-        if !corner_or_rotate {
-            continue;
-        }
-
+    for point in selection_handles(element, view.handle_layout) {
         let s = crate::world_to_screen(view.camera, point.x, point.y);
         ctx.begin_path();
         if point.kind == HandleKind::Rotate {
@@ -695,21 +695,27 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         return;
     };
 
-    let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
-    let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
+    let pad = view.handle_layout.frame_pad;
+    let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
+    let br = crate::world_to_screen(view.camera, bounds.max_x + pad, bounds.max_y + pad);
     ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+    // The handles sit further out than the frame, exactly as they do on a single shape.
+    let off = view.handle_layout.handle_offset;
+    let htl = crate::world_to_screen(view.camera, bounds.min_x - off, bounds.min_y - off);
+    let hbr = crate::world_to_screen(view.camera, bounds.max_x + off, bounds.max_y + off);
 
     let half = view.handle_px / 2.0;
     // `rotate_gap` is in world units; the overlay paints in screen space.
-    let rotate_y = tl.y - view.rotate_gap * view.camera.scale;
+    let rotate_y = htl.y - view.handle_layout.rotate_gap * view.camera.scale;
 
     // Corners, matching what a single shape gets, plus the rotation circle above.
     for (x, y, is_rotate) in [
-        (tl.x, tl.y, false),
-        (br.x, tl.y, false),
-        (br.x, br.y, false),
-        (tl.x, br.y, false),
-        ((tl.x + br.x) / 2.0, rotate_y, true),
+        (htl.x, htl.y, false),
+        (hbr.x, htl.y, false),
+        (hbr.x, hbr.y, false),
+        (htl.x, hbr.y, false),
+        ((htl.x + hbr.x) / 2.0, rotate_y, true),
     ] {
         ctx.begin_path();
         if is_rotate {
@@ -773,7 +779,7 @@ fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     ctx.save();
     set_stroke(ctx, view.theme.binding_highlight.as_str());
     // Excalidraw: clamp(1.75, strokeWidth, 4), held constant in screen pixels.
-    ctx.set_line_width(element.stroke_width.max(1.75).min(4.0));
+    ctx.set_line_width(element.stroke_width.clamp(1.75, 4.0));
     let _ = ctx.set_line_dash(&EMPTY_DASH.with(Clone::clone));
 
     // The overlay paints in screen space, so the element transform is applied here

@@ -16,6 +16,26 @@ import type {
 
 export { loadDrawEngine } from "./wasmLoad";
 
+/**
+ * CSS cursors, indexed by the engine's `HoverCursor` discriminant.
+ *
+ * The order is the contract with `engine/hover.rs` and is append-only — inserting in the
+ * middle silently reassigns every cursor after it. `ci_ts_parity` asserts the two agree.
+ */
+const HOVER_CURSORS = [
+  "default", // Default
+  "move", // Move
+  "ns-resize", // ResizeNs
+  "ew-resize", // ResizeEw
+  "nesw-resize", // ResizeNesw
+  "nwse-resize", // ResizeNwse
+  "grab", // Grab
+  "grabbing", // Grabbing
+  "pointer", // PointHandle
+  "crosshair", // Crosshair
+  "text", // Text
+] as const;
+
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
 export class DrawEngine {
   private readonly inner: InstanceType<typeof WasmDrawEngine>;
@@ -68,6 +88,21 @@ export class DrawEngine {
   hitTest(sx: number, sy: number, tolerance = 0): DrawElement | null {
     const json = this.inner.hitTest(sx, sy, tolerance);
     return json ? parseJson<DrawElement | null>(json, null) : null;
+  }
+
+  /**
+   * The CSS cursor for the pointer at this position.
+   *
+   * The engine decides, not the host: what the pointer is over — a resize handle, a
+   * rotation handle, a movable element — is the engine's own hit-test state, and a host
+   * that guessed at it from the tool alone is how a shape ends up silently resizing when
+   * you meant to move it.
+   *
+   * Crosses the boundary as a small integer and is mapped here, so a hover costs no
+   * allocation on either side.
+   */
+  hoverCursor(sx: number, sy: number): string {
+    return HOVER_CURSORS[this.inner.hoverCursor(sx, sy)] ?? "default";
   }
 
   setTool(tool: DrawTool): void {
