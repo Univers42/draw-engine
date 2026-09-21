@@ -84,7 +84,9 @@ impl DrawEngine {
         match self.tool {
             DrawTool::Hand => return HoverCursor::Grab,
             DrawTool::Text => return HoverCursor::Text,
-            DrawTool::Eraser | DrawTool::Freedraw => return HoverCursor::Crosshair,
+            DrawTool::Eraser | DrawTool::Freedraw | DrawTool::Lasso => {
+                return HoverCursor::Crosshair
+            }
             tool if is_shape_tool(tool) || is_linear_tool(tool) => {
                 return HoverCursor::Crosshair;
             }
@@ -157,6 +159,7 @@ impl DrawEngine {
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
             Interaction::Erase => HoverCursor::Crosshair,
             Interaction::Marquee { .. } => HoverCursor::Default,
+            Interaction::Lasso { .. } => HoverCursor::Crosshair,
         })
     }
 }

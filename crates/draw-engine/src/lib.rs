@@ -51,8 +51,8 @@ pub use scene::{
     LABEL_PADDING,
 };
 pub use selection::{
-    elements_in_marquee, elements_in_marquee_among, handle_local_point, hit_handle, marquee_rect,
-    resize_element, rotate_element, rotate_point, selection_corners, selection_corners_padded,
-    selection_handle_points, selection_handles, HandleKind, HandleLayout, HandlePoint,
-    RESIZE_HANDLES,
+    elements_in_lasso, elements_in_marquee, elements_in_marquee_among, handle_local_point,
+    hit_handle, marquee_rect, polygon_contains_point, resize_element, rotate_element, rotate_point,
+    selection_corners, selection_corners_padded, selection_handle_points, selection_handles,
+    simplify_path, HandleKind, HandleLayout, HandlePoint, LassoMode, RESIZE_HANDLES,
 };

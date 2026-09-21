@@ -24,6 +24,8 @@ pub struct PaintView<'a> {
     pub elements: Vec<&'a DrawElement>,
     pub selected: Vec<&'a DrawElement>,
     pub marquee: Option<WorldBounds>,
+    /// The lasso loop in progress, in world space. Empty unless one is being drawn.
+    pub lasso: Vec<crate::camera::Point>,
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
@@ -65,6 +67,10 @@ impl DrawEngine {
             .filter_map(|id| self.scene.get(id))
             .filter(|el| !el.is_deleted)
             .collect();
+        let lasso = match &self.interaction {
+            Some(super::Interaction::Lasso { path, .. }) => path.clone(),
+            _ => Vec::new(),
+        };
         let marquee = match &self.interaction {
             Some(super::Interaction::Marquee { start, current, .. }) => {
                 Some(marquee_rect(start.x, start.y, current.x, current.y))
@@ -106,6 +112,7 @@ impl DrawEngine {
                 .collect(),
             selected,
             marquee,
+            lasso,
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,

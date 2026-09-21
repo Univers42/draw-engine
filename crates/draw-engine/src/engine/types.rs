@@ -93,6 +93,15 @@ pub(crate) enum Interaction {
         id: String,
         handle: crate::selection::LinearHandle,
     },
+    /// A free-form selection loop in progress.
+    ///
+    /// The path is world-space and accumulates as the pointer moves; the engine
+    /// simplifies it when deciding what it selects, so the raw trail is kept here and
+    /// the host never has to thin it.
+    Lasso {
+        path: Vec<crate::camera::Point>,
+        base: std::collections::HashSet<String>,
+    },
     Marquee {
         start: Point,
         current: Point,

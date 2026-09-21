@@ -706,6 +706,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         ctx.stroke();
     }
 
+    paint_lasso(ctx, view);
     paint_binding_highlight(ctx, view);
 
     // A linear element is edited by its points; it gets no frame.
@@ -719,6 +720,52 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     } else if view.selected.len() > 1 {
         paint_group_selection(ctx, view);
     }
+}
+
+/// The free-form selection loop, while one is being drawn.
+///
+/// Drawn closed — the segment back to the start is shown dashed — because that is the
+/// loop the engine will actually test against. Leaving it open would let someone aim a
+/// gap that does not exist.
+fn paint_lasso(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.lasso.len() < 2 {
+        return;
+    }
+    ctx.save();
+    set_stroke(ctx, &view.theme.accent);
+    ctx.set_line_width(1.0);
+
+    ctx.begin_path();
+    let first = crate::world_to_screen(view.camera, view.lasso[0].x, view.lasso[0].y);
+    ctx.move_to(first.x, first.y);
+    for p in &view.lasso[1..] {
+        let s = crate::world_to_screen(view.camera, p.x, p.y);
+        ctx.line_to(s.x, s.y);
+    }
+    ctx.stroke();
+
+    // The closing segment, dashed so it reads as implied rather than drawn.
+    let last = view.lasso[view.lasso.len() - 1];
+    let end = crate::world_to_screen(view.camera, last.x, last.y);
+    let _ = ctx.set_line_dash(&dash_js(Some([4.0, 4.0])));
+    ctx.begin_path();
+    ctx.move_to(end.x, end.y);
+    ctx.line_to(first.x, first.y);
+    ctx.stroke();
+
+    // Shade the enclosed area, as the marquee does, so what is caught is visible.
+    let _ = ctx.set_line_dash(&dash_js(None));
+    ctx.set_global_alpha(0.1);
+    set_fill(ctx, &view.theme.accent);
+    ctx.begin_path();
+    ctx.move_to(first.x, first.y);
+    for p in &view.lasso[1..] {
+        let s = crate::world_to_screen(view.camera, p.x, p.y);
+        ctx.line_to(s.x, s.y);
+    }
+    ctx.close_path();
+    ctx.fill();
+    ctx.restore();
 }
 
 /// The frame and its handles for a single shape.

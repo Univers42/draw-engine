@@ -36,6 +36,8 @@ export const ARROWHEADS: Arrowhead[] = ["none", "arrow", "triangle", "dot", "dia
 
 export type DrawTool =
   | "select"
+  /** Free-form selection: draw a loop, take what it encloses. */
+  | "lasso"
   | "hand"
   | "rectangle"
   | "diamond"
