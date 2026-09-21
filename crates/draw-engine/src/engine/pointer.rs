@@ -47,6 +47,11 @@ impl DrawEngine {
             // until it does there is nothing to place — clicking must not start a
             // marquee either, or the selection changes behind the open dialog.
             DrawTool::Image | DrawTool::Embed => {}
+            // The click *is* the gesture: there is nothing to drag, and starting a
+            // marquee would change the selection under a fill that just happened.
+            DrawTool::BucketFill => {
+                let _ = self.bucket_fill_at(sx, sy);
+            }
             DrawTool::Laser => {
                 // Deliberately the unsnapped point. A laser follows the cursor; snapping
                 // it to the grid would make the beam jump between intersections while the

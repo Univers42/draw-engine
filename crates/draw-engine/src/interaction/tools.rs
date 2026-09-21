@@ -28,6 +28,9 @@ pub enum DrawTool {
     Embed,
     /// Draws freehand and converts the stroke into the shape it was meant to be.
     AutoShape,
+    /// Fills the region under the pointer. Nothing is dragged: the click *is* the
+    /// gesture, and what it leaves behind is a polygon derived from the strokes around it.
+    BucketFill,
 }
 
 impl DrawTool {
@@ -49,6 +52,7 @@ impl DrawTool {
             Self::Image => "image",
             Self::Embed => "embed",
             Self::AutoShape => "autoshape",
+            Self::BucketFill => "bucketfill",
         }
     }
 }
@@ -89,6 +93,8 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
         "9" => Some(DrawTool::Image),
         "w" => Some(DrawTool::Embed),
         "g" => Some(DrawTool::AutoShape),
+        // Excalidraw's own key for it.
+        "b" => Some(DrawTool::BucketFill),
         "h" => Some(DrawTool::Hand),
         _ => None,
     }
@@ -96,7 +102,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 16] = [
+pub const ALL_TOOLS: [DrawTool; 17] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -113,6 +119,7 @@ pub const ALL_TOOLS: [DrawTool; 16] = [
     DrawTool::Image,
     DrawTool::Embed,
     DrawTool::AutoShape,
+    DrawTool::BucketFill,
 ];
 
 pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementType> {

@@ -34,6 +34,8 @@ const HOTKEYS: Record<string, DrawTool> = {
   "9": "image",
   w: "embed",
   g: "autoshape",
+  // Excalidraw's own key for the bucket.
+  b: "bucketfill",
   h: "hand",
 };
 

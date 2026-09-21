@@ -56,7 +56,9 @@ export type DrawTool =
   /** Frames a live web page. Like the image tool, it asks rather than draws. */
   | "embed"
   /** Draws freehand and converts the stroke into the shape it was meant to be. */
-  | "autoshape";
+  | "autoshape"
+  /** Fills the region under the pointer. The click is the whole gesture. */
+  | "bucketfill";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
