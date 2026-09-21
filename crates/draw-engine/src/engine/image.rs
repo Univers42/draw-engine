@@ -63,3 +63,119 @@ impl DrawEngine {
         Some(id)
     }
 }
+
+impl DrawEngine {
+    /// Put an embed on the board, sized to the provider's own shape.
+    ///
+    /// `raw_url` is whatever was pasted. Resolving it — deciding whether the host may be
+    /// framed at all, and rewriting a watch page into a player — happens in the engine,
+    /// so a host cannot accidentally frame something the rules would have refused.
+    ///
+    /// Returns the new element's id, or `None` when the link is not embeddable.
+    pub fn insert_embed(&mut self, raw_url: &str, sx: f64, sy: f64) -> Option<String> {
+        let resolved = crate::scene::embed_link(raw_url)?;
+        let centre = self.screen_to_world(sx, sy);
+        // Sized exactly as an image is: an embed arriving several screens tall is the
+        // same problem, and the answer should not depend on which one you inserted.
+        let fit = crate::scene::fit_image(
+            resolved.intrinsic_width,
+            resolved.intrinsic_height,
+            self.height,
+            self.camera.scale,
+            centre,
+        );
+        if fit.width <= 0.0 || fit.height <= 0.0 {
+            return None;
+        }
+
+        let mut element = create_element(
+            DrawElementType::Embed,
+            Geometry {
+                x: fit.x,
+                y: fit.y,
+                width: fit.width,
+                height: fit.height,
+            },
+            default_element_style(),
+            self.now_ms,
+        );
+        element.embed_url = Some(resolved.url);
+        // A frame round a live page, not a drawing of one: a hand-drawn border would
+        // never line up with the rectangle the browser actually clips the page to.
+        element.roughness = 0.0;
+        element.background_color = "transparent".into();
+
+        let id = element.id.clone();
+        self.scene.add(element);
+        self.refresh_frame_membership();
+        self.set_selection(vec![id.clone()]);
+        self.push_history();
+        self.request_draw();
+        Some(id)
+    }
+}
+
+/// Where a live frame has to be put, in screen pixels.
+///
+/// An embed is the one element a canvas cannot draw: a page inside a board is a real
+/// `<iframe>`, positioned over the canvas by the host. What the host must not do is work
+/// out *where* — that is the camera, and getting it slightly wrong makes the frame drift
+/// away from the rectangle drawn under it while you pan.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbedFrame {
+    pub id: String,
+    pub url: String,
+    /// Whether the frame may keep its origin. Decided by the engine, per provider, so a
+    /// host cannot quietly grant it to everything.
+    pub allow_same_origin: bool,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Radians. A turned embed needs a CSS rotation about its own centre.
+    pub angle: f64,
+}
+
+impl DrawEngine {
+    /// The embeds currently on screen, with their boxes in screen pixels.
+    ///
+    /// Culled, because an off-screen `<iframe>` is a page still running: a board with
+    /// thirty videos on it should not have thirty players loaded because one is visible.
+    pub fn embed_frames(&self) -> Vec<EmbedFrame> {
+        let visible = crate::camera::visible_world_rect(self.camera, self.width, self.height);
+        self.scene
+            .iter_ordered()
+            .filter(|element| {
+                element.kind == DrawElementType::Embed
+                    && !element.is_deleted
+                    && element.embed_url.is_some()
+                    && crate::render::bounds::intersects_viewport(element, &visible)
+            })
+            .map(|element| {
+                let rect = crate::scene::normalize_rect(
+                    element.x,
+                    element.y,
+                    element.width,
+                    element.height,
+                );
+                let top_left = crate::world_to_screen(self.camera, rect.x, rect.y);
+                EmbedFrame {
+                    id: element.id.clone(),
+                    url: element.embed_url.clone().unwrap_or_default(),
+                    allow_same_origin: element
+                        .embed_url
+                        .as_deref()
+                        .and_then(crate::scene::embed_link)
+                        .map(|resolved| resolved.allow_same_origin)
+                        .unwrap_or(false),
+                    x: top_left.x,
+                    y: top_left.y,
+                    width: rect.width * self.camera.scale,
+                    height: rect.height * self.camera.scale,
+                    angle: element.angle,
+                }
+            })
+            .collect()
+    }
+}

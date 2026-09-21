@@ -23,6 +23,9 @@ pub enum DrawTool {
     /// decodes what it gets, and calls `insert_image`. The tool exists so that the
     /// shortcut, the toolbar state and the cursor all live where every other tool's do.
     Image,
+    /// Waiting for a URL. Like the image tool, the pointer draws nothing: the host asks
+    /// for a link and calls `insert_embed`.
+    Embed,
 }
 
 impl DrawTool {
@@ -42,6 +45,7 @@ impl DrawTool {
             Self::Laser => "laser",
             Self::Frame => "frame",
             Self::Image => "image",
+            Self::Embed => "embed",
         }
     }
 }
@@ -80,6 +84,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
         "k" => Some(DrawTool::Laser),
         "f" => Some(DrawTool::Frame),
         "9" => Some(DrawTool::Image),
+        "w" => Some(DrawTool::Embed),
         "h" => Some(DrawTool::Hand),
         _ => None,
     }
@@ -87,7 +92,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 14] = [
+pub const ALL_TOOLS: [DrawTool; 15] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -102,6 +107,7 @@ pub const ALL_TOOLS: [DrawTool; 14] = [
     DrawTool::Laser,
     DrawTool::Frame,
     DrawTool::Image,
+    DrawTool::Embed,
 ];
 
 pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementType> {

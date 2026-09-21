@@ -52,7 +52,9 @@ export type DrawTool =
   /** A named region that owns whatever is drawn inside it. */
   | "frame"
   /** Picks a file and places it. Never a drag: the picker decides, not the pointer. */
-  | "image";
+  | "image"
+  /** Frames a live web page. Like the image tool, it asks rather than draws. */
+  | "embed";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";

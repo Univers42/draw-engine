@@ -46,7 +46,7 @@ impl DrawEngine {
             // Nothing to do with a pointer. The image arrives from a file picker, and
             // until it does there is nothing to place — clicking must not start a
             // marquee either, or the selection changes behind the open dialog.
-            DrawTool::Image => {}
+            DrawTool::Image | DrawTool::Embed => {}
             DrawTool::Laser => {
                 // Deliberately the unsnapped point. A laser follows the cursor; snapping
                 // it to the grid would make the beam jump between intersections while the
