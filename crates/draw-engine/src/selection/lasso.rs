@@ -15,8 +15,11 @@
 //! 3. test the survivors properly, against the element's own outline.
 
 use crate::camera::{Point, WorldBounds};
-use crate::scene::element::{DrawElement, DrawElementType};
-use crate::scene::geometry::{element_rotated_bounds, normalize_rect};
+use crate::scene::element::DrawElement;
+use crate::scene::geometry::{
+    cross, element_outline, element_rotated_bounds, outline_edges, outline_is_closed,
+    segments_intersect,
+};
 
 /// What counts as selected.
 ///
@@ -114,92 +117,6 @@ pub fn polygon_contains_point(polygon: &[Point], point: Point) -> bool {
     winding != 0
 }
 
-/// `> 0` when `p` is left of the directed line `a -> b`.
-fn cross(a: Point, b: Point, p: Point) -> f64 {
-    (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
-}
-
-/// Whether two segments cross.
-fn segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
-    let d1 = cross(p3, p4, p1);
-    let d2 = cross(p3, p4, p2);
-    let d3 = cross(p1, p2, p3);
-    let d4 = cross(p1, p2, p4);
-
-    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
-        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
-    {
-        return true;
-    }
-    // Collinear touching counts, so a loop drawn exactly along an edge still catches it.
-    let on = |a: Point, b: Point, p: Point, d: f64| {
-        d == 0.0
-            && p.x >= a.x.min(b.x)
-            && p.x <= a.x.max(b.x)
-            && p.y >= a.y.min(b.y)
-            && p.y <= a.y.max(b.y)
-    };
-    on(p3, p4, p1, d1) || on(p3, p4, p2, d2) || on(p1, p2, p3, d3) || on(p1, p2, p4, d4)
-}
-
-/// The outline of an element, as the points a lasso is tested against.
-///
-/// A line or arrow is its own path; everything else is its box, turned if it is turned.
-/// Sampling an ellipse as its four box corners would let a loop drawn snugly around a
-/// circle miss it, so curved shapes are sampled around their perimeter.
-fn outline(element: &DrawElement) -> Vec<Point> {
-    if matches!(
-        element.kind,
-        DrawElementType::Line | DrawElementType::Arrow | DrawElementType::Freedraw
-    ) {
-        let points = crate::selection::linear::world_points(element);
-        if !points.is_empty() {
-            return points;
-        }
-    }
-
-    let rect = normalize_rect(element.x, element.y, element.width, element.height);
-    let centre = crate::scene::geometry::rotation_center(element);
-    let (sin, cos) = element.angle.sin_cos();
-    let turn = |x: f64, y: f64| {
-        let (dx, dy) = (x - centre.x, y - centre.y);
-        Point {
-            x: centre.x + dx * cos - dy * sin,
-            y: centre.y + dx * sin + dy * cos,
-        }
-    };
-
-    if element.kind == DrawElementType::Ellipse {
-        // Enough samples that a loop hugging the curve cannot slip between them.
-        const SAMPLES: usize = 24;
-        let (rx, ry) = (rect.width / 2.0, rect.height / 2.0);
-        let (cx, cy) = (rect.x + rx, rect.y + ry);
-        return (0..SAMPLES)
-            .map(|i| {
-                let t = i as f64 / SAMPLES as f64 * std::f64::consts::TAU;
-                turn(cx + rx * t.cos(), cy + ry * t.sin())
-            })
-            .collect();
-    }
-
-    if element.kind == DrawElementType::Diamond {
-        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
-        return vec![
-            turn(cx, rect.y),
-            turn(rect.x + rect.width, cy),
-            turn(cx, rect.y + rect.height),
-            turn(rect.x, cy),
-        ];
-    }
-
-    vec![
-        turn(rect.x, rect.y),
-        turn(rect.x + rect.width, rect.y),
-        turn(rect.x + rect.width, rect.y + rect.height),
-        turn(rect.x, rect.y + rect.height),
-    ]
-}
-
 fn bounds_of(points: &[Point]) -> Option<WorldBounds> {
     let first = points.first()?;
     let mut b = WorldBounds {
@@ -264,7 +181,7 @@ pub fn elements_in_lasso<'a>(
             continue;
         }
 
-        let shape = outline(element);
+        let shape = element_outline(element);
         if shape.is_empty() {
             continue;
         }
@@ -294,20 +211,11 @@ pub fn elements_in_lasso<'a>(
 ///
 /// Only asked in `Intersect` mode, and only after the boxes have already overlapped.
 fn crosses(lasso: &[Point], shape: &[Point], element: &DrawElement) -> bool {
-    // A line is an open path; a shape closes back to its first point.
-    let closed = !matches!(
-        element.kind,
-        DrawElementType::Line | DrawElementType::Arrow | DrawElementType::Freedraw
-    );
-    let edges = if closed { shape.len() } else { shape.len() - 1 };
-
-    for i in 0..edges {
-        let a = shape[i];
-        let b = shape[(i + 1) % shape.len()];
+    for (a, b) in outline_edges(shape, outline_is_closed(element)) {
         for j in 0..lasso.len() {
             let c = lasso[j];
             let d = lasso[(j + 1) % lasso.len()];
-            if segments_cross(a, b, c, d) {
+            if segments_intersect(a, b, c, d) {
                 return true;
             }
         }

@@ -124,6 +124,16 @@ pub struct DrawElement {
     pub bound_text_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    /// The frame that owns this element, if it is inside one.
+    ///
+    /// Membership is a property of the child, not a list on the frame, so moving an
+    /// element between frames is one write rather than two — and an element can never be
+    /// in two frames at once by construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<String>,
+    /// A frame's label. Nothing else carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
     pub version: u32,
@@ -205,6 +215,8 @@ pub fn create_element(
         container_id: None,
         bound_text_id: None,
         group_id: None,
+        frame_id: None,
+        name: None,
         locked: None,
         version: 1,
         version_nonce: rand_int(),

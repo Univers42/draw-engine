@@ -385,9 +385,30 @@ impl Painter for CanvasPainter<'_> {
         ];
 
         for element in &view.elements {
+            // A child that pokes out of its frame is cut off at the frame's edge — that
+            // is what makes a frame read as a window onto a region rather than as a
+            // rectangle drawn behind things. The engine decides which children need it.
+            let clip = view.frame_clips.get(&element.id);
+            if let Some(bounds) = clip {
+                ctx.save();
+                // Set under the plain device transform, because the previous element
+                // left its own matrix on the context. A clip region is fixed in device
+                // space once applied, so the element is free to set its own transform
+                // afterwards without escaping it.
+                let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+                let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
+                let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
+                ctx.begin_path();
+                ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+                ctx.clip();
+            }
             paint_element(ctx, view_transform, element, &view.theme.background);
+            if clip.is_some() {
+                ctx.restore();
+            }
         }
         evict_paths(&view.elements);
+        paint_frame_names(ctx, view);
 
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         paint_overlay(ctx, view);
@@ -395,6 +416,31 @@ impl Painter for CanvasPainter<'_> {
         // pointing at the board, so nothing on the board should cover it.
         paint_laser(ctx, view);
     }
+}
+
+/// Frame names, written above each frame.
+///
+/// At a fixed size on screen rather than in world units, because a name is a label on the
+/// board rather than something drawn on it — zooming out to see the whole layout is
+/// exactly when you most need to read which frame is which.
+fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.frame_names.is_empty() {
+        return;
+    }
+    ctx.save();
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    set_fill(ctx, &view.theme.frame_name);
+    ctx.set_font(&crate::render::font_string(
+        crate::scene::FRAME_NAME_FONT_SIZE,
+    ));
+    ctx.set_text_baseline("alphabetic");
+    for (anchor, name) in &view.frame_names {
+        let at = crate::world_to_screen(view.camera, anchor.x, anchor.y);
+        let _ = ctx.fill_text(name, at.x, at.y);
+    }
+    ctx.restore();
+    // The cached font no longer matches what the context holds.
+    FONT.with(|f| *f.borrow_mut() = None);
 }
 
 /// Laser trails, filled.

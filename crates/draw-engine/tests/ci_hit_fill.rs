@@ -101,11 +101,13 @@ fn zero_alpha_hex_counts_as_transparent() {
 /// by default and that says nothing about whether their middle can be clicked.
 #[test]
 fn content_elements_are_never_hollow() {
+    // A frame used to be in this list, by falling through rather than by decision. It is
+    // the one element whose middle belongs to something else: see
+    // `a_frame_is_hollow_because_its_middle_belongs_to_its_contents` below.
     for kind in [
         DrawElementType::Text,
         DrawElementType::Freedraw,
         DrawElementType::Image,
-        DrawElementType::Frame,
     ] {
         let element = create_element_default(
             kind,
@@ -210,4 +212,32 @@ fn the_marquee_leaves_bound_labels_to_their_container() {
 
     let got = elements_in_marquee(&[label, shape], marquee_rect(450.0, 250.0, 860.0, 560.0));
     assert_eq!(got, vec!["s"]);
+}
+
+/// A frame is the one element whose middle is not its own.
+///
+/// Every other element with no fill to leave out — text, a freehand stroke, an image —
+/// *is* its content, so its middle is clickable. A frame is a boundary drawn around
+/// other people's content, so its middle belongs to them. Treated like the rest it
+/// swallows every click that lands inside it, and framing a diagram makes the diagram
+/// unselectable.
+#[test]
+fn a_frame_is_hollow_because_its_middle_belongs_to_its_contents() {
+    let frame = create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 100.0,
+        },
+    );
+    assert!(
+        !hit_test_element(&frame, 100.0, 50.0, T),
+        "a click in the middle of a frame must fall through to what is inside it"
+    );
+    assert!(
+        hit_test_element(&frame, 0.0, 50.0, T),
+        "a frame must still be grabbable by its border"
+    );
 }

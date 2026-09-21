@@ -17,6 +17,8 @@ pub enum DrawTool {
     Eraser,
     /// A trail that follows the cursor and fades. Draws nothing into the scene.
     Laser,
+    /// A named region that owns whatever is drawn inside it.
+    Frame,
 }
 
 impl DrawTool {
@@ -34,6 +36,7 @@ impl DrawTool {
             Self::Text => "text",
             Self::Eraser => "eraser",
             Self::Laser => "laser",
+            Self::Frame => "frame",
         }
     }
 }
@@ -70,6 +73,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
         "0" | "e" => Some(DrawTool::Eraser),
         "s" => Some(DrawTool::Lasso),
         "k" => Some(DrawTool::Laser),
+        "f" => Some(DrawTool::Frame),
         "h" => Some(DrawTool::Hand),
         _ => None,
     }
@@ -77,7 +81,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 12] = [
+pub const ALL_TOOLS: [DrawTool; 13] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -90,6 +94,7 @@ pub const ALL_TOOLS: [DrawTool; 12] = [
     DrawTool::Text,
     DrawTool::Eraser,
     DrawTool::Laser,
+    DrawTool::Frame,
 ];
 
 pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementType> {

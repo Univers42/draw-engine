@@ -26,6 +26,14 @@ pub struct PaintView<'a> {
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
     pub lasso: Vec<crate::camera::Point>,
+    /// Clip boxes for children that stick out of the frame that owns them, by element id.
+    ///
+    /// Only the ones that need it. A child sitting wholly inside its frame has nothing to
+    /// clip, and setting a clip path for it anyway costs a path per element every frame
+    /// for no visible difference.
+    pub frame_clips: std::collections::HashMap<String, WorldBounds>,
+    /// Where each frame's name sits, and what it says.
+    pub frame_names: Vec<(crate::camera::Point, String)>,
     /// Laser strokes to fill, oldest first, in world space.
     ///
     /// Already shaped: each is a closed outline whose width varies along its length, not
@@ -102,6 +110,28 @@ impl DrawEngine {
             }
             _ => Vec::new(),
         };
+        // Frame chrome, decided here so every host paints the same boundaries and clips
+        // the same children. A host is handed boxes and labels, not rules.
+        let mut frame_clips = std::collections::HashMap::new();
+        let mut frame_names = Vec::new();
+        for frame in self.scene.iter_ordered().filter(|el| {
+            crate::scene::is_frame(el)
+                && !el.is_deleted
+                && crate::render::bounds::intersects_viewport(el, &visible)
+        }) {
+            if let Some(name) = frame.name.clone() {
+                frame_names.push((crate::scene::frame_name_anchor(frame), name));
+            }
+            let clip = crate::scene::frame_clip_bounds(frame);
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
+                if let Some(child) = self.scene.get(&child_id) {
+                    if crate::scene::needs_frame_clip(child, frame) {
+                        frame_clips.insert(child_id, clip);
+                    }
+                }
+            }
+        }
+
         PaintView {
             camera: self.camera,
             theme: self.theme.clone(),
@@ -121,6 +151,8 @@ impl DrawEngine {
             selected,
             marquee,
             lasso,
+            frame_clips,
+            frame_names,
             laser: self.laser.outlines(self.now_ms, self.camera.scale),
             laser_color: crate::interaction::DEFAULT_LASER_COLOR.to_string(),
             snap_guides: self.snap_guides.clone(),
