@@ -162,11 +162,13 @@ impl DrawEngine {
     }
 
     pub fn duplicate_selection(&mut self, offset_x: f64, offset_y: f64) {
-        let Some(json) = serialize_selection(&self.scene.ordered_cloned(), &self.selected_ids)
-        else {
-            return;
-        };
-        let Some(copies) = materialize_elements(&json, offset_x, offset_y, self.now_ms) else {
+        // Straight from the scene, with no JSON in between. This used to deep-clone every
+        // element on the board, serialise the selection, and parse it back — so the cost
+        // of one Ctrl+D was proportional to the whole document, and a run of them (which
+        // is how a board full of one shape gets made) was quadratic in its own output.
+        let copied =
+            crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
+        let Some(copies) = crate::edit::materialize(copied, offset_x, offset_y, self.now_ms) else {
             return;
         };
         let ids: Vec<String> = copies.iter().map(|el| el.id.clone()).collect();
