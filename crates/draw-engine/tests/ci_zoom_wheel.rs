@@ -6,11 +6,20 @@
 //! single event may do. Without one the zoom is not slow or fast, it is *unpredictable*,
 //! which is the part that makes it unusable.
 //!
-//! The bound is not a preference: Excalidraw clamps the wheel delta to `ZOOM_STEP * 100`
-//! (`App.wheel.ts::zoomBy` at the SHA in `scripts/oracle-sha.txt`) and that clamp is
-//! ported here unchanged.
+//! The bound is not a preference: Excalidraw bounds what one event may do
+//! (`App.wheel.ts::zoomBy` at the SHA in `scripts/oracle-sha.txt`) and so does this.
 //!
-//! **What the step does with the clamped delta is a deliberate divergence.** The oracle
+//! **Where it bounds is a divergence, and it is the one that mattered most.** The oracle
+//! clamps the *delta* to `ZOOM_STEP * 100` = 10, which also makes 10 the delta worth a
+//! whole step — so any event of 10px or more is a full notch. That is right for a plain
+//! mouse, which reports a notch as one event of 100, and catastrophic for a
+//! high-resolution or smooth-scroll wheel, which reports the same notch as a dozen-odd
+//! events of 8 to 20: each became a full notch, so one flick of the wheel moved the zoom
+//! 1.1^14 = 3.8x. Here a notch is a *distance* (`PIXELS_PER_NOTCH`) and the clamp bounds
+//! the *notches* an event may spend, so the reporting granularity of the device cannot
+//! change how far the zoom travels.
+//!
+//! **What the step does with that delta is a second deliberate divergence.** The oracle
 //! works in *linear* zoom units — a flat tenth of the scale — and then corrects the top
 //! of the range with `log10(max(1, zoom))`. The bottom of the range gets no correction,
 //! so zooming out moved in leaps: 10% to 20% to 30% is 2.0x then 1.5x, and that is the
@@ -116,6 +125,52 @@ fn one_notch_is_the_same_share_of_the_picture_at_every_zoom() {
             );
         }
     }
+}
+
+#[test]
+fn the_same_scroll_distance_zooms_the_same_however_the_device_chops_it_up() {
+    // The bug every other test in this file was structurally blind to.
+    //
+    // A wheel gesture is a *distance*, and the device decides how many events it takes to
+    // report it. A plain mouse sends one event of 100. A high-resolution or smooth-scroll
+    // wheel — MX Master, most modern trackpads, Windows "smooth scrolling" — sends the
+    // same physical notch as a dozen-odd events of 8 to 20 each.
+    //
+    // `MAX_WHEEL_DELTA` used to be both the delta worth one notch AND the per-event
+    // clamp, so *any* event of 10 or more was a whole notch. One notch of scroll on a
+    // hi-res wheel was therefore fourteen notches of zoom: 1.1^14 = 3.80x, which is
+    // exactly what was reported — 10% to 38% to 144%, and 100% to 26% back the other way.
+    //
+    // Nothing caught it because every harness here sends one event per gesture:
+    // `wheel_zoom_scale` is called once per test, and `page.mouse.wheel()` synthesises a
+    // single event. The device that breaks it is one no test was imitating.
+    let notch = wheel_zoom_scale(1.0, -100.0);
+
+    for chunks in [1, 2, 4, 5, 10, 20, 50, 100] {
+        let piece = -100.0 / f64::from(chunks);
+        let mut scale = 1.0;
+        for _ in 0..chunks {
+            scale = wheel_zoom_scale(scale, piece);
+        }
+        assert!(
+            (scale - notch).abs() < 1e-4,
+            "100px of scroll in {chunks} event(s) of {piece} reached {scale}, not {notch}"
+        );
+    }
+}
+
+#[test]
+fn a_single_event_is_still_bounded_however_far_it_claims_to_have_scrolled() {
+    // The other half, and why the clamp cannot simply be removed to fix the above: one
+    // event carrying a trackpad fling's worth of delta must still be one notch, or the
+    // board leaves the screen in a single tick.
+    let notch = wheel_zoom_scale(1.0, -100.0);
+    assert_close(wheel_zoom_scale(1.0, -240.0), notch);
+    assert_close(wheel_zoom_scale(1.0, -10_000.0), notch);
+
+    // So the clamp is now on the *notches* an event may spend, not on the delta that
+    // defines a notch — which is the conflation that caused the bug.
+    assert!(wheel_zoom_scale(1.0, -99.0) < notch);
 }
 
 #[test]
@@ -233,16 +288,21 @@ fn a_notch_at_one_hundred_percent_is_a_tenth_in_and_the_same_tenth_back_out() {
 
 #[test]
 fn the_delta_is_clamped_so_a_fling_is_worth_one_notch() {
-    // This clamp is the entire fix. Every delta past `ZOOM_STEP * 100` is the same step,
-    // so a trackpad fling and a mouse notch land in the same place rather than the fling
+    // A trackpad fling and a mouse notch land in the same place rather than the fling
     // leaving the board.
+    //
+    // What changed: `-10.0` used to be asserted equal to a notch here, because the clamp
+    // and the notch were the same constant. That assertion was the bug written down — it
+    // is precisely the claim that a 10px event is a whole notch, which made a hi-res
+    // wheel zoom fourteen times too far. A tenth of the distance is now a tenth of a
+    // notch, and `the_same_scroll_distance_zooms_the_same...` pins the consequence.
     let notch = wheel_zoom_scale(1.0, -100.0);
     assert_close(wheel_zoom_scale(1.0, -240.0), notch);
     assert_close(wheel_zoom_scale(1.0, -10_000.0), notch);
-    assert_close(wheel_zoom_scale(1.0, -10.0), notch);
+    assert!(wheel_zoom_scale(1.0, -10.0) < notch);
 
-    // Just under the clamp still scales with the delta, so a trackpad stays continuous.
-    assert!(wheel_zoom_scale(1.0, -9.0) < notch);
+    // Just under a notch still scales with the delta, so a trackpad stays continuous.
+    assert!(wheel_zoom_scale(1.0, -99.0) < notch);
 }
 
 #[test]
@@ -270,13 +330,15 @@ fn the_step_needs_no_amplification_because_it_is_already_proportional() {
 #[test]
 fn a_delta_under_the_clamp_is_a_proportional_fraction_of_a_notch() {
     // A trackpad sends a stream of small deltas where a mouse sends one large one, so a
-    // sub-clamp delta has to be worth a fraction of a notch rather than a whole one —
+    // small delta has to be worth a fraction of a notch rather than a whole one —
     // otherwise a gentle two-finger drag zooms in notches and is unusable for framing.
     //
-    // 4 of the clamp's 10 is four tenths of a notch, so the factor is `1.1^0.4`.
+    // 4px of the 100px that makes a notch is four hundredths of one, so the factor is
+    // `1.1^0.04`. Under the old conflated constant this was `1.1^0.4` — ten times too
+    // much for the same gesture.
     assert_close(
         wheel_zoom_scale(5.0, -4.0),
-        normalize_zoom(5.0 * (1.0 + ZOOM_STEP).powf(0.4)),
+        normalize_zoom(5.0 * (1.0 + ZOOM_STEP).powf(0.04)),
     );
 
     // And it really is smaller than the notch it is a fraction of.
@@ -291,14 +353,15 @@ fn a_firefox_line_delta_is_a_small_step_rather_than_a_wild_one() {
     // real Firefox notch arrives as 120 and is worth a whole notch. This pins what the
     // bare function does with a raw 3 regardless: three tenths of the clamp, so three
     // tenths of a notch. Continuous either way, which is what the function owes; the
-    // unit is the host's problem and is tested there.
+    // unit is the host's problem and is tested there. 3px of the 100px that makes a
+    // notch, so three hundredths of one.
     assert_close(
         wheel_zoom_scale(1.0, -3.0),
-        normalize_zoom((1.0 + ZOOM_STEP).powf(0.3)),
+        normalize_zoom((1.0 + ZOOM_STEP).powf(0.03)),
     );
     assert_close(
         wheel_zoom_scale(1.0, 3.0),
-        normalize_zoom((1.0 + ZOOM_STEP).powf(-0.3)),
+        normalize_zoom((1.0 + ZOOM_STEP).powf(-0.03)),
     );
 }
 
