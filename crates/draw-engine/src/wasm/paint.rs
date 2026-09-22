@@ -456,66 +456,301 @@ fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
     });
 }
 
-impl Painter for CanvasPainter<'_> {
-    fn paint(&mut self, view: &PaintView) {
-        let ctx = self.ctx;
-        let dpr = view.dpr;
+/// The offscreen layer the static scene is kept in.
+///
+/// One canvas, because the strip path that needed a second one to scroll through is not
+/// taken — see the note on `LayerPlan::Scroll` in `paint`. When it is, this gains a back
+/// buffer: a scroll copies the layer onto itself offset, and a self-blit with overlap is
+/// a copy whose result depends on the order pixels happen to be read in.
+struct Layers {
+    front: web_sys::HtmlCanvasElement,
+    front_ctx: CanvasRenderingContext2d,
+    key: crate::render::scroll::LayerKey,
+    camera: crate::camera::Camera,
+    device: (u32, u32),
+    /// Whether the frame on the target canvas has any chrome drawn over the layer.
+    ///
+    /// When it has not, and nothing has changed, the canvas already shows the right
+    /// picture and the frame can be skipped entirely.
+    overlay_drawn: bool,
+}
 
-        // The context's state is not ours to assume across frames.
-        STATE.with(|s| s.borrow_mut().reset());
-        FONT.with(|f| *f.borrow_mut() = None);
+thread_local! {
+    static LAYERS: std::cell::RefCell<Option<Layers>> = const { std::cell::RefCell::new(None) };
+    /// How each frame was served, since the counters were last read: redraws, scrolls,
+    /// reuses. Exposed through `paintStatsJson` because the difference between "the
+    /// scroll path is working" and "it is quietly never taken" is invisible from the
+    /// outside and is exactly the thing a benchmark result hangs on.
+    static PLAN_COUNTS: std::cell::Cell<(u32, u32, u32)> = const { std::cell::Cell::new((0, 0, 0)) };
+}
 
-        let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
-        ctx.clear_rect(0.0, 0.0, view.width, view.height);
-        set_fill(ctx, &view.theme.background);
-        ctx.fill_rect(0.0, 0.0, view.width, view.height);
-        paint_grid(ctx, view);
+/// Redraws, scrolls and reuses since the last call, then resets.
+pub fn take_plan_counts() -> (u32, u32, u32) {
+    PLAN_COUNTS.with(|c| c.replace((0, 0, 0)))
+}
 
-        // Device pixel ratio and camera, folded into one matrix and combined with each
-        // element's own transform rather than pushed and popped around every element.
-        let s = view.camera.scale;
-        let view_transform = [
-            dpr * s,
-            0.0,
-            0.0,
-            dpr * s,
-            dpr * view.camera.x,
-            dpr * view.camera.y,
-        ];
+fn count_plan(redraw: u32, scroll: u32, reuse: u32) {
+    PLAN_COUNTS.with(|c| {
+        let (r, s, u) = c.get();
+        c.set((r + redraw, s + scroll, u + reuse));
+    });
+}
 
-        for element in &view.elements {
-            // A child that pokes out of its frame is cut off at the frame's edge — that
-            // is what makes a frame read as a window onto a region rather than as a
-            // rectangle drawn behind things. The engine decides which children need it.
-            let clip = view.frame_clips.get(&element.id);
-            if let Some(bounds) = clip {
-                ctx.save();
-                // Set under the plain device transform, because the previous element
-                // left its own matrix on the context. A clip region is fixed in device
-                // space once applied, so the element is free to set its own transform
-                // afterwards without escaping it.
-                let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
-                let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
-                let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
-                ctx.begin_path();
-                ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
-                ctx.clip();
-            }
-            paint_element(
-                ctx,
-                view_transform,
-                element,
-                &view.theme.background,
-                &view.elements,
-            );
-            if clip.is_some() {
-                ctx.restore();
+/// A canvas of exactly `w` x `h` device pixels, with a 2D context.
+fn make_layer(w: u32, h: u32) -> Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)> {
+    let document = web_sys::window()?.document()?;
+    let canvas: web_sys::HtmlCanvasElement =
+        document.create_element("canvas").ok()?.dyn_into().ok()?;
+    canvas.set_width(w);
+    canvas.set_height(h);
+    let ctx = canvas
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<CanvasRenderingContext2d>()
+        .ok()?;
+    Some((canvas, ctx))
+}
+
+/// Everything painted into the layer that is not an element.
+fn chrome_digest(view: &PaintView) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+    };
+    eat(view.theme.background.as_bytes());
+    eat(view.theme.grid.as_bytes());
+    eat(&[u8::from(view.grid.enabled)]);
+    eat(&view.grid.size.to_bits().to_le_bytes());
+    eat(&(view.grid.step as u64).to_le_bytes());
+    hash
+}
+
+/// The box an element can paint into, in device pixels.
+fn device_bounds(view: &PaintView, element: &DrawElement) -> crate::scene::geometry::Rect {
+    let world = crate::render::bounds::render_bounds(element);
+    let top_left = crate::world_to_screen(view.camera, world.min_x, world.min_y);
+    let bottom_right = crate::world_to_screen(view.camera, world.max_x, world.max_y);
+    crate::scene::geometry::Rect {
+        x: top_left.x * view.dpr,
+        y: top_left.y * view.dpr,
+        width: (bottom_right.x - top_left.x) * view.dpr,
+        height: (bottom_right.y - top_left.y) * view.dpr,
+    }
+}
+
+/// Draws the static scene — background, grid, elements, frame names — into `ctx`.
+///
+/// `only` limits it to the strips that have just come into view — elements outside them
+/// are skipped rather than clipped, because a clipped draw still builds every path before
+/// the rasteriser discards it. Nothing passes anything but `None` today: see the note on
+/// `LayerPlan::Scroll` in `paint` for why the strip path is not taken yet.
+fn paint_static(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    only: Option<&[crate::scene::geometry::Rect]>,
+) {
+    let dpr = view.dpr;
+    // A fresh context has none of the state the cache believes it set.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+
+    ctx.save();
+    if let Some(rects) = only {
+        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        // Cleared before the clip is set, not after. A clipped clear antialiases against
+        // the clip edge, so the boundary pixel ends up a blend of the shifted old content
+        // and the new — a seam one pixel wide, which then travels with the picture on
+        // every later scroll. Clearing the exact integer rectangle first means those
+        // pixels are fully replaced rather than blended into.
+        for rect in rects {
+            ctx.clear_rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.begin_path();
+        for rect in rects {
+            ctx.rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.clip();
+    }
+
+    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, view.width, view.height);
+    set_fill(ctx, &view.theme.background);
+    ctx.fill_rect(0.0, 0.0, view.width, view.height);
+    paint_grid(ctx, view);
+
+    // Device pixel ratio and camera, folded into one matrix and combined with each
+    // element's own transform rather than pushed and popped around every element.
+    let s = view.camera.scale;
+    let view_transform = [
+        dpr * s,
+        0.0,
+        0.0,
+        dpr * s,
+        dpr * view.camera.x,
+        dpr * view.camera.y,
+    ];
+
+    for element in &view.elements {
+        if let Some(rects) = only {
+            if !crate::render::scroll::intersects_any(device_bounds(view, element), rects) {
+                continue;
             }
         }
-        evict_paths(&view.elements);
-        evict_images(&view.elements);
-        paint_frame_names(ctx, view);
+        // A child that pokes out of its frame is cut off at the frame's edge — that
+        // is what makes a frame read as a window onto a region rather than as a
+        // rectangle drawn behind things. The engine decides which children need it.
+        let clip = view.frame_clips.get(&element.id);
+        if let Some(bounds) = clip {
+            ctx.save();
+            // Set under the plain device transform, because the previous element
+            // left its own matrix on the context. A clip region is fixed in device
+            // space once applied, so the element is free to set its own transform
+            // afterwards without escaping it.
+            let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+            let tl = crate::world_to_screen(view.camera, bounds.min_x, bounds.min_y);
+            let br = crate::world_to_screen(view.camera, bounds.max_x, bounds.max_y);
+            ctx.begin_path();
+            ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+            ctx.clip();
+        }
+        paint_element(
+            ctx,
+            view_transform,
+            element,
+            &view.theme.background,
+            &view.elements,
+        );
+        if clip.is_some() {
+            ctx.restore();
+        }
+    }
+    paint_frame_names(ctx, view);
+    ctx.restore();
+}
 
+impl Painter for CanvasPainter<'_> {
+    fn paint(&mut self, view: &PaintView) {
+        use crate::render::scroll::{plan_layer, LayerKey, LayerPlan};
+
+        let ctx = self.ctx;
+        let dpr = view.dpr;
+        let device = (
+            (view.width * dpr).round().max(1.0) as u32,
+            (view.height * dpr).round().max(1.0) as u32,
+        );
+        let key = LayerKey {
+            scale: view.camera.scale,
+            dpr,
+            width: view.width,
+            height: view.height,
+            // The whole scene's revision, not a digest of the visible elements: the
+            // culled set changes as the camera moves, so a digest of it invalidated the
+            // layer on every pan — which is precisely the frame the layer exists for.
+            // Measured before the change: 120 redraws and zero scrolls across a pan.
+            content: view.scene_revision,
+            chrome: chrome_digest(view),
+        };
+
+        let drew_everything = LAYERS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            // A layer of the wrong size is no layer at all.
+            if slot.as_ref().is_none_or(|l| l.device != device) {
+                let (front, front_ctx) = make_layer(device.0, device.1)?;
+                *slot = Some(Layers {
+                    front,
+                    front_ctx,
+                    key,
+                    camera: view.camera,
+                    device,
+                    overlay_drawn: true,
+                });
+            }
+            let layers = slot.as_mut().expect("just built");
+
+            let plan = plan_layer(Some((layers.key, layers.camera)), key, view.camera);
+            let bare = crate::render::scroll::overlay_is_empty(
+                view.selected.len(),
+                view.marquee.is_some(),
+                view.lasso.len(),
+                view.laser.len(),
+                view.snap_guides.len(),
+                view.binding_highlight.is_some(),
+                view.linear_handles.len(),
+            );
+
+            let full = match plan {
+                LayerPlan::Reuse => {
+                    count_plan(0, 0, 1);
+                    // Nothing changed and nothing is drawn over it: the canvas already
+                    // holds this exact frame. Copying it onto itself would be a
+                    // full-canvas memcpy to produce the picture that is already there.
+                    if bare && !layers.overlay_drawn {
+                        return Some(false);
+                    }
+                    false
+                }
+                LayerPlan::Redraw => {
+                    count_plan(1, 0, 0);
+                    paint_static(&layers.front_ctx, view, None);
+                    true
+                }
+                // Not taken yet, deliberately. Redrawing only the strip that has come
+                // into view is the right idea and `plan_layer` works out the strips
+                // correctly, but the painting of it does not: a clipped redraw leaves a
+                // seam along the clip edge — about seventy pixels at a max channel
+                // difference of 30 — and because each scroll builds on the last, the seam
+                // travels with the picture and accumulates. `e2e/layer.spec.ts` catches
+                // it by comparing a panned frame against a freshly drawn one, exactly.
+                //
+                // It is also worth less than it looks. A strip runs the full width or
+                // height of the viewport, so on a board of large overlapping shapes it
+                // crosses nearly all of them: measured on 300 screen-sized shapes, the
+                // strip path came out at 1592ms against 1006ms for a plain redraw.
+                //
+                // So the frame is redrawn, and the saving that matters — skipping the
+                // frames where nothing changed at all — is untouched by this.
+                LayerPlan::Scroll { .. } => {
+                    count_plan(1, 0, 0);
+                    paint_static(&layers.front_ctx, view, None);
+                    true
+                }
+            };
+            layers.key = key;
+            layers.camera = view.camera;
+            layers.overlay_drawn = !bare;
+
+            // The layer, one device pixel to one device pixel.
+            STATE.with(|s| s.borrow_mut().reset());
+            FONT.with(|f| *f.borrow_mut() = None);
+            ctx.set_global_alpha(1.0);
+            let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+            ctx.clear_rect(0.0, 0.0, f64::from(device.0), f64::from(device.1));
+            let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+            Some(full)
+        });
+
+        // No layer — no document, no context, a browser that refused the canvas. Draw
+        // straight to the target rather than showing nothing.
+        let drew_everything = match drew_everything {
+            Some(full) => full,
+            None => {
+                paint_static(ctx, view, None);
+                true
+            }
+        };
+
+        // Only after a full redraw. On a reuse nothing was asked of the caches, and on a
+        // scroll only the strip was — so "what this frame used" is not the set to keep.
+        if drew_everything {
+            evict_paths(&view.elements);
+            evict_images(&view.elements);
+        }
+
+        STATE.with(|s| s.borrow_mut().reset());
+        FONT.with(|f| *f.borrow_mut() = None);
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         paint_overlay(ctx, view);
         // Last, so the beam is over the selection chrome as well as the drawing. It is

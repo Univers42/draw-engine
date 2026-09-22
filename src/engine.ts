@@ -97,6 +97,15 @@ export class DrawEngine {
     this.inner.zoomToSelection(padding);
   }
 
+  /**
+   * How the last frames were served: redraws, scrolls and reuses of the static layer,
+   * then reset. A diagnostic — the layer is either being reused or it is not, and from
+   * outside those look identical until something is measured against the wrong guess.
+   */
+  paintStats(): { redraws: number; scrolls: number; reuses: number } {
+    return parseJson(this.inner.paintStatsJson(), { redraws: 0, scrolls: 0, reuses: 0 });
+  }
+
   /** Move by a screenful, in page counts: `pageBy(0, -1)` is one page up. */
   pageBy(pagesX: number, pagesY: number): void {
     this.inner.pageBy(pagesX, pagesY);

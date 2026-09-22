@@ -22,6 +22,14 @@ pub struct PaintView<'a> {
     pub in_motion: bool,
     /// Visible elements in z-order. Already culled to the viewport.
     pub elements: Vec<&'a DrawElement>,
+    /// A number that changes whenever the scene does.
+    ///
+    /// The painter reuses its offscreen layer between frames and needs to know whether
+    /// the picture is still the one in it. Deliberately taken from the whole scene rather
+    /// than from the culled list above: panning changes which elements are visible, and a
+    /// signal that moved with the camera would throw the layer away exactly when it was
+    /// most worth keeping.
+    pub scene_revision: u64,
     pub selected: Vec<&'a DrawElement>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
@@ -99,6 +107,7 @@ impl DrawEngine {
             self.quality_dpr()
         };
         let visible = crate::camera::visible_world_rect(self.camera, self.width, self.height);
+        let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
         let linear_handles = match selected.as_slice() {
@@ -148,6 +157,7 @@ impl DrawEngine {
                 .iter_ordered()
                 .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
                 .collect(),
+            scene_revision,
             selected,
             marquee,
             lasso,
