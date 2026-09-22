@@ -23,8 +23,9 @@ impl DrawEngine {
         }
         match self.tool {
             DrawTool::Eraser => {
-                self.interaction = Some(Interaction::Erase);
-                self.erase_at(sx, sy);
+                let at = self.screen_to_world(sx, sy);
+                self.interaction = Some(Interaction::Erase { last: at });
+                self.erase_along(at, at);
             }
             DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
@@ -425,6 +426,15 @@ impl DrawEngine {
         // By reference: this runs once per drag-start but touches every element in the
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.
+        //
+        // Culled to the viewport as well. An alignment guide to something off screen is
+        // drawn where nobody can see it, so the shape appears to stick for no reason —
+        // and gathering candidates from the whole document makes `snap_move` cost the
+        // size of the board on *every frame of every drag*. Excalidraw gathers its
+        // candidates from the visible elements for the same two reasons.
+        //
+        // Once, here, rather than per frame: the viewport does not move during a drag.
+        let view = crate::visible_world_rect(self.camera, self.width, self.height);
         let static_bounds = self
             .scene
             .iter_ordered()
@@ -436,6 +446,12 @@ impl DrawEngine {
                         .is_none_or(|id| !moving.contains(id))
             })
             .map(element_bounds)
+            .filter(|b| {
+                b.min_x <= view.max_x
+                    && b.max_x >= view.min_x
+                    && b.min_y <= view.max_y
+                    && b.max_y >= view.min_y
+            })
             .collect();
         self.interaction = Some(Interaction::Move {
             ids: origins.keys().cloned().collect(),
@@ -446,12 +462,50 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    pub(crate) fn erase_at(&mut self, sx: f64, sy: f64) {
-        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
-            self.scene.remove(&hit.id, self.now_ms);
-            if self.selected_ids.remove(&hit.id) {
-                self.events.selection = Some(self.get_selection());
+    /// Erase everything the sweep from `from` to `to` touches.
+    ///
+    /// Two departures from what this replaced, both of which are why the eraser felt
+    /// broken rather than slow:
+    ///
+    /// - It takes a *segment*. Pointer moves are coalesced to one per animation frame, so
+    ///   a quick drag arrives as samples tens of pixels apart, and testing the samples
+    ///   steps over everything in between.
+    /// - It takes *every* element it touches, not the topmost. A board made by holding
+    ///   Ctrl+D is a stack of identical shapes in one place, so taking one per pass meant
+    ///   one pass per copy — each of which looked like it had done nothing.
+    pub(crate) fn erase_along(&mut self, from: Point, to: Point) {
+        let tolerance = self.collision_tolerance();
+        let doomed: Vec<String> = self
+            .scene
+            .iter_ordered()
+            .filter(|el| !el.locked() && crate::segment_hits_element(el, from, to, tolerance))
+            .map(|el| el.id.clone())
+            .collect();
+        if doomed.is_empty() {
+            return;
+        }
+
+        // A label belongs to its container: leaving it behind orphans it against a shape
+        // that is no longer there, which only surfaces later when something tries to lay
+        // it out.
+        let mut removed_any = false;
+        let mut selection_changed = false;
+        for id in doomed {
+            let bound = self.scene.get(&id).and_then(|el| el.bound_text_id.clone());
+            for id in std::iter::once(id).chain(bound) {
+                if self.scene.get(&id).is_none_or(|el| el.is_deleted) {
+                    continue;
+                }
+                self.scene.remove(&id, self.now_ms);
+                removed_any = true;
+                selection_changed |= self.selected_ids.remove(&id);
             }
+        }
+
+        if selection_changed {
+            self.events.selection = Some(self.get_selection());
+        }
+        if removed_any {
             self.request_draw();
         }
     }

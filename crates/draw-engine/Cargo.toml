@@ -46,3 +46,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 [[bench]]
 name = "render"
 harness = false
+
+[[bench]]
+name = "editing"
+harness = false

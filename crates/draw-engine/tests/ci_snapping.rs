@@ -271,3 +271,61 @@ fn snap_move_constrain_to_angle_utility() {
     let (cx, cy) = constrain_to_angle(10.0, 9.0);
     assert_close(cx.abs(), cy.abs());
 }
+
+#[test]
+fn snapping_ignores_elements_that_are_off_screen() {
+    // Two reasons, and they agree. An alignment guide to something outside the viewport
+    // is drawn where nobody can see it, so it reads as the shape sticking for no reason;
+    // and gathering candidates from the whole document makes the cost of dragging grow
+    // with the size of the board, paid on every frame of every drag.
+    //
+    // Excalidraw gathers its candidates from the visible elements for the same reasons.
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_scene(Scene::new(vec![
+        // The one being dragged.
+        filled(box_at(100.0, 100.0, 60.0, 40.0)),
+        // Far off to the right, sharing an edge the drag would otherwise snap to.
+        filled(box_at(9000.0, 300.0, 60.0, 40.0)),
+    ]));
+    let dragged = engine.get_scene()[0].id.clone();
+    engine.select(vec![dragged.clone()]);
+    engine.set_tool(DrawTool::Select);
+
+    // Pick it up and drop it a hair away from the far element's top edge.
+    engine.begin_pointer(130.0, 120.0, false, false);
+    engine.move_pointer(130.0, 322.0, false, false);
+    engine.end_pointer();
+
+    let moved = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == dragged)
+        .expect("dragged element");
+    assert_close(moved.y, 302.0);
+}
+
+#[test]
+fn snapping_still_works_for_elements_that_are_on_screen() {
+    // The counterpart: culling must not be the reason snapping stops happening.
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_scene(Scene::new(vec![
+        filled(box_at(100.0, 100.0, 60.0, 40.0)),
+        filled(box_at(500.0, 300.0, 60.0, 40.0)),
+    ]));
+    let dragged = engine.get_scene()[0].id.clone();
+    engine.select(vec![dragged.clone()]);
+    engine.set_tool(DrawTool::Select);
+
+    engine.begin_pointer(130.0, 120.0, false, false);
+    engine.move_pointer(130.0, 322.0, false, false);
+    engine.end_pointer();
+
+    let moved = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == dragged)
+        .expect("dragged element");
+    assert_close(moved.y, 300.0);
+}

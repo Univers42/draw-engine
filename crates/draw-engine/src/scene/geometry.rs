@@ -621,3 +621,55 @@ pub fn segment_intersection_point(
         None
     }
 }
+
+/// Whether the swept segment `a -> b` touches `element`.
+///
+/// The eraser's question, and the reason it is a *segment* rather than a point: pointer
+/// moves are coalesced to one per animation frame, so a quick drag across the board
+/// arrives as a handful of samples tens of pixels apart. Asking about the samples steps
+/// straight over everything between them, which is what made the eraser feel like it had
+/// to be swept again and again over the same place.
+///
+/// Exact rather than sampled. Sampling the segment would reintroduce the same gap at a
+/// smaller scale, and the step needed to close it properly would be a hit test every few
+/// pixels of a drag — the cost of which is paid on every frame of every sweep.
+///
+/// The fill rule is the same one the rest of hit-testing uses, because it comes from the
+/// same place: `hit_test_element` on the endpoints covers a click and a sweep that begins
+/// or ends inside a filled shape, and the edge crossings cover passing through. A hollow
+/// rectangle is therefore erased by its outline and not by its empty middle, exactly as
+/// it is selected by its outline and not by its middle.
+pub fn segment_hits_element(element: &DrawElement, a: Point, b: Point, tolerance: f64) -> bool {
+    // Boxes first. The exact tests below build an outline — a fresh allocation per
+    // element — and a sweep asks this of every element on the board on every frame, so
+    // almost all of that work is for elements the segment comes nowhere near.
+    if !segment_box_overlaps(a, b, element, tolerance) {
+        return false;
+    }
+    if hit_test_element(element, a.x, a.y, tolerance)
+        || hit_test_element(element, b.x, b.y, tolerance)
+    {
+        return true;
+    }
+    // A zero-length sweep is a click, and the endpoints above have already answered it.
+    if (b.x - a.x).abs() < f64::EPSILON && (b.y - a.y).abs() < f64::EPSILON {
+        return false;
+    }
+    let outline = element_outline(element);
+    outline_edges(&outline, outline_is_closed(element))
+        .into_iter()
+        .any(|(from, to)| segments_intersect(a, b, from, to))
+}
+
+/// Whether the segment's bounding box overlaps the element's, allowing `tolerance`.
+///
+/// A cheap reject, and only a reject: two boxes overlapping says nothing about whether
+/// the segment touches the shape. It is worth having because it is arithmetic on six
+/// numbers where the alternative allocates an outline.
+fn segment_box_overlaps(a: Point, b: Point, element: &DrawElement, tolerance: f64) -> bool {
+    let bounds = element_rotated_bounds(element);
+    a.x.min(b.x) <= bounds.max_x + tolerance
+        && a.x.max(b.x) >= bounds.min_x - tolerance
+        && a.y.min(b.y) <= bounds.max_y + tolerance
+        && a.y.max(b.y) >= bounds.min_y - tolerance
+}

@@ -21,9 +21,10 @@ pub use camera::{
     ZOOM_STEP,
 };
 pub use edit::{
-    align_elements, distribute_elements, expand_for_copy, expand_to_groups, expand_to_groups_among,
-    flip_elements, group_patches, is_single_group, materialize_elements, reorder_elements,
-    serialize_selection, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    align_elements, distribute_elements, expand_for_copy, expand_for_copy_among, expand_to_groups,
+    expand_to_groups_among, flip_elements, group_patches, is_single_group, materialize,
+    materialize_elements, reorder_elements, serialize_selection, ungroup_patches, AlignMode,
+    FlipAxis, ZOrderMode,
 };
 pub use engine::{
     DrawEngine, EmbedFrame, EngineEvents, HoverCursor, NoopPainter, PaintView, Painter,
@@ -51,9 +52,9 @@ pub use scene::{
     element_rotated_bounds, hit_test, hit_test_element, is_bindable_element, is_linear_element,
     is_transparent, layout_label, linear_endpoints, linear_from_endpoints, linear_retarget,
     local_box, local_center, merge_style, new_element_id, normalize_rect, refresh_bindings,
-    rotation_center, scene_bounds, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
-    DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, ARROWHEADS, BINDING_GAP,
-    LABEL_PADDING,
+    rotation_center, scene_bounds, segment_hits_element, Arrowhead, DrawElement, DrawElementStyle,
+    DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle,
+    ARROWHEADS, BINDING_GAP, LABEL_PADDING,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,

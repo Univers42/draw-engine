@@ -43,7 +43,12 @@ pub(crate) enum Interaction {
         id: String,
         start: Point,
     },
-    Erase,
+    Erase {
+        /// Where the last sample landed, so the next one erases the segment between them
+        /// rather than a point. Frames are coalesced, so that segment is most of the
+        /// gesture.
+        last: Point,
+    },
     Pan {
         last_x: f64,
         last_y: f64,
