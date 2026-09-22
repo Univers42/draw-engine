@@ -96,7 +96,20 @@ impl DrawEngine {
             Interaction::Freedraw { ref id, start } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     if let Some(mut points) = element.points.clone() {
-                        points.push([world.x - start.x, world.y - start.y]);
+                        // Streamlined as it arrives rather than smoothed afterwards, so
+                        // what is stored is what is drawn and what is exported — a
+                        // stroke smoothed only in the painter would change shape the
+                        // moment it was saved and reloaded.
+                        let raw = [world.x - start.x, world.y - start.y];
+                        let next = match points.last() {
+                            Some(&previous) => crate::freehand::streamline(
+                                previous,
+                                raw,
+                                crate::freehand::STREAMLINE,
+                            ),
+                            None => raw,
+                        };
+                        points.push(next);
                         element.points = Some(points);
                         self.scene.put(element);
                         self.request_draw();

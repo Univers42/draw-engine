@@ -1028,15 +1028,33 @@ fn paint_freedraw(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &Draw
         return;
     }
     with_element_transform(ctx, view, element, || {
-        set_stroke(ctx, &element.stroke_color);
-        set_line_width_cached(ctx, element.stroke_width);
-        set_dash_cached(ctx, None);
-        ctx.begin_path();
-        ctx.move_to(points[0][0], points[0][1]);
-        for point in &points[1..] {
-            ctx.line_to(point[0], point[1]);
+        // Filled, not stroked. The width varies along the stroke — faster means thinner,
+        // the way a real nib behaves — and `lineWidth` is one number for a whole path,
+        // so the only way to draw a varying width is to fill the region between the two
+        // sides of it. `stroke_outline` walks down one side and back up the other.
+        set_fill(ctx, &element.stroke_color);
+        let outline = crate::freehand::stroke_outline(
+            points,
+            element.stroke_width,
+            crate::freehand::THINNING,
+        );
+        if outline.len() < 3 {
+            return;
         }
-        ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(outline[0][0], outline[0][1]);
+        // Through the midpoints, with each sample as the control point of a quadratic.
+        // Drawing straight to the samples puts a hard corner at every one of them, which
+        // is the shake this whole path exists to remove — the streamlining softens where
+        // the samples *are*, and this softens the joins between them.
+        for i in 1..outline.len() {
+            let current = outline[i];
+            let next = outline[(i + 1) % outline.len()];
+            let mid = [(current[0] + next[0]) / 2.0, (current[1] + next[1]) / 2.0];
+            ctx.quadratic_curve_to(current[0], current[1], mid[0], mid[1]);
+        }
+        ctx.close_path();
+        ctx.fill();
     });
 }
 
