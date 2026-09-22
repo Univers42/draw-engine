@@ -54,6 +54,18 @@ impl WasmEngine {
         }
     }
 
+    /// Choose a tool the way a keyboard shortcut does, with the toggle tools' return trip.
+    ///
+    /// Separate from `setTool` because a toolbar button must not toggle: it shows the
+    /// tool as active, so switching away on a second click would contradict the screen.
+    #[wasm_bindgen(js_name = activateTool)]
+    pub fn activate_tool(&self, tool: &str) {
+        if let Ok(tool) = serde_json::from_str(&format!("\"{tool}\"")) {
+            self.cell.borrow_mut().engine.activate_tool(tool);
+            self.flush();
+        }
+    }
+
     /// Put a decoded image on the board.
     ///
     /// The host decodes the file — only a browser can — and having done so already knows

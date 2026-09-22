@@ -62,6 +62,7 @@ function recording(selection: string[] = []): { engine: KeyEngine; calls: string
     },
     getToolLocked: () => locked,
     setTool: (tool: string) => calls.push(`setTool:${tool}`),
+    activateTool: (tool: string) => calls.push(`activateTool:${tool}`),
   } as unknown as KeyEngine;
   return { engine, calls };
 }
@@ -126,12 +127,15 @@ describe("dispatchKeyDown", () => {
   });
 
   it("flips a selection with Shift+H / Shift+V, else maps H to the hand tool", () => {
+    // `activateTool`, not `setTool`: the hand is a toggle tool, so pressing H while
+    // already panning goes back to the tool it interrupted. A toolbar click stays on
+    // `setTool`, which never toggles.
     const flip = recording(["id"]);
     assert.equal(dispatchKeyDown(session(flip.engine), event({ key: "H", shiftKey: true })), "prevent");
     assert.deepEqual(flip.calls, ["flip:horizontal"]);
     const hand = recording([]);
     assert.equal(dispatchKeyDown(session(hand.engine), event({ key: "h" })), "prevent");
-    assert.deepEqual(hand.calls, ["setTool:hand"]);
+    assert.deepEqual(hand.calls, ["activateTool:hand"]);
   });
 
   it("toggles the tool lock on Q", () => {

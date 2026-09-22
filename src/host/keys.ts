@@ -3,7 +3,7 @@
  * chords without a window. attachKeyboardInput is the thin listener glue.
  */
 
-import { toolForKey } from "../tools";
+import { toolForChord } from "../tools";
 import type { DrawTool, FlipAxis, ZOrderMode } from "../types";
 import type { HostCallbacks } from "./types";
 
@@ -42,6 +42,7 @@ export interface KeyEngine {
   setToolLocked(locked: boolean): void;
   getToolLocked(): boolean;
   setTool(tool: DrawTool): void;
+  activateTool(tool: DrawTool): void;
 }
 
 export interface KeySession {
@@ -141,9 +142,12 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
     session.callbacks.onToolLockChange?.(engine.getToolLocked());
     return true;
   }
-  const tool = toolForKey(event.key);
+  // Shift is part of the chord for exactly one tool — Shift+X is autoshape where X is
+  // freedraw — and `activateTool` rather than `setTool` because the hand and the eraser
+  // go back to the tool they interrupted when their key is pressed a second time.
+  const tool = toolForChord(event.key, event.shiftKey);
   if (tool) {
-    engine.setTool(tool);
+    engine.activateTool(tool);
     return true;
   }
   return false;

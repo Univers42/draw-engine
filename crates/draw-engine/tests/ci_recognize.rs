@@ -532,8 +532,12 @@ fn converting_keeps_the_style_that_was_chosen_before_drawing() {
 }
 
 #[test]
-fn the_auto_shape_tool_is_reachable_by_its_own_key() {
-    assert_eq!(tool_for_key("g"), Some(DrawTool::AutoShape));
+fn the_auto_shape_tool_is_reachable_by_its_own_chord() {
+    // Shift+X, which is Excalidraw's. `G` was invented here because the keymap took a key
+    // and no modifier, so a chord could not be expressed at all — see ci_shortcuts.rs,
+    // where the whole table is pinned against the oracle.
+    assert_eq!(tool_for_chord("x", true), Some(DrawTool::AutoShape));
+    assert_eq!(tool_for_key("g"), None);
 }
 
 #[test]

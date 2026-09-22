@@ -528,40 +528,6 @@ fn the_laser_ignores_the_grid() {
     assert_close(rect.width, 100.0);
 }
 
-// --------------------------------------------------------------- the tool table
-
-#[test]
-fn every_tool_has_a_key() {
-    // A tool nothing can reach is a tool that does not exist on a keyboard-driven board,
-    // and the host toolbars print these keys as badges — a badge advertising a key the
-    // engine ignores is worse than no badge at all. This is what caught the eraser
-    // printing `0` while the engine mapped nothing to it.
-    for tool in ALL_TOOLS {
-        let found = ('a'..='z')
-            .map(|c| c.to_string())
-            .chain((0..=9).map(|d| d.to_string()))
-            .any(|key| tool_for_key(&key) == Some(tool));
-        assert!(found, "{tool:?} has no shortcut");
-    }
-}
-
-#[test]
-fn no_key_is_claimed_by_two_tools() {
-    for key in ('a'..='z')
-        .map(|c| c.to_string())
-        .chain((0..=9).map(|d| d.to_string()))
-    {
-        // `tool_for_key` returns one answer per key by construction; what this guards is
-        // the table drifting into two arms that both look plausible for the same letter.
-        let upper = key.to_uppercase();
-        assert_eq!(
-            tool_for_key(&key),
-            tool_for_key(&upper),
-            "{key} and {upper} disagree"
-        );
-    }
-}
-
 #[test]
 fn needs_frame_is_the_only_question_a_host_has_to_ask() {
     // The browser loop had been spelling out `dirty || in_motion` itself, so a trail

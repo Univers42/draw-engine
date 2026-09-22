@@ -154,6 +154,18 @@ export class DrawEngine {
     this.inner.setTool(tool);
   }
 
+  /**
+   * Choose a tool the way a keyboard shortcut does.
+   *
+   * The difference from `setTool` is the return trip: pressing the hand or eraser key
+   * while that tool is already active goes back to the tool it interrupted. Toolbar
+   * buttons stay on `setTool`, because a button that shows a tool as active must not
+   * switch away when clicked again.
+   */
+  activateTool(tool: DrawTool): void {
+    this.inner.activateTool(tool);
+  }
+
   getTool(): DrawTool {
     return this.inner.getTool() as DrawTool;
   }

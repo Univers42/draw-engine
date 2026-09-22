@@ -34,10 +34,11 @@ pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
 pub use interaction::{
     constrain_to_angle, ease_out, is_degenerate_linear, is_degenerate_rect, is_linear_tool,
-    is_shape_tool, linear_from_drag, rect_from_drag, size_mapping, snap_move, tool_for_key, Axis,
-    DrawTool, LaserOptions, LaserPoint, LaserStroke, LaserTrails, LinearDrag, SnapGuide,
-    SnapResult, ALL_TOOLS, CORNER_DETECTION_MAX_ANGLE_DEG, DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH,
-    LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH, LASER_SIZE, LASER_STREAMLINE,
+    is_shape_tool, is_toggle_tool, linear_from_drag, rect_from_drag, size_mapping, snap_move,
+    tool_for_chord, tool_for_key, Axis, DrawTool, LaserOptions, LaserPoint, LaserStroke,
+    LaserTrails, LinearDrag, SnapGuide, SnapResult, ALL_TOOLS, CORNER_DETECTION_MAX_ANGLE_DEG,
+    DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH,
+    LASER_SIZE, LASER_STREAMLINE,
 };
 pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
 pub use render::{
