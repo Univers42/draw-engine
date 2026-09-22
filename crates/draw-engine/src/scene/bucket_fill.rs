@@ -335,7 +335,8 @@ impl NodeStore {
 // -----------------------------------------------------------------------------
 
 /// Whether this element type paints its `background_color` at all.
-fn has_background(kind: DrawElementType) -> bool {
+/// Element kinds that can carry a background colour of their own.
+pub fn has_background(kind: DrawElementType) -> bool {
     matches!(
         kind,
         DrawElementType::Rectangle
