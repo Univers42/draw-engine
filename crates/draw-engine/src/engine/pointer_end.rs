@@ -217,18 +217,32 @@ impl DrawEngine {
                     // The whole gesture is one history entry: the stroke is never
                     // committed on its own, so one undo takes the shape away rather
                     // than turning it back into a scribble nobody drew.
+                    // Auto-shape watches one stroke and hands back a shape, so the
+                    // gesture ends with something you will want to place: it settles and
+                    // leaves the result selected, like every shape tool.
+                    //
+                    // The pencil does not. Drawing by hand is many strokes with the pen
+                    // lifted between them, so settling would make every stroke after the
+                    // first a marquee and you would reach for the tool again between
+                    // every mark. Nor is the stroke left selected: a frame and eight
+                    // handles over the drawing you are still making would swallow the
+                    // next stroke that began inside them.
                     if self.get_tool() == DrawTool::AutoShape {
                         self.convert_to_shape(&id);
+                        self.settle_tool();
+                        self.set_selection(vec![element.id]);
                     }
-                    self.settle_tool();
-                    self.set_selection(vec![element.id]);
                     self.push_history();
+                    self.request_draw();
                     return;
                 }
             }
             self.scene.discard(id);
         }
-        self.set_tool(DrawTool::Select);
+        // A tap too short to keep must not take the tool with it either.
+        if self.get_tool() != DrawTool::Freedraw {
+            self.set_tool(DrawTool::Select);
+        }
         self.request_draw();
     }
 
