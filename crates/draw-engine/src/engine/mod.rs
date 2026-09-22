@@ -62,6 +62,9 @@ pub struct DrawEngine {
     now_ms: f64,
     measure_text: fn(&str, f64) -> (f64, f64),
     tool: DrawTool,
+    /// Where a toggle tool goes back to. Never a toggle tool itself, so pressing the
+    /// eraser key three times enters, leaves, and enters again rather than oscillating.
+    tool_before_toggle: DrawTool,
     tool_locked: bool,
     next_style: DrawElementStylePatch,
     next_font_size: f64,
@@ -107,6 +110,7 @@ impl DrawEngine {
             now_ms: 0.0,
             measure_text: default_measure,
             tool: DrawTool::Select,
+            tool_before_toggle: DrawTool::Select,
             tool_locked: false,
             next_style: DrawElementStylePatch::default(),
             next_font_size: DEFAULT_FONT_SIZE,
@@ -285,8 +289,31 @@ impl DrawEngine {
         if tool == self.tool {
             return;
         }
+        // Remembered before the move, and never the tool being left if that tool is
+        // itself a toggle — otherwise pressing E twice would bounce the eraser against
+        // itself instead of returning you to what you were drawing.
+        if !crate::is_toggle_tool(self.tool) {
+            self.tool_before_toggle = self.tool;
+        }
         self.tool = tool;
         self.events.tool = Some(tool);
+    }
+
+    /// Choose a tool the way a keyboard shortcut does.
+    ///
+    /// The difference from [`set_tool`](Self::set_tool) is the return trip: pressing the
+    /// hand or the eraser key while that tool is already active goes back to the tool it
+    /// interrupted. A toolbar button must *not* do this — the button shows the tool as
+    /// active, so switching away on a second click would contradict what is on screen —
+    /// which is why the two doors are separate.
+    pub fn activate_tool(&mut self, tool: DrawTool) {
+        if tool == self.tool && crate::is_toggle_tool(tool) {
+            let back = self.tool_before_toggle;
+            self.tool = back;
+            self.events.tool = Some(back);
+            return;
+        }
+        self.set_tool(tool);
     }
 
     pub fn get_tool(&self) -> DrawTool {

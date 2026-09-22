@@ -68,36 +68,66 @@ pub fn is_linear_tool(tool: DrawTool) -> bool {
     matches!(tool, DrawTool::Line | DrawTool::Arrow)
 }
 
-/// Excalidraw's tool shortcuts, which are the numeral and the initial of each tool.
+/// Tools that switch back when their own key is pressed again.
 ///
-/// Every variant of [`DrawTool`] must appear here — `ci_tools.rs` asserts it — because a
-/// tool nothing can reach is a tool that does not exist on a keyboard-driven board, and
-/// because the host toolbars print these keys as badges. A badge advertising a key the
-/// engine ignores is worse than no badge at all.
+/// The hand and the eraser, and Excalidraw marks exactly these two. They are the tools
+/// you reach for *during* something else — pan to see the rest of the diagram, rub out a
+/// stray line — so the return trip is the point. Without it, leaving the eraser costs a
+/// second keystroke and you have to remember what you were holding.
+pub fn is_toggle_tool(tool: DrawTool) -> bool {
+    matches!(tool, DrawTool::Hand | DrawTool::Eraser)
+}
+
+/// Excalidraw's tool shortcuts: `TOOLS` in `components/Tools.tsx`, pinned by
+/// `tests/ci_shortcuts.rs`.
 ///
-/// `s` is the lasso and `k` the laser, matching Excalidraw: `l` was already the line.
-pub fn tool_for_key(key: &str) -> Option<DrawTool> {
-    match key.to_ascii_lowercase().as_str() {
+/// Every variant of [`DrawTool`] must be reachable from here, because a tool nothing can
+/// reach is a tool that does not exist on a keyboard-driven board — and because the host
+/// toolbars print these keys as badges, and a badge advertising a key the engine ignores
+/// is worse than no badge at all.
+///
+/// `shift` is a parameter rather than something the caller folds into `key`, because
+/// Shift+X is autoshape while X is freedraw: the two are different tools, so the keymap
+/// cannot be a function of the key alone. It used to be, and autoshape had an invented
+/// key as a result.
+///
+/// Holding shift is otherwise inert — Excalidraw dropped Shift+letter as a separate
+/// binding and made tool keys case-insensitive, so `R` and `r` are the same shortcut.
+pub fn tool_for_chord(key: &str, shift: bool) -> Option<DrawTool> {
+    let key = key.to_ascii_lowercase();
+    if shift && key == "x" {
+        return Some(DrawTool::AutoShape);
+    }
+    match key.as_str() {
         "1" | "v" => Some(DrawTool::Select),
         "2" | "r" => Some(DrawTool::Rectangle),
         "3" | "d" => Some(DrawTool::Diamond),
         "4" | "o" => Some(DrawTool::Ellipse),
         "5" | "a" => Some(DrawTool::Arrow),
         "6" | "l" => Some(DrawTool::Line),
-        "7" | "p" => Some(DrawTool::Freedraw),
+        // Two letters, and the only tool with two.
+        "7" | "p" | "x" => Some(DrawTool::Freedraw),
         "8" | "t" => Some(DrawTool::Text),
         "0" | "e" => Some(DrawTool::Eraser),
-        "s" => Some(DrawTool::Lasso),
         "k" => Some(DrawTool::Laser),
         "f" => Some(DrawTool::Frame),
+        // A digit and no letter, which is the oracle's choice rather than an oversight.
         "9" => Some(DrawTool::Image),
-        "w" => Some(DrawTool::Embed),
-        "g" => Some(DrawTool::AutoShape),
-        // Excalidraw's own key for it.
         "b" => Some(DrawTool::BucketFill),
         "h" => Some(DrawTool::Hand),
+        // Two tools Excalidraw gives no key at all: it reaches the lasso through a mode
+        // of the selection tool and the embed through a menu. Ours are toolbar entries in
+        // their own right, so they need keys, and these are the ones left — `l` was
+        // already the line.
+        "s" => Some(DrawTool::Lasso),
+        "w" => Some(DrawTool::Embed),
         _ => None,
     }
+}
+
+/// The tool for a key with no modifier held.
+pub fn tool_for_key(key: &str) -> Option<DrawTool> {
+    tool_for_chord(key, false)
 }
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
