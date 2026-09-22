@@ -233,15 +233,15 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
 /// that is the point of keying on geometry — so the only thing that can be asked about it
 /// is whether anything still draws it.
 fn evict_paths(live: &[&DrawElement]) {
-    SHAPES.with(|shapes| shapes.borrow_mut().sweep());
+    // Both caches keep a budget's worth before evicting anything. Sweeping eagerly costs
+    // far more than it reclaims: during a pan the visible set changes every frame, so
+    // dropping what the last frame missed regenerates each shape as it crosses the edge.
+    let budget = live.len().saturating_mul(2).max(64);
+    SHAPES.with(|shapes| shapes.borrow_mut().sweep(budget));
     PATHS.with(|cache| {
         let mut cache = cache.borrow_mut();
         let used = PATHS_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
-        // Only worth the sweep once the cache has outgrown the scene by a clear margin;
-        // doing it every frame would cost more than it reclaims. With duplicates sharing
-        // one entry the cache is normally far *smaller* than the scene, so this rarely
-        // fires at all.
-        if cache.len() <= live.len().saturating_mul(2).max(64) {
+        if cache.len() <= budget {
             return;
         }
         cache.retain(|fingerprint, _| used.contains(fingerprint));

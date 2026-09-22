@@ -265,6 +265,53 @@ fn a_board_of_duplicates_generates_one_shape() {
 }
 
 #[test]
+fn panning_does_not_regenerate_what_scrolls_off_and_back() {
+    // The cost of evicting eagerly. During a pan the visible set changes every frame, so
+    // a cache that drops whatever the last frame did not draw regenerates each shape as
+    // it crosses the edge — and for a screen-sized hachure fill that is thousands of ops
+    // per crossing. Measured, it turned a 600px pan from 10ms into 1.8 seconds.
+    //
+    // So the sweep has a budget: while the cache is no bigger than the scene needs, it
+    // keeps everything, and shapes that scroll off stay ready for when they come back.
+    let mut cache = ShapeCache::new();
+    let shapes: Vec<DrawElement> = (0..8)
+        .map(|i| {
+            let mut element = create_element_default(
+                DrawElementType::Rectangle,
+                Geometry {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1100.0,
+                    height: 640.0,
+                },
+            );
+            element.background_color = "#ffec99".into();
+            element.seed = 1000 + i;
+            element
+        })
+        .collect();
+
+    // A pan: a sliding window of four, moving out across the row and back again.
+    let window = 4;
+    let starts = [0usize, 1, 2, 3, 2, 1, 0];
+    for start in starts {
+        for element in &shapes[start..start + window] {
+            cache.get(element);
+        }
+        cache.sweep(64);
+    }
+
+    // One generation per distinct shape the window ever covered, and not one more. Counted
+    // rather than written down, so the assertion cannot drift from the window above.
+    let touched = starts.iter().max().expect("starts") + window;
+    assert_eq!(
+        cache.stats().1,
+        touched as u64,
+        "a shape was regenerated after scrolling off and back"
+    );
+}
+
+#[test]
 fn the_cache_still_lets_go_of_what_is_gone() {
     // Sharing by geometry means the cache can no longer be swept by element id, so it is
     // swept by use instead: anything not asked for since the last sweep is dropped.
@@ -288,7 +335,7 @@ fn the_cache_still_lets_go_of_what_is_gone() {
     assert_eq!(cache.len(), 2);
 
     // End of the frame that drew both.
-    cache.sweep();
+    cache.sweep(0);
     assert_eq!(
         cache.len(),
         2,
@@ -297,7 +344,7 @@ fn the_cache_still_lets_go_of_what_is_gone() {
 
     // A frame that draws only the first.
     cache.get(&first);
-    cache.sweep();
+    cache.sweep(0);
 
     assert_eq!(cache.len(), 1, "the unused shape was kept");
     assert_eq!(shape_fingerprint(&first), shape_fingerprint(&first));
@@ -320,7 +367,7 @@ fn a_shape_survives_the_sweep_that_follows_the_frame_it_was_used_in() {
 
     for _ in 0..5 {
         cache.get(&element);
-        cache.sweep();
+        cache.sweep(0);
     }
 
     let (hits, misses) = cache.stats();
