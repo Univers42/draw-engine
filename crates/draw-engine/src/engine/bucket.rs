@@ -122,7 +122,51 @@ impl DrawEngine {
         // `App.bucketFill.ts:245-265` sets the same.
         element.roughness = 0.0;
         element.stroke_width = 1.0;
+        self.inherit_belonging(&mut element, fill);
         element
+    }
+
+    /// The two things a fill inherits from what it was painted inside.
+    ///
+    /// Nothing links a fill back to the shape it was traced from — no back-reference, no
+    /// marker — because a region is frequently not a shape at all: the overlap of two
+    /// rectangles, an area walled in by four loose lines, a ring with a hole through it.
+    /// None of those can be written as some element's background, so the paint has to be
+    /// its own element and moving the shape leaves it behind. That is the design, here
+    /// and upstream.
+    ///
+    /// Frame and group are the exceptions, and they are *membership* rather than a link:
+    /// the paint joins whatever its region already belonged to. That is what makes a fill
+    /// travel with a frame that is dragged, and with a group that is moved — without it,
+    /// paint inside a frame is abandoned the instant the frame moves, which reads as the
+    /// colour coming unstuck from the drawing. Excalidraw inherits these two and nothing
+    /// else (`App.bucketFill.ts:227-243`).
+    fn inherit_belonging(&self, element: &mut DrawElement, fill: &BucketFill) {
+        if let Some(owner) = fill.owner_id.as_ref().and_then(|id| self.scene.get(id)) {
+            // A frame is a container, so paint filling one belongs *inside* it rather
+            // than beside it. Anything else passes on the frame it is itself in.
+            element.frame_id = if crate::scene::is_frame(owner) {
+                Some(owner.id.clone())
+            } else {
+                owner.frame_id.clone()
+            };
+            element.group_id = owner.group_id.clone();
+            return;
+        }
+
+        // No owner: the region is held up by loose walls, so it belongs wherever *all* of
+        // them agree it does. Anything less than unanimous means there is no one place
+        // the region sits, and guessing would drag a stranger's shape along with the
+        // paint every time the group moved.
+        element.group_id = shared_among(
+            fill.boundary_element_ids
+                .iter()
+                .map(|id| self.scene.get(id).and_then(|el| el.group_id.clone())),
+        );
+        // The frame is asked of the finished ring rather than of the walls, because a
+        // frame holds whatever is drawn within its bounds — which is the same question
+        // asked of every other element the moment it is created.
+        element.frame_id = crate::scene::frame_for_element(self.scene.iter_ordered(), element);
     }
 
     /// Say why a click painted nothing — when it is worth saying.
@@ -185,6 +229,22 @@ fn paint_fill_style(style: FillStyle) -> FillStyle {
         FillStyle::Hachure | FillStyle::CrossHatch => FillStyle::Solid,
         other => other,
     }
+}
+
+/// The one value every item agrees on, or `None`.
+///
+/// Unanimity rather than a majority or a first-wins: the question is "is there a single
+/// place this region sits", and anything short of every wall saying the same place means
+/// there is not one.
+fn shared_among(values: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let mut items = values.into_iter();
+    let first = items.next().flatten()?;
+    for value in items {
+        if value.as_deref() != Some(first.as_str()) {
+            return None;
+        }
+    }
+    Some(first)
 }
 
 /// The box a ring of points spans, as a width and a height.

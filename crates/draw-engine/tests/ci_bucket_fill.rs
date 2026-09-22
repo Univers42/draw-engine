@@ -1115,3 +1115,127 @@ fn a_fill_that_works_says_nothing() {
 
     assert_eq!(notice_of(&mut engine), None, "success is not news");
 }
+
+// -----------------------------------------------------------------------------
+// what the paint belongs to
+// -----------------------------------------------------------------------------
+//
+// A fill is a separate element and nothing links it back to the shape it was traced
+// from — that is the design, here and upstream, because a region often is not a shape at
+// all: the overlap of two rectangles, an area walled in by four loose lines, a ring with
+// a hole punched through it. None of those can be written as some element's background.
+//
+// But there are two things a fill does inherit, and they are the only places the paint
+// travels with what it was painted inside: the frame it sits in, and the group its owner
+// belongs to. Group a shape with its paint's owner and the paint moves with the group;
+// put the owner in a frame and dragging the frame takes the paint along. Excalidraw
+// inherits exactly these two and nothing else (`App.bucketFill.ts:227-243`).
+//
+// Without them a fill inside a frame is left behind the moment the frame moves, which
+// looks like the paint coming unstuck from the drawing.
+
+/// The owner of a region, grouped with something else so the group is real.
+fn grouped(mut element: DrawElement, group: &str) -> DrawElement {
+    element.group_id = Some(group.to_string());
+    element
+}
+
+#[test]
+fn the_paint_joins_the_group_its_owner_belongs_to() {
+    let owner = grouped(stroked_box(0.0, 0.0, 200.0, 120.0), "g1");
+    let mut engine = engine_with_scene(vec![owner]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(
+        painted(&engine).group_id.as_deref(),
+        Some("g1"),
+        "paint that belongs to a group moves when the group moves"
+    );
+}
+
+#[test]
+fn the_paint_joins_the_frame_its_owner_sits_in() {
+    let mut owner = stroked_box(0.0, 0.0, 200.0, 120.0);
+    owner.frame_id = Some("f1".into());
+    let mut engine = engine_with_scene(vec![owner]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(painted(&engine).frame_id.as_deref(), Some("f1"));
+}
+
+/// Filling the frame itself puts the paint *inside* it, not beside it.
+#[test]
+fn filling_a_frame_puts_the_paint_within_it() {
+    let mut frame = create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 200.0,
+        },
+    );
+    frame.id = "frame-1".into();
+    let mut engine = engine_with_scene(vec![frame]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(150.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(
+        painted(&engine).frame_id.as_deref(),
+        Some("frame-1"),
+        "a frame is a container, so paint inside it is its child rather than its sibling"
+    );
+}
+
+#[test]
+fn an_ownerless_region_joins_the_group_all_its_walls_share() {
+    // Four loose lines enclosing a square, every one of them in the same group. There is
+    // no owner, so the group has to come from the walls — and only when they agree.
+    let walls = vec![
+        grouped(poly(&[(0.0, 0.0), (200.0, 0.0)]), "g2"),
+        grouped(poly(&[(200.0, 0.0), (200.0, 200.0)]), "g2"),
+        grouped(poly(&[(200.0, 200.0), (0.0, 200.0)]), "g2"),
+        grouped(poly(&[(0.0, 200.0), (0.0, 0.0)]), "g2"),
+    ];
+    let mut engine = engine_with_scene(walls);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(painted(&engine).group_id.as_deref(), Some("g2"));
+}
+
+#[test]
+fn walls_that_disagree_give_the_paint_no_group() {
+    // One wall out of four belongs somewhere else, so there is no group the region as a
+    // whole sits in. Guessing one would drag a stranger's shape along with the paint.
+    let walls = vec![
+        grouped(poly(&[(0.0, 0.0), (200.0, 0.0)]), "g2"),
+        grouped(poly(&[(200.0, 0.0), (200.0, 200.0)]), "g2"),
+        grouped(poly(&[(200.0, 200.0), (0.0, 200.0)]), "g2"),
+        grouped(poly(&[(0.0, 200.0), (0.0, 0.0)]), "other"),
+    ];
+    let mut engine = engine_with_scene(walls);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(painted(&engine).group_id, None);
+}
+
+#[test]
+fn a_plain_region_belongs_to_nothing() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    let paint = painted(&engine);
+    assert_eq!(paint.group_id, None);
+    assert_eq!(paint.frame_id, None);
+}
