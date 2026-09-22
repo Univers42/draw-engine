@@ -309,3 +309,84 @@ fn the_anchor_holds_still_across_a_drag_that_turns_the_element_through() {
     assert_close(el.x, 400.0);
     assert_close(el.width, -240.0);
 }
+
+// -----------------------------------------------------------------------------
+// choosing a tool
+// -----------------------------------------------------------------------------
+
+/// Picking a tool that draws puts down what is held.
+///
+/// `setActiveTool` clears `selectedElementIds` for every tool that is not the selection
+/// tool (`packages/excalidraw/components/App.tsx:6211-6226`), and the reason is the style
+/// panel: it offers the union of what the active *tool* can style and what the
+/// *selection* can, and a swatch applies to the selection when there is one. So a shape
+/// left selected from a moment ago silently captures the colour meant for the next thing
+/// drawn — picking the bucket and choosing a green recoloured the rectangle behind it
+/// instead of arming the bucket, and the fill still came out the fallback shade.
+#[test]
+fn choosing_a_drawing_tool_lets_go_of_the_selection() {
+    let mut engine = engine_with_scene(vec![box_at(0.0, 0.0, 100.0, 100.0)]);
+    engine.select_all();
+    assert_eq!(engine.get_selection().len(), 1, "something to let go of");
+
+    engine.set_tool(DrawTool::BucketFill);
+    assert_eq!(
+        engine.get_selection(),
+        Vec::<String>::new(),
+        "the bucket paints the next region, not the thing that happened to be selected"
+    );
+}
+
+#[test]
+fn every_tool_but_select_lets_go() {
+    for tool in [
+        DrawTool::Rectangle,
+        DrawTool::Ellipse,
+        DrawTool::Diamond,
+        DrawTool::Arrow,
+        DrawTool::Line,
+        DrawTool::Freedraw,
+        DrawTool::Text,
+        DrawTool::Eraser,
+        DrawTool::Hand,
+        DrawTool::BucketFill,
+    ] {
+        let mut engine = engine_with_scene(vec![box_at(0.0, 0.0, 100.0, 100.0)]);
+        engine.select_all();
+        engine.set_tool(tool);
+        assert!(
+            engine.get_selection().is_empty(),
+            "{tool:?} should have let go of the selection"
+        );
+    }
+}
+
+/// The one exception, and the reason the rule is written as "not the selection tool"
+/// rather than "a tool that draws": going back to the select tool is how a person picks
+/// up what they just made, so it has to keep it.
+#[test]
+fn going_back_to_select_keeps_what_is_held() {
+    let mut engine = engine_with_scene(vec![box_at(0.0, 0.0, 100.0, 100.0)]);
+    engine.select_all();
+    let held = engine.get_selection();
+    engine.set_tool(DrawTool::Select);
+    assert_eq!(engine.get_selection(), held);
+}
+
+/// Drawing something selects it, and that must survive the tool reverting to select on
+/// its own — otherwise nothing is ever selected after it is drawn.
+#[test]
+fn what_was_just_drawn_stays_selected() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(10.0, 10.0, false, false);
+    engine.move_pointer(110.0, 90.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(engine.get_tool(), DrawTool::Select, "the tool reverts");
+    assert_eq!(
+        engine.get_selection().len(),
+        1,
+        "and the new shape is still held"
+    );
+}

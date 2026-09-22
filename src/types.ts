@@ -176,6 +176,14 @@ export interface TextEditRequest {
   containerId?: string | null;
 }
 
+/**
+ * Something the person should be told, as a stable code rather than a sentence.
+ *
+ * The motor knows *what* happened; the wording, the language and the room it has to fit
+ * in belong to whatever is hosting it. A headless host is free to ignore these entirely.
+ */
+export type DrawNotice = "fill-region-not-closed" | "fill-region-too-complex";
+
 export interface DrawEngineOptions {
   canvas: HTMLCanvasElement;
   onCameraChange?: (camera: Camera) => void;
@@ -183,6 +191,7 @@ export interface DrawEngineOptions {
   onSelectionChange?: (ids: string[]) => void;
   onRequestTextEdit?: (request: TextEditRequest) => void;
   onSceneChange?: (json: string) => void;
+  onNotice?: (notice: DrawNotice) => void;
 }
 
 export class Scene {

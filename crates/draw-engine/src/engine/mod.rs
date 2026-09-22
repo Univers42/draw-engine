@@ -26,7 +26,7 @@ mod types;
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, history_signature, Interaction};
-pub use types::{merge_style_patch, EngineEvents, TextEditRequest};
+pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
 /// Reach for the handles that are not laid out by [`crate::selection::HandleLayout`] —
@@ -297,6 +297,19 @@ impl DrawEngine {
         }
         self.tool = tool;
         self.events.tool = Some(tool);
+        // Picking any tool but select puts down whatever was being held.
+        // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
+        // style panel: it offers the union of what the active tool can style and what the
+        // selection can, and a swatch applies to the selection whenever there is one. So
+        // a shape left selected from a moment ago silently captures the colour meant for
+        // the next thing drawn — choosing a green for the bucket recoloured the rectangle
+        // behind it, and the fill still came out the fallback shade.
+        //
+        // Going back to select is how a person picks up what they have just made, so that
+        // one direction keeps it.
+        if tool != DrawTool::Select {
+            self.clear_selection();
+        }
     }
 
     /// Choose a tool the way a keyboard shortcut does.

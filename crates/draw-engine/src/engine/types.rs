@@ -19,6 +19,27 @@ pub struct TextEditRequest {
     pub container_id: Option<String>,
 }
 
+/// Something the person should be told, as a code rather than a sentence.
+///
+/// A code because the wording is the host's half of the problem: it is the half that
+/// knows the language, the tone and how much room there is on screen. The motor knows
+/// only *what* happened, and every frontend built on it should be free to say it
+/// differently — or, in a headless one, not at all.
+///
+/// Emitted only where silence would read as a bug. A gesture that does nothing because
+/// there was nothing to do stays silent; one that does nothing because it could not do
+/// what was asked says why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Notice {
+    /// There is a shape under the bucket, but its outline does not close around the
+    /// click, so there is no region to paint. Worth saying: the rule that a region must
+    /// be enclosed by *visible* strokes is not discoverable by looking.
+    FillRegionNotClosed,
+    /// Too much geometry near the click to resolve a region in the time a click may take.
+    FillRegionTooComplex,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct EngineEvents {
     /// Only the elements that changed. Preferred over `scene_json`.
@@ -28,6 +49,8 @@ pub struct EngineEvents {
     pub selection: Option<Vec<String>>,
     pub text_edit: Option<TextEditRequest>,
     pub scene_json: Option<String>,
+    /// Something to tell the person about, if anything.
+    pub notice: Option<Notice>,
 }
 
 pub(crate) enum Interaction {

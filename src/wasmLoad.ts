@@ -1,5 +1,11 @@
 import init, { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
-import type { Camera, DrawEngineOptions, DrawTool, TextEditRequest } from "./types";
+import type {
+  Camera,
+  DrawEngineOptions,
+  DrawNotice,
+  DrawTool,
+  TextEditRequest,
+} from "./types";
 
 let ready: Promise<void> | null = null;
 
@@ -42,5 +48,9 @@ export function wireCallbacks(
   if (options.onSceneChange) {
     const cb = options.onSceneChange;
     inner.setOnSceneChange((json: string) => cb(json));
+  }
+  if (options.onNotice) {
+    const cb = options.onNotice;
+    inner.setOnNotice((code: string) => cb(code as DrawNotice));
   }
 }

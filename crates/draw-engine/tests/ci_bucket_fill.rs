@@ -925,3 +925,193 @@ fn the_paint_a_fill_leaves_behind_can_actually_be_drawn() {
         let _ = draw_engine::render::shape::element_drawable(&element);
     }
 }
+
+// -----------------------------------------------------------------------------
+// the element the fill becomes
+// -----------------------------------------------------------------------------
+//
+// Everything above this line stops at `compute_bucket_fill`, which returns a polygon and
+// is thoroughly right about it. The step that turns that polygon into a `DrawElement` had
+// no test at all, and that is where the tool was broken: the region was computed
+// correctly and then committed as an element that claimed to occupy nothing.
+
+/// The fill the engine just made — the one element with no stroke.
+fn painted(engine: &DrawEngine) -> DrawElement {
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|e| !e.is_deleted && is_transparent(&e.stroke_color))
+        .expect("the bucket should have left paint behind")
+}
+
+#[test]
+fn the_fill_declares_the_size_of_the_region_it_covers() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    let paint = painted(&engine);
+    let points = paint.points.as_deref().expect("a fill is its points");
+    let width = points
+        .iter()
+        .map(|p| p[0])
+        .fold(f64::NEG_INFINITY, f64::max)
+        - points.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+    let height = points
+        .iter()
+        .map(|p| p[1])
+        .fold(f64::NEG_INFINITY, f64::max)
+        - points.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+
+    // Not merely "non-zero": the whole point is that it agrees with the points, because
+    // every consumer that cannot see the points — the API's bounds mirror, a thumbnail,
+    // another frontend — has only these two numbers to go on.
+    assert_close(paint.width, width);
+    assert_close(paint.height, height);
+    assert!(
+        paint.width > 0.0 && paint.height > 0.0,
+        "a region that covers a 200x120 box cannot be 0x0, and was: {}x{}",
+        paint.width,
+        paint.height
+    );
+}
+
+#[test]
+fn the_paint_can_be_picked_up_again() {
+    // The failure a person actually meets. The fill appears, and then it is inert: it
+    // cannot be clicked, so it cannot be selected, moved, recoloured or deleted. It was
+    // hit-testable only along its own edge, which is exactly where the outline it was
+    // traced from is already answering for the same click.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+    let id = painted(&engine).id;
+
+    let hit = engine.hit_test(100.0, 60.0, 10.0);
+    assert_eq!(
+        hit.map(|e| e.id),
+        Some(id.clone()),
+        "a click in the middle of the paint must find the paint"
+    );
+
+    // And the whole way through the tool that a person would use to grab it.
+    engine.set_tool(DrawTool::Select);
+    engine.clear_selection();
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+    assert_eq!(
+        engine.get_selection(),
+        vec![id],
+        "selecting it with the select tool must select it"
+    );
+}
+
+#[test]
+fn the_paint_moves_when_it_is_dragged() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+    let before = painted(&engine);
+
+    engine.set_tool(DrawTool::Select);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.move_pointer(140.0, 90.0, false, false);
+    engine.end_pointer();
+
+    let after = painted(&engine);
+    assert_close(after.x, before.x + 40.0);
+    assert_close(after.y, before.y + 30.0);
+}
+
+// -----------------------------------------------------------------------------
+// telling the person why nothing happened
+// -----------------------------------------------------------------------------
+//
+// `BucketFillFailure` has had five variants and its own note that "an open region is
+// worth a word to the person clicking" since the feature landed, and the word was never
+// said: the pointer path discarded the `Result`, so a click that found no region did
+// nothing at all — no element, no cursor change, no message. For someone who does not
+// already know a region must be fully enclosed by *visible* strokes, that is
+// indistinguishable from a tool that is broken.
+//
+// The engine emits a code, never a sentence. Which words to use, and in which language,
+// is the host's half of the problem.
+
+/// The notice a bucket click leaves behind, if any.
+fn notice_of(engine: &mut DrawEngine) -> Option<Notice> {
+    engine.drain_events().notice
+}
+
+#[test]
+fn aiming_at_a_shape_and_getting_nothing_says_so() {
+    // A shape *is* under the pointer — the person plainly aimed at something — and it
+    // still refuses, here because the region is too small to become paint. That is the
+    // case where silence reads as a broken tool, so it gets a word.
+    //
+    // A 1x1 box rather than a broken outline because the three refusals that reach this
+    // branch are one message to the person clicking; which stage refused is a fact about
+    // the algorithm, and `a_region_below_the_minimum_area_is_refused` is where that
+    // distinction is pinned.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 1.0, 1.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    let _ = notice_of(&mut engine);
+
+    engine.begin_pointer(0.5, 0.5, false, false);
+    engine.end_pointer();
+
+    assert_eq!(live_kinds(&engine).len(), 1, "nothing was painted");
+    assert_eq!(notice_of(&mut engine), Some(Notice::FillRegionNotClosed));
+}
+
+/// The owner-less half of the same refusal, and it stays quiet.
+///
+/// Three sides of a box enclose nothing and own nothing, so the fallback search comes
+/// back empty — which is `NoOwner`, the same answer as a click on bare canvas.
+/// Excalidraw draws the line in the same place (`App.bucketFill.ts:197`): with no owner
+/// there is no evidence the person was aiming at anything in particular.
+#[test]
+fn an_open_shape_that_owns_nothing_stays_quiet() {
+    let mut engine = engine_with_scene(vec![
+        poly(&[(0.0, 0.0), (200.0, 0.0)]),
+        poly(&[(200.0, 0.0), (200.0, 200.0)]),
+        poly(&[(200.0, 200.0), (0.0, 200.0)]),
+    ]);
+    engine.set_tool(DrawTool::BucketFill);
+    let _ = notice_of(&mut engine);
+
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(live_kinds(&engine).len(), 3, "nothing was painted");
+    assert_eq!(notice_of(&mut engine), None);
+}
+
+#[test]
+fn a_click_on_bare_canvas_says_nothing() {
+    // Excalidraw is deliberately silent here too (`App.bucketFill.ts:197`). Clicking
+    // empty space is not a mistake worth interrupting someone over, and a tool that
+    // complains every time the pointer slips is one people stop reading.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 100.0, 100.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    let _ = notice_of(&mut engine);
+
+    engine.begin_pointer(900.0, 900.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(notice_of(&mut engine), None);
+}
+
+#[test]
+fn a_fill_that_works_says_nothing() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    let _ = notice_of(&mut engine);
+
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(notice_of(&mut engine), None, "success is not news");
+}

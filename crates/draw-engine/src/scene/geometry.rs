@@ -409,6 +409,74 @@ fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -> bool {
     }
 }
 
+/// How close a path's ends must be for it to read as closed.
+///
+/// Excalidraw's `LINE_CONFIRM_THRESHOLD` (`packages/common/src/constants.ts:23`). It lives
+/// here, in the geometry, because three separate questions turn on it and they have to
+/// give the same answer: whether the renderer paints a path's background, whether a fill
+/// treats a stroke as a wall, and whether a click in the middle of a path belongs to it.
+/// They used to be three constants in three files, which is how paint came to exist that
+/// could not be clicked.
+pub const LINE_CONFIRM_THRESHOLD: f64 = 8.0;
+
+/// Whether a path's ends are close enough that it reads — and paints — as closed.
+///
+/// `isPathALoop`, `packages/element/src/utils.ts:511-525`. Excalidraw divides the
+/// threshold by the zoom so that closing a path by hand is equally easy at any
+/// magnification; that only applies while drawing, and every caller here is asking about
+/// a path that already exists, so the static form is the right one.
+pub fn is_path_a_loop(points: &[[f64; 2]]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let first = points[0];
+    let last = points[points.len() - 1];
+    (first[0] - last[0]).hypot(first[1] - last[1]) <= LINE_CONFIRM_THRESHOLD
+}
+
+/// Whether a point-based element encloses a region that belongs to it.
+///
+/// `shouldTestInside`, `packages/element/src/collision.ts:82-102`: a line is grabbable
+/// from the inside when it paints a background *and* its path is a loop, and an arrow
+/// never is — it points at something, so its middle is not a region however closed and
+/// however filled it happens to be.
+///
+/// This is what a bucket fill is made of. The paint it leaves behind is a closed line with
+/// a background and no stroke, so without this it is hit only along its own edge — which
+/// is exactly where the outline it was traced from is already answering for the same
+/// click. The paint was visible and inert: it could not be selected, moved, recoloured or
+/// deleted.
+fn encloses_its_interior(element: &DrawElement) -> bool {
+    if matches!(element.kind, DrawElementType::Arrow) {
+        return false;
+    }
+    if is_transparent(&element.background_color) {
+        return false;
+    }
+    element.points.as_deref().is_some_and(is_path_a_loop)
+}
+
+/// Whether the point is inside the ring the element's points trace.
+///
+/// Non-zero winding, because that is the rule `ctx.fill()` uses and the hit test has to
+/// agree with what was actually painted. For the keyholed polygons a bucket fill produces
+/// the choice does not matter — holes are spliced with the opposite winding precisely so
+/// that both rules agree — but for a path that crosses itself the two disagree, and then
+/// the painter is the authority.
+fn interior_contains(element: &DrawElement, wx: f64, wy: f64) -> bool {
+    let Some(points) = element.points.as_deref() else {
+        return false;
+    };
+    let ring: Vec<Point> = points
+        .iter()
+        .map(|p| Point {
+            x: element.x + p[0],
+            y: element.y + p[1],
+        })
+        .collect();
+    polygon_includes_point_non_zero(Point { x: wx, y: wy }, &ring)
+}
+
 /// Whether a click at `(wx, wy)` lands on the element.
 ///
 /// A filled shape is solid: anywhere within it, plus `tolerance` beyond its edge. A
@@ -422,7 +490,12 @@ fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -> bool {
 pub fn hit_test_element(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
     let (wx, wy) = to_element_local(element, wx, wy);
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
-        return hit_linear(element, wx, wy, tolerance);
+        // The path itself first: it is the cheaper test, and it answers for the open
+        // paths that are most of what these two kinds are.
+        if hit_linear(element, wx, wy, tolerance) {
+            return true;
+        }
+        return encloses_its_interior(element) && interior_contains(element, wx, wy);
     }
 
     if !within_shape(element, wx, wy, tolerance) {
