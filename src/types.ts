@@ -118,6 +118,12 @@ export interface DrawElement extends DrawElementStyle {
    */
   textAlign?: TextAlign;
   verticalAlign?: VerticalAlign;
+  /**
+   * `false` for a column dragged out with the text tool, which keeps the width it was
+   * given and wraps inside it. Absent means auto — every text saved before this field
+   * existed sized itself to its glyphs, so only `false` is ever written.
+   */
+  autoResize?: boolean;
   containerId?: string | null;
   boundTextId?: string | null;
   groupId?: string | null;

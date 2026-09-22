@@ -358,6 +358,11 @@ export class DrawEngine {
     return this.inner.getFontSize();
   }
 
+  /** Re-widths a dragged-out text column and re-wraps it. Auto-sizing text is ignored. */
+  setTextBoxWidth(id: string, width: number): void {
+    this.inner.setTextBoxWidth(id, width);
+  }
+
   setTextAlign(align: TextAlign): void {
     this.inner.setTextAlign(align);
   }

@@ -373,6 +373,14 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Re-widths a dragged-out text column and re-wraps it. Ignored for auto-sizing
+    /// text, which has no width of its own to impose.
+    #[wasm_bindgen(js_name = setTextBoxWidth)]
+    pub fn set_text_box_width(&self, id: &str, width: f64) {
+        self.cell.borrow_mut().engine.set_text_box_width(id, width);
+        self.flush();
+    }
+
     #[wasm_bindgen(js_name = setFontSize)]
     pub fn set_font_size(&self, size: f64) {
         self.cell.borrow_mut().engine.set_font_size(size);
