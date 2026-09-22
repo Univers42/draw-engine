@@ -73,6 +73,17 @@ export class DrawEngine {
     this.inner.zoomAt(sx, sy, factor);
   }
 
+  /**
+   * One wheel event's worth of zoom, anchored at `(sx, sy)`.
+   *
+   * Pass `WheelEvent.deltaY` straight through. The engine owns the step — how much a
+   * wheel delta is worth is arithmetic, and it is the part that has to be bounded or the
+   * zoom teleports instead of moving.
+   */
+  wheelZoom(sx: number, sy: number, deltaY: number): void {
+    this.inner.wheelZoom(sx, sy, deltaY);
+  }
+
   panBy(dx: number, dy: number): void {
     this.inner.panBy(dx, dy);
   }
