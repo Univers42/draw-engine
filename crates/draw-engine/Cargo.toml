@@ -31,6 +31,9 @@ web-sys = { version = "0.3", features = [
     # Path2D lets a shape be built once and stroked with a single call per frame,
     # instead of thousands of move/line/curve calls crossing the WASM boundary.
     "Path2d",
+    # Decoding an inserted image. Kept decoded between frames; the element carries the
+    # `data:` URL and the painter turns it into pixels once.
+    "HtmlImageElement",
 ] }
 serde-wasm-bindgen = "0.6"
 getrandom = { version = "0.2", features = ["js"] }
@@ -42,4 +45,8 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 
 [[bench]]
 name = "render"
+harness = false
+
+[[bench]]
+name = "editing"
 harness = false

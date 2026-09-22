@@ -13,6 +13,10 @@ pub struct TextEditRequest {
     pub font_size: f64,
     pub color: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -39,7 +43,12 @@ pub(crate) enum Interaction {
         id: String,
         start: Point,
     },
-    Erase,
+    Erase {
+        /// Where the last sample landed, so the next one erases the segment between them
+        /// rather than a point. Frames are coalesced, so that segment is most of the
+        /// gesture.
+        last: Point,
+    },
     Pan {
         last_x: f64,
         last_y: f64,
@@ -93,6 +102,21 @@ pub(crate) enum Interaction {
         id: String,
         handle: crate::selection::LinearHandle,
     },
+    /// A free-form selection loop in progress.
+    ///
+    /// The path is world-space and accumulates as the pointer moves; the engine
+    /// simplifies it when deciding what it selects, so the raw trail is kept here and
+    /// the host never has to thin it.
+    Lasso {
+        path: Vec<crate::camera::Point>,
+        base: std::collections::HashSet<String>,
+    },
+    /// A laser stroke in progress.
+    ///
+    /// Carries nothing: the trail itself lives on the engine, because it has to outlive
+    /// the gesture. Releasing the pointer ends the stroke but not the fade, and a second
+    /// flick can start while the first is still on screen.
+    Laser,
     Marquee {
         start: Point,
         current: Point,

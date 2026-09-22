@@ -3,7 +3,7 @@
  * chords without a window. attachKeyboardInput is the thin listener glue.
  */
 
-import { toolForKey } from "../tools";
+import { toolForChord } from "../tools";
 import type { DrawTool, FlipAxis, ZOrderMode } from "../types";
 import type { HostCallbacks } from "./types";
 
@@ -37,11 +37,14 @@ export interface KeyEngine {
   copySelection(): string | null;
   cutSelection(): string | null;
   fit(): void;
+  zoomToSelection(): void;
+  pageBy(pagesX: number, pagesY: number): void;
   editSelectedText(): boolean;
   flipSelection(axis: FlipAxis): void;
   setToolLocked(locked: boolean): void;
   getToolLocked(): boolean;
   setTool(tool: DrawTool): void;
+  activateTool(tool: DrawTool): void;
 }
 
 export interface KeySession {
@@ -126,6 +129,21 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
     engine.fit();
     return true;
   }
+  if (event.shiftKey && !(event.metaKey || event.ctrlKey) && event.code === "Digit2") {
+    // Frame the selection rather than the board. `fit` cannot stand in for it: a fit has
+    // to hold everything, so the shape you are working on ends up as small as the
+    // furthest stray one allows.
+    engine.zoomToSelection();
+    return true;
+  }
+  if (event.key === "PageUp" || event.key === "PageDown") {
+    // Shift pages sideways, matching the wheel: shift turns vertical scrolling into
+    // horizontal everywhere else on the board, so it would be odd here alone.
+    const forward = event.key === "PageDown" ? 1 : -1;
+    if (event.shiftKey) engine.pageBy(forward, 0);
+    else engine.pageBy(0, forward);
+    return true;
+  }
   if (event.key === "Enter") {
     return engine.editSelectedText();
   }
@@ -141,9 +159,12 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
     session.callbacks.onToolLockChange?.(engine.getToolLocked());
     return true;
   }
-  const tool = toolForKey(event.key);
+  // Shift is part of the chord for exactly one tool — Shift+X is autoshape where X is
+  // freedraw — and `activateTool` rather than `setTool` because the hand and the eraser
+  // go back to the tool they interrupted when their key is pressed a second time.
+  const tool = toolForChord(event.key, event.shiftKey);
   if (tool) {
-    engine.setTool(tool);
+    engine.activateTool(tool);
     return true;
   }
   return false;

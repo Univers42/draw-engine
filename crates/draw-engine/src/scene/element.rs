@@ -124,6 +124,32 @@ pub struct DrawElement {
     pub bound_text_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    /// The frame that owns this element, if it is inside one.
+    ///
+    /// Membership is a property of the child, not a list on the frame, so moving an
+    /// element between frames is one write rather than two — and an element can never be
+    /// in two frames at once by construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<String>,
+    /// A frame's label. Nothing else carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The image itself, as a `data:` URL.
+    ///
+    /// Carried on the element rather than keyed into a separate file store, which is
+    /// what Excalidraw does. Theirs keeps the scene small and is the better end state;
+    /// this one makes saving, loading, undo, copy/paste, export and realtime work with
+    /// no new plumbing at all, because the image travels wherever the element does. The
+    /// cost is scene size, and the swap is mechanical when a blob endpoint exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_url: Option<String>,
+    /// The page an embed frames.
+    ///
+    /// The **resolved** embed URL, not the one that was pasted: a YouTube watch page in
+    /// an iframe shows a refusal rather than a video. Resolving once and storing the
+    /// result means the board does not depend on the rules still agreeing later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
     pub version: u32,
@@ -205,6 +231,10 @@ pub fn create_element(
         container_id: None,
         bound_text_id: None,
         group_id: None,
+        frame_id: None,
+        name: None,
+        data_url: None,
+        embed_url: None,
         locked: None,
         version: 1,
         version_nonce: rand_int(),

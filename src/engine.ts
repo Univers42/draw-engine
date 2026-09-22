@@ -1,5 +1,5 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
-import { DEFAULT_ELEMENT_STYLE, Scene } from "./types";
+import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, Scene } from "./types";
 import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
@@ -11,6 +11,7 @@ import type {
   DrawTheme,
   DrawTool,
   FlipAxis,
+  GridSettings,
   ZOrderMode,
 } from "./types";
 
@@ -72,12 +73,42 @@ export class DrawEngine {
     this.inner.zoomAt(sx, sy, factor);
   }
 
+  /**
+   * One wheel event's worth of zoom, anchored at `(sx, sy)`.
+   *
+   * Pass `WheelEvent.deltaY` straight through. The engine owns the step — how much a
+   * wheel delta is worth is arithmetic, and it is the part that has to be bounded or the
+   * zoom teleports instead of moving.
+   */
+  wheelZoom(sx: number, sy: number, deltaY: number): void {
+    this.inner.wheelZoom(sx, sy, deltaY);
+  }
+
   panBy(dx: number, dy: number): void {
     this.inner.panBy(dx, dy);
   }
 
   fit(padding?: number): void {
     this.inner.fit(padding);
+  }
+
+  /** Frame the selection. Does nothing when nothing is selected. */
+  zoomToSelection(padding?: number): void {
+    this.inner.zoomToSelection(padding);
+  }
+
+  /**
+   * How the last frames were served: redraws, scrolls and reuses of the static layer,
+   * then reset. A diagnostic — the layer is either being reused or it is not, and from
+   * outside those look identical until something is measured against the wrong guess.
+   */
+  paintStats(): { redraws: number; scrolls: number; reuses: number } {
+    return parseJson(this.inner.paintStatsJson(), { redraws: 0, scrolls: 0, reuses: 0 });
+  }
+
+  /** Move by a screenful, in page counts: `pageBy(0, -1)` is one page up. */
+  pageBy(pagesX: number, pagesY: number): void {
+    this.inner.pageBy(pagesX, pagesY);
   }
 
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
@@ -124,12 +155,89 @@ export class DrawEngine {
     return this.inner.fontFamily();
   }
 
+  /**
+   * Show, size and snap to the canvas grid.
+   *
+   * `enabled` and `snap` are separate: a grid can be a visual reference you draw freely
+   * over, which is a different request from being held to it.
+   */
+  setGrid(grid: Partial<GridSettings>): void {
+    this.inner.setGridJson(JSON.stringify({ ...this.getGrid(), ...grid }));
+  }
+
+  getGrid(): GridSettings {
+    return parseJson<GridSettings>(this.inner.getGridJson(), DEFAULT_GRID);
+  }
+
   setTool(tool: DrawTool): void {
     this.inner.setTool(tool);
   }
 
+  /**
+   * Choose a tool the way a keyboard shortcut does.
+   *
+   * The difference from `setTool` is the return trip: pressing the hand or eraser key
+   * while that tool is already active goes back to the tool it interrupted. Toolbar
+   * buttons stay on `setTool`, because a button that shows a tool as active must not
+   * switch away when clicked again.
+   */
+  activateTool(tool: DrawTool): void {
+    this.inner.activateTool(tool);
+  }
+
   getTool(): DrawTool {
     return this.inner.getTool() as DrawTool;
+  }
+
+  /**
+   * Place a decoded image, centred on a screen point.
+   *
+   * The caller decodes the file, because only a browser can, and having done so already
+   * knows the natural size. Everything after that — how large the image should appear,
+   * where it lands, which frame it joins — is the engine's, so every frontend produces
+   * the same element. Returns the new element's id, or `null` if the image could not be
+   * measured.
+   */
+  /**
+   * Place an embed, resolving the pasted link first.
+   *
+   * Whether the host may be framed at all, and what the page rewrites to, are the
+   * engine's: a caller that resolved links itself could frame something the rules would
+   * have refused. Returns the new element's id, or `null` if the link is not embeddable.
+   */
+  insertEmbed(rawUrl: string, screenX: number, screenY: number): string | null {
+    return this.inner.insertEmbed(rawUrl, screenX, screenY) ?? null;
+  }
+
+  /**
+   * What a pasted link resolves to, or `null` if it cannot be embedded.
+   *
+   * Lets a caller say so *before* putting an empty box on the board.
+   */
+  resolveEmbed(rawUrl: string): {
+    url: string;
+    intrinsicWidth: number;
+    intrinsicHeight: number;
+    kind: "video" | "generic";
+    allowSameOrigin: boolean;
+  } | null {
+    const json = this.inner.resolveEmbed(rawUrl);
+    return json ? JSON.parse(json) : null;
+  }
+
+  /** The embeds on screen and where their frames go, in screen pixels. */
+  embedFramesJson(): string {
+    return this.inner.embedFrames();
+  }
+
+  insertImage(
+    dataUrl: string,
+    naturalWidth: number,
+    naturalHeight: number,
+    screenX: number,
+    screenY: number,
+  ): string | null {
+    return this.inner.insertImage(dataUrl, naturalWidth, naturalHeight, screenX, screenY) ?? null;
   }
 
   setNextStyle(style: Partial<DrawElementStyle>): void {

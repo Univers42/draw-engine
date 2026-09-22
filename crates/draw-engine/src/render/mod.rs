@@ -3,6 +3,7 @@ pub mod bounds;
 pub mod cache;
 pub mod opts;
 pub mod paint;
+pub mod scroll;
 pub mod shape;
 
 pub use arrowheads::*;

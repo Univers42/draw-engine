@@ -81,6 +81,25 @@ impl DrawEngine {
         self.bump_motion();
     }
 
+    /// One wheel event, anchored at the cursor.
+    ///
+    /// The host passes the raw `deltaY` and nothing else: how far a wheel event is worth
+    /// is arithmetic, it differs per browser and per device, and every platform this
+    /// engine is embedded in would otherwise have to get it right independently.
+    ///
+    /// Returns early when the step changes nothing, which is the common case at either
+    /// zoom limit — a trackpad goes on sending ticks for as long as the fingers move, and
+    /// publishing a camera event for each would repaint the whole scene to produce the
+    /// identical picture.
+    pub fn wheel_zoom(&mut self, sx: f64, sy: f64, delta_y: f64) {
+        let next = crate::camera::wheel_zoom_scale(self.camera.scale, delta_y);
+        if next == self.camera.scale {
+            return;
+        }
+        self.set_camera(crate::zoom_to(self.camera, sx, sy, next));
+        self.bump_motion();
+    }
+
     pub fn set_camera(&mut self, camera: crate::camera::Camera) {
         self.camera = camera;
         self.events.camera = Some(camera);
@@ -96,6 +115,39 @@ impl DrawEngine {
         if let Some(bounds) = self.scene.bounds() {
             self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
         }
+    }
+
+    /// Frame what is selected, rather than the whole board.
+    ///
+    /// The command `fit` cannot stand in for: a fit has to hold everything, so the thing
+    /// you are working on ends up as small as the furthest stray shape allows. Does
+    /// nothing when the selection is empty — framing "nothing" has no meaning, and
+    /// jumping somewhere arbitrary is the worst of the available answers.
+    pub fn zoom_to_selection(&mut self, padding: f64) {
+        let selected = self.get_selected_elements();
+        if selected.is_empty() {
+            return;
+        }
+        let Some(bounds) = crate::scene_bounds(selected.iter()) else {
+            return;
+        };
+        self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
+    }
+
+    /// Move by a screenful, in units of pages.
+    ///
+    /// `PAGE_OVERLAP` is the point: moving exactly one screen leaves nothing in common
+    /// between the two views, so you lose your place at every press. Keeping a strip of
+    /// the old view is what makes paging better than dragging.
+    ///
+    /// Screen pixels, not world units, so a page is a screenful at every zoom level.
+    /// Scaling it by the zoom would make paging useless exactly when it is most needed.
+    pub fn page_by(&mut self, pages_x: f64, pages_y: f64) {
+        /// How much of the outgoing view is still visible after a page.
+        const PAGE_OVERLAP: f64 = 0.15;
+        let step_x = self.width * (1.0 - PAGE_OVERLAP);
+        let step_y = self.height * (1.0 - PAGE_OVERLAP);
+        self.pan_by(-pages_x * step_x, -pages_y * step_y);
     }
 
     pub fn zoom_in(&mut self) {

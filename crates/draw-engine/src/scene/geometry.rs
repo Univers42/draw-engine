@@ -215,6 +215,122 @@ pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
     }
 }
 
+/// How many points a curve is sampled at when it has to be described as a polygon.
+///
+/// Four box corners would let a loop drawn snugly around a circle miss it, and would let
+/// a frame's edge appear to cross an ellipse it never touches.
+const OUTLINE_SAMPLES: usize = 24;
+
+/// The element's own outline, as a closed ring of world-space points.
+///
+/// The single answer to "what shape is this element, really" — used by the lasso to
+/// decide what a loop encloses and by frames to decide what they contain. Two
+/// definitions of an element's outline would eventually disagree, and the disagreement
+/// would look like a selection bug rather than a geometry one.
+///
+/// A line, arrow or freehand stroke is its own path and comes back open; everything else
+/// is its box, turned if it is turned.
+pub fn element_outline(element: &DrawElement) -> Vec<Point> {
+    if is_point_based(element) {
+        let points = crate::selection::linear::world_points(element);
+        if !points.is_empty() {
+            return points;
+        }
+    }
+
+    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    let centre = rotation_center(element);
+    let (sin, cos) = element.angle.sin_cos();
+    let turn = |x: f64, y: f64| {
+        let (dx, dy) = (x - centre.x, y - centre.y);
+        Point {
+            x: centre.x + dx * cos - dy * sin,
+            y: centre.y + dx * sin + dy * cos,
+        }
+    };
+
+    match element.kind {
+        DrawElementType::Ellipse => {
+            let (rx, ry) = (rect.width / 2.0, rect.height / 2.0);
+            let (cx, cy) = (rect.x + rx, rect.y + ry);
+            (0..OUTLINE_SAMPLES)
+                .map(|i| {
+                    let t = i as f64 / OUTLINE_SAMPLES as f64 * std::f64::consts::TAU;
+                    turn(cx + rx * t.cos(), cy + ry * t.sin())
+                })
+                .collect()
+        }
+        DrawElementType::Diamond => {
+            let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+            vec![
+                turn(cx, rect.y),
+                turn(rect.x + rect.width, cy),
+                turn(cx, rect.y + rect.height),
+                turn(rect.x, cy),
+            ]
+        }
+        _ => vec![
+            turn(rect.x, rect.y),
+            turn(rect.x + rect.width, rect.y),
+            turn(rect.x + rect.width, rect.y + rect.height),
+            turn(rect.x, rect.y + rect.height),
+        ],
+    }
+}
+
+/// Whether the outline of this element closes back on itself.
+///
+/// Open paths must not have their last point joined to their first, or a line drawn
+/// across a frame would appear to enclose the triangle between its ends.
+pub fn outline_is_closed(element: &DrawElement) -> bool {
+    !is_point_based(element)
+}
+
+/// `> 0` when `p` is left of the directed line `a -> b`.
+pub fn cross(a: Point, b: Point, p: Point) -> f64 {
+    (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
+}
+
+/// Whether two segments cross, touching included.
+///
+/// Collinear touching counts, so a loop drawn exactly along an edge still catches it and
+/// an element laid exactly on a frame's border still counts as meeting it.
+pub fn segments_intersect(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
+    let d1 = cross(p3, p4, p1);
+    let d2 = cross(p3, p4, p2);
+    let d3 = cross(p1, p2, p3);
+    let d4 = cross(p1, p2, p4);
+
+    if ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+    {
+        return true;
+    }
+    let on = |a: Point, b: Point, p: Point, d: f64| {
+        d == 0.0
+            && p.x >= a.x.min(b.x)
+            && p.x <= a.x.max(b.x)
+            && p.y >= a.y.min(b.y)
+            && p.y <= a.y.max(b.y)
+    };
+    on(p3, p4, p1, d1) || on(p3, p4, p2, d2) || on(p1, p2, p3, d3) || on(p1, p2, p4, d4)
+}
+
+/// The edges of an outline, respecting whether it closes.
+pub fn outline_edges(outline: &[Point], closed: bool) -> Vec<(Point, Point)> {
+    if outline.len() < 2 {
+        return Vec::new();
+    }
+    let count = if closed {
+        outline.len()
+    } else {
+        outline.len() - 1
+    };
+    (0..count)
+        .map(|i| (outline[i], outline[(i + 1) % outline.len()]))
+        .collect()
+}
+
 /// Whether a colour paints nothing.
 ///
 /// Excalidraw's `isTransparent`: the literal keyword, or any hex that carries a fully
@@ -239,10 +355,17 @@ pub fn is_transparent(color: &str) -> bool {
 /// canvas showing through.
 ///
 /// The hollow/solid distinction only means anything for the three shapes that have a
-/// fill to leave out. Text, freehand strokes, images and frames are their own content:
-/// their "background" being transparent says nothing about whether their middle is
-/// clickable, and treating a line of text as an outline would make it unselectable
-/// except at its edges.
+/// fill to leave out. Text, freehand strokes and images are their own content: their
+/// "background" being transparent says nothing about whether their middle is clickable,
+/// and treating a line of text as an outline would make it unselectable except at its
+/// edges.
+///
+/// A **frame** is the exception in the other direction, and has to be stated rather than
+/// left to the default. It is a boundary you reach through: its middle belongs to
+/// whatever is inside it, so it is grabbed by its border. Counted as solid — which is
+/// what the fall-through did, since a frame is not one of the three fillable shapes — a
+/// frame swallows every click that lands in it, and the moment you framed a diagram its
+/// contents became unselectable.
 ///
 /// **Known divergence.** Excalidraw also treats a shape as solid when it carries bound
 /// text, via `hasBoundTextElement`. That needs the container's `boundElements`
@@ -250,6 +373,9 @@ pub fn is_transparent(color: &str) -> bool {
 /// way, from the label's `container_id`. So a *transparent* shape with a label is hollow
 /// here and solid there. Its label is still clickable, so the shape is still reachable.
 fn has_solid_interior(element: &DrawElement) -> bool {
+    if element.kind == DrawElementType::Frame {
+        return false;
+    }
     if !matches!(
         element.kind,
         DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse
@@ -345,4 +471,205 @@ pub fn hit_test(
         }
     }
     None
+}
+
+// -----------------------------------------------------------------------------
+// polygon primitives
+//
+// Excalidraw's `packages/math/src/polygon.ts`, transcribed. These are the pieces the
+// bucket fill decides on, and two of them are decided by *sign*, so the winding
+// convention has to survive the port exactly — see `polygon_signed_area`.
+// -----------------------------------------------------------------------------
+
+/// Excalidraw's `PRECISION`: the tolerance at which two points count as the same.
+pub const PRECISION: f64 = 10e-5;
+
+/// Whether the ring already repeats its first vertex as its last.
+pub fn polygon_is_closed(polygon: &[Point], tolerance: f64) -> bool {
+    match (polygon.first(), polygon.last()) {
+        (Some(first), Some(last)) => {
+            (first.x - last.x).abs() <= tolerance && (first.y - last.y).abs() <= tolerance
+        }
+        _ => false,
+    }
+}
+
+/// The signed area of a polygon by the shoelace formula.
+///
+/// **Positive when the vertices wind counter-clockwise in a y-down system.** The bucket
+/// fill separates bounded faces from the outside contour by the sign of this and nothing
+/// else, so flipping the convention here does not make fills slightly wrong — it makes
+/// the tool select the outside of every region instead of the inside.
+///
+/// Accepts the ring open or closed; a repeated closing vertex is dropped first so it
+/// cannot contribute a zero-width term.
+pub fn polygon_signed_area(polygon: &[Point], tolerance: f64) -> f64 {
+    let pts = if polygon_is_closed(polygon, tolerance) {
+        &polygon[..polygon.len() - 1]
+    } else {
+        polygon
+    };
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        sum += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+        j = i;
+    }
+    sum / 2.0
+}
+
+/// The unsigned area of a polygon.
+///
+/// Wraps modulo rather than stripping a closing vertex, because a repeated vertex
+/// contributes a zero term either way — so this accepts a ring open or closed and answers
+/// the same for both.
+pub fn polygon_area(points: &[Point]) -> f64 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+    let mut sum = 0.0;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + 1) % points.len()];
+        sum += a.x * b.y - b.x * a.y;
+    }
+    (sum / 2.0).abs()
+}
+
+/// Even-odd containment, which is the rule the renderer fills with.
+///
+/// This is the one to ask when the question is "does the paint cover this point", because
+/// it answers *no* inside a keyhole's hole — matching what is actually painted.
+pub fn polygon_includes_point(point: Point, polygon: &[Point]) -> bool {
+    if polygon.is_empty() {
+        return false;
+    }
+    let (x, y) = (point.x, point.y);
+    let mut inside = false;
+    let mut j = polygon.len() - 1;
+    for i in 0..polygon.len() {
+        let (xi, yi) = (polygon[i].x, polygon[i].y);
+        let (xj, yj) = (polygon[j].x, polygon[j].y);
+        if ((yi > y && yj <= y) || (yi <= y && yj > y)) && x < (xj - xi) * (y - yi) / (yj - yi) + xi
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Non-zero winding containment.
+///
+/// Used for face selection, where the ring is a simple cell of the arrangement and the
+/// two rules agree — but a winding test is insensitive to which way the face was walked,
+/// and the walk hands back bounded and unbounded faces in opposite orientations.
+pub fn polygon_includes_point_non_zero(point: Point, polygon: &[Point]) -> bool {
+    let (x, y) = (point.x, point.y);
+    let mut winding = 0i32;
+    for i in 0..polygon.len() {
+        let j = (i + 1) % polygon.len();
+        let (xi, yi) = (polygon[i].x, polygon[i].y);
+        let (xj, yj) = (polygon[j].x, polygon[j].y);
+        if yi <= y {
+            if yj > y && (xj - xi) * (y - yi) - (x - xi) * (yj - yi) > 0.0 {
+                winding += 1;
+            }
+        } else if yj <= y && (xj - xi) * (y - yi) - (x - xi) * (yj - yi) < 0.0 {
+            winding -= 1;
+        }
+    }
+    winding != 0
+}
+
+/// Where two segments cross, if they do.
+///
+/// Excalidraw's `lineSegmentIntersectionPoints`: intersect the infinite lines, then keep
+/// the point only if it lies on *both* segments within `threshold`. Parallel lines give
+/// `None`, including collinear overlapping ones — those are handled instead by the
+/// T-junction pass, which finds the endpoint that necessarily lies on the other segment.
+pub fn segment_intersection_point(
+    a: (Point, Point),
+    b: (Point, Point),
+    threshold: f64,
+) -> Option<Point> {
+    let a1 = a.1.y - a.0.y;
+    let b1 = a.0.x - a.1.x;
+    let a2 = b.1.y - b.0.y;
+    let b2 = b.0.x - b.1.x;
+    let d = a1 * b2 - a2 * b1;
+    if d == 0.0 {
+        return None;
+    }
+    let c1 = a1 * a.0.x + b1 * a.0.y;
+    let c2 = a2 * b.0.x + b2 * b.0.y;
+    let candidate = Point {
+        x: (c1 * b2 - c2 * b1) / d,
+        y: (a1 * c2 - a2 * c1) / d,
+    };
+    let on = |seg: (Point, Point)| {
+        let distance =
+            distance_to_segment(candidate.x, candidate.y, seg.0.x, seg.0.y, seg.1.x, seg.1.y);
+        distance == 0.0 || distance < threshold
+    };
+    if on(a) && on(b) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+/// Whether the swept segment `a -> b` touches `element`.
+///
+/// The eraser's question, and the reason it is a *segment* rather than a point: pointer
+/// moves are coalesced to one per animation frame, so a quick drag across the board
+/// arrives as a handful of samples tens of pixels apart. Asking about the samples steps
+/// straight over everything between them, which is what made the eraser feel like it had
+/// to be swept again and again over the same place.
+///
+/// Exact rather than sampled. Sampling the segment would reintroduce the same gap at a
+/// smaller scale, and the step needed to close it properly would be a hit test every few
+/// pixels of a drag — the cost of which is paid on every frame of every sweep.
+///
+/// The fill rule is the same one the rest of hit-testing uses, because it comes from the
+/// same place: `hit_test_element` on the endpoints covers a click and a sweep that begins
+/// or ends inside a filled shape, and the edge crossings cover passing through. A hollow
+/// rectangle is therefore erased by its outline and not by its empty middle, exactly as
+/// it is selected by its outline and not by its middle.
+pub fn segment_hits_element(element: &DrawElement, a: Point, b: Point, tolerance: f64) -> bool {
+    // Boxes first. The exact tests below build an outline — a fresh allocation per
+    // element — and a sweep asks this of every element on the board on every frame, so
+    // almost all of that work is for elements the segment comes nowhere near.
+    if !segment_box_overlaps(a, b, element, tolerance) {
+        return false;
+    }
+    if hit_test_element(element, a.x, a.y, tolerance)
+        || hit_test_element(element, b.x, b.y, tolerance)
+    {
+        return true;
+    }
+    // A zero-length sweep is a click, and the endpoints above have already answered it.
+    if (b.x - a.x).abs() < f64::EPSILON && (b.y - a.y).abs() < f64::EPSILON {
+        return false;
+    }
+    let outline = element_outline(element);
+    outline_edges(&outline, outline_is_closed(element))
+        .into_iter()
+        .any(|(from, to)| segments_intersect(a, b, from, to))
+}
+
+/// Whether the segment's bounding box overlaps the element's, allowing `tolerance`.
+///
+/// A cheap reject, and only a reject: two boxes overlapping says nothing about whether
+/// the segment touches the shape. It is worth having because it is arithmetic on six
+/// numbers where the alternative allocates an outline.
+fn segment_box_overlaps(a: Point, b: Point, element: &DrawElement, tolerance: f64) -> bool {
+    let bounds = element_rotated_bounds(element);
+    a.x.min(b.x) <= bounds.max_x + tolerance
+        && a.x.max(b.x) >= bounds.min_x - tolerance
+        && a.y.min(b.y) <= bounds.max_y + tolerance
+        && a.y.max(b.y) >= bounds.min_y - tolerance
 }

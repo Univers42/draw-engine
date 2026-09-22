@@ -5,7 +5,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, develop]
+    branches: ["**"]
   workflow_dispatch:
 
 concurrency:
@@ -44,10 +44,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (stable + rustfmt + clippy)
+      - name: Install Rust (stable + rustfmt + clippy + wasm32)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
 

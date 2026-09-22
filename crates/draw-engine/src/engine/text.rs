@@ -36,6 +36,11 @@ impl DrawEngine {
 
     fn request_text_edit(&mut self, element: &DrawElement) {
         let screen = crate::world_to_screen(self.camera, element.x, element.y);
+        let width = if element.container_id.is_some() {
+            Some(element.width * self.camera.scale)
+        } else {
+            None
+        };
         self.events.text_edit = Some(TextEditRequest {
             id: element.id.clone(),
             x: screen.x,
@@ -43,6 +48,8 @@ impl DrawEngine {
             font_size: element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE),
             color: element.stroke_color.clone(),
             text: element.text.clone().unwrap_or_default(),
+            width,
+            container_id: element.container_id.clone(),
         });
     }
 
@@ -153,15 +160,76 @@ impl DrawEngine {
             return;
         }
         let font_size = element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE);
-        let (width, height) = (self.measure_text)(text, font_size);
+        let final_text = if let Some(container_id) = &element.container_id {
+            if let Some(container) = self.scene.get(container_id) {
+                let max_width = (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0);
+                wrap_text_to_width(text, max_width, font_size, &self.measure_text)
+            } else {
+                text.to_string()
+            }
+        } else {
+            text.to_string()
+        };
+        let (width, height) = (self.measure_text)(&final_text, font_size);
         let mut next = element;
-        next.text = Some(text.to_string());
+        next.text = Some(final_text.clone());
         next.width = width;
-        next.height = height
-            .max(font_size.max(text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT));
+        next.height = height.max(
+            font_size.max(final_text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT),
+        );
         self.scene.put(bump_version(next, self.now_ms));
         self.apply_bindings();
         self.push_history();
         self.request_draw();
     }
+}
+
+fn wrap_text_to_width<F>(text: &str, max_width: f64, font_size: f64, measure: &F) -> String
+where
+    F: Fn(&str, f64) -> (f64, f64),
+{
+    let mut wrapped_lines = Vec::new();
+    for hard_line in text.split('\n') {
+        if hard_line.is_empty() || measure(hard_line, font_size).0 <= max_width {
+            wrapped_lines.push(hard_line.to_string());
+            continue;
+        }
+        let words: Vec<&str> = hard_line.split(' ').collect();
+        let mut current_line = String::new();
+        for word in words {
+            if current_line.is_empty() {
+                if measure(word, font_size).0 > max_width {
+                    // Break long words character by character
+                    let mut chunk = String::new();
+                    for ch in word.chars() {
+                        let mut test = chunk.clone();
+                        test.push(ch);
+                        if measure(&test, font_size).0 > max_width && !chunk.is_empty() {
+                            wrapped_lines.push(chunk);
+                            chunk = ch.to_string();
+                        } else {
+                            chunk = test;
+                        }
+                    }
+                    if !chunk.is_empty() {
+                        current_line = chunk;
+                    }
+                } else {
+                    current_line = word.to_string();
+                }
+            } else {
+                let candidate = format!("{current_line} {word}");
+                if measure(&candidate, font_size).0 <= max_width {
+                    current_line = candidate;
+                } else {
+                    wrapped_lines.push(current_line);
+                    current_line = word.to_string();
+                }
+            }
+        }
+        if !current_line.is_empty() {
+            wrapped_lines.push(current_line);
+        }
+    }
+    wrapped_lines.join("\n")
 }

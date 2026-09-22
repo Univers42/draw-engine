@@ -51,6 +51,14 @@ pub struct Scene {
     /// Set when a change cannot be expressed as "these elements differ" — a z-order
     /// rearrangement or a hard delete. The host then needs the whole scene.
     structural: bool,
+    /// Bumped by every mutation.
+    ///
+    /// The painter keeps the static scene in an offscreen layer and needs one question
+    /// answered per frame: has the picture changed? Hashing the visible elements answers
+    /// it, but *only* for the elements that are visible — so panning changed the answer
+    /// merely by culling different ones, and the layer was thrown away exactly when it
+    /// was most reusable. A counter is O(1), exact, and says nothing about the camera.
+    revision: u64,
 }
 
 /// What changed since the host was last told.
@@ -124,6 +132,7 @@ impl Scene {
     /// Copy-on-write: `Rc::make_mut` clones the element only if a history snapshot
     /// still holds it, so a drag that touches one shape copies one shape.
     pub fn update<F: FnOnce(&mut DrawElement)>(&mut self, id: &str, f: F) -> bool {
+        self.revision = self.revision.wrapping_add(1);
         match self.index.get(id) {
             Some(&i) => {
                 f(Rc::make_mut(&mut self.elements[i]));
@@ -139,12 +148,14 @@ impl Scene {
     }
 
     pub fn add(&mut self, element: DrawElement) {
+        self.revision = self.revision.wrapping_add(1);
         self.put(element);
     }
 
     /// Inserts or replaces an element, **keeping its existing z-position** when it is
     /// already present. A style change must not bring a shape to the front.
     pub fn put(&mut self, element: DrawElement) {
+        self.revision = self.revision.wrapping_add(1);
         self.dirty.insert(element.id.clone());
         match self.index.get(&element.id) {
             Some(&i) => self.elements[i] = Rc::new(element),
@@ -158,6 +169,7 @@ impl Scene {
     /// Soft delete: the element stays, marked, so a later merge can distinguish a
     /// deletion from an element it has simply never seen.
     pub fn remove(&mut self, id: &str, now: f64) {
+        self.revision = self.revision.wrapping_add(1);
         self.update(id, |element| {
             element.is_deleted = true;
             element.version += 1;
@@ -168,6 +180,7 @@ impl Scene {
     /// Hard delete, leaving no tombstone. Used when discarding an element that was
     /// never committed, such as a drag that ended below the minimum size.
     pub fn discard(&mut self, id: &str) {
+        self.revision = self.revision.wrapping_add(1);
         if let Some(&i) = self.index.get(id) {
             self.elements.remove(i);
             self.reindex();
@@ -177,6 +190,7 @@ impl Scene {
     }
 
     pub fn bring_to_front(&mut self, id: &str) {
+        self.revision = self.revision.wrapping_add(1);
         if let Some(&i) = self.index.get(id) {
             if i + 1 != self.elements.len() {
                 let element = self.elements.remove(i);
@@ -192,6 +206,7 @@ impl Scene {
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
+        self.revision = self.revision.wrapping_add(1);
         let mut next: Vec<Rc<DrawElement>> = self
             .elements
             .iter()
@@ -210,6 +225,14 @@ impl Scene {
     /// `None` means the change was structural — a reorder or a hard delete — and the
     /// caller should send the whole scene instead. That is rare: it is a z-order
     /// command or a discarded draft, never the common path of drawing or moving.
+    /// A number that changes whenever the scene does, and never otherwise.
+    ///
+    /// Deliberately not a hash of the contents: this is asked once per frame and has to
+    /// cost nothing, and a counter cannot miss a field the way a hash can.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn take_delta(&mut self) -> Option<SceneDelta> {
         let structural = std::mem::take(&mut self.structural);
         let dirty = std::mem::take(&mut self.dirty);
@@ -266,6 +289,7 @@ impl Scene {
         };
         scene.reindex();
         scene.structural = true;
+        scene.revision = scene.revision.wrapping_add(1);
         scene
     }
 }

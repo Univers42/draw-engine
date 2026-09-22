@@ -51,6 +51,8 @@ function recording(selection: string[] = []): { engine: KeyEngine; calls: string
       return null;
     },
     fit: () => calls.push("fit"),
+    zoomToSelection: () => calls.push("zoomToSelection"),
+    pageBy: (x: number, y: number) => calls.push(`pageBy:${x},${y}`),
     editSelectedText: () => {
       calls.push("editSelectedText");
       return false;
@@ -62,6 +64,7 @@ function recording(selection: string[] = []): { engine: KeyEngine; calls: string
     },
     getToolLocked: () => locked,
     setTool: (tool: string) => calls.push(`setTool:${tool}`),
+    activateTool: (tool: string) => calls.push(`activateTool:${tool}`),
   } as unknown as KeyEngine;
   return { engine, calls };
 }
@@ -125,13 +128,46 @@ describe("dispatchKeyDown", () => {
     assert.deepEqual(chord.calls, []);
   });
 
+  it("zooms to the selection on Shift+2", () => {
+    // Matched on `code`, like Shift+1: `key` for a shifted digit is a punctuation mark
+    // that differs per layout — "@" on a US keyboard, "é" on a French one.
+    const zoom = recording(["id"]);
+    assert.equal(
+      dispatchKeyDown(session(zoom.engine), event({ key: "@", shiftKey: true, code: "Digit2" })),
+      "prevent",
+    );
+    assert.deepEqual(zoom.calls, ["zoomToSelection"]);
+  });
+
+  it("pages the canvas on Page Up and Page Down, sideways with shift", () => {
+    // Shift turns vertical into horizontal here the same way it does for the wheel, so
+    // the modifier means one thing across the whole board.
+    const down = recording();
+    assert.equal(dispatchKeyDown(session(down.engine), event({ key: "PageDown" })), "prevent");
+    assert.deepEqual(down.calls, ["pageBy:0,1"]);
+
+    const up = recording();
+    assert.equal(dispatchKeyDown(session(up.engine), event({ key: "PageUp" })), "prevent");
+    assert.deepEqual(up.calls, ["pageBy:0,-1"]);
+
+    const sideways = recording();
+    assert.equal(
+      dispatchKeyDown(session(sideways.engine), event({ key: "PageDown", shiftKey: true })),
+      "prevent",
+    );
+    assert.deepEqual(sideways.calls, ["pageBy:1,0"]);
+  });
+
   it("flips a selection with Shift+H / Shift+V, else maps H to the hand tool", () => {
+    // `activateTool`, not `setTool`: the hand is a toggle tool, so pressing H while
+    // already panning goes back to the tool it interrupted. A toolbar click stays on
+    // `setTool`, which never toggles.
     const flip = recording(["id"]);
     assert.equal(dispatchKeyDown(session(flip.engine), event({ key: "H", shiftKey: true })), "prevent");
     assert.deepEqual(flip.calls, ["flip:horizontal"]);
     const hand = recording([]);
     assert.equal(dispatchKeyDown(session(hand.engine), event({ key: "h" })), "prevent");
-    assert.deepEqual(hand.calls, ["setTool:hand"]);
+    assert.deepEqual(hand.calls, ["activateTool:hand"]);
   });
 
   it("toggles the tool lock on Q", () => {

@@ -43,6 +43,44 @@ pub struct WasmEngine {
     pub(crate) cell: Rc<RefCell<EngineCell>>,
 }
 
+thread_local! {
+    /// Every engine on this page, weakly.
+    ///
+    /// Exists for one job: something outside the input path can finish and need the
+    /// canvas redrawn. An image decodes asynchronously, so the frame that first asks for
+    /// it has nothing to draw, and without a way back the picture would stay a
+    /// placeholder until the next unrelated repaint.
+    ///
+    /// Weak, so an engine that has been destroyed is not kept alive by this list, and a
+    /// `Vec` rather than a single slot because a page may embed more than one board.
+    static LIVE: RefCell<Vec<std::rc::Weak<RefCell<EngineCell>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Ask every live engine for another frame.
+///
+/// Called from asynchronous callbacks — image decoding today — which have no handle on
+/// the engine that wanted the work. Dead entries are swept here rather than tracked, so
+/// destroying an engine costs nothing.
+pub(crate) fn request_repaint() {
+    let live: Vec<Rc<RefCell<EngineCell>>> = LIVE.with(|live| {
+        let mut live = live.borrow_mut();
+        live.retain(|weak| weak.strong_count() > 0);
+        live.iter().filter_map(|weak| weak.upgrade()).collect()
+    });
+    for cell in live {
+        {
+            let Ok(mut borrowed) = cell.try_borrow_mut() else {
+                continue;
+            };
+            if borrowed.engine.is_disposed() {
+                continue;
+            }
+            borrowed.engine.request_draw();
+        }
+        WasmEngine { cell }.schedule();
+    }
+}
+
 fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, JsValue> {
     canvas
         .get_context("2d")?
@@ -88,6 +126,7 @@ impl WasmEngine {
             on_scene: None,
         }));
         let wasm = WasmEngine { cell: cell.clone() };
+        LIVE.with(|live| live.borrow_mut().push(Rc::downgrade(&cell)));
         wasm.schedule();
         Ok(wasm)
     }
@@ -157,7 +196,11 @@ impl WasmEngine {
             if c.raf.is_some() || c.engine.is_disposed() {
                 return;
             }
-            if !c.engine.is_dirty() && !c.engine.in_motion() {
+            // One question, asked of the engine. This used to spell out `dirty ||
+            // in_motion` here and again below, which meant the browser loop held its own
+            // opinion about when the engine still had work — and so never learned about
+            // anything that animates on its own.
+            if !c.engine.needs_frame() {
                 return;
             }
         }
@@ -172,10 +215,7 @@ impl WasmEngine {
             }
             paint_frame(&cloned);
             let more = match cloned.try_borrow() {
-                Ok(cell) => {
-                    !cell.engine.is_disposed()
-                        && (cell.engine.is_dirty() || cell.engine.in_motion())
-                }
+                Ok(cell) => cell.engine.needs_frame(),
                 // Busy: assume there is more to do rather than stalling the loop.
                 Err(_) => true,
             };
