@@ -12,6 +12,8 @@ import type {
   DrawTool,
   FlipAxis,
   GridSettings,
+  TextAlign,
+  VerticalAlign,
   ZOrderMode,
 } from "./types";
 
@@ -352,6 +354,22 @@ export class DrawEngine {
 
   getFontSize(): number {
     return this.inner.getFontSize();
+  }
+
+  setTextAlign(align: TextAlign): void {
+    this.inner.setTextAlign(align);
+  }
+
+  getTextAlign(): TextAlign {
+    return this.inner.getTextAlign() as TextAlign;
+  }
+
+  setVerticalAlign(align: VerticalAlign): void {
+    this.inner.setVerticalAlign(align);
+  }
+
+  getVerticalAlign(): VerticalAlign {
+    return this.inner.getVerticalAlign() as VerticalAlign;
   }
 
   zoomIn(): void {

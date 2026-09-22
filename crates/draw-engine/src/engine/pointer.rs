@@ -192,6 +192,8 @@ impl DrawEngine {
         );
         element.text = Some(String::new());
         element.font_size = Some(self.next_font_size);
+        element.text_align = self.next_text_align;
+        element.vertical_align = self.next_vertical_align;
         let id = element.id.clone();
         let color = element.stroke_color.clone();
         self.scene.add(element);
@@ -204,6 +206,9 @@ impl DrawEngine {
             color,
             text: String::new(),
             width: None,
+            text_align: self
+                .next_text_align
+                .unwrap_or(crate::scene::TextAlign::Left),
             container_id: None,
         });
         self.settle_tool();

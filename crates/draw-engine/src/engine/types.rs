@@ -15,6 +15,12 @@ pub struct TextEditRequest {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
+    /// **Resolved**, not the raw field: the overlay has to draw the text where the
+    /// canvas will, and an unset element still has an alignment to honour. Sending
+    /// `None` and letting the host guess is how the editor and the canvas end up
+    /// disagreeing — the same failure the measured `width` above exists to prevent,
+    /// where text visibly jumped the moment an edit was committed.
+    pub text_align: crate::scene::TextAlign,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
 }

@@ -1078,17 +1078,15 @@ fn paint_text(
 
         set_fill(ctx, &element.stroke_color);
         let line_height = font_size * crate::TEXT_LINE_HEIGHT;
-        if element.container_id.is_some() {
-            ctx.set_text_align("center");
-            let center_x = element.width / 2.0;
-            for (i, line) in text.split('\n').enumerate() {
-                let _ = ctx.fill_text(line, center_x, i as f64 * line_height);
-            }
-        } else {
-            ctx.set_text_align("left");
-            for (i, line) in text.split('\n').enumerate() {
-                let _ = ctx.fill_text(line, 0.0, i as f64 * line_height);
-            }
+        // The two used to be a hard-coded pair chosen by `container_id`: centre for a
+        // label, left for anything else. They are element properties now, and the anchor
+        // and the canvas setting have to be derived from the same value — `fill_text`
+        // places the line's anchor at x, and which end that is depends on `textAlign`.
+        let align = crate::scene::resolved_text_align(element);
+        ctx.set_text_align(crate::render::canvas_text_align(align));
+        let anchor_x = crate::render::text_anchor_x(align, element.width);
+        for (i, line) in text.split('\n').enumerate() {
+            let _ = ctx.fill_text(line, anchor_x, i as f64 * line_height);
         }
     });
 }

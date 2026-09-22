@@ -4,6 +4,23 @@ use super::WasmEngine;
 use crate::engine::DrawEngine;
 use crate::scene::Scene;
 
+/// The name a small enum travels under, which is the one serde writes into a scene.
+///
+/// Through serde rather than a second `match` in this layer, so the names have one
+/// definition: renaming a variant in `element.rs` reaches the host automatically instead
+/// of leaving the binding quietly disagreeing with the file format.
+fn wire_name<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .map(|json| json.trim_matches('"').to_string())
+        .unwrap_or_default()
+}
+
+/// The inverse. An unknown name yields `None` and the caller does nothing — the host
+/// must not be able to put a value into the scene that the engine cannot read back.
+fn from_wire<T: serde::de::DeserializeOwned>(name: &str) -> Option<T> {
+    serde_json::from_str(&format!("\"{name}\"")).ok()
+}
+
 #[wasm_bindgen(js_class = DrawEngine)]
 impl WasmEngine {
     #[wasm_bindgen(js_name = setViewport)]
@@ -365,6 +382,36 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = getFontSize)]
     pub fn get_font_size(&self) -> f64 {
         self.cell.borrow().engine.get_font_size()
+    }
+
+    /// `"left"`, `"center"` or `"right"`. Anything else is ignored rather than coerced,
+    /// so a typo in the host is a control that does nothing instead of a scene holding a
+    /// value the engine will not read back.
+    #[wasm_bindgen(js_name = setTextAlign)]
+    pub fn set_text_align(&self, align: &str) {
+        if let Some(align) = from_wire(align) {
+            self.cell.borrow_mut().engine.set_text_align(align);
+            self.flush();
+        }
+    }
+
+    #[wasm_bindgen(js_name = getTextAlign)]
+    pub fn get_text_align(&self) -> String {
+        wire_name(&self.cell.borrow().engine.get_text_align())
+    }
+
+    /// `"top"`, `"middle"` or `"bottom"`.
+    #[wasm_bindgen(js_name = setVerticalAlign)]
+    pub fn set_vertical_align(&self, align: &str) {
+        if let Some(align) = from_wire(align) {
+            self.cell.borrow_mut().engine.set_vertical_align(align);
+            self.flush();
+        }
+    }
+
+    #[wasm_bindgen(js_name = getVerticalAlign)]
+    pub fn get_vertical_align(&self) -> String {
+        wire_name(&self.cell.borrow().engine.get_vertical_align())
     }
 
     #[wasm_bindgen(js_name = setArrowheadsJson)]

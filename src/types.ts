@@ -34,6 +34,14 @@ export type StrokeStyle = "solid" | "dashed" | "dotted";
 export type Arrowhead = "none" | "arrow" | "triangle" | "dot" | "diamond" | "bar";
 export const ARROWHEADS: Arrowhead[] = ["none", "arrow", "triangle", "dot", "diamond", "bar"];
 
+/** Where a line of text sits across the width of its own box. */
+export type TextAlign = "left" | "center" | "right";
+export const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
+
+/** Where a label sits down the height of the shape holding it. */
+export type VerticalAlign = "top" | "middle" | "bottom";
+export const VERTICAL_ALIGNS: VerticalAlign[] = ["top", "middle", "bottom"];
+
 export type DrawTool =
   | "select"
   /** Free-form selection: draw a loop, take what it encloses. */
@@ -102,6 +110,14 @@ export interface DrawElement extends DrawElementStyle {
   endArrowhead?: Arrowhead;
   text?: string;
   fontSize?: number;
+  /**
+   * Absent means "nobody has chosen", which is not the same as any of the three values:
+   * a text with no alignment falls back to left, a label with none falls back to centre.
+   * Writing a value here where none was chosen re-aligns every board saved before the
+   * field existed.
+   */
+  textAlign?: TextAlign;
+  verticalAlign?: VerticalAlign;
   containerId?: string | null;
   boundTextId?: string | null;
   groupId?: string | null;
@@ -173,6 +189,12 @@ export interface TextEditRequest {
   color: string;
   text: string;
   width?: number;
+  /**
+   * Already resolved, so the overlay never has to work out what an unset element means.
+   * The overlay must lay the text out the way the canvas will, or it jumps the moment
+   * the edit is committed.
+   */
+  textAlign: TextAlign;
   containerId?: string | null;
 }
 
