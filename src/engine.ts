@@ -294,6 +294,8 @@ export class DrawEngine {
    * edit into a duplicate, and the resulting change is broadcast back, so two clients
    * grow the board without bound.
    *
+   * Optional `order` (array of live ids) in the JSON rewrites z-order after the merge.
+   *
    * Returns whether anything actually changed, so an echo costs nothing.
    */
   applyRemotePatch(json: string): boolean {
