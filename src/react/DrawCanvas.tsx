@@ -23,6 +23,7 @@ export function DrawCanvas({
   onSelectionChange,
   onRequestTextEdit,
   onSceneChange,
+  onNotice,
   onContextMenu,
   onToolLockChange,
   onPointerDown,
@@ -45,6 +46,7 @@ export function DrawCanvas({
   callbacks.onSelectionChange = onSelectionChange;
   callbacks.onRequestTextEdit = onRequestTextEdit;
   callbacks.onSceneChange = onSceneChange;
+  callbacks.onNotice = onNotice;
   callbacks.onContextMenu = onContextMenu;
   callbacks.onToolLockChange = onToolLockChange;
   callbacks.onPointerDown = onPointerDown;

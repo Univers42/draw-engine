@@ -26,7 +26,7 @@ mod types;
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, history_signature, Interaction};
-pub use types::{merge_style_patch, EngineEvents, TextEditRequest};
+pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
 /// Reach for the handles that are not laid out by [`crate::selection::HandleLayout`] —
@@ -69,6 +69,15 @@ pub struct DrawEngine {
     next_style: DrawElementStylePatch,
     next_font_size: f64,
     interaction: Option<Interaction>,
+    /// The linear element whose individual points are currently on offer.
+    ///
+    /// A path of more than two points is a shape: it selects to a box that resizes and
+    /// turns it. Its corners are still reachable, but behind a double click, so that the
+    /// common gesture is the common one. Excalidraw calls this the line editor and enters
+    /// it the same way.
+    ///
+    /// Held by id rather than by index because the scene is reordered underneath it.
+    editing_linear: Option<String>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -115,6 +124,7 @@ impl DrawEngine {
             next_style: DrawElementStylePatch::default(),
             next_font_size: DEFAULT_FONT_SIZE,
             interaction: None,
+            editing_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
@@ -297,6 +307,19 @@ impl DrawEngine {
         }
         self.tool = tool;
         self.events.tool = Some(tool);
+        // Picking any tool but select puts down whatever was being held.
+        // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
+        // style panel: it offers the union of what the active tool can style and what the
+        // selection can, and a swatch applies to the selection whenever there is one. So
+        // a shape left selected from a moment ago silently captures the colour meant for
+        // the next thing drawn — choosing a green for the bucket recoloured the rectangle
+        // behind it, and the fill still came out the fallback shade.
+        //
+        // Going back to select is how a person picks up what they have just made, so that
+        // one direction keeps it.
+        if tool != DrawTool::Select {
+            self.clear_selection();
+        }
     }
 
     /// Choose a tool the way a keyboard shortcut does.
@@ -342,8 +365,59 @@ impl DrawEngine {
 
     fn set_selection(&mut self, ids: impl IntoIterator<Item = String>) {
         self.selected_ids = ids.into_iter().collect();
+        // The point editor belongs to one element, and closes the moment that element
+        // stops being the only thing held. Without this it survives onto whatever is
+        // picked up next, which shows a stranger's corners over the new selection.
+        if let Some(editing) = self.editing_linear.as_deref() {
+            if self.selected_ids.len() != 1 || !self.selected_ids.contains(editing) {
+                self.editing_linear = None;
+            }
+        }
         self.events.selection = Some(self.get_selection());
         self.request_draw();
+    }
+
+    /// Whether this element offers its individual points rather than a bounding box.
+    ///
+    /// The shape of the element decides it — two points or fewer — plus the one element
+    /// the person has explicitly opened by double clicking it.
+    pub(crate) fn shows_point_handles(&self, element: &DrawElement) -> bool {
+        crate::selection::linear::is_point_edited(element)
+            || self.editing_linear.as_deref() == Some(element.id.as_str())
+    }
+
+    /// Open a longer path for point editing, if this element is one.
+    ///
+    /// Returns whether it did, so the double-click handler knows the gesture was spent.
+    pub(crate) fn open_linear_points(&mut self, element: &DrawElement) -> bool {
+        let is_linear = matches!(
+            element.kind,
+            crate::scene::DrawElementType::Line | crate::scene::DrawElementType::Arrow
+        );
+        let has_points = element.points.as_deref().is_some_and(|p| p.len() > 2);
+        if !is_linear || !has_points {
+            return false;
+        }
+        self.set_selection(vec![element.id.clone()]);
+        self.editing_linear = Some(element.id.clone());
+        self.request_draw();
+        true
+    }
+
+    /// The point handles currently on offer, if any.
+    ///
+    /// The same list the painter draws and the pointer tests, so a host — or a test —
+    /// can ask what is actually grabbable rather than infer it.
+    pub fn linear_points(&self) -> Vec<crate::selection::linear::LinearHandlePoint> {
+        match self.get_selected_elements().as_slice() {
+            [single] if self.shows_point_handles(single) => {
+                crate::selection::linear::handle_points(
+                    single,
+                    LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
+                )
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub fn clear_selection(&mut self) {

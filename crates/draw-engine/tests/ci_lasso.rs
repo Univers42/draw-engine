@@ -425,8 +425,12 @@ fn an_additive_loop_keeps_what_was_already_selected() {
     let mut engine = DrawEngine::new();
     engine.set_viewport(900.0, 700.0, 1.0);
     engine.set_scene(Scene::new(vec![a, b]));
-    engine.select(vec!["b".to_string()]);
+    // The tool first, then the selection: picking any tool but select lets go of what is
+    // held, so selecting before the switch would be selecting into the void. That is the
+    // order a person works in anyway — reach for the lasso, catch something, then hold
+    // the modifier to catch more.
     engine.set_tool(DrawTool::Lasso);
+    engine.select(vec!["b".to_string()]);
 
     engine.begin_pointer(60.0, 60.0, true, false);
     for (x, y) in [(260.0, 60.0), (260.0, 220.0), (60.0, 220.0)] {

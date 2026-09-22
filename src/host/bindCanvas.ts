@@ -35,6 +35,7 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     onSelectionChange: (ids) => callbacks.onSelectionChange?.(ids),
     onRequestTextEdit: (request) => callbacks.onRequestTextEdit?.(request),
     onSceneChange: (json) => callbacks.onSceneChange?.(json),
+    onNotice: (notice) => callbacks.onNotice?.(notice),
   });
 
   const session: HostSession = {

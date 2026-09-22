@@ -121,8 +121,20 @@ impl DrawEngine {
                 handle,
                 ratio,
                 origin,
+                ref origin_points,
             } => {
-                self.move_resize(id, handle, world, square, ratio, origin);
+                let points = origin_points.clone();
+                self.move_resize(
+                    id,
+                    world,
+                    square,
+                    ResizeDrag {
+                        handle,
+                        ratio,
+                        origin,
+                        origin_points: points.as_deref(),
+                    },
+                );
                 Some(it)
             }
             Interaction::Rotate { ref id } => {
@@ -388,15 +400,13 @@ impl DrawEngine {
         }
     }
 
-    fn move_resize(
-        &mut self,
-        id: &str,
-        handle: HandleKind,
-        world: Point,
-        square: bool,
-        ratio: Option<f64>,
-        origin: crate::selection::Geometry,
-    ) {
+    fn move_resize(&mut self, id: &str, world: Point, square: bool, drag: ResizeDrag<'_>) {
+        let ResizeDrag {
+            handle,
+            ratio,
+            origin,
+            origin_points,
+        } = drag;
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
@@ -424,8 +434,92 @@ impl DrawEngine {
         element.y = geom.y;
         element.width = geom.width;
         element.height = geom.height;
+        // A shape is generated into its box, so the box is the whole story. A path *is*
+        // its points, so the box on its own moves nothing that is drawn — the ring has to
+        // be scaled to match, from the ring the drag started with.
+        if let Some(points) = origin_points {
+            scale_ring(&mut element, points, &geom);
+        }
         self.scene.put(element);
         self.apply_bindings();
         self.request_draw();
+    }
+}
+
+/// Everything a resize drag remembers from the moment it began.
+///
+/// Grouped rather than passed one by one because they are one thing — the state of a
+/// gesture in progress — and because every one of them exists for the same reason: a
+/// resize must be measured from where the element *was*, never from where it has got to.
+struct ResizeDrag<'a> {
+    handle: HandleKind,
+    ratio: Option<f64>,
+    origin: crate::selection::Geometry,
+    origin_points: Option<&'a [[f64; 2]]>,
+}
+
+/// Scale a path's points so its ring follows the box the handle just dragged.
+///
+/// The awkward part is the anchor. A point-based element stores `points[0]` at `[0, 0]`
+/// and puts `x`/`y` where that first point sits, so the ring's own box is offset from the
+/// element's origin by however far the first point is from the ring's corner — and for a
+/// bucket fill that offset is whatever vertex the region walk happened to start on. So
+/// the points are scaled about `points[0]`, and then the origin is moved by exactly the
+/// amount that scaling shifted the ring's corner, which puts the corner back where the
+/// handle asked for it.
+fn scale_ring(
+    element: &mut DrawElement,
+    origin_points: &[[f64; 2]],
+    geom: &crate::selection::Geometry,
+) {
+    if origin_points.is_empty() {
+        return;
+    }
+    // Measured from the ring the drag *started* with, never from the live one. The live
+    // ring has already been scaled by every earlier move of this same gesture, so a scale
+    // derived from it and then applied to the original points compounds: the second move
+    // divides by a span the first move had already stretched, and the ring drifts away
+    // from the box under the hand. A single-step drag cannot see this, which is why the
+    // first test of it passed.
+    let before = ring_box(origin_points);
+    // A ring with no extent on an axis has no scale to speak of on it: leave it alone
+    // rather than divide by zero and send every point to infinity.
+    let sx = if before.width.abs() > f64::EPSILON {
+        geom.width / before.width
+    } else {
+        1.0
+    };
+    let sy = if before.height.abs() > f64::EPSILON {
+        geom.height / before.height
+    } else {
+        1.0
+    };
+    element.points = Some(
+        origin_points
+            .iter()
+            .map(|p| [p[0] * sx, p[1] * sy])
+            .collect(),
+    );
+    element.x = geom.x - before.x * sx;
+    element.y = geom.y - before.y * sy;
+    element.width = geom.width;
+    element.height = geom.height;
+}
+
+/// The box a ring covers, relative to its own first point.
+fn ring_box(points: &[[f64; 2]]) -> crate::scene::geometry::Rect {
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in points {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    crate::scene::geometry::Rect {
+        x: min_x,
+        y: min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
     }
 }

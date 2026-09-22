@@ -36,6 +36,7 @@ pub(crate) struct EngineCell {
     pub(crate) on_selection: Option<js_sys::Function>,
     pub(crate) on_text: Option<js_sys::Function>,
     pub(crate) on_scene: Option<js_sys::Function>,
+    pub(crate) on_notice: Option<js_sys::Function>,
 }
 
 #[wasm_bindgen(js_name = DrawEngine)]
@@ -124,6 +125,7 @@ impl WasmEngine {
             on_selection: None,
             on_text: None,
             on_scene: None,
+            on_notice: None,
         }));
         let wasm = WasmEngine { cell: cell.clone() };
         LIVE.with(|live| live.borrow_mut().push(Rc::downgrade(&cell)));
@@ -154,6 +156,15 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = setOnSceneChange)]
     pub fn set_on_scene_change(&self, cb: Option<js_sys::Function>) {
         self.cell.borrow_mut().on_scene = cb;
+    }
+
+    /// Something the person should be told, as a stable code.
+    ///
+    /// A code and not a sentence: the wording, the language and the room it has to fit in
+    /// are the host's to decide, and a headless host is free to ignore it entirely.
+    #[wasm_bindgen(js_name = setOnNotice)]
+    pub fn set_on_notice(&self, cb: Option<js_sys::Function>) {
+        self.cell.borrow_mut().on_notice = cb;
     }
 
     pub fn destroy(&self) {
@@ -297,6 +308,7 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
                 cell.on_selection.clone(),
                 cell.on_text.clone(),
                 cell.on_scene.clone(),
+                cell.on_notice.clone(),
             ),
         )
     };
@@ -314,6 +326,12 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
     if let (Some(req), Some(cb)) = (events.text_edit, cbs.3) {
         let json = serde_json::to_string(&req).unwrap_or_default();
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    }
+    if let (Some(notice), Some(cb)) = (events.notice, cbs.5) {
+        // Serialised through serde so the wire name comes from the enum's own
+        // `rename_all` rather than from a second list that could drift from it.
+        let code = serde_json::to_string(&notice).unwrap_or_default();
+        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(code.trim_matches('"')));
     }
     // One callback carries both shapes. A delta is tagged so the host can tell them
     // apart, and the full form is kept for the structural changes a delta cannot
