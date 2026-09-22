@@ -34,12 +34,35 @@ pub struct LinearHandlePoint {
 }
 
 /// Whether this element is edited by points rather than by a bounding box.
+///
+/// A **count**, not a kind. Two points make a segment, and a box around a segment is
+/// degenerate — for a dead-horizontal arrow it has no height at all, so every handle
+/// lands on the same spot — and a box cannot express "point this end somewhere else"
+/// anyway. Three or more points enclose an area, and an area is resized and turned by its
+/// box like any other shape.
+///
+/// Excalidraw draws the line the same place: `hasBoundingBox` is
+/// `element.points.length > 2` for a linear element (`transformHandles.ts:352`), and the
+/// point circles appear only while the line editor is open or the line has exactly two
+/// points (`interactiveScene.ts:1256`).
+///
+/// This used to be a kind alone, so every line and arrow was grabbed by its points
+/// however many it had. The element that made it matter is the bucket fill — a closed
+/// line of five points or more — which selected to a circle on every vertex of the region
+/// and no box at all: it could not be resized, could not be turned, and its circles
+/// dragged single corners of the paint away from the outline it was traced from.
+///
+/// The points of a longer path are not lost, only put behind a double click; the engine
+/// adds that to this rule in [`crate::DrawEngine::shows_point_handles`].
 pub fn is_point_edited(element: &DrawElement) -> bool {
     matches!(
         element.kind,
         crate::scene::element::DrawElementType::Line
             | crate::scene::element::DrawElementType::Arrow
-    )
+    ) && element
+        .points
+        .as_deref()
+        .is_none_or(|points| points.len() <= 2)
 }
 
 /// The element's points in world space.

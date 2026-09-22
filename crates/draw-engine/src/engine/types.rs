@@ -96,6 +96,15 @@ pub(crate) enum Interaction {
         /// the pointer and the element can never grow past it. Holding the original also
         /// keeps a long drag free of accumulated rounding.
         origin: crate::selection::Geometry,
+        /// The ring as it was when the drag began, for a point-based element.
+        ///
+        /// A shape's geometry is generated from its box, so moving the box is the whole
+        /// resize. A line's geometry *is* its points, so the box alone changes nothing
+        /// that is drawn — which is why this went unnoticed for as long as point-based
+        /// elements had no box to drag. Held for the same reason as `origin`: scaling the
+        /// live points every move would compound, and a drag that passes through zero
+        /// would collapse the ring and never recover it.
+        origin_points: Option<Vec<[f64; 2]>>,
     },
     Rotate {
         id: String,

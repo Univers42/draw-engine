@@ -148,7 +148,17 @@ impl HandleLayout {
             // Inner edge of the handle box on the frame, so its centre is half a box
             // further out.
             handle_offset: (margin + handle_px / 2.0) / scale,
-            hit: (handle_px / 2.0) / scale,
+            // Half the handle's *diagonal*, not half its side. The drawn handle is a
+            // square and the reach is radial, so half the side would inscribe a circle
+            // inside the painted box and leave its four corners — the part of a corner
+            // handle a person actually aims at — outside the target. A grab three pixels
+            // inside the box used to fall through to the element and move the shape
+            // instead of resizing it.
+            //
+            // This is Excalidraw's reach, derived from their geometry: their corner grab
+            // box is the handle's own 8px square, so it reaches 5.66px diagonally from
+            // its centre (`transformHandles.ts:138-200`).
+            hit: (handle_px * std::f64::consts::SQRT_2 / 2.0) / scale,
             rotate_gap: rotate_gap_px / scale,
             min_side: 5.0 * handle_px / scale,
         }
