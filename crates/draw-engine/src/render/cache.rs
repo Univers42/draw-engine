@@ -141,17 +141,29 @@ impl ShapeCache {
         self.entries.get(&key).and_then(|d| d.as_ref())
     }
 
-    /// Drops geometry the frame that just ran did not ask for.
+    /// Drops geometry the frame that just ran did not ask for, once the cache has grown
+    /// past `budget` entries.
     ///
     /// Called once per frame, after painting. Sweeping by element id is no longer
     /// possible — a shape has no single owner — so it is swept by use instead, and
     /// without it the cache holds every shape a session ever drew.
     ///
-    /// This assumes a frame asks for every element it draws, which is true while the
+    /// The budget is the important half. Evicting eagerly looks tidy and is very
+    /// expensive: during a pan the visible set changes every frame, so dropping whatever
+    /// the last frame missed regenerates each shape as it crosses the viewport edge, and
+    /// for a screen-sized hachure fill that is thousands of ops per crossing. Measured on
+    /// 300 such shapes it turned a 600px pan from 10ms into 1.8 seconds. Keeping the
+    /// cache while it is no larger than the scene needs costs a little memory and saves
+    /// all of that.
+    ///
+    /// Eviction assumes a frame asks for every element it draws, which is true while the
     /// painter redraws the whole scene. A partial redraw would have to mark the shapes it
     /// skipped, or it would drop them and regenerate them on the next full frame.
-    pub fn sweep(&mut self) {
+    pub fn sweep(&mut self, budget: usize) {
         let used = std::mem::take(&mut self.used);
+        if self.entries.len() <= budget {
+            return;
+        }
         self.entries.retain(|key, _| used.contains(key));
     }
 
@@ -255,8 +267,8 @@ mod tests {
 
         // Two sweeps with nothing asked for in between: one generation of grace, then
         // gone. See `ShapeCache::sweep`.
-        cache.sweep();
-        cache.sweep();
+        cache.sweep(0);
+        cache.sweep(0);
         assert!(cache.is_empty());
     }
 
