@@ -13,7 +13,17 @@ import { describe, it } from "node:test";
 import { wheelIntent, type WheelInput } from "./wheel.ts";
 
 function wheel(partial: Partial<WheelInput> = {}): WheelInput {
-  return { deltaX: 0, deltaY: 0, ctrlKey: false, metaKey: false, shiftKey: false, ...partial };
+  return {
+    deltaX: 0,
+    deltaY: 0,
+    // DOM_DELTA_PIXEL. The default because it is what Chromium and WebKit always
+    // report, so every test that is not about deltaMode reads as it did before.
+    deltaMode: 0,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...partial,
+  };
 }
 
 describe("wheelIntent", () => {
@@ -91,6 +101,88 @@ describe("wheelIntent", () => {
       kind: "pan",
       dx: -30,
       dy: 0,
+    });
+  });
+
+  it("normalises a line-mode delta to pixels, so Firefox moves like Chrome", () => {
+    // The bug this pins. `deltaMode` says what unit `deltaY` is in, and browsers do not
+    // agree: Chromium always reports PIXEL, Firefox reports LINE for a mouse wheel on
+    // Windows and Linux — one notch is `deltaY: 3, deltaMode: 1` there against Chrome's
+    // `deltaY: 100, deltaMode: 0`.
+    //
+    // Read raw, that notch was worth three pixels. For the zoom that is under
+    // `MAX_WHEEL_DELTA` and came out as 3% instead of 10%; for the pan it moved the board
+    // three pixels instead of a hundred, which is a board that does not move.
+    assert.deepEqual(wheelIntent(wheel({ deltaY: -3, deltaMode: 1, ctrlKey: true })), {
+      kind: "zoom",
+      deltaY: -120,
+    });
+    assert.deepEqual(wheelIntent(wheel({ deltaY: 3, deltaMode: 1 })), {
+      kind: "pan",
+      dx: 0,
+      dy: -120,
+    });
+  });
+
+  it("normalises a page-mode delta to pixels", () => {
+    // DOM_DELTA_PAGE. Rare — some Windows configurations and a few assistive devices —
+    // but it is the same failure an order of magnitude further on: one page read as one
+    // pixel is a board that is frozen rather than merely slow.
+    assert.deepEqual(wheelIntent(wheel({ deltaY: -1, deltaMode: 2, ctrlKey: true })), {
+      kind: "zoom",
+      deltaY: -800,
+    });
+    assert.deepEqual(wheelIntent(wheel({ deltaY: 1, deltaMode: 2 })), {
+      kind: "pan",
+      dx: 0,
+      dy: -800,
+    });
+  });
+
+  it("normalises both axes, not just the one being read", () => {
+    // deltaX carries the pan on a tilt wheel and on macOS shift+wheel. Normalising only
+    // deltaY would leave sideways scrolling slow on exactly the browser this fixes.
+    assert.deepEqual(wheelIntent(wheel({ deltaX: 3, deltaY: 3, deltaMode: 1 })), {
+      kind: "pan",
+      dx: -120,
+      dy: -120,
+    });
+    assert.deepEqual(wheelIntent(wheel({ deltaX: 2, deltaMode: 1, shiftKey: true })), {
+      kind: "pan",
+      dx: -80,
+      dy: 0,
+    });
+  });
+
+  it("lands a line-mode notch on a delta some mouse already sends in pixels", () => {
+    // Why 40 and not 33.3: a Windows mouse in pixel mode sends 120 for one notch, so a
+    // normalised Firefox notch is a value the stack already handles rather than a new
+    // one invented for it. Both clamp to a single step in `wheel_zoom_scale`, so the
+    // zoom is identical; the pan differs by the 20px that separates the two real
+    // browsers anyway.
+    const firefoxNotch = wheelIntent(wheel({ deltaY: -3, deltaMode: 1, ctrlKey: true }));
+    const windowsMouseNotch = wheelIntent(wheel({ deltaY: -120, deltaMode: 0, ctrlKey: true }));
+    assert.deepEqual(firefoxNotch, windowsMouseNotch);
+  });
+
+  it("leaves a pixel-mode delta exactly as it arrived", () => {
+    // The regression guard for the fix itself: every browser that already worked must
+    // keep its arithmetic untouched, to the bit.
+    for (const deltaY of [-240, -100, -53, -3, 3, 53, 100, 240]) {
+      assert.deepEqual(wheelIntent(wheel({ deltaY, deltaMode: 0, ctrlKey: true })), {
+        kind: "zoom",
+        deltaY,
+      });
+    }
+  });
+
+  it("treats an unknown deltaMode as pixels rather than scaling by a guess", () => {
+    // The spec defines 0, 1 and 2. A future or vendor value must not be multiplied by a
+    // constant chosen for a different unit — passing it through is wrong by at most the
+    // unit, where guessing is wrong by 40×.
+    assert.deepEqual(wheelIntent(wheel({ deltaY: -100, deltaMode: 7, ctrlKey: true })), {
+      kind: "zoom",
+      deltaY: -100,
     });
   });
 
