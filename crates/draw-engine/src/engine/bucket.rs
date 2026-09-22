@@ -114,10 +114,7 @@ impl DrawEngine {
         let style = self.get_next_style();
         if let Some(mut shape) = self.scene.get(id).cloned() {
             shape.background_color = fill_color(&style.background_color);
-            // The chosen fill style verbatim, unlike the polygon path: this is a shape,
-            // every fill style renders properly on one, and the Fill style row in the
-            // panel is offered precisely so it can be chosen.
-            shape.fill_style = style.fill_style;
+            shape.fill_style = self.bucket_fill_style();
             self.scene.put(bump_version(shape, self.now_ms));
             self.push_history();
             self.request_draw();
@@ -222,6 +219,23 @@ impl DrawEngine {
         // frame holds whatever is drawn within its bounds — which is the same question
         // asked of every other element the moment it is created.
         element.frame_id = crate::scene::frame_for_element(self.scene.iter_ordered(), element);
+    }
+
+    /// The fill style a bucket lays down.
+    ///
+    /// Solid unless someone actually chose otherwise. A bucket means paint, and the
+    /// default style is hachure — so taking the merged style at face value gave a click
+    /// a shape crosshatched in faint diagonal lines with white between them, which reads
+    /// as the tool having half worked. Caught by looking at the screen: a pixel probe in
+    /// the middle of a "filled" shape came back white, because it landed in a gap.
+    ///
+    /// The *raw* patch is what distinguishes the two cases. `get_next_style` merges over
+    /// the defaults, so by the time it is read "nobody chose" and "somebody chose
+    /// hachure" look identical; the patch still has `None` for the first. So an explicit
+    /// choice is honoured — the Fill style row exists to be used — and an absent one
+    /// becomes solid rather than inheriting a default meant for drawing shapes.
+    fn bucket_fill_style(&self) -> FillStyle {
+        self.next_style.fill_style.unwrap_or(FillStyle::Solid)
     }
 
     /// Say why a click painted nothing — when it is worth saying.
