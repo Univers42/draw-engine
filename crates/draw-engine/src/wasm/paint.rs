@@ -132,15 +132,21 @@ thread_local! {
     /// and rotation are applied to the *context*, the same path object stays valid
     /// through panning, zooming and dragging — it is only rebuilt when the element
     /// genuinely changes shape.
-    static PATHS: std::cell::RefCell<HashMap<String, CachedPaths>> =
+    /// Keyed by the shape fingerprint, not by element id, so every copy of a duplicated
+    /// shape shares one `Path2D`. A board made by holding Ctrl+D is hundreds of elements
+    /// with identical geometry, and one path each was both the build cost and the memory.
+    static PATHS: std::cell::RefCell<HashMap<u64, CachedPaths>> =
         std::cell::RefCell::new(HashMap::new());
+    /// Fingerprints drawn since the last eviction.
+    static PATHS_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
-/// One element's built paths, tagged with the shape fingerprint they were built from.
+/// The paths built for one piece of geometry.
 ///
-/// The fingerprint is what makes a translate free: it covers geometry only, so panning,
+/// The fingerprint covers geometry only, which is what makes a translate free: panning,
 /// zooming and dragging leave it untouched and the cached paths stay valid.
-type CachedPaths = (u64, Vec<(OpSetKind, Path2d)>);
+type CachedPaths = Vec<(OpSetKind, Path2d)>;
 
 /// Builds the `Path2D` objects for one drawable.
 fn build_paths(drawable: &Drawable) -> Vec<(OpSetKind, Path2d)> {
@@ -174,14 +180,12 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     let fingerprint = shape_fingerprint(element);
     let fill_weight = element.stroke_width / 2.0;
 
+    PATHS_USED.with(|used| used.borrow_mut().insert(fingerprint));
+
     PATHS.with(|cache| {
         let mut cache = cache.borrow_mut();
 
-        let stale = match cache.get(&element.id) {
-            Some((cached, _)) => *cached != fingerprint,
-            None => true,
-        };
-        if stale {
+        if let std::collections::hash_map::Entry::Vacant(slot) = cache.entry(fingerprint) {
             let built = SHAPES.with(|shapes| {
                 shapes
                     .borrow_mut()
@@ -189,10 +193,10 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
                     .map(build_paths)
                     .unwrap_or_default()
             });
-            cache.insert(element.id.clone(), (fingerprint, built));
+            slot.insert(built);
         }
 
-        let Some((_, paths)) = cache.get(&element.id) else {
+        let Some(paths) = cache.get(&fingerprint) else {
             return;
         };
 
@@ -220,20 +224,27 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     });
 }
 
-/// Drops cached paths for elements that are no longer in the scene.
+/// Drops cached geometry and paths the frame that just ran did not draw.
 ///
-/// Without this the cache is a leak, and a long editing session churns through a lot of
-/// elements. Run once per frame against what was actually drawn.
+/// Without this both caches leak, and a long editing session churns through a lot of
+/// shapes. Run once per frame, after painting.
+///
+/// Swept by *use* rather than by element id: a shape now belongs to no single element —
+/// that is the point of keying on geometry — so the only thing that can be asked about it
+/// is whether anything still draws it.
 fn evict_paths(live: &[&DrawElement]) {
+    SHAPES.with(|shapes| shapes.borrow_mut().sweep());
     PATHS.with(|cache| {
         let mut cache = cache.borrow_mut();
+        let used = PATHS_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
         // Only worth the sweep once the cache has outgrown the scene by a clear margin;
-        // doing it every frame would cost more than it reclaims.
+        // doing it every frame would cost more than it reclaims. With duplicates sharing
+        // one entry the cache is normally far *smaller* than the scene, so this rarely
+        // fires at all.
         if cache.len() <= live.len().saturating_mul(2).max(64) {
             return;
         }
-        let ids: std::collections::HashSet<&str> = live.iter().map(|e| e.id.as_str()).collect();
-        cache.retain(|id, _| ids.contains(id.as_str()));
+        cache.retain(|fingerprint, _| used.contains(fingerprint));
     });
 }
 
