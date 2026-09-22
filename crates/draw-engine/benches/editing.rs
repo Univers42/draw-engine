@@ -13,6 +13,7 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use std::hint::black_box;
 
+use draw_engine::render::cache::ShapeCache;
 use draw_engine::scene::element::{create_element_default, DrawElement, DrawElementType, Geometry};
 use draw_engine::{DrawEngine, DrawTool, Scene};
 
@@ -206,5 +207,80 @@ fn moving(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, duplicate, erase, moving);
+criterion_group!(benches, duplicate, erase, moving, painting);
 criterion_main!(benches);
+
+/// Screen-sized shapes, hundreds of them, each a copy of the last.
+///
+/// The case that actually hurts, and the one the small-shape benchmarks above miss
+/// entirely. Rough geometry costs grow with a shape's *size* — a hachure fill of a
+/// 1200×700 rectangle is thousands of ops where a 40×30 one is a handful — and culling
+/// rejects nothing, because every one of these covers the viewport.
+fn big_duplicates(n: usize) -> Vec<DrawElement> {
+    let mut first = create_element_default(
+        DrawElementType::Rectangle,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 1200.0,
+            height: 700.0,
+        },
+    );
+    first.background_color = "#ffec99".into();
+    first.seed = 123_456;
+    (0..n)
+        .map(|i| {
+            // What Ctrl+D produces: a fresh id, the same seed, the same size, nudged.
+            let mut copy = first.clone();
+            copy.id = format!("copy-{i}");
+            copy.x += f64::from(i as u32) * 12.0;
+            copy.y += f64::from(i as u32) * 12.0;
+            copy
+        })
+        .collect()
+}
+
+fn painting(c: &mut Criterion) {
+    let mut group = c.benchmark_group("paint_big");
+    group.sample_size(20);
+
+    // The first frame after a run of Ctrl+D: nothing is cached yet. Every copy is
+    // identical in element-local space — same seed, same size, same style — so this is
+    // the same geometry generated over and over.
+    for n in [50usize, 200] {
+        group.bench_function(format!("cold_cache_{n}_copies"), |b| {
+            b.iter_batched_ref(
+                || (ShapeCache::new(), big_duplicates(n)),
+                |(cache, elements)| {
+                    for element in elements.iter() {
+                        black_box(cache.get(element));
+                    }
+                    black_box(cache.len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    // Every frame after that. Should be a lookup per element and nothing else.
+    group.bench_function("warm_cache_200_copies", |b| {
+        b.iter_batched_ref(
+            || {
+                let elements = big_duplicates(200);
+                let mut cache = ShapeCache::new();
+                for element in &elements {
+                    cache.get(element);
+                }
+                (cache, elements)
+            },
+            |(cache, elements)| {
+                for element in elements.iter() {
+                    black_box(cache.get(element));
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
