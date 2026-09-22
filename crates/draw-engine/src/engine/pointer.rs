@@ -385,6 +385,22 @@ impl DrawEngine {
             self.begin_move(world);
             return;
         }
+        // Nothing was hit — but the click may still be *inside what is selected*, and a
+        // click there can only sensibly mean "move this".
+        //
+        // It matters because a shape with no fill is hit on its outline only, so the
+        // middle of a selected empty rectangle is a hole. Falling through to a marquee
+        // there drops the selection that was just made and leaves the shape movable only
+        // by aiming at a two-pixel line. Checked *after* `selectable_hit` so a shape
+        // lying over the selection can still be clicked and selected in the normal way.
+        if !additive && self.pointer_is_inside_selection(world) {
+            if duplicate {
+                self.duplicate_selection(0.0, 0.0);
+            }
+            self.begin_move(world);
+            return;
+        }
+
         if !additive {
             self.clear_selection();
         }
@@ -394,6 +410,31 @@ impl DrawEngine {
             base: self.selected_ids.clone(),
         });
         self.request_draw();
+    }
+
+    /// Whether a world point falls within the frame drawn around the current selection.
+    ///
+    /// The same box the painter outlines, so what you can grab is what you can see. The
+    /// collision tolerance is added on top for the same reason it is added everywhere
+    /// else: the frame is a line, and a line is not something anyone can aim at exactly.
+    ///
+    /// A deliberate divergence from Excalidraw, which answers this only for two or more
+    /// elements (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx:9783`, returns
+    /// false below that). One element and two behaving differently is an asymmetry
+    /// nobody asks for.
+    fn pointer_is_inside_selection(&self, world: Point) -> bool {
+        let selected = self.get_selected_elements();
+        if selected.is_empty() || selected.iter().all(|el| el.locked()) {
+            return false;
+        }
+        let Some(bounds) = crate::scene_bounds(selected.iter()) else {
+            return false;
+        };
+        let pad = self.handle_layout().frame_pad + self.collision_tolerance();
+        world.x >= bounds.min_x - pad
+            && world.x <= bounds.max_x + pad
+            && world.y >= bounds.min_y - pad
+            && world.y <= bounds.max_y + pad
     }
 
     fn begin_move(&mut self, world: Point) {
