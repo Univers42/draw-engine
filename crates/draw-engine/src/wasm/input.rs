@@ -272,6 +272,17 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// How the last frames were served: `{redraws, scrolls, reuses}`, then reset.
+    ///
+    /// A diagnostic, not an API. The static layer is either being reused or it is not,
+    /// and from outside the engine those two look identical until something is measured
+    /// against the wrong assumption.
+    #[wasm_bindgen(js_name = paintStatsJson)]
+    pub fn paint_stats_json(&self) -> String {
+        let (redraws, scrolls, reuses) = crate::wasm::paint::take_plan_counts();
+        format!("{{\"redraws\":{redraws},\"scrolls\":{scrolls},\"reuses\":{reuses}}}")
+    }
+
     #[wasm_bindgen(js_name = panBy)]
     pub fn pan_by(&self, dx: f64, dy: f64) {
         self.cell.borrow_mut().engine.pan_by(dx, dy);
