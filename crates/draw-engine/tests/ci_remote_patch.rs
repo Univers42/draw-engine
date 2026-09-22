@@ -174,3 +174,43 @@ fn a_freedraw_with_points_survives_the_round_trip() {
         .expect("the stroke merged");
     assert_eq!(merged.points.as_ref().map(Vec::len), Some(3));
 }
+
+#[test]
+fn a_remote_tombstone_soft_deletes_the_local_element() {
+    let mut engine = engine_with_scene(vec![element("a", 0.0, 1, 1)]);
+    let mut gone = element("a", 0.0, 2, 1);
+    gone.is_deleted = true;
+    // scene_to_json drops tombstones — peers still send them on the live wire.
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [gone],
+    })
+    .to_string();
+
+    assert!(engine.apply_remote_patch(&patch));
+    let scene = engine.get_scene();
+    let a = scene.iter().find(|e| e.id == "a").expect("tombstone kept");
+    assert!(a.is_deleted);
+}
+
+#[test]
+fn a_remote_order_rewrites_z_order() {
+    let mut engine = engine_with_scene(vec![element("a", 0.0, 1, 1), element("b", 10.0, 1, 1)]);
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": ["b", "a"],
+    })
+    .to_string();
+
+    assert!(engine.apply_remote_patch(&patch));
+    let ids: Vec<String> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(ids, vec!["b".to_string(), "a".to_string()]);
+}
