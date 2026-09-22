@@ -1452,3 +1452,47 @@ fn undoing_a_shape_fill_puts_the_colour_back() {
         "undo returns the shape to having no colour at all"
     );
 }
+
+#[test]
+fn a_bucket_lays_down_solid_paint_unless_told_otherwise() {
+    // The default style is hachure, which on a bucket click gives a shape crosshatched
+    // in faint lines with white between them — the tool looking like it half worked. A
+    // bucket means paint. Found by looking at the screen rather than at the scene: the
+    // element had the colour on it and a pixel in the middle of it was white.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_next_style(style_background("#ffc9c9"));
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    let shape = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| !e.is_deleted)
+        .unwrap();
+    assert_eq!(shape.fill_style, FillStyle::Solid);
+}
+
+#[test]
+fn a_fill_style_that_was_actually_chosen_is_honoured() {
+    // The other half: the Fill style row is offered while the bucket is active precisely
+    // so it can be used, and a control that silently does nothing is worse than no
+    // control. The raw patch is what tells the two cases apart — `get_next_style` merges
+    // over the defaults and loses the difference.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_next_style(DrawElementStylePatch {
+        background_color: Some("#ffc9c9".into()),
+        fill_style: Some(FillStyle::CrossHatch),
+        ..Default::default()
+    });
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    let shape = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| !e.is_deleted)
+        .unwrap();
+    assert_eq!(shape.fill_style, FillStyle::CrossHatch);
+}
