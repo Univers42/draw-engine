@@ -249,6 +249,17 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// One wheel event's worth of zoom, anchored at the cursor.
+    ///
+    /// Takes the raw `WheelEvent.deltaY` rather than a factor the host worked out: what a
+    /// wheel delta is worth differs per browser and per device, and it is arithmetic, so
+    /// it belongs here where every host shares one answer.
+    #[wasm_bindgen(js_name = wheelZoom)]
+    pub fn wheel_zoom(&self, sx: f64, sy: f64, delta_y: f64) {
+        self.cell.borrow_mut().engine.wheel_zoom(sx, sy, delta_y);
+        self.flush();
+    }
+
     #[wasm_bindgen(js_name = panBy)]
     pub fn pan_by(&self, dx: f64, dy: f64) {
         self.cell.borrow_mut().engine.pan_by(dx, dy);

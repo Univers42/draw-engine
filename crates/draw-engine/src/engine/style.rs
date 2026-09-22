@@ -81,6 +81,25 @@ impl DrawEngine {
         self.bump_motion();
     }
 
+    /// One wheel event, anchored at the cursor.
+    ///
+    /// The host passes the raw `deltaY` and nothing else: how far a wheel event is worth
+    /// is arithmetic, it differs per browser and per device, and every platform this
+    /// engine is embedded in would otherwise have to get it right independently.
+    ///
+    /// Returns early when the step changes nothing, which is the common case at either
+    /// zoom limit — a trackpad goes on sending ticks for as long as the fingers move, and
+    /// publishing a camera event for each would repaint the whole scene to produce the
+    /// identical picture.
+    pub fn wheel_zoom(&mut self, sx: f64, sy: f64, delta_y: f64) {
+        let next = crate::camera::wheel_zoom_scale(self.camera.scale, delta_y);
+        if next == self.camera.scale {
+            return;
+        }
+        self.set_camera(crate::zoom_to(self.camera, sx, sy, next));
+        self.bump_motion();
+    }
+
     pub fn set_camera(&mut self, camera: crate::camera::Camera) {
         self.camera = camera;
         self.events.camera = Some(camera);

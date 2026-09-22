@@ -4,6 +4,7 @@
  */
 
 import { localPoint, type HostSession } from "./session";
+import { wheelIntent } from "./wheel";
 
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
@@ -28,9 +29,18 @@ export function attachPointerInput(session: HostSession): () => void {
 
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
+    const intent = wheelIntent(event);
+    if (intent.kind === "none") return;
+    if (intent.kind === "pan") {
+      engine.panBy(intent.dx, intent.dy);
+      return;
+    }
+    // Applied per event rather than coalesced per frame: the engine derives each step
+    // from the scale the one before it produced, so a burst of ticks walks the zoom.
+    // Summing them into one frame's delta would instead collapse the burst into a single
+    // clamped step, and a trackpad fling would barely move the board.
     const { x: sx, y: sy } = localPoint(canvas, event);
-    if (event.ctrlKey || event.metaKey) engine.zoomAt(sx, sy, Math.exp(-event.deltaY * 0.01));
-    else engine.panBy(-event.deltaX, -event.deltaY);
+    engine.wheelZoom(sx, sy, intent.deltaY);
   };
 
   const onPointerDown = (event: PointerEvent) => {
