@@ -97,7 +97,7 @@ impl DrawEngine {
 
         if let Some(single) = self.single_selected() {
             if !single.locked() {
-                if crate::selection::linear::is_point_edited(&single) {
+                if self.shows_point_handles(&single) {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
                     let tol = super::HANDLE_HIT_PX / self.camera.scale;

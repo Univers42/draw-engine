@@ -108,6 +108,12 @@ impl DrawEngine {
                 self.request_text_edit(&hit);
                 return;
             }
+            // A path of more than two points selects to a box, because it is a shape.
+            // Its corners are still there, behind this gesture — the same door
+            // Excalidraw puts its line editor behind.
+            if self.open_linear_points(&hit) {
+                return;
+            }
         }
         if let Some(container) = self.label_target_at(world.x, world.y) {
             let bound = container

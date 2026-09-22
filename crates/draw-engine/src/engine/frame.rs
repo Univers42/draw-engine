@@ -111,7 +111,7 @@ impl DrawEngine {
 
         // Computed before the struct literal takes ownership of `selected`.
         let linear_handles = match selected.as_slice() {
-            [single] if crate::selection::linear::is_point_edited(single) => {
+            [single] if self.shows_point_handles(single) => {
                 crate::selection::linear::handle_points(
                     single,
                     super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale,

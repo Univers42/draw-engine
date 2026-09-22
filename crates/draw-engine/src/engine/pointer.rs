@@ -296,7 +296,7 @@ impl DrawEngine {
                 // its handles are tested first and the box handles never apply to it.
                 // Excalidraw does the same: select an arrow there and you get circles
                 // on its ends, with no selection rectangle at all.
-                if crate::selection::linear::is_point_edited(&single) {
+                if self.shows_point_handles(&single) {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
                     if let Some(handle) =
@@ -310,7 +310,7 @@ impl DrawEngine {
                     }
                 }
 
-                let handle = if crate::selection::linear::is_point_edited(&single) {
+                let handle = if self.shows_point_handles(&single) {
                     None
                 } else {
                     // The same layout the painter uses, so a grab can only land on a
@@ -345,6 +345,7 @@ impl DrawEngine {
                         handle,
                         ratio,
                         origin,
+                        origin_points: single.points.clone(),
                     });
                     return;
                 }
