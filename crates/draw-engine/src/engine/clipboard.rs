@@ -130,7 +130,10 @@ impl DrawEngine {
         }
 
         if let Some(order_ids) = data.get("order").and_then(|value| value.as_array()) {
-            let ids: Vec<&str> = order_ids.iter().filter_map(|value| value.as_str()).collect();
+            let ids: Vec<&str> = order_ids
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect();
             if !ids.is_empty() {
                 let mut live: Vec<DrawElement> = Vec::with_capacity(ids.len());
                 for id in &ids {
