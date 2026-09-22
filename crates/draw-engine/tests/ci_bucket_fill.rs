@@ -808,3 +808,120 @@ fn the_fill_lands_beneath_the_outline_it_came_from() {
         "the paint goes under the stroke, or filling a shape erases its outline"
     );
 }
+
+#[test]
+fn a_fill_tells_the_host_about_itself() {
+    // The bug that made the bucket useless in a browser: the paint appeared on the canvas
+    // and never reached the server, so it was gone on the next load. `push_history` both
+    // snapshots *and* publishes what changed, and it was being called before the element
+    // was in the scene — so the host was handed a scene with no fill in it, believed it,
+    // and saved that. Nothing in the geometry was wrong, which is why 41 green tests said
+    // the feature worked.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let _ = engine.drain_events();
+
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+
+    let events = engine.drain_events();
+    let published = events
+        .scene_delta
+        .map(|delta| {
+            delta
+                .updated
+                .iter()
+                .any(|e| e.kind == DrawElementType::Line)
+        })
+        .or_else(|| {
+            events.scene_json.as_ref().map(|json| {
+                json.contains("\"type\": \"line\"") || json.contains("\"type\":\"line\"")
+            })
+        });
+    assert_eq!(
+        published,
+        Some(true),
+        "the fill was created but never announced, so nothing downstream can save it"
+    );
+}
+
+#[test]
+fn undoing_a_fill_takes_away_the_paint_and_nothing_else() {
+    // The same ordering bug seen from the other side. `push_history` snapshots the scene
+    // it is called on, so calling it before the insert stored the pre-fill state as the
+    // *current* one — and the undo that should have removed the paint went back a step
+    // further than the user asked for.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+    assert_eq!(live_kinds(&engine).len(), 2);
+
+    engine.undo();
+
+    assert_eq!(
+        live_kinds(&engine),
+        vec![DrawElementType::Rectangle],
+        "one undo should leave the shape that was there before the fill"
+    );
+}
+
+/// The kinds still on the board, in z-order.
+fn live_kinds(engine: &DrawEngine) -> Vec<DrawElementType> {
+    engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .map(|e| e.kind)
+        .collect()
+}
+
+#[test]
+fn a_second_click_in_a_painted_region_restyles_it_through_the_engine() {
+    // The engine end of "click twice". `clicking_the_same_region_twice_restyles_rather_
+    // than_stacks` builds the paint by hand and asks `is_restylable_fill` about it, which
+    // says nothing about what happens when the *engine* runs a second time over a scene
+    // that now contains its own output — and that is the path a person takes. It panicked
+    // in the browser on the second click, which is as bad as a bug gets: the WASM module
+    // aborts and the whole board stops responding until the page is reloaded.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+    assert_eq!(live_kinds(&engine).len(), 2);
+
+    // Deliberately not the same pixel. Nobody clicks twice on the same pixel, and a
+    // nearby point is what lands on the fill the first click left behind.
+    engine.begin_pointer(90.0, 110.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(
+        live_kinds(&engine).len(),
+        2,
+        "the second click should recolour the paint that is there, not add to it"
+    );
+}
+
+#[test]
+fn the_paint_a_fill_leaves_behind_can_actually_be_drawn() {
+    // The gap the browser fell through. Every other test here stops at the scene: it
+    // checks that an element exists, where it sits and what colour it is, and the engine
+    // tests paint through a `NoopPainter` that never builds a shape. So nothing asked the
+    // renderer whether the thing the bucket produces is drawable — and a second click, by
+    // restyling the fill, made one that was not. The module aborted and the board froze.
+    //
+    // `element_drawable` is the renderer's own entry point and is pure, so the question
+    // can be asked here rather than only in a browser.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+    engine.begin_pointer(90.0, 110.0, false, false);
+    engine.end_pointer();
+
+    for element in engine.get_scene().into_iter().filter(|e| !e.is_deleted) {
+        // `None` is a fine answer — some elements have no drawable. A panic is not.
+        let _ = draw_engine::render::shape::element_drawable(&element);
+    }
+}
