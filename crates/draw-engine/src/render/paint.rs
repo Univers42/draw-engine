@@ -1,4 +1,5 @@
-use crate::scene::element::DrawElementType;
+use crate::scene::binding::LABEL_PADDING;
+use crate::scene::element::{DrawElementType, TextAlign, VerticalAlign};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -140,6 +141,46 @@ pub const FONT_FAMILY: &str = "system-ui, -apple-system, Segoe UI, Roboto, sans-
 /// The CSS font shorthand for a given size, as Canvas2D wants it.
 pub fn font_string(size: f64) -> String {
     format!("{size}px {FONT_FAMILY}")
+}
+
+/// What Canvas2D's `textAlign` must be set to for a given alignment.
+///
+/// Paired with [`text_anchor_x`], and only meaningful together: `fill_text(line, x)`
+/// places the line's *anchor* at `x`, and which end of the line is the anchor is decided
+/// by this setting. An x computed for one and drawn under another lands a whole
+/// text-width out.
+pub fn canvas_text_align(align: TextAlign) -> &'static str {
+    match align {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    }
+}
+
+/// Where in the element's own box the anchor of a line goes, for a given alignment.
+///
+/// In element-local coordinates, so the caller has already applied the element
+/// transform: 0 is its left edge and `width` its right.
+pub fn text_anchor_x(align: TextAlign, width: f64) -> f64 {
+    match align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center => width / 2.0,
+        TextAlign::Right => width,
+    }
+}
+
+/// Where a label's top edge goes inside its container, in the container's own box.
+///
+/// `height` is the container's, `label_height` the label's. A label taller than the
+/// space it has cannot honour top and bottom at once, and this clamps to the top:
+/// overflowing downward still shows the first line, overflowing upward hides it.
+pub fn label_offset_y(align: VerticalAlign, height: f64, label_height: f64) -> f64 {
+    let offset = match align {
+        VerticalAlign::Top => LABEL_PADDING,
+        VerticalAlign::Middle => height / 2.0 - label_height / 2.0,
+        VerticalAlign::Bottom => height - label_height - LABEL_PADDING,
+    };
+    offset.max(0.0)
 }
 
 pub fn is_roughable(kind: DrawElementType) -> bool {

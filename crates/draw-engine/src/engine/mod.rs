@@ -5,7 +5,8 @@ use crate::history::SnapshotHistory;
 use crate::interaction::{DrawTool, SnapGuide};
 use crate::render::{light_theme, DrawTheme, GridSettings};
 use crate::scene::{
-    default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene,
+    default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene, TextAlign,
+    VerticalAlign,
 };
 
 mod arrange;
@@ -68,6 +69,12 @@ pub struct DrawEngine {
     tool_locked: bool,
     next_style: DrawElementStylePatch,
     next_font_size: f64,
+    /// The alignments the next text will be created with, when one was chosen with
+    /// nothing selected. `None` means nothing was chosen, so the new element is left
+    /// unset too and keeps resolving through its role — picking an alignment must not be
+    /// the same as never touching the control.
+    next_text_align: Option<TextAlign>,
+    next_vertical_align: Option<VerticalAlign>,
     interaction: Option<Interaction>,
     /// The linear element whose individual points are currently on offer.
     ///
@@ -123,6 +130,8 @@ impl DrawEngine {
             tool_locked: false,
             next_style: DrawElementStylePatch::default(),
             next_font_size: DEFAULT_FONT_SIZE,
+            next_text_align: None,
+            next_vertical_align: None,
             interaction: None,
             editing_linear: None,
             selected_ids: HashSet::new(),

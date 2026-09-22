@@ -49,6 +49,7 @@ impl DrawEngine {
             color: element.stroke_color.clone(),
             text: element.text.clone().unwrap_or_default(),
             width,
+            text_align: crate::scene::resolved_text_align(element),
             container_id: element.container_id.clone(),
         });
     }
@@ -73,6 +74,8 @@ impl DrawEngine {
         );
         label.text = Some(String::new());
         label.font_size = Some(self.next_font_size);
+        label.text_align = self.next_text_align;
+        label.vertical_align = self.next_vertical_align;
         label.container_id = Some(container.id.clone());
         label.stroke_color = self.get_next_style().stroke_color;
         let mut container = container.clone();
@@ -143,6 +146,8 @@ impl DrawEngine {
         );
         element.text = Some(String::new());
         element.font_size = Some(self.next_font_size);
+        element.text_align = self.next_text_align;
+        element.vertical_align = self.next_vertical_align;
         let id = element.id.clone();
         self.scene.add(element.clone());
         self.set_selection(vec![id]);

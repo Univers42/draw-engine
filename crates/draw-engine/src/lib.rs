@@ -43,8 +43,9 @@ pub use interaction::{
 };
 pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
 pub use render::{
-    dark_theme, default_arrowhead, font_string, is_roughable, light_theme, DrawTheme, GridSettings,
-    DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP, FONT_FAMILY, TEXT_LINE_HEIGHT,
+    canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, label_offset_y,
+    light_theme, text_anchor_x, DrawTheme, GridSettings, DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP,
+    FONT_FAMILY, TEXT_LINE_HEIGHT,
 };
 pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,
@@ -52,9 +53,10 @@ pub use scene::{
     element_rotated_bounds, hit_test, hit_test_element, is_bindable_element, is_linear_element,
     is_transparent, layout_label, linear_endpoints, linear_from_endpoints, linear_retarget,
     local_box, local_center, merge_style, new_element_id, normalize_rect, refresh_bindings,
-    rotation_center, scene_bounds, segment_hits_element, Arrowhead, DrawElement, DrawElementStyle,
-    DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle,
-    ARROWHEADS, BINDING_GAP, LABEL_PADDING,
+    resolved_text_align, resolved_vertical_align, rotation_center, scene_bounds,
+    segment_hits_element, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
+    DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, TextAlign, VerticalAlign,
+    ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,

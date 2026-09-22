@@ -52,6 +52,67 @@ pub const ARROWHEADS: [Arrowhead; 6] = [
     Arrowhead::Bar,
 ];
 
+/// Where a line of text sits across the width of its own box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+pub const TEXT_ALIGNS: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+
+/// Where a label sits down the height of the shape holding it.
+///
+/// Free-standing text has no second box to sit in, so this only has visible meaning for
+/// a label — but it is stored on every text so that binding one to a shape later does
+/// not have to invent a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerticalAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+pub const VERTICAL_ALIGNS: [VerticalAlign; 3] = [
+    VerticalAlign::Top,
+    VerticalAlign::Middle,
+    VerticalAlign::Bottom,
+];
+
+/// The horizontal alignment to draw with, for an element that may not name one.
+///
+/// Both alignment fields are `Option` rather than plain values with a `Default`, and the
+/// reason is every board saved before they existed. Such a scene carries neither, and
+/// the two roles want opposite answers: free text reads from the left like a paragraph,
+/// a label centres inside its shape. One blanket default would re-align every label ever
+/// saved, so the board would come back looking different — the one thing a format change
+/// must not do. Deriving the fallback from `container_id` reproduces exactly what the
+/// two hard-coded constants used to do.
+pub fn resolved_text_align(element: &DrawElement) -> TextAlign {
+    element
+        .text_align
+        .unwrap_or(if element.container_id.is_some() {
+            TextAlign::Center
+        } else {
+            TextAlign::Left
+        })
+}
+
+/// The vertical alignment to lay out with. See [`resolved_text_align`] for why it is not
+/// a plain `Default`.
+pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
+    element
+        .vertical_align
+        .unwrap_or(if element.container_id.is_some() {
+            VerticalAlign::Middle
+        } else {
+            VerticalAlign::Top
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawElementStyle {
@@ -118,6 +179,13 @@ pub struct DrawElement {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
+    /// Read it through [`resolved_text_align`], never directly: `None` is "nobody has
+    /// said", which is not the same as any of the three values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<TextAlign>,
+    /// Read it through [`resolved_vertical_align`], for the same reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_align: Option<VerticalAlign>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,6 +296,8 @@ pub fn create_element(
         end_arrowhead: None,
         text: None,
         font_size: None,
+        text_align: None,
+        vertical_align: None,
         container_id: None,
         bound_text_id: None,
         group_id: None,
