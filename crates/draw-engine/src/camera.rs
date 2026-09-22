@@ -5,14 +5,21 @@ use crate::math::clamp;
 pub const MIN_ZOOM: f64 = 0.1;
 pub const MAX_ZOOM: f64 = 30.0;
 
-/// One zoom step, in linear zoom units — Excalidraw's `ZOOM_STEP`.
+/// One zoom step, as a *proportion* of the current scale: a notch is 10% more picture.
 ///
-/// "Linear" is the part that matters: the step is a flat tenth of the *scale*, not a
-/// tenth of the picture, so the same step is a fifth of the view at 50% and a
-/// three-hundredth of it at 3000%. `WHEEL_AMPLIFY_FROM` is what compensates.
+/// The proportion is the point. Excalidraw's `ZOOM_STEP` is a flat tenth of the *scale*,
+/// which is a different thing to look at depending on where you already are — at 10% it
+/// doubles the picture, at 1000% it is a hundredth of it. Their `log10` amplification
+/// papers over the top half of that range and leaves the bottom half alone, so zooming
+/// out stepped in leaps: 10% to 20% to 30% is 2.0x then 1.5x, in the range you are in
+/// precisely when you are looking for something.
+///
+/// Applied geometrically here instead, which is the same thing `zoom_in`/`zoom_out`
+/// already do for the toolbar buttons (x1.2), so the wheel is no longer the one control
+/// that steps by a different rule than the rest of the app.
 pub const ZOOM_STEP: f64 = 0.1;
 
-/// The largest wheel delta one event may spend.
+/// The wheel delta worth one whole notch, and the ceiling on what one event may spend.
 ///
 /// The single most important number here. A wheel delta is not a quantity the browser
 /// agrees on with anyone: Firefox reports 3 (lines) for the notch Chrome reports as 100
@@ -20,16 +27,6 @@ pub const ZOOM_STEP: f64 = 0.1;
 /// likes. Clamping means the *worst* an event can do is bounded no matter which of those
 /// it is, and that bound is what makes zooming feel like a movement rather than a jump.
 const MAX_WHEEL_DELTA: f64 = ZOOM_STEP * 100.0;
-
-/// Above this zoom the step grows with `log10`, to keep the felt step roughly constant.
-const WHEEL_AMPLIFY_FROM: f64 = 1.0;
-
-/// The delta at which that amplification reaches full strength.
-///
-/// A trackpad sends a stream of small deltas where a mouse sends one large one. Giving
-/// every small delta the full amplification would make a slow drag zoom further than a
-/// fast flick, so it is faded in over the first `20`.
-const WHEEL_AMPLIFY_FULL_AT: f64 = 20.0;
 
 /// `Math.sign`, which is 0 at 0 — unlike `f64::signum`, which is 1.0.
 ///
@@ -62,27 +59,28 @@ pub fn normalize_zoom(zoom: f64) -> f64 {
 
 /// The scale one wheel event moves to, given the scale it starts from.
 ///
-/// A port of Excalidraw's `App.wheel.ts::zoomBy`, pinned in `tests/ci_zoom_wheel.rs`.
+/// Excalidraw's clamp (`App.wheel.ts::zoomBy`) applied to a geometric step rather than a
+/// linear one — a deliberate divergence from the oracle, pinned in `tests/ci_zoom_wheel.rs`.
 /// Positive `delta_y` zooms out, matching the event.
 ///
 /// Pure, and takes the scale rather than reading the camera, because wheel events arrive
 /// faster than frames: each one has to be applied to the scale the one before it produced
 /// or a burst of ticks all start from the same scale and collapse into a single step.
 pub fn wheel_zoom_scale(scale: f64, delta_y: f64) -> f64 {
-    let sign = js_sign(delta_y);
-    let abs_delta = delta_y.abs();
-    let delta = if abs_delta > MAX_WHEEL_DELTA {
-        MAX_WHEEL_DELTA * sign
-    } else {
-        delta_y
-    };
+    // How much of a notch this event is worth, signed: exactly one past the clamp, and
+    // proportionally less below it, so a trackpad's stream of small deltas stays smooth
+    // instead of moving in notches. Negative `delta_y` zooms in, hence the flip.
+    //
+    // The sign comes from `js_sign` rather than `f64::signum`, which answers 1.0 at zero
+    // where `Math.sign` answers 0 — a purely horizontal wheel would otherwise be worth a
+    // whole notch of zoom while you are plainly scrolling sideways.
+    let notches = -js_sign(delta_y) * (delta_y.abs().min(MAX_WHEEL_DELTA) / MAX_WHEEL_DELTA);
 
-    let mut next = scale - delta / 100.0;
-    next += scale.max(WHEEL_AMPLIFY_FROM).log10()
-        * -sign
-        * (abs_delta / WHEEL_AMPLIFY_FULL_AT).min(1.0);
-
-    normalize_zoom(next.max(MIN_ZOOM))
+    // Geometric, so the step is the same share of the picture at every zoom, and the
+    // step out is the exact inverse of the step in — one notch back undoes one notch.
+    // No amplification term: a proportional step needs no correction for where it is,
+    // which is the whole reason `log10(max(1, zoom))` existed.
+    normalize_zoom(scale * (1.0 + ZOOM_STEP).powf(notches))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

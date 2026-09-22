@@ -6,11 +6,22 @@
 //! single event may do. Without one the zoom is not slow or fast, it is *unpredictable*,
 //! which is the part that makes it unusable.
 //!
-//! The bound is not a preference. Excalidraw clamps the wheel delta to `ZOOM_STEP * 100`
-//! and works in linear zoom units, and this is a port of that arithmetic
-//! (`App.wheel.ts::zoomBy` at the SHA in `scripts/oracle-sha.txt`), so the tests below
-//! come in two kinds: ones that pin the oracle's exact numbers, and ones that assert the
-//! continuity property those numbers produce.
+//! The bound is not a preference: Excalidraw clamps the wheel delta to `ZOOM_STEP * 100`
+//! (`App.wheel.ts::zoomBy` at the SHA in `scripts/oracle-sha.txt`) and that clamp is
+//! ported here unchanged.
+//!
+//! **What the step does with the clamped delta is a deliberate divergence.** The oracle
+//! works in *linear* zoom units — a flat tenth of the scale — and then corrects the top
+//! of the range with `log10(max(1, zoom))`. The bottom of the range gets no correction,
+//! so zooming out moved in leaps: 10% to 20% to 30% is 2.0x then 1.5x, and that is the
+//! range you are in when you are hunting for something. A geometric step is the same
+//! share of the picture everywhere, needs no amplification, and makes zooming out the
+//! exact inverse of zooming in. It also matches `zoom_in`/`zoom_out`, which have always
+//! multiplied by 1.2 for the toolbar buttons.
+//!
+//! So the tests below come in two kinds: ones that pin the numbers this engine promises,
+//! and ones that assert the continuity property those numbers produce. Where a number
+//! differs from the oracle's, the comment says so.
 
 mod common;
 use common::*;
@@ -37,6 +48,16 @@ fn zoom_levels() -> Vec<f64> {
     ]
 }
 
+/// How much a measured step ratio may differ from the exact one.
+///
+/// Not slack: `normalize_zoom` rounds to six decimal places, which is an *absolute*
+/// correction of up to 5e-7, and a ratio divides it by the scale. At 50% zooming out,
+/// 0.5/1.1 = 0.4545454… rounds to 0.454545 and the ratio reads 1.1000011 rather than
+/// 1.1. That is the rounding doing its job — it is what keeps the toolbar from showing
+/// 99% at rest — so the tolerance covers it and nothing more. Five orders of magnitude
+/// tighter than the 2.0 the linear step needed.
+const RATIO_TOLERANCE: f64 = 1e-5;
+
 /// How far apart two scales are, as a ratio ≥ 1 whichever way the zoom went.
 fn step_ratio(before: f64, after: f64) -> f64 {
     if after > before {
@@ -51,44 +72,88 @@ fn step_ratio(before: f64, after: f64) -> f64 {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn no_single_wheel_event_more_than_doubles_the_zoom() {
-    // The regression test. The handler this replaced was `exp(-delta * 0.01)`, which on
-    // a Chrome notch (`delta = 100`) is `e¹ = 2.718` — the zoom nearly tripled per event,
-    // at every zoom level, and a wheel spun twice left you somewhere unrecognisable.
+fn one_notch_is_the_same_share_of_the_picture_at_every_zoom() {
+    // The property the linear step could not give, and the reason for the divergence
+    // recorded at the top of this file.
     //
-    // Two is the oracle's own worst case rather than a target: below 100% the step is a
-    // flat tenth of *linear* zoom, so it is proportionally largest at MIN_ZOOM, where
-    // 0.1 → 0.2 doubles it. Everywhere else it is far smaller — see the test below.
+    // A flat tenth of *linear* zoom is a different thing to look at depending on where
+    // you already are: at 10% it doubles the picture, at 100% it grows it a tenth, at
+    // 1000% it is a hundredth. The `log10` amplification only ever applied above 100%,
+    // so the whole zoomed-out half of the range stepped in leaps — 10% to 20% to 30% is
+    // 2.0x then 1.5x — and that is the range you are in when you are looking for
+    // something, which is when a violent step costs the most.
+    //
+    // A geometric step is the same proportion everywhere by construction.
+    //
+    // The scale itself is pinned exactly, through `normalize_zoom` so the six-place
+    // rounding is part of the contract rather than something the test works around. The
+    // *ratio* gets a tolerance, because that rounding is an absolute correction of up to
+    // 5e-7 and dividing it by a small scale makes it a relative one: at 13% zooming out,
+    // 0.13/1.1 = 0.1181818… rounds to 0.118182 and the ratio lands on 1.0999983. That is
+    // the rounding working, not the step drifting, and 1e-5 is comfortably inside what
+    // anyone could see while being far tighter than the 2.0 the linear step needed.
+    let step = 1.0 + ZOOM_STEP;
+
     for scale in zoom_levels() {
-        for delta in REAL_WORLD_DELTAS {
-            let next = wheel_zoom_scale(scale, delta);
-            let ratio = step_ratio(scale, next);
+        // The ends of the range clamp, and a clamped step is not a step — it is the
+        // limit doing its job, asserted by its own test below.
+        if scale * step <= MAX_ZOOM {
+            let zoomed_in = wheel_zoom_scale(scale, -100.0);
+            assert_close(zoomed_in, normalize_zoom(scale * step));
             assert!(
-                ratio <= 2.0 + EPS,
-                "wheel delta {delta} at zoom {scale} moved it to {next} — a {ratio}× jump"
+                (step_ratio(scale, zoomed_in) - step).abs() < RATIO_TOLERANCE,
+                "zooming in at {scale} moved by {}x, not {step}x",
+                step_ratio(scale, zoomed_in)
+            );
+        }
+        if scale / step >= MIN_ZOOM {
+            let zoomed_out = wheel_zoom_scale(scale, 100.0);
+            assert_close(zoomed_out, normalize_zoom(scale / step));
+            assert!(
+                (step_ratio(scale, zoomed_out) - step).abs() < RATIO_TOLERANCE,
+                "zooming out at {scale} moved by {}x, not {step}x",
+                step_ratio(scale, zoomed_out)
             );
         }
     }
 }
 
 #[test]
-fn a_notch_in_the_everyday_zoom_range_moves_it_by_about_a_quarter_at_most() {
-    // 50%–2000% is where a board is read and edited. The bound here is what the zoom
-    // actually feels like; the 2× above is a corner of the range nobody works in.
-    //
-    // 1.26 rather than a round quarter because the worst case is 1.2519, zooming out at
-    // 216% — that is where `(ZOOM_STEP + log10 z) / z`, the amplification's share of the
-    // step, peaks. Stated as a computed bound rather than rounded up to a nice number so
-    // that a change to the amplification moves this test instead of hiding under it.
+fn zooming_in_and_back_out_returns_to_where_it_started() {
+    // What a constant proportion buys beyond consistency: the step out is the exact
+    // inverse of the step in, so a notch you did not mean to spin costs one notch back
+    // rather than leaving the scale somewhere near where it was. The linear step was
+    // reversible at 100% and nowhere else — from 0.5 it went 0.6 then 0.5, but from 2.0
+    // it went 2.401 then 2.021.
     for scale in zoom_levels() {
-        if !(0.5..=20.0).contains(&scale) {
+        if scale * (1.0 + ZOOM_STEP) > MAX_ZOOM {
             continue;
         }
+        let there = wheel_zoom_scale(scale, -100.0);
+        let back = wheel_zoom_scale(there, 100.0);
+        assert_close(back, scale);
+    }
+}
+
+#[test]
+fn no_single_wheel_event_moves_the_zoom_by_more_than_one_notch() {
+    // The regression test, and it now has teeth in both directions.
+    //
+    // The handler this replaced was `exp(-delta * 0.01)`, which on a Chrome notch
+    // (`delta = 100`) is `e¹ = 2.718` — the zoom nearly tripled per event, at every zoom
+    // level, and a wheel spun twice left you somewhere unrecognisable.
+    //
+    // The bound used to be 2.0, which was the *linear* step's own worst case: a flat
+    // tenth of scale at MIN_ZOOM takes 0.1 to 0.2. That made it a poor guard — a silent
+    // return to the linear step would have passed it, and passed the 1.26 bound over the
+    // working range too. One notch is the whole guarantee now, so it is what is asserted,
+    // and the two looser tests this replaced are covered by it at every level and delta.
+    for scale in zoom_levels() {
         for delta in REAL_WORLD_DELTAS {
             let next = wheel_zoom_scale(scale, delta);
             let ratio = step_ratio(scale, next);
             assert!(
-                ratio <= 1.26,
+                ratio <= 1.0 + ZOOM_STEP + RATIO_TOLERANCE,
                 "wheel delta {delta} at zoom {scale} moved it to {next} — a {ratio}× jump"
             );
         }
@@ -108,7 +173,7 @@ fn spinning_the_wheel_walks_the_zoom_rather_than_teleporting_it() {
             "zooming in went backwards: {scale} -> {next}"
         );
         assert!(
-            step_ratio(scale, next) <= 1.25 + EPS,
+            step_ratio(scale, next) <= 1.0 + ZOOM_STEP + RATIO_TOLERANCE,
             "a jump from {scale} to {next}"
         );
         steps.push(next);
@@ -124,7 +189,7 @@ fn spinning_the_wheel_walks_the_zoom_rather_than_teleporting_it() {
             "zooming out went forwards: {scale} -> {next}"
         );
         assert!(
-            step_ratio(scale, next) <= 2.0 + EPS,
+            step_ratio(scale, next) <= 1.0 + ZOOM_STEP + RATIO_TOLERANCE,
             "a jump from {scale} to {next}"
         );
         scale = next;
@@ -154,11 +219,16 @@ fn a_bigger_delta_never_zooms_less_than_a_smaller_one() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_notch_at_one_hundred_percent_is_a_tenth_either_way() {
-    // `delta / 100` after the clamp to `ZOOM_STEP * 100`, with no amplification because
-    // the amplification only applies above 100%.
+fn a_notch_at_one_hundred_percent_is_a_tenth_in_and_the_same_tenth_back_out() {
+    // In is `x1.1`; out is `/1.1`, which is 0.909090… and NOT the oracle's 0.9.
+    //
+    // That asymmetry is the point rather than a rounding artefact: 0.9 is a tenth of
+    // where you *were*, so zooming out and back in under the linear rule landed at 0.99.
+    // A tenth more picture and a tenth less have to be inverses or the scale drifts
+    // every time you change your mind.
     assert_close(wheel_zoom_scale(1.0, -100.0), 1.1);
-    assert_close(wheel_zoom_scale(1.0, 100.0), 0.9);
+    assert_close(wheel_zoom_scale(1.0, 100.0), normalize_zoom(1.0 / 1.1));
+    assert_close(wheel_zoom_scale(1.0, 100.0), 0.909091);
 }
 
 #[test]
@@ -176,48 +246,60 @@ fn the_delta_is_clamped_so_a_fling_is_worth_one_notch() {
 }
 
 #[test]
-fn zooming_in_past_one_hundred_percent_takes_larger_steps() {
-    // `log10(max(1, zoom))`: a tenth of linear zoom is a fifth of the picture at 50% and
-    // a three-hundredth at 3000%, so without this the zoom crawls once you are in close.
-    // The amplification is what keeps the *felt* step roughly constant.
-    // Through `normalize_zoom` because the engine rounds to six places and the long-hand
-    // arithmetic does not; the two differ in the ninth decimal, which is the rounding
-    // doing its job rather than a discrepancy.
-    assert_close(
-        wheel_zoom_scale(2.0, -100.0),
-        normalize_zoom(2.0 + 0.1 + 2.0_f64.log10()),
-    );
-    assert_close(wheel_zoom_scale(10.0, -100.0), 10.0 + 0.1 + 1.0);
+fn the_step_needs_no_amplification_because_it_is_already_proportional() {
+    // What replaced `log10(max(1, zoom))`. That term existed to stop a flat linear step
+    // from crawling once you were zoomed in; a proportional step has nothing to correct,
+    // so the whole amplification — and the `min(1, |delta| / 20)` fade that kept it from
+    // making a slow trackpad drag out-zoom a fast flick — is gone.
+    //
+    // Pinned at the zoom levels the old amplification changed the answer at, so deleting
+    // it cannot quietly come back.
+    let step = 1.0 + ZOOM_STEP;
+    for scale in [0.5, 1.0, 2.0, 5.0, 10.0] {
+        assert_close(
+            wheel_zoom_scale(scale, -100.0),
+            normalize_zoom(scale * step),
+        );
+    }
 
-    // Below 100% there is none: `max(1, zoom)` floors it.
-    assert_close(wheel_zoom_scale(0.5, -100.0), 0.6);
-    assert_close(wheel_zoom_scale(0.5, 100.0), 0.4);
+    // 10.0 is the case that shows the difference plainly: the oracle's amplified step
+    // was `10 + 0.1 + log10(10)` = 11.1, and a proportional tenth is 11.0.
+    assert_close(wheel_zoom_scale(10.0, -100.0), 11.0);
 }
 
 #[test]
-fn a_small_trackpad_delta_is_amplified_less() {
-    // `min(1, |delta| / 20)`. A trackpad sends a stream of small deltas; giving each one
-    // the full `log10` amplification would make a slow drag zoom faster than a fast one.
-    let damped = wheel_zoom_scale(5.0, -4.0);
+fn a_delta_under_the_clamp_is_a_proportional_fraction_of_a_notch() {
+    // A trackpad sends a stream of small deltas where a mouse sends one large one, so a
+    // sub-clamp delta has to be worth a fraction of a notch rather than a whole one —
+    // otherwise a gentle two-finger drag zooms in notches and is unusable for framing.
+    //
+    // 4 of the clamp's 10 is four tenths of a notch, so the factor is `1.1^0.4`.
     assert_close(
-        damped,
-        normalize_zoom(5.0 + 0.04 + 5.0_f64.log10() * (4.0 / 20.0)),
+        wheel_zoom_scale(5.0, -4.0),
+        normalize_zoom(5.0 * (1.0 + ZOOM_STEP).powf(0.4)),
     );
 
-    // Undamped it would be this instead — a 15% jump out of a 4px nudge.
-    let undamped = 5.0 + 0.04 + 5.0_f64.log10();
-    assert!(damped < undamped - 0.5, "{damped} vs {undamped}");
+    // And it really is smaller than the notch it is a fraction of.
+    assert!(wheel_zoom_scale(5.0, -4.0) < wheel_zoom_scale(5.0, -100.0));
 }
 
 #[test]
 fn a_firefox_line_delta_is_a_small_step_rather_than_a_wild_one() {
-    // Firefox reports `deltaMode: 1` — one notch is 3 *lines*, not ~100 pixels. The
-    // oracle does not normalise for it, and it does not need to: 3 is well under the
-    // clamp, so it lands as a 3% step. Slower than Chrome, but continuous, which is the
-    // property that matters. Pinned so that adding a `deltaMode` normalisation later is
-    // a deliberate divergence rather than an accident.
-    assert_close(wheel_zoom_scale(1.0, -3.0), 1.03);
-    assert_close(wheel_zoom_scale(1.0, 3.0), 0.97);
+    // Firefox reports `deltaMode: 1` — one notch is 3 *lines*, not ~100 pixels.
+    //
+    // `host/wheel.ts` now normalises that to pixels before it ever reaches here, so a
+    // real Firefox notch arrives as 120 and is worth a whole notch. This pins what the
+    // bare function does with a raw 3 regardless: three tenths of the clamp, so three
+    // tenths of a notch. Continuous either way, which is what the function owes; the
+    // unit is the host's problem and is tested there.
+    assert_close(
+        wheel_zoom_scale(1.0, -3.0),
+        normalize_zoom((1.0 + ZOOM_STEP).powf(0.3)),
+    );
+    assert_close(
+        wheel_zoom_scale(1.0, 3.0),
+        normalize_zoom((1.0 + ZOOM_STEP).powf(-0.3)),
+    );
 }
 
 #[test]
@@ -240,8 +322,10 @@ fn a_wheel_event_with_no_vertical_delta_leaves_the_zoom_alone() {
 fn the_zoom_stops_at_the_limits_instead_of_wrapping_or_drifting() {
     assert_close(wheel_zoom_scale(MAX_ZOOM, -100.0), MAX_ZOOM);
     assert_close(wheel_zoom_scale(MIN_ZOOM, 100.0), MIN_ZOOM);
-    // And a limit is reachable from the other side, not merely approached.
-    assert_close(wheel_zoom_scale(MIN_ZOOM, -100.0), 0.2);
+    // And a limit is reachable from the other side, not merely approached. A tenth more
+    // than MIN_ZOOM rather than the linear step's 0.2, which doubled the picture in one
+    // event at exactly the zoom where that is most disorienting.
+    assert_close(wheel_zoom_scale(MIN_ZOOM, -100.0), 0.11);
     assert!(wheel_zoom_scale(MAX_ZOOM, 100.0) < MAX_ZOOM);
 }
 
