@@ -26,7 +26,8 @@ impl DrawEngine {
         bypass_snap: bool,
     ) -> Option<Interaction> {
         match it {
-            Interaction::Draft { ref id, start } => {
+            // Same rubber-band as a shape: the box you drag out is the column you get.
+            Interaction::TextDraft { ref id, start } | Interaction::Draft { ref id, start } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     let rect = rect_from_drag(start.x, start.y, world.x, world.y, square);
                     element.x = rect.x;

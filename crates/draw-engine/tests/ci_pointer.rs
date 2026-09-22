@@ -118,11 +118,24 @@ fn pointer_freedraw_multiple_points_creates_element() {
     assert_eq!(scene[0].kind, DrawElementType::Freedraw);
 }
 
+/// A click with the text tool makes text and opens the editor — on **release**.
+///
+/// It used to happen on press, and could not any more: pressing is also how a text *box*
+/// starts, and which of the two a gesture was is only knowable once the pointer comes up.
+/// So this test now does what a click actually is, rather than half of one.
+/// `ci_text_box.rs` covers the other half of the fork.
 #[test]
 fn pointer_text_tool_click_creates_and_edits() {
     let mut engine = engine_with_measure(vec![]);
     engine.set_tool(DrawTool::Text);
+
     engine.begin_pointer(100.0, 100.0, false, false);
+    assert!(
+        engine.drain_events().text_edit.is_none(),
+        "pressing alone cannot know whether this is a click or a drag"
+    );
+
+    engine.end_pointer();
     let events = engine.drain_events();
     assert!(events.text_edit.is_some());
     assert_eq!(engine.get_scene().len(), 1);

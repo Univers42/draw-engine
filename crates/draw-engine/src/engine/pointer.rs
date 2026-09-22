@@ -177,15 +177,21 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    fn begin_text(&mut self, sx: f64, sy: f64, world: Point) {
+    /// Starts a text gesture, without yet knowing which of the two it is.
+    ///
+    /// A click makes text that grows with what you type; a drag makes a column fixed to
+    /// the width you dragged. Which one it was is only knowable on release, so the
+    /// editor cannot open here the way it used to — `end_text` opens it, once the
+    /// gesture has said how wide the thing is.
+    fn begin_text(&mut self, _sx: f64, _sy: f64, world: Point) {
         let style = merge_style(&default_element_style(), &self.next_style);
         let mut element = create_element(
             DrawElementType::Text,
             Geometry {
                 x: world.x,
                 y: world.y,
-                width: 4.0,
-                height: self.next_font_size,
+                width: 0.0,
+                height: 0.0,
             },
             style,
             self.now_ms,
@@ -195,23 +201,9 @@ impl DrawEngine {
         element.text_align = self.next_text_align;
         element.vertical_align = self.next_vertical_align;
         let id = element.id.clone();
-        let color = element.stroke_color.clone();
         self.scene.add(element);
-        self.set_selection(vec![id.clone()]);
-        self.events.text_edit = Some(crate::engine::TextEditRequest {
-            id,
-            x: sx,
-            y: sy,
-            font_size: self.next_font_size,
-            color,
-            text: String::new(),
-            width: None,
-            text_align: self
-                .next_text_align
-                .unwrap_or(crate::scene::TextAlign::Left),
-            container_id: None,
-        });
-        self.settle_tool();
+        self.interaction = Some(Interaction::TextDraft { id, start: world });
+        self.request_draw();
     }
 
     pub fn begin_pan(&mut self, sx: f64, sy: f64) {

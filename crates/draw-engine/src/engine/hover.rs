@@ -155,6 +155,7 @@ impl DrawEngine {
             }
             Interaction::ResizeGroup { handle, .. } => resize_cursor(*handle, 0.0),
             Interaction::Draft { .. }
+            | Interaction::TextDraft { .. }
             | Interaction::Linear { .. }
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
             Interaction::Erase { .. } => HoverCursor::Crosshair,

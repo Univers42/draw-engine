@@ -101,6 +101,14 @@ pub fn resolved_text_align(element: &DrawElement) -> TextAlign {
         })
 }
 
+/// Whether a text element sizes itself to its glyphs, or keeps the width it was given.
+///
+/// `None` means auto, because every text saved before the field existed did. Only
+/// `false` is ever written out, so an old scene round-trips byte-identically.
+pub fn is_auto_resize(element: &DrawElement) -> bool {
+    element.auto_resize.unwrap_or(true)
+}
+
 /// The vertical alignment to lay out with. See [`resolved_text_align`] for why it is not
 /// a plain `Default`.
 pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
@@ -186,6 +194,10 @@ pub struct DrawElement {
     /// Read it through [`resolved_vertical_align`], for the same reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vertical_align: Option<VerticalAlign>,
+    /// Read it through [`is_auto_resize`]: `None` is auto, which is what every text
+    /// saved before this field existed did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resize: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,6 +310,7 @@ pub fn create_element(
         font_size: None,
         text_align: None,
         vertical_align: None,
+        auto_resize: None,
         container_id: None,
         bound_text_id: None,
         group_id: None,

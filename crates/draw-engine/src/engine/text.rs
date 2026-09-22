@@ -34,9 +34,16 @@ impl DrawEngine {
         true
     }
 
-    fn request_text_edit(&mut self, element: &DrawElement) {
+    pub(crate) fn font_size_of(&self, element: &DrawElement) -> f64 {
+        element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE)
+    }
+
+    pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
         let screen = crate::world_to_screen(self.camera, element.x, element.y);
-        let width = if element.container_id.is_some() {
+        // A width is sent whenever the element has one to impose: a label takes its
+        // container's, a dragged-out column keeps its own. Only auto-sizing text leaves
+        // it to the overlay, because only auto-sizing text has no width of its own yet.
+        let width = if element.container_id.is_some() || !crate::scene::is_auto_resize(element) {
             Some(element.width * self.camera.scale)
         } else {
             None
@@ -154,6 +161,33 @@ impl DrawEngine {
         self.request_text_edit(&element);
     }
 
+    /// Gives a text column a new width and re-wraps it to fit.
+    ///
+    /// Re-wrapping is the whole job. Without it the text keeps the line breaks it had
+    /// when the box was wider and simply spills out of the box it is supposedly inside —
+    /// and the box is the only thing the person moved.
+    ///
+    /// Does nothing to auto-sizing text, which has no width of its own to impose. A
+    /// resize handle must not silently change what an element *is*.
+    pub fn set_text_box_width(&mut self, id: &str, width: f64) {
+        let Some(element) = self.scene.get(id).cloned() else {
+            return;
+        };
+        if element.kind != DrawElementType::Text
+            || element.container_id.is_some()
+            || crate::scene::is_auto_resize(&element)
+        {
+            return;
+        }
+        let text = element.text.clone().unwrap_or_default();
+        let mut next = element;
+        next.width = width.abs().max(8.0);
+        self.scene.put(next);
+        // Through `set_element_text` rather than re-wrapping here, so a column resized by
+        // a handle and one retyped into end up with exactly the same lines.
+        self.set_element_text(id, &text);
+    }
+
     pub fn set_element_text(&mut self, id: &str, text: &str) {
         let Some(element) = self.scene.get(id).cloned() else {
             return;
@@ -170,21 +204,32 @@ impl DrawEngine {
             self.request_draw();
             return;
         }
-        let font_size = element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE);
-        let final_text = if let Some(container_id) = &element.container_id {
-            if let Some(container) = self.scene.get(container_id) {
-                let max_width = (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0);
-                wrap_text_to_width(text, max_width, font_size, &self.measure_text)
-            } else {
-                text.to_string()
-            }
+        let font_size = self.font_size_of(&element);
+        // Three ways a text element gets its width, and only the last lets the glyphs
+        // decide. A label takes its container's; a dragged-out column keeps the one it
+        // was given; auto-sizing text grows to fit.
+        let wrap_to = if let Some(container_id) = &element.container_id {
+            self.scene
+                .get(container_id)
+                .map(|container| (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0))
+        } else if !crate::scene::is_auto_resize(&element) {
+            Some(element.width.abs().max(8.0))
         } else {
-            text.to_string()
+            None
+        };
+        let final_text = match wrap_to {
+            Some(max_width) => wrap_text_to_width(text, max_width, font_size, &self.measure_text),
+            None => text.to_string(),
         };
         let (width, height) = (self.measure_text)(&final_text, font_size);
         let mut next = element;
         next.text = Some(final_text.clone());
-        next.width = width;
+        // A column keeps the width it was given: it is the thing the person set, and
+        // shrinking it to the longest wrapped line would make the box creep inwards a
+        // little on every edit.
+        if crate::scene::is_auto_resize(&next) && next.container_id.is_none() {
+            next.width = width;
+        }
         next.height = height.max(
             font_size.max(final_text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT),
         );
