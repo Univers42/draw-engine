@@ -465,8 +465,21 @@ fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
 struct Layers {
     front: web_sys::HtmlCanvasElement,
     front_ctx: CanvasRenderingContext2d,
-    key: crate::render::scroll::LayerKey,
-    camera: crate::camera::Camera,
+    /// The frame this layer actually holds, or `None` when nothing has been painted into
+    /// it yet.
+    ///
+    /// An `Option` rather than a bare key, because an empty canvas that reports a key is
+    /// indistinguishable to `plan_layer` from one that has the frame: it compares the key
+    /// to itself, answers `Reuse`, nothing is painted, and the empty layer is blitted over
+    /// the board. Everything vanishes and stays vanished, because the frame loop then has
+    /// no reason to run again.
+    ///
+    /// That is not hypothetical — it is what a fresh layer used to be stamped with, and a
+    /// layer is rebuilt whenever the device size changes, which is twice per pan on any
+    /// screen above dpr 1. Making the empty state representable is what stops it coming
+    /// back: there is no longer a value to write here that claims content the canvas does
+    /// not have.
+    painted: Option<(crate::render::scroll::LayerKey, crate::camera::Camera)>,
     device: (u32, u32),
     /// Whether the frame on the target canvas has any chrome drawn over the layer.
     ///
@@ -662,15 +675,17 @@ impl Painter for CanvasPainter<'_> {
                 *slot = Some(Layers {
                     front,
                     front_ctx,
-                    key,
-                    camera: view.camera,
+                    // Nothing has been drawn into it, so it holds no frame. Saying so is
+                    // what makes the plan below a `Redraw` instead of a `Reuse` of an
+                    // empty canvas.
+                    painted: None,
                     device,
                     overlay_drawn: true,
                 });
             }
             let layers = slot.as_mut().expect("just built");
 
-            let plan = plan_layer(Some((layers.key, layers.camera)), key, view.camera);
+            let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
                 view.selected.len(),
                 view.marquee.is_some(),
@@ -718,8 +733,8 @@ impl Painter for CanvasPainter<'_> {
                     true
                 }
             };
-            layers.key = key;
-            layers.camera = view.camera;
+            // Recorded only here, after the arm above has actually painted into it.
+            layers.painted = Some((key, view.camera));
             layers.overlay_drawn = !bare;
 
             // The layer, one device pixel to one device pixel.
