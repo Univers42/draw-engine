@@ -56,6 +56,26 @@ fn opaque_box(x: f64, y: f64, w: f64, h: f64) -> DrawElement {
     element
 }
 
+/// A next-style patch that only sets the background, which is what the bucket paints with.
+fn style_background(color: &str) -> DrawElementStylePatch {
+    DrawElementStylePatch {
+        background_color: Some(color.to_string()),
+        ..Default::default()
+    }
+}
+
+/// A rectangle cut in half by a line, and a point in the left half.
+///
+/// The bucket colours a *shape's own background* when the region under the click is
+/// exactly that shape's inside, so a test about the polygon it makes otherwise has to ask
+/// for a region that is not one. Half a rectangle is the smallest such region.
+fn divided_box(w: f64, h: f64) -> Vec<DrawElement> {
+    vec![
+        stroked_box(0.0, 0.0, w, h),
+        poly(&[(w / 2.0, 0.0), (w / 2.0, h)]),
+    ]
+}
+
 fn at(x: f64, y: f64) -> Point {
     Point { x, y }
 }
@@ -767,15 +787,17 @@ fn a_click_with_the_bucket_leaves_visible_paint() {
     // element that was there, selected and undoable — but invisible. A bucket that paints
     // nothing reads as a tool that silently failed, which is the worst of the failures
     // available to it.
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 200.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.begin_pointer(50.0, 100.0, false, false);
     engine.end_pointer();
 
     let painted: Vec<DrawElement> = engine
         .get_scene()
         .into_iter()
-        .filter(|e| !e.is_deleted && e.kind == DrawElementType::Line)
+        // By what makes an element paint rather than by its kind: the divider that
+        // makes this region a region is a `Line` too.
+        .filter(|e| !e.is_deleted && is_transparent(&e.stroke_color))
         .collect();
     assert_eq!(painted.len(), 1, "one fill, not none and not two");
     assert!(
@@ -791,9 +813,9 @@ fn a_click_with_the_bucket_leaves_visible_paint() {
 
 #[test]
 fn the_fill_lands_beneath_the_outline_it_came_from() {
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 200.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.begin_pointer(50.0, 100.0, false, false);
     engine.end_pointer();
 
     let order: Vec<DrawElementType> = engine
@@ -802,10 +824,16 @@ fn the_fill_lands_beneath_the_outline_it_came_from() {
         .filter(|e| !e.is_deleted)
         .map(|e| e.kind)
         .collect();
+    // Paint first, then the outline that bounds it and the line that halves it — a
+    // stroke drawn over its own paint rather than buried by it.
     assert_eq!(
         order,
-        vec![DrawElementType::Line, DrawElementType::Rectangle],
-        "the paint goes under the stroke, or filling a shape erases its outline"
+        vec![
+            DrawElementType::Line,
+            DrawElementType::Rectangle,
+            DrawElementType::Line
+        ],
+        "the paint goes under the strokes, or filling a shape erases its outline"
     );
 }
 
@@ -817,11 +845,11 @@ fn a_fill_tells_the_host_about_itself() {
     // was in the scene — so the host was handed a scene with no fill in it, believed it,
     // and saved that. Nothing in the geometry was wrong, which is why 41 green tests said
     // the feature worked.
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 200.0));
     let _ = engine.drain_events();
 
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.begin_pointer(50.0, 100.0, false, false);
     engine.end_pointer();
 
     let events = engine.drain_events();
@@ -851,18 +879,18 @@ fn undoing_a_fill_takes_away_the_paint_and_nothing_else() {
     // it is called on, so calling it before the insert stored the pre-fill state as the
     // *current* one — and the undo that should have removed the paint went back a step
     // further than the user asked for.
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 200.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.begin_pointer(50.0, 100.0, false, false);
     engine.end_pointer();
-    assert_eq!(live_kinds(&engine).len(), 2);
+    assert_eq!(live_kinds(&engine).len(), 3);
 
     engine.undo();
 
     assert_eq!(
         live_kinds(&engine),
-        vec![DrawElementType::Rectangle],
-        "one undo should leave the shape that was there before the fill"
+        vec![DrawElementType::Rectangle, DrawElementType::Line],
+        "one undo should leave the scene that was there before the fill"
     );
 }
 
@@ -884,21 +912,21 @@ fn a_second_click_in_a_painted_region_restyles_it_through_the_engine() {
     // that now contains its own output — and that is the path a person takes. It panicked
     // in the browser on the second click, which is as bad as a bug gets: the WASM module
     // aborts and the whole board stops responding until the page is reloaded.
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 200.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 200.0));
     engine.set_tool(DrawTool::BucketFill);
 
-    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.begin_pointer(50.0, 100.0, false, false);
     engine.end_pointer();
-    assert_eq!(live_kinds(&engine).len(), 2);
+    assert_eq!(live_kinds(&engine).len(), 3);
 
     // Deliberately not the same pixel. Nobody clicks twice on the same pixel, and a
     // nearby point is what lands on the fill the first click left behind.
-    engine.begin_pointer(90.0, 110.0, false, false);
+    engine.begin_pointer(60.0, 110.0, false, false);
     engine.end_pointer();
 
     assert_eq!(
         live_kinds(&engine).len(),
-        2,
+        3,
         "the second click should recolour the paint that is there, not add to it"
     );
 }
@@ -946,9 +974,9 @@ fn painted(engine: &DrawEngine) -> DrawElement {
 
 #[test]
 fn the_fill_declares_the_size_of_the_region_it_covers() {
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 120.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
 
     let paint = painted(&engine);
@@ -983,13 +1011,13 @@ fn the_paint_can_be_picked_up_again() {
     // cannot be clicked, so it cannot be selected, moved, recoloured or deleted. It was
     // hit-testable only along its own edge, which is exactly where the outline it was
     // traced from is already answering for the same click.
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 120.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
     let id = painted(&engine).id;
 
-    let hit = engine.hit_test(100.0, 60.0, 10.0);
+    let hit = engine.hit_test(50.0, 60.0, 10.0);
     assert_eq!(
         hit.map(|e| e.id),
         Some(id.clone()),
@@ -999,7 +1027,7 @@ fn the_paint_can_be_picked_up_again() {
     // And the whole way through the tool that a person would use to grab it.
     engine.set_tool(DrawTool::Select);
     engine.clear_selection();
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
     assert_eq!(
         engine.get_selection(),
@@ -1010,15 +1038,15 @@ fn the_paint_can_be_picked_up_again() {
 
 #[test]
 fn the_paint_moves_when_it_is_dragged() {
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 120.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
     let before = painted(&engine);
 
     engine.set_tool(DrawTool::Select);
-    engine.begin_pointer(100.0, 60.0, false, false);
-    engine.move_pointer(140.0, 90.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
+    engine.move_pointer(90.0, 90.0, false, false);
     engine.end_pointer();
 
     let after = painted(&engine);
@@ -1143,9 +1171,9 @@ fn grouped(mut element: DrawElement, group: &str) -> DrawElement {
 #[test]
 fn the_paint_joins_the_group_its_owner_belongs_to() {
     let owner = grouped(stroked_box(0.0, 0.0, 200.0, 120.0), "g1");
-    let mut engine = engine_with_scene(vec![owner]);
+    let mut engine = engine_with_scene(vec![owner, poly(&[(100.0, 0.0), (100.0, 120.0)])]);
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
 
     assert_eq!(
@@ -1159,9 +1187,9 @@ fn the_paint_joins_the_group_its_owner_belongs_to() {
 fn the_paint_joins_the_frame_its_owner_sits_in() {
     let mut owner = stroked_box(0.0, 0.0, 200.0, 120.0);
     owner.frame_id = Some("f1".into());
-    let mut engine = engine_with_scene(vec![owner]);
+    let mut engine = engine_with_scene(vec![owner, poly(&[(100.0, 0.0), (100.0, 120.0)])]);
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
 
     assert_eq!(painted(&engine).frame_id.as_deref(), Some("f1"));
@@ -1230,12 +1258,197 @@ fn walls_that_disagree_give_the_paint_no_group() {
 
 #[test]
 fn a_plain_region_belongs_to_nothing() {
-    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    let mut engine = engine_with_scene(divided_box(200.0, 120.0));
     engine.set_tool(DrawTool::BucketFill);
-    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.begin_pointer(50.0, 60.0, false, false);
     engine.end_pointer();
 
     let paint = painted(&engine);
     assert_eq!(paint.group_id, None);
     assert_eq!(paint.frame_id, None);
+}
+
+// -----------------------------------------------------------------------------
+// filling a shape colours the shape
+// -----------------------------------------------------------------------------
+//
+// A deliberate divergence from Excalidraw, taken on the user's instruction after being
+// reported three times. Upstream the bucket *always* inserts a polygon, even for a plain
+// rectangle: `isBucketFillCompatible` rejects a rectangle on its first clause, so a
+// rectangle can never be restyled by the tool. The paint is then an independent element
+// with no back-reference, and moving the rectangle strands it — visibly, as a coloured
+// block sitting where the shape used to be, with square corners where the shape's were
+// round.
+//
+// That is defensible for a region that is not a shape, and indefensible for one that is.
+// So: when the region under the click is exactly some shape's own inside — nothing else
+// walls it, and that shape can carry a background — the bucket writes that shape's
+// `backgroundColor`, which is what the person meant. It then moves, resizes, rotates and
+// rounds with the shape because it *is* the shape.
+//
+// Everything a background cannot express still becomes a polygon, and that is most of
+// what the tool is for: a sub-region cut by a line, the overlap of two shapes, a ring
+// with a hole in it, a region walled in by loose strokes.
+
+#[test]
+fn filling_a_plain_shape_colours_the_shape_itself() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_next_style(style_background("#ffc9c9"));
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    let live: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .collect();
+    assert_eq!(live.len(), 1, "no second element: the shape *is* the paint");
+    assert_eq!(live[0].kind, DrawElementType::Rectangle);
+    assert_eq!(live[0].background_color, "#ffc9c9");
+}
+
+#[test]
+fn a_coloured_shape_carries_its_colour_wherever_it_goes() {
+    // The whole point of the divergence, and the thing the polygon could never do.
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_next_style(style_background("#ffc9c9"));
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    engine.set_tool(DrawTool::Select);
+    engine.begin_pointer(100.0, 0.0, false, false); // the top edge
+    engine.move_pointer(180.0, 50.0, false, false);
+    engine.end_pointer();
+
+    let moved = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| !e.is_deleted)
+        .unwrap();
+    assert_close(moved.x, 80.0);
+    assert_close(moved.y, 50.0);
+    assert_eq!(moved.background_color, "#ffc9c9", "the colour came with it");
+}
+
+#[test]
+fn clicking_a_coloured_shape_again_changes_its_colour() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.set_next_style(style_background("#ffc9c9"));
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+
+    engine.set_next_style(style_background("#a5d8ff"));
+    engine.begin_pointer(90.0, 70.0, false, false);
+    engine.end_pointer();
+
+    let live: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .collect();
+    assert_eq!(live.len(), 1, "still one element, not a pile");
+    assert_eq!(live[0].background_color, "#a5d8ff");
+}
+
+/// Everything a background cannot express still becomes paint.
+#[test]
+fn a_region_a_background_cannot_express_is_still_a_polygon() {
+    // Half a rectangle, cut by a line. No shape's background is that region.
+    let divided = vec![
+        stroked_box(0.0, 0.0, 200.0, 120.0),
+        poly(&[(100.0, 0.0), (100.0, 120.0)]),
+    ];
+    let mut engine = engine_with_scene(divided);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(50.0, 60.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(live_kinds(&engine).len(), 3, "a third element: the paint");
+    let paint = painted(&engine);
+    assert!(paint.width < 150.0, "and it is the half, not the whole");
+}
+
+#[test]
+fn an_overlap_is_still_a_polygon() {
+    let mut engine = engine_with_scene(vec![
+        stroked_box(0.0, 0.0, 200.0, 120.0),
+        stroked_box(100.0, 60.0, 200.0, 120.0),
+    ]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(150.0, 90.0, false, false);
+    engine.end_pointer();
+    assert_eq!(live_kinds(&engine).len(), 3);
+}
+
+#[test]
+fn a_region_with_a_hole_in_it_is_still_a_polygon() {
+    // An annulus. A background fills a shape solid; it has no way to leave a hole.
+    let mut engine = engine_with_scene(vec![
+        stroked_box(0.0, 0.0, 300.0, 300.0),
+        stroked_box(100.0, 100.0, 100.0, 100.0),
+    ]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(30.0, 30.0, false, false);
+    engine.end_pointer();
+    assert_eq!(live_kinds(&engine).len(), 3);
+}
+
+#[test]
+fn a_region_held_up_by_loose_strokes_is_still_a_polygon() {
+    let walls = vec![
+        poly(&[(0.0, 0.0), (200.0, 0.0)]),
+        poly(&[(200.0, 0.0), (200.0, 200.0)]),
+        poly(&[(200.0, 200.0), (0.0, 200.0)]),
+        poly(&[(0.0, 200.0), (0.0, 0.0)]),
+    ];
+    let mut engine = engine_with_scene(walls);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+    assert_eq!(live_kinds(&engine).len(), 5, "four walls and the paint");
+}
+
+/// A frame is a container, not a shape with a background, so filling one paints.
+#[test]
+fn a_shape_that_cannot_carry_a_background_is_still_painted() {
+    let mut frame = create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 200.0,
+        },
+    );
+    frame.id = "frame-1".into();
+    let mut engine = engine_with_scene(vec![frame]);
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(150.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(live_kinds(&engine).len(), 2, "the frame keeps its own look");
+}
+
+#[test]
+fn undoing_a_shape_fill_puts_the_colour_back() {
+    let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
+    engine.set_next_style(style_background("#ffc9c9"));
+    engine.set_tool(DrawTool::BucketFill);
+    engine.begin_pointer(100.0, 60.0, false, false);
+    engine.end_pointer();
+    engine.undo();
+
+    let live: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .collect();
+    assert_eq!(live.len(), 1);
+    assert!(
+        is_transparent(&live[0].background_color),
+        "undo returns the shape to having no colour at all"
+    );
 }

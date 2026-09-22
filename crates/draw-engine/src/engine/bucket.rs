@@ -27,6 +27,12 @@ impl DrawEngine {
         let refs: Vec<&DrawElement> = live.iter().collect();
         let fill = compute_bucket_fill(point, &refs, &options)?;
 
+        // The region is exactly some shape's own inside: colour that shape rather than
+        // laying a separate polygon over it. See `colour_the_shape_itself`.
+        if let Some(id) = self.shape_to_colour(&fill, &live) {
+            return Ok(self.colour_the_shape_itself(&id));
+        }
+
         // Clicking a region that is already painted recolours that paint rather than
         // stacking an identical polygon on top of it — otherwise every click leaves
         // another invisible element behind and the scene grows without bound.
@@ -68,6 +74,55 @@ impl DrawEngine {
         // the first fill had already been painted in a colour nobody chose.
         self.request_draw();
         Ok(id)
+    }
+
+    /// The shape whose own background *is* this region, if there is one.
+    ///
+    /// Three things have to hold. There must be an owner — a closed element the click
+    /// landed inside. Nothing else may bound the region: a wall from any other element
+    /// means the face is some sub-region, and no shape's background is a sub-region of
+    /// itself. And the owner must be able to carry a background at all; a frame is a
+    /// container with a fixed look, so filling one still makes paint.
+    ///
+    /// An island counts as a boundary, which is what keeps a ring with a hole in it on
+    /// the polygon path — a background fills a shape solid and has no way to leave a hole.
+    fn shape_to_colour(&self, fill: &BucketFill, live: &[DrawElement]) -> Option<String> {
+        if !fill.boundary_element_ids.is_empty() {
+            return None;
+        }
+        let id = fill.owner_id.as_ref()?;
+        let owner = live.iter().find(|e| &e.id == id)?;
+        crate::scene::has_background(owner.kind).then(|| owner.id.clone())
+    }
+
+    /// Paint a shape's own background, which is what "fill this shape" means.
+    ///
+    /// A deliberate divergence from Excalidraw, taken on instruction after the previous
+    /// behaviour was reported three times. Upstream the bucket always inserts a polygon,
+    /// even for a plain rectangle — `isBucketFillCompatible` rejects a rectangle outright
+    /// — so the paint is an independent element with no back-reference to the shape it
+    /// was traced from. Move the shape and the colour stays behind: a block sitting where
+    /// the shape used to be, with square corners where the shape's were round, because
+    /// the ring is a trace of the outline rather than the outline itself.
+    ///
+    /// That is defensible for a region that is not a shape, and indefensible for one that
+    /// is. Written onto the shape, the colour moves, resizes, rotates and rounds with it,
+    /// because it *is* the shape. Everything a background cannot express — a sub-region
+    /// cut by a line, an overlap, a ring with a hole, a region walled in by loose strokes
+    /// — still becomes a polygon, and that is most of what the tool is for.
+    fn colour_the_shape_itself(&mut self, id: &str) -> String {
+        let style = self.get_next_style();
+        if let Some(mut shape) = self.scene.get(id).cloned() {
+            shape.background_color = fill_color(&style.background_color);
+            // The chosen fill style verbatim, unlike the polygon path: this is a shape,
+            // every fill style renders properly on one, and the Fill style row in the
+            // panel is offered precisely so it can be chosen.
+            shape.fill_style = style.fill_style;
+            self.scene.put(bump_version(shape, self.now_ms));
+            self.push_history();
+            self.request_draw();
+        }
+        id.to_string()
     }
 
     /// Turn the computed polygon into a line element carrying the region as its points.
