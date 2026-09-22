@@ -9,6 +9,12 @@ use crate::selection::{elements_in_lasso, elements_in_marquee_among, marquee_rec
 /// absorb the jitter of a mouse being clicked.
 const MARQUEE_MIN_DRAG: f64 = 2.0;
 
+/// How wide a text gesture has to be before it means "a column this wide" rather than
+/// "put the caret here". Wider than [`MARQUEE_MIN_DRAG`] because the consequence of
+/// getting it wrong is worse: a marquee that selects nothing costs a click, a column
+/// four pixels wide costs a retype.
+const TEXT_BOX_MIN_DRAG: f64 = 12.0;
+
 impl DrawEngine {
     pub fn end_pointer(&mut self) {
         // The binding hint belongs to the drag, not to the document.
@@ -19,6 +25,7 @@ impl DrawEngine {
         self.snap_guides.clear();
         match it {
             Interaction::Draft { id, .. } => self.end_draft(&id),
+            Interaction::TextDraft { id, .. } => self.end_text(&id),
             Interaction::Linear { id, .. } => self.end_linear(&id),
             Interaction::Freedraw { id, .. } => self.end_freedraw(&id),
             Interaction::Lasso { path, base } => {
@@ -140,6 +147,37 @@ impl DrawEngine {
         self.settle_tool();
         self.set_selection(vec![id.to_string()]);
         self.push_history();
+    }
+
+    /// Decides which text gesture just happened, and opens the editor for it.
+    ///
+    /// Below `TEXT_BOX_MIN_DRAG` the gesture was a click and the element auto-sizes;
+    /// above it, the box that was dragged out is the column, fixed to that width.
+    ///
+    /// The threshold is not cosmetic. A click is never perfectly still, and without it a
+    /// two-pixel wobble would produce a two-pixel column that wraps every character onto
+    /// its own line — indistinguishable from a click to the person who made it, and the
+    /// worst of the available outcomes.
+    fn end_text(&mut self, id: &str) {
+        let Some(mut element) = self.scene.get(id).cloned() else {
+            return;
+        };
+        let dragged = element.width.abs() >= TEXT_BOX_MIN_DRAG;
+        if dragged {
+            element.auto_resize = Some(false);
+            element.width = element.width.abs();
+            // One line to start with. The height follows the text from here on, because
+            // a column's height is a consequence of its width, never a thing you set.
+            element.height = self.font_size_of(&element) * crate::TEXT_LINE_HEIGHT;
+        } else {
+            // Put back the click-sized box `begin_text` could not commit to.
+            element.width = 4.0;
+            element.height = self.font_size_of(&element);
+        }
+        self.scene.put(element.clone());
+        self.set_selection(vec![id.to_string()]);
+        self.request_text_edit(&element);
+        self.settle_tool();
     }
 
     fn end_linear(&mut self, id: &str) {

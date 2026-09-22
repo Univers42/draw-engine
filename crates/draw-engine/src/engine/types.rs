@@ -64,6 +64,15 @@ pub(crate) enum Interaction {
         id: String,
         start: Point,
     },
+    /// A text gesture in progress, before it is known to be a click or a drag.
+    ///
+    /// Separate from `Draft` because the two end differently: a drafted shape that is
+    /// too small is thrown away, whereas a text gesture that is too small is a *click*,
+    /// which is the commonest way to make text and must not be discarded.
+    TextDraft {
+        id: String,
+        start: Point,
+    },
     Linear {
         id: String,
         start: Point,
