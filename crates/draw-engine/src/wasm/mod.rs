@@ -36,11 +36,50 @@ pub(crate) struct EngineCell {
     pub(crate) on_selection: Option<js_sys::Function>,
     pub(crate) on_text: Option<js_sys::Function>,
     pub(crate) on_scene: Option<js_sys::Function>,
+    pub(crate) on_notice: Option<js_sys::Function>,
 }
 
 #[wasm_bindgen(js_name = DrawEngine)]
 pub struct WasmEngine {
     pub(crate) cell: Rc<RefCell<EngineCell>>,
+}
+
+thread_local! {
+    /// Every engine on this page, weakly.
+    ///
+    /// Exists for one job: something outside the input path can finish and need the
+    /// canvas redrawn. An image decodes asynchronously, so the frame that first asks for
+    /// it has nothing to draw, and without a way back the picture would stay a
+    /// placeholder until the next unrelated repaint.
+    ///
+    /// Weak, so an engine that has been destroyed is not kept alive by this list, and a
+    /// `Vec` rather than a single slot because a page may embed more than one board.
+    static LIVE: RefCell<Vec<std::rc::Weak<RefCell<EngineCell>>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Ask every live engine for another frame.
+///
+/// Called from asynchronous callbacks — image decoding today — which have no handle on
+/// the engine that wanted the work. Dead entries are swept here rather than tracked, so
+/// destroying an engine costs nothing.
+pub(crate) fn request_repaint() {
+    let live: Vec<Rc<RefCell<EngineCell>>> = LIVE.with(|live| {
+        let mut live = live.borrow_mut();
+        live.retain(|weak| weak.strong_count() > 0);
+        live.iter().filter_map(|weak| weak.upgrade()).collect()
+    });
+    for cell in live {
+        {
+            let Ok(mut borrowed) = cell.try_borrow_mut() else {
+                continue;
+            };
+            if borrowed.engine.is_disposed() {
+                continue;
+            }
+            borrowed.engine.request_draw();
+        }
+        WasmEngine { cell }.schedule();
+    }
 }
 
 fn context_2d(canvas: &HtmlCanvasElement) -> Result<CanvasRenderingContext2d, JsValue> {
@@ -86,8 +125,10 @@ impl WasmEngine {
             on_selection: None,
             on_text: None,
             on_scene: None,
+            on_notice: None,
         }));
         let wasm = WasmEngine { cell: cell.clone() };
+        LIVE.with(|live| live.borrow_mut().push(Rc::downgrade(&cell)));
         wasm.schedule();
         Ok(wasm)
     }
@@ -115,6 +156,15 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = setOnSceneChange)]
     pub fn set_on_scene_change(&self, cb: Option<js_sys::Function>) {
         self.cell.borrow_mut().on_scene = cb;
+    }
+
+    /// Something the person should be told, as a stable code.
+    ///
+    /// A code and not a sentence: the wording, the language and the room it has to fit in
+    /// are the host's to decide, and a headless host is free to ignore it entirely.
+    #[wasm_bindgen(js_name = setOnNotice)]
+    pub fn set_on_notice(&self, cb: Option<js_sys::Function>) {
+        self.cell.borrow_mut().on_notice = cb;
     }
 
     pub fn destroy(&self) {
@@ -157,7 +207,11 @@ impl WasmEngine {
             if c.raf.is_some() || c.engine.is_disposed() {
                 return;
             }
-            if !c.engine.is_dirty() && !c.engine.in_motion() {
+            // One question, asked of the engine. This used to spell out `dirty ||
+            // in_motion` here and again below, which meant the browser loop held its own
+            // opinion about when the engine still had work — and so never learned about
+            // anything that animates on its own.
+            if !c.engine.needs_frame() {
                 return;
             }
         }
@@ -172,10 +226,7 @@ impl WasmEngine {
             }
             paint_frame(&cloned);
             let more = match cloned.try_borrow() {
-                Ok(cell) => {
-                    !cell.engine.is_disposed()
-                        && (cell.engine.is_dirty() || cell.engine.in_motion())
-                }
+                Ok(cell) => cell.engine.needs_frame(),
                 // Busy: assume there is more to do rather than stalling the loop.
                 Err(_) => true,
             };
@@ -257,6 +308,7 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
                 cell.on_selection.clone(),
                 cell.on_text.clone(),
                 cell.on_scene.clone(),
+                cell.on_notice.clone(),
             ),
         )
     };
@@ -274,6 +326,12 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
     if let (Some(req), Some(cb)) = (events.text_edit, cbs.3) {
         let json = serde_json::to_string(&req).unwrap_or_default();
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    }
+    if let (Some(notice), Some(cb)) = (events.notice, cbs.5) {
+        // Serialised through serde so the wire name comes from the enum's own
+        // `rename_all` rather than from a second list that could drift from it.
+        let code = serde_json::to_string(&notice).unwrap_or_default();
+        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(code.trim_matches('"')));
     }
     // One callback carries both shapes. A delta is tagged so the host can tell them
     // apart, and the full form is kept for the structural changes a delta cannot

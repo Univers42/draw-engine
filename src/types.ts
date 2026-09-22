@@ -34,8 +34,18 @@ export type StrokeStyle = "solid" | "dashed" | "dotted";
 export type Arrowhead = "none" | "arrow" | "triangle" | "dot" | "diamond" | "bar";
 export const ARROWHEADS: Arrowhead[] = ["none", "arrow", "triangle", "dot", "diamond", "bar"];
 
+/** Where a line of text sits across the width of its own box. */
+export type TextAlign = "left" | "center" | "right";
+export const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
+
+/** Where a label sits down the height of the shape holding it. */
+export type VerticalAlign = "top" | "middle" | "bottom";
+export const VERTICAL_ALIGNS: VerticalAlign[] = ["top", "middle", "bottom"];
+
 export type DrawTool =
   | "select"
+  /** Free-form selection: draw a loop, take what it encloses. */
+  | "lasso"
   | "hand"
   | "rectangle"
   | "diamond"
@@ -44,7 +54,19 @@ export type DrawTool =
   | "arrow"
   | "freedraw"
   | "text"
-  | "eraser";
+  | "eraser"
+  /** A trail that follows the cursor and fades. Draws nothing into the scene. */
+  | "laser"
+  /** A named region that owns whatever is drawn inside it. */
+  | "frame"
+  /** Picks a file and places it. Never a drag: the picker decides, not the pointer. */
+  | "image"
+  /** Frames a live web page. Like the image tool, it asks rather than draws. */
+  | "embed"
+  /** Draws freehand and converts the stroke into the shape it was meant to be. */
+  | "autoshape"
+  /** Fills the region under the pointer. The click is the whole gesture. */
+  | "bucketfill";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
@@ -88,6 +110,20 @@ export interface DrawElement extends DrawElementStyle {
   endArrowhead?: Arrowhead;
   text?: string;
   fontSize?: number;
+  /**
+   * Absent means "nobody has chosen", which is not the same as any of the three values:
+   * a text with no alignment falls back to left, a label with none falls back to centre.
+   * Writing a value here where none was chosen re-aligns every board saved before the
+   * field existed.
+   */
+  textAlign?: TextAlign;
+  verticalAlign?: VerticalAlign;
+  /**
+   * `false` for a column dragged out with the text tool, which keeps the width it was
+   * given and wraps inside it. Absent means auto — every text saved before this field
+   * existed sized itself to its glyphs, so only `false` is ever written.
+   */
+  autoResize?: boolean;
   containerId?: string | null;
   boundTextId?: string | null;
   groupId?: string | null;
@@ -97,6 +133,27 @@ export interface DrawElement extends DrawElementStyle {
   updated: number;
   isDeleted: boolean;
 }
+
+/**
+ * The canvas grid: whether it is drawn, how coarse, how often a line is emphasised, and
+ * whether gestures land on it.
+ *
+ * Mirrors the engine's `GridSettings`. Defaults are Excalidraw's — off, 20 units, every
+ * 5th line major.
+ */
+export interface GridSettings {
+  enabled: boolean;
+  size: number;
+  step: number;
+  snap: boolean;
+}
+
+export const DEFAULT_GRID: GridSettings = {
+  enabled: false,
+  size: 20,
+  step: 5,
+  snap: true,
+};
 
 export interface DrawTheme {
   background: string;
@@ -137,7 +194,23 @@ export interface TextEditRequest {
   fontSize: number;
   color: string;
   text: string;
+  width?: number;
+  /**
+   * Already resolved, so the overlay never has to work out what an unset element means.
+   * The overlay must lay the text out the way the canvas will, or it jumps the moment
+   * the edit is committed.
+   */
+  textAlign: TextAlign;
+  containerId?: string | null;
 }
+
+/**
+ * Something the person should be told, as a stable code rather than a sentence.
+ *
+ * The motor knows *what* happened; the wording, the language and the room it has to fit
+ * in belong to whatever is hosting it. A headless host is free to ignore these entirely.
+ */
+export type DrawNotice = "fill-region-not-closed" | "fill-region-too-complex";
 
 export interface DrawEngineOptions {
   canvas: HTMLCanvasElement;
@@ -146,6 +219,7 @@ export interface DrawEngineOptions {
   onSelectionChange?: (ids: string[]) => void;
   onRequestTextEdit?: (request: TextEditRequest) => void;
   onSceneChange?: (json: string) => void;
+  onNotice?: (notice: DrawNotice) => void;
 }
 
 export class Scene {

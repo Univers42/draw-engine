@@ -96,11 +96,24 @@ impl DrawEngine {
     /// reconciliation rule, and the same one `packages/contract` applies server-side,
     /// so a client and the server converge on the same answer.
     ///
+    /// An optional `order` array of live ids rewrites z-order after the element merge.
+    /// Without it, `put` keeps each element's existing position — a style change must
+    /// not float a shape to the front, and a peer's reorder would never arrive.
+    ///
     /// No history entry: a remote edit is not a step in *your* undo stack. No scene
     /// event either — the caller is told through the return value, so nothing
     /// re-broadcasts what it was just sent.
     pub fn apply_remote_patch(&mut self, json: &str) -> bool {
-        let Some(incoming) = crate::export::elements_from_json(json) else {
+        let Ok(data) = serde_json::from_str::<serde_json::Value>(json) else {
+            return false;
+        };
+        if data.get("type").and_then(|value| value.as_str()) != Some("osidraw") {
+            return false;
+        }
+        let Some(incoming) = data
+            .get("elements")
+            .and_then(|value| serde_json::from_value::<Vec<DrawElement>>(value.clone()).ok())
+        else {
             return false;
         };
 
@@ -112,6 +125,33 @@ impl DrawEngine {
             };
             if accept {
                 self.scene.put(element);
+                changed = true;
+            }
+        }
+
+        if let Some(order_ids) = data.get("order").and_then(|value| value.as_array()) {
+            let ids: Vec<&str> = order_ids
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect();
+            if !ids.is_empty() {
+                let mut live: Vec<DrawElement> = Vec::with_capacity(ids.len());
+                for id in &ids {
+                    if let Some(element) = self.scene.get(id) {
+                        if !element.is_deleted {
+                            live.push(element.clone());
+                        }
+                    }
+                }
+                for element in self.scene.ordered_cloned() {
+                    if element.is_deleted {
+                        continue;
+                    }
+                    if !ids.iter().any(|id| *id == element.id) {
+                        live.push(element);
+                    }
+                }
+                self.scene.set_order(live);
                 changed = true;
             }
         }
@@ -162,11 +202,13 @@ impl DrawEngine {
     }
 
     pub fn duplicate_selection(&mut self, offset_x: f64, offset_y: f64) {
-        let Some(json) = serialize_selection(&self.scene.ordered_cloned(), &self.selected_ids)
-        else {
-            return;
-        };
-        let Some(copies) = materialize_elements(&json, offset_x, offset_y, self.now_ms) else {
+        // Straight from the scene, with no JSON in between. This used to deep-clone every
+        // element on the board, serialise the selection, and parse it back — so the cost
+        // of one Ctrl+D was proportional to the whole document, and a run of them (which
+        // is how a board full of one shape gets made) was quadratic in its own output.
+        let copied =
+            crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
+        let Some(copies) = crate::edit::materialize(copied, offset_x, offset_y, self.now_ms) else {
             return;
         };
         let ids: Vec<String> = copies.iter().map(|el| el.id.clone()).collect();
@@ -199,6 +241,20 @@ impl DrawEngine {
                 }
             }
         }
+        // Deleting a frame deletes what it holds, as Excalidraw's does. A frame is the
+        // thing those elements live in, not a label on them: leaving the contents behind
+        // would scatter a diagram you had deliberately gathered.
+        //
+        // Collected before the removals rather than inside the loop above, because
+        // reading a frame's children needs the scene while the loop above is already
+        // writing to it.
+        let orphaned: Vec<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .collect();
+        doomed.extend(orphaned);
         for id in doomed {
             self.scene.remove(&id, now);
         }

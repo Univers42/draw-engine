@@ -195,8 +195,16 @@ pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElem
     }
     let rect = normalize_rect(container.x, container.y, container.width, container.height);
     let width = (rect.width - LABEL_PADDING * 2.0).max(8.0);
+    // Horizontal alignment is the painter's job — the label keeps the container's full
+    // inner width and the glyphs move inside it. Vertical alignment is this function's,
+    // because the label is a real element with its own `y` and nothing else would move it.
     label.x = rect.x + LABEL_PADDING;
-    label.y = rect.y + rect.height / 2.0 - label.height / 2.0;
+    label.y = rect.y
+        + crate::render::label_offset_y(
+            crate::scene::resolved_vertical_align(&label),
+            rect.height,
+            label.height,
+        );
     label.width = width;
     label.angle = container.angle;
     label

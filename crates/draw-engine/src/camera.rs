@@ -5,6 +5,102 @@ use crate::math::clamp;
 pub const MIN_ZOOM: f64 = 0.1;
 pub const MAX_ZOOM: f64 = 30.0;
 
+/// One zoom step, as a *proportion* of the current scale: a notch is 10% more picture.
+///
+/// The proportion is the point. Excalidraw's `ZOOM_STEP` is a flat tenth of the *scale*,
+/// which is a different thing to look at depending on where you already are — at 10% it
+/// doubles the picture, at 1000% it is a hundredth of it. Their `log10` amplification
+/// papers over the top half of that range and leaves the bottom half alone, so zooming
+/// out stepped in leaps: 10% to 20% to 30% is 2.0x then 1.5x, in the range you are in
+/// precisely when you are looking for something.
+///
+/// Applied geometrically here instead, which is the same thing `zoom_in`/`zoom_out`
+/// already do for the toolbar buttons (x1.2), so the wheel is no longer the one control
+/// that steps by a different rule than the rest of the app.
+pub const ZOOM_STEP: f64 = 0.1;
+
+/// The scroll distance, in pixels, worth one whole notch of zoom.
+///
+/// A Chrome mouse notch, which is the one device everything else is calibrated against.
+/// `host/wheel.ts` converts lines and pages to pixels before any of this, so a Firefox
+/// notch (3 lines) arrives here as 120 and a Windows mouse sends 120 directly.
+const PIXELS_PER_NOTCH: f64 = 100.0;
+
+/// The most zoom one event may spend, however far it claims to have scrolled.
+///
+/// This and `PIXELS_PER_NOTCH` used to be the same constant (`ZOOM_STEP * 100` = 10),
+/// which quietly meant "any event of 10px or more is a whole notch". That is correct for
+/// a plain mouse, which reports a notch as one event of 100 — and catastrophic for a
+/// high-resolution or smooth-scroll wheel, which reports the same physical notch as a
+/// dozen-odd events of 8 to 20. Each one became a full notch, so one notch of scroll was
+/// fourteen notches of zoom: 1.1^14 = 3.8x per flick, at every zoom level.
+///
+/// They are separate now because they are answers to different questions. How much zoom
+/// a delta is worth is a matter of *distance*, so it divides by `PIXELS_PER_NOTCH` and a
+/// device that sends ten small events reaches the same place as one that sends a big one.
+/// The clamp is a matter of *safety* — a trackpad fling coalesces into whatever delta it
+/// likes and must not throw the board off screen in a single tick — so it bounds the
+/// notches, not the delta that defines one.
+const MAX_NOTCHES_PER_EVENT: f64 = 1.0;
+
+/// `Math.sign`, which is 0 at 0 — unlike `f64::signum`, which is 1.0.
+///
+/// Not a nicety: the notch count below is multiplied by the sign, so borrowing `signum`'s
+/// answer at zero would spend a whole notch of zoom on a purely horizontal wheel — a tilt
+/// wheel, or a sideways two-finger scroll with ctrl still held from the last pinch.
+fn js_sign(value: f64) -> f64 {
+    if value > 0.0 {
+        1.0
+    } else if value < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
+/// Excalidraw's `getNormalizedZoom`: six decimal places, then the limits.
+///
+/// The rounding keeps a long run of wheel ticks from leaving the scale a hair off every
+/// round number — visible as a toolbar reading 99% when the board is plainly at rest.
+/// `+ f64::EPSILON` before rounding is theirs too; it is what makes 1.0000004999 land on
+/// 1 rather than on the float below it.
+pub fn normalize_zoom(zoom: f64) -> f64 {
+    const PLACES: f64 = 1e6;
+    clamp(
+        ((zoom + f64::EPSILON) * PLACES).round() / PLACES,
+        MIN_ZOOM,
+        MAX_ZOOM,
+    )
+}
+
+/// The scale one wheel event moves to, given the scale it starts from.
+///
+/// Two deliberate divergences from Excalidraw's `App.wheel.ts::zoomBy`, both pinned in
+/// `tests/ci_zoom_wheel.rs`: the step is geometric rather than linear, and the bound is on
+/// the notches an event may spend rather than on the delta that defines a notch.
+/// Positive `delta_y` zooms out, matching the event.
+///
+/// Pure, and takes the scale rather than reading the camera, because wheel events arrive
+/// faster than frames: each one has to be applied to the scale the one before it produced
+/// or a burst of ticks all start from the same scale and collapse into a single step.
+pub fn wheel_zoom_scale(scale: f64, delta_y: f64) -> f64 {
+    // How much of a notch this event is worth, signed. Proportional to the distance
+    // scrolled, so ten events of 10px are worth exactly what one event of 100px is —
+    // the device's reporting granularity must not change how far the zoom travels.
+    // Negative `delta_y` zooms in, hence the flip.
+    //
+    // The sign comes from `js_sign` rather than `f64::signum`, which answers 1.0 at zero
+    // where `Math.sign` answers 0 — a purely horizontal wheel would otherwise be worth a
+    // whole notch of zoom while you are plainly scrolling sideways.
+    let notches = -js_sign(delta_y) * (delta_y.abs() / PIXELS_PER_NOTCH).min(MAX_NOTCHES_PER_EVENT);
+
+    // Geometric, so the step is the same share of the picture at every zoom, and the
+    // step out is the exact inverse of the step in — one notch back undoes one notch.
+    // No amplification term: a proportional step needs no correction for where it is,
+    // which is the whole reason `log10(max(1, zoom))` existed.
+    normalize_zoom(scale * (1.0 + ZOOM_STEP).powf(notches))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Camera {
     pub x: f64,

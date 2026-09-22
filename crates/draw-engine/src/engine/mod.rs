@@ -3,15 +3,20 @@ use std::collections::HashSet;
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
 use crate::interaction::{DrawTool, SnapGuide};
-use crate::render::{light_theme, DrawTheme};
+use crate::render::{light_theme, DrawTheme, GridSettings};
 use crate::scene::{
-    default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene,
+    default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene, TextAlign,
+    VerticalAlign,
 };
 
 mod arrange;
+mod autoshape;
+mod bucket;
 mod clipboard;
 mod frame;
 mod hover;
+mod image;
+pub use image::EmbedFrame;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -22,7 +27,7 @@ mod types;
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, history_signature, Interaction};
-pub use types::{merge_style_patch, EngineEvents, TextEditRequest};
+pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
 /// Reach for the handles that are not laid out by [`crate::selection::HandleLayout`] —
@@ -47,6 +52,7 @@ const MOTION_MS: f64 = 140.0;
 pub struct DrawEngine {
     scene: Scene,
     theme: DrawTheme,
+    grid: GridSettings,
     pub camera: Camera,
     width: f64,
     height: f64,
@@ -57,10 +63,28 @@ pub struct DrawEngine {
     now_ms: f64,
     measure_text: fn(&str, f64) -> (f64, f64),
     tool: DrawTool,
+    /// Where a toggle tool goes back to. Never a toggle tool itself, so pressing the
+    /// eraser key three times enters, leaves, and enters again rather than oscillating.
+    tool_before_toggle: DrawTool,
     tool_locked: bool,
     next_style: DrawElementStylePatch,
     next_font_size: f64,
+    /// The alignments the next text will be created with, when one was chosen with
+    /// nothing selected. `None` means nothing was chosen, so the new element is left
+    /// unset too and keeps resolving through its role — picking an alignment must not be
+    /// the same as never touching the control.
+    next_text_align: Option<TextAlign>,
+    next_vertical_align: Option<VerticalAlign>,
     interaction: Option<Interaction>,
+    /// The linear element whose individual points are currently on offer.
+    ///
+    /// A path of more than two points is a shape: it selects to a box that resizes and
+    /// turns it. Its corners are still reachable, but behind a double click, so that the
+    /// common gesture is the common one. Excalidraw calls this the line editor and enters
+    /// it the same way.
+    ///
+    /// Held by id rather than by index because the scene is reordered underneath it.
+    editing_linear: Option<String>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -70,6 +94,12 @@ pub struct DrawEngine {
     /// without that, binding is invisible until after the fact and feels like a
     /// coincidence rather than a tool.
     binding_highlight: Option<String>,
+    /// Laser strokes on screen, drawn and fading.
+    ///
+    /// Not part of the scene and never serialized: a laser mark is a gesture, like a
+    /// finger pointed at a slide, and putting it in the document would put it in the
+    /// undo stack, the autosave and every other participant's board.
+    laser: crate::interaction::LaserTrails,
     history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
     events: EngineEvents,
 }
@@ -85,6 +115,7 @@ impl DrawEngine {
         Self {
             scene: Scene::default(),
             theme: light_theme(),
+            grid: GridSettings::default(),
             camera: IDENTITY,
             width: 0.0,
             height: 0.0,
@@ -95,14 +126,19 @@ impl DrawEngine {
             now_ms: 0.0,
             measure_text: default_measure,
             tool: DrawTool::Select,
+            tool_before_toggle: DrawTool::Select,
             tool_locked: false,
             next_style: DrawElementStylePatch::default(),
             next_font_size: DEFAULT_FONT_SIZE,
+            next_text_align: None,
+            next_vertical_align: None,
             interaction: None,
+            editing_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
             binding_highlight: None,
+            laser: crate::interaction::LaserTrails::default(),
             history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
             events: EngineEvents::default(),
         }
@@ -110,6 +146,10 @@ impl DrawEngine {
 
     pub fn set_now(&mut self, now_ms: f64) {
         self.now_ms = now_ms;
+        // Faded laser strokes are dropped here rather than while painting, so the paint
+        // view can stay borrow-only. Without it a long presentation keeps one dead stroke
+        // per flick and walks all of them every frame to draw nothing.
+        self.laser.prune(now_ms);
     }
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
@@ -139,6 +179,24 @@ impl DrawEngine {
         &self.theme
     }
 
+    pub fn set_grid(&mut self, grid: GridSettings) {
+        self.grid = grid;
+        self.request_draw();
+    }
+
+    pub fn grid(&self) -> GridSettings {
+        self.grid
+    }
+
+    /// A world point rounded onto the grid, or unchanged when the grid is not snapping.
+    ///
+    /// Every gesture that positions something goes through this, so turning the grid on
+    /// changes drawing, dragging and resizing together rather than only one of them.
+    pub(crate) fn snap(&self, point: Point) -> Point {
+        let (x, y) = self.grid.snap_point(point.x, point.y);
+        Point { x, y }
+    }
+
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {
         self.width = width;
         self.height = height;
@@ -156,6 +214,19 @@ impl DrawEngine {
 
     pub fn in_motion(&self) -> bool {
         self.now_ms < self.motion_until
+    }
+
+    /// Whether another frame is owed, for any reason.
+    ///
+    /// The single question a host's frame loop should ask. `is_dirty` alone is not it:
+    /// dirtiness means "something changed", and a fading laser changes with no input at
+    /// all, so a loop that stopped at `dirty || in_motion` would freeze a trail
+    /// part-faded until something unrelated happened to repaint.
+    ///
+    /// Answering here rather than in each host is the point — otherwise every frontend
+    /// has to learn, separately, every reason the engine might still have work to do.
+    pub fn needs_frame(&self) -> bool {
+        !self.disposed && (self.dirty || self.in_motion() || self.laser.is_active(self.now_ms))
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -237,8 +308,44 @@ impl DrawEngine {
         if tool == self.tool {
             return;
         }
+        // Remembered before the move, and never the tool being left if that tool is
+        // itself a toggle — otherwise pressing E twice would bounce the eraser against
+        // itself instead of returning you to what you were drawing.
+        if !crate::is_toggle_tool(self.tool) {
+            self.tool_before_toggle = self.tool;
+        }
         self.tool = tool;
         self.events.tool = Some(tool);
+        // Picking any tool but select puts down whatever was being held.
+        // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
+        // style panel: it offers the union of what the active tool can style and what the
+        // selection can, and a swatch applies to the selection whenever there is one. So
+        // a shape left selected from a moment ago silently captures the colour meant for
+        // the next thing drawn — choosing a green for the bucket recoloured the rectangle
+        // behind it, and the fill still came out the fallback shade.
+        //
+        // Going back to select is how a person picks up what they have just made, so that
+        // one direction keeps it.
+        if tool != DrawTool::Select {
+            self.clear_selection();
+        }
+    }
+
+    /// Choose a tool the way a keyboard shortcut does.
+    ///
+    /// The difference from [`set_tool`](Self::set_tool) is the return trip: pressing the
+    /// hand or the eraser key while that tool is already active goes back to the tool it
+    /// interrupted. A toolbar button must *not* do this — the button shows the tool as
+    /// active, so switching away on a second click would contradict what is on screen —
+    /// which is why the two doors are separate.
+    pub fn activate_tool(&mut self, tool: DrawTool) {
+        if tool == self.tool && crate::is_toggle_tool(tool) {
+            let back = self.tool_before_toggle;
+            self.tool = back;
+            self.events.tool = Some(back);
+            return;
+        }
+        self.set_tool(tool);
     }
 
     pub fn get_tool(&self) -> DrawTool {
@@ -267,8 +374,59 @@ impl DrawEngine {
 
     fn set_selection(&mut self, ids: impl IntoIterator<Item = String>) {
         self.selected_ids = ids.into_iter().collect();
+        // The point editor belongs to one element, and closes the moment that element
+        // stops being the only thing held. Without this it survives onto whatever is
+        // picked up next, which shows a stranger's corners over the new selection.
+        if let Some(editing) = self.editing_linear.as_deref() {
+            if self.selected_ids.len() != 1 || !self.selected_ids.contains(editing) {
+                self.editing_linear = None;
+            }
+        }
         self.events.selection = Some(self.get_selection());
         self.request_draw();
+    }
+
+    /// Whether this element offers its individual points rather than a bounding box.
+    ///
+    /// The shape of the element decides it — two points or fewer — plus the one element
+    /// the person has explicitly opened by double clicking it.
+    pub(crate) fn shows_point_handles(&self, element: &DrawElement) -> bool {
+        crate::selection::linear::is_point_edited(element)
+            || self.editing_linear.as_deref() == Some(element.id.as_str())
+    }
+
+    /// Open a longer path for point editing, if this element is one.
+    ///
+    /// Returns whether it did, so the double-click handler knows the gesture was spent.
+    pub(crate) fn open_linear_points(&mut self, element: &DrawElement) -> bool {
+        let is_linear = matches!(
+            element.kind,
+            crate::scene::DrawElementType::Line | crate::scene::DrawElementType::Arrow
+        );
+        let has_points = element.points.as_deref().is_some_and(|p| p.len() > 2);
+        if !is_linear || !has_points {
+            return false;
+        }
+        self.set_selection(vec![element.id.clone()]);
+        self.editing_linear = Some(element.id.clone());
+        self.request_draw();
+        true
+    }
+
+    /// The point handles currently on offer, if any.
+    ///
+    /// The same list the painter draws and the pointer tests, so a host — or a test —
+    /// can ask what is actually grabbable rather than infer it.
+    pub fn linear_points(&self) -> Vec<crate::selection::linear::LinearHandlePoint> {
+        match self.get_selected_elements().as_slice() {
+            [single] if self.shows_point_handles(single) => {
+                crate::selection::linear::handle_points(
+                    single,
+                    LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
+                )
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub fn clear_selection(&mut self) {

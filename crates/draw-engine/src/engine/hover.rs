@@ -84,7 +84,9 @@ impl DrawEngine {
         match self.tool {
             DrawTool::Hand => return HoverCursor::Grab,
             DrawTool::Text => return HoverCursor::Text,
-            DrawTool::Eraser | DrawTool::Freedraw => return HoverCursor::Crosshair,
+            DrawTool::Eraser | DrawTool::Freedraw | DrawTool::Lasso => {
+                return HoverCursor::Crosshair
+            }
             tool if is_shape_tool(tool) || is_linear_tool(tool) => {
                 return HoverCursor::Crosshair;
             }
@@ -95,7 +97,7 @@ impl DrawEngine {
 
         if let Some(single) = self.single_selected() {
             if !single.locked() {
-                if crate::selection::linear::is_point_edited(&single) {
+                if self.shows_point_handles(&single) {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
                     let tol = super::HANDLE_HIT_PX / self.camera.scale;
@@ -153,10 +155,15 @@ impl DrawEngine {
             }
             Interaction::ResizeGroup { handle, .. } => resize_cursor(*handle, 0.0),
             Interaction::Draft { .. }
+            | Interaction::TextDraft { .. }
             | Interaction::Linear { .. }
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
-            Interaction::Erase => HoverCursor::Crosshair,
+            Interaction::Erase { .. } => HoverCursor::Crosshair,
             Interaction::Marquee { .. } => HoverCursor::Default,
+            Interaction::Lasso { .. } => HoverCursor::Crosshair,
+            // The trail is the pointer here, so a crosshair marks exactly where the beam
+            // comes from — an arrow would sit beside its own tip.
+            Interaction::Laser => HoverCursor::Crosshair,
         })
     }
 }

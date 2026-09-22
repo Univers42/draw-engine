@@ -28,7 +28,8 @@ impl WasmEngine {
     /// Merges a peer's elements into the scene by id, last-writer-wins.
     ///
     /// Use this for anything arriving over the wire. `pasteJson` mints new ids, which
-    /// is right for a paste and catastrophic for a merge.
+    /// is right for a paste and catastrophic for a merge. Optional `order` (live ids)
+    /// rewrites z-order after the element merge.
     #[wasm_bindgen(js_name = applyRemotePatch)]
     pub fn apply_remote_patch(&self, json: &str) -> bool {
         let changed = self.cell.borrow_mut().engine.apply_remote_patch(json);

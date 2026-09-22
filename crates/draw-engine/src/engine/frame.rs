@@ -1,7 +1,7 @@
 use crate::camera::{Camera, WorldBounds};
 use crate::engine::DrawEngine;
 use crate::interaction::SnapGuide;
-use crate::render::DrawTheme;
+use crate::render::{DrawTheme, GridSettings};
 use crate::scene::DrawElement;
 use crate::selection::marquee_rect;
 
@@ -15,14 +15,41 @@ use crate::selection::marquee_rect;
 pub struct PaintView<'a> {
     pub camera: Camera,
     pub theme: DrawTheme,
+    pub grid: GridSettings,
     pub width: f64,
     pub height: f64,
     pub dpr: f64,
     pub in_motion: bool,
     /// Visible elements in z-order. Already culled to the viewport.
     pub elements: Vec<&'a DrawElement>,
+    /// A number that changes whenever the scene does.
+    ///
+    /// The painter reuses its offscreen layer between frames and needs to know whether
+    /// the picture is still the one in it. Deliberately taken from the whole scene rather
+    /// than from the culled list above: panning changes which elements are visible, and a
+    /// signal that moved with the camera would throw the layer away exactly when it was
+    /// most worth keeping.
+    pub scene_revision: u64,
     pub selected: Vec<&'a DrawElement>,
     pub marquee: Option<WorldBounds>,
+    /// The lasso loop in progress, in world space. Empty unless one is being drawn.
+    pub lasso: Vec<crate::camera::Point>,
+    /// Clip boxes for children that stick out of the frame that owns them, by element id.
+    ///
+    /// Only the ones that need it. A child sitting wholly inside its frame has nothing to
+    /// clip, and setting a clip path for it anyway costs a path per element every frame
+    /// for no visible difference.
+    pub frame_clips: std::collections::HashMap<String, WorldBounds>,
+    /// Where each frame's name sits, and what it says.
+    pub frame_names: Vec<(crate::camera::Point, String)>,
+    /// Laser strokes to fill, oldest first, in world space.
+    ///
+    /// Already shaped: each is a closed outline whose width varies along its length, not
+    /// a centre line to be stroked. The engine computes them so that every host draws the
+    /// same beam, and so that none of them has to own the fade.
+    pub laser: Vec<Vec<crate::interaction::LaserPoint>>,
+    /// The colour laser strokes are filled with.
+    pub laser_color: String,
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
@@ -64,6 +91,10 @@ impl DrawEngine {
             .filter_map(|id| self.scene.get(id))
             .filter(|el| !el.is_deleted)
             .collect();
+        let lasso = match &self.interaction {
+            Some(super::Interaction::Lasso { path, .. }) => path.clone(),
+            _ => Vec::new(),
+        };
         let marquee = match &self.interaction {
             Some(super::Interaction::Marquee { start, current, .. }) => {
                 Some(marquee_rect(start.x, start.y, current.x, current.y))
@@ -76,10 +107,11 @@ impl DrawEngine {
             self.quality_dpr()
         };
         let visible = crate::camera::visible_world_rect(self.camera, self.width, self.height);
+        let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
         let linear_handles = match selected.as_slice() {
-            [single] if crate::selection::linear::is_point_edited(single) => {
+            [single] if self.shows_point_handles(single) => {
                 crate::selection::linear::handle_points(
                     single,
                     super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
@@ -87,9 +119,32 @@ impl DrawEngine {
             }
             _ => Vec::new(),
         };
+        // Frame chrome, decided here so every host paints the same boundaries and clips
+        // the same children. A host is handed boxes and labels, not rules.
+        let mut frame_clips = std::collections::HashMap::new();
+        let mut frame_names = Vec::new();
+        for frame in self.scene.iter_ordered().filter(|el| {
+            crate::scene::is_frame(el)
+                && !el.is_deleted
+                && crate::render::bounds::intersects_viewport(el, &visible)
+        }) {
+            if let Some(name) = frame.name.clone() {
+                frame_names.push((crate::scene::frame_name_anchor(frame), name));
+            }
+            let clip = crate::scene::frame_clip_bounds(frame);
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
+                if let Some(child) = self.scene.get(&child_id) {
+                    if crate::scene::needs_frame_clip(child, frame) {
+                        frame_clips.insert(child_id, clip);
+                    }
+                }
+            }
+        }
+
         PaintView {
             camera: self.camera,
             theme: self.theme.clone(),
+            grid: self.grid,
             width: self.width,
             height: self.height,
             dpr,
@@ -102,8 +157,14 @@ impl DrawEngine {
                 .iter_ordered()
                 .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
                 .collect(),
+            scene_revision,
             selected,
             marquee,
+            lasso,
+            frame_clips,
+            frame_names,
+            laser: self.laser.outlines(self.now_ms, self.camera.scale),
+            laser_color: crate::interaction::DEFAULT_LASER_COLOR.to_string(),
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
@@ -122,7 +183,7 @@ impl DrawEngine {
         }
         self.dirty = false;
         painter.paint(&self.paint_view());
-        if self.in_motion() {
+        if self.needs_frame() {
             self.dirty = true;
         }
     }

@@ -46,11 +46,10 @@ impl DrawEngine {
 
     pub fn set_font_size(&mut self, size: f64) {
         self.next_font_size = size;
-        let texts: Vec<_> = self
-            .get_selected_elements()
-            .into_iter()
-            .filter(|el| el.kind == crate::scene::DrawElementType::Text)
-            .collect();
+        // Through `selected_texts` rather than the raw selection, so resizing works with
+        // a labelled shape selected — which is the only thing you *can* select once a
+        // shape has a label.
+        let texts = self.selected_texts();
         if texts.is_empty() {
             return;
         }
@@ -69,15 +68,117 @@ impl DrawEngine {
     }
 
     pub fn get_font_size(&self) -> f64 {
-        self.get_selected_elements()
+        self.selected_texts()
             .into_iter()
-            .find(|el| el.kind == crate::scene::DrawElementType::Text)
+            .next()
             .and_then(|el| el.font_size)
             .unwrap_or(self.next_font_size)
     }
 
+    /// Every text the alignment controls should act on, for the current selection.
+    ///
+    /// A bound label is not separately selectable — clicking a shape with a label in it
+    /// selects the shape — so following `bound_text_id` is not a convenience here, it is
+    /// the difference between the control working on labels and being dead for all of
+    /// them. Deduplicated by id, because selecting a shape *and* a loose text must not
+    /// visit anything twice.
+    fn selected_texts(&self) -> Vec<crate::scene::DrawElement> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for element in self.get_selected_elements() {
+            let candidate = if element.kind == crate::scene::DrawElementType::Text {
+                Some(element)
+            } else {
+                element
+                    .bound_text_id
+                    .as_deref()
+                    .and_then(|id| self.scene.get(id).cloned())
+                    .filter(|label| !label.is_deleted)
+            };
+            if let Some(text) = candidate {
+                if seen.insert(text.id.clone()) {
+                    out.push(text);
+                }
+            }
+        }
+        out
+    }
+
+    /// Horizontal alignment for the selected text, or for the next text drawn when
+    /// nothing is selected — the same way the stroke colour behaves. Without the second
+    /// half, choosing an alignment before typing would do nothing and read as a dead
+    /// button.
+    pub fn set_text_align(&mut self, align: crate::scene::TextAlign) {
+        self.next_text_align = Some(align);
+        let texts = self.selected_texts();
+        if texts.is_empty() {
+            return;
+        }
+        let now = self.now_ms;
+        for mut element in texts {
+            element.text_align = Some(align);
+            self.scene.put(bump_version(element, now));
+        }
+        self.push_history();
+        self.request_draw();
+    }
+
+    pub fn get_text_align(&self) -> crate::scene::TextAlign {
+        self.selected_texts()
+            .first()
+            .map(crate::scene::resolved_text_align)
+            .or(self.next_text_align)
+            .unwrap_or(crate::scene::TextAlign::Left)
+    }
+
+    /// Vertical alignment. Unlike the horizontal one this is a *position*: the label is a
+    /// real element with its own `y`, so the value has to be followed by a relayout or
+    /// the label stays where it was until something unrelated moves it.
+    pub fn set_vertical_align(&mut self, align: crate::scene::VerticalAlign) {
+        self.next_vertical_align = Some(align);
+        let texts = self.selected_texts();
+        if texts.is_empty() {
+            return;
+        }
+        let now = self.now_ms;
+        for mut element in texts {
+            element.vertical_align = Some(align);
+            self.scene.put(bump_version(element, now));
+        }
+        self.apply_bindings();
+        self.push_history();
+        self.request_draw();
+    }
+
+    pub fn get_vertical_align(&self) -> crate::scene::VerticalAlign {
+        self.selected_texts()
+            .first()
+            .map(crate::scene::resolved_vertical_align)
+            .or(self.next_vertical_align)
+            .unwrap_or(crate::scene::VerticalAlign::Top)
+    }
+
     pub fn zoom_at(&mut self, sx: f64, sy: f64, factor: f64) {
         self.set_camera(crate::zoom_at(self.camera, sx, sy, factor));
+        self.bump_motion();
+    }
+
+    /// One wheel event, anchored at the cursor.
+    ///
+    /// The host passes the raw `deltaY` and nothing else: how far a wheel event is worth
+    /// is arithmetic, it differs per browser and per device, and every platform this
+    /// engine is embedded in would otherwise have to get it right independently.
+    ///
+    /// Returns early when the step changes nothing, which is the common case at either
+    /// zoom limit — a trackpad goes on sending ticks for as long as the fingers move, and
+    /// publishing a camera event for each would repaint the whole scene to produce the
+    /// identical picture.
+    pub fn wheel_zoom(&mut self, sx: f64, sy: f64, delta_y: f64) {
+        let next = crate::camera::wheel_zoom_scale(self.camera.scale, delta_y);
+        if next == self.camera.scale {
+            return;
+        }
+        self.set_camera(crate::zoom_to(self.camera, sx, sy, next));
         self.bump_motion();
     }
 
@@ -96,6 +197,39 @@ impl DrawEngine {
         if let Some(bounds) = self.scene.bounds() {
             self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
         }
+    }
+
+    /// Frame what is selected, rather than the whole board.
+    ///
+    /// The command `fit` cannot stand in for: a fit has to hold everything, so the thing
+    /// you are working on ends up as small as the furthest stray shape allows. Does
+    /// nothing when the selection is empty — framing "nothing" has no meaning, and
+    /// jumping somewhere arbitrary is the worst of the available answers.
+    pub fn zoom_to_selection(&mut self, padding: f64) {
+        let selected = self.get_selected_elements();
+        if selected.is_empty() {
+            return;
+        }
+        let Some(bounds) = crate::scene_bounds(selected.iter()) else {
+            return;
+        };
+        self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
+    }
+
+    /// Move by a screenful, in units of pages.
+    ///
+    /// `PAGE_OVERLAP` is the point: moving exactly one screen leaves nothing in common
+    /// between the two views, so you lose your place at every press. Keeping a strip of
+    /// the old view is what makes paging better than dragging.
+    ///
+    /// Screen pixels, not world units, so a page is a screenful at every zoom level.
+    /// Scaling it by the zoom would make paging useless exactly when it is most needed.
+    pub fn page_by(&mut self, pages_x: f64, pages_y: f64) {
+        /// How much of the outgoing view is still visible after a page.
+        const PAGE_OVERLAP: f64 = 0.15;
+        let step_x = self.width * (1.0 - PAGE_OVERLAP);
+        let step_y = self.height * (1.0 - PAGE_OVERLAP);
+        self.pan_by(-pages_x * step_x, -pages_y * step_y);
     }
 
     pub fn zoom_in(&mut self) {

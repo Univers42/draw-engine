@@ -52,6 +52,75 @@ pub const ARROWHEADS: [Arrowhead; 6] = [
     Arrowhead::Bar,
 ];
 
+/// Where a line of text sits across the width of its own box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+}
+
+pub const TEXT_ALIGNS: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+
+/// Where a label sits down the height of the shape holding it.
+///
+/// Free-standing text has no second box to sit in, so this only has visible meaning for
+/// a label — but it is stored on every text so that binding one to a shape later does
+/// not have to invent a value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerticalAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+pub const VERTICAL_ALIGNS: [VerticalAlign; 3] = [
+    VerticalAlign::Top,
+    VerticalAlign::Middle,
+    VerticalAlign::Bottom,
+];
+
+/// The horizontal alignment to draw with, for an element that may not name one.
+///
+/// Both alignment fields are `Option` rather than plain values with a `Default`, and the
+/// reason is every board saved before they existed. Such a scene carries neither, and
+/// the two roles want opposite answers: free text reads from the left like a paragraph,
+/// a label centres inside its shape. One blanket default would re-align every label ever
+/// saved, so the board would come back looking different — the one thing a format change
+/// must not do. Deriving the fallback from `container_id` reproduces exactly what the
+/// two hard-coded constants used to do.
+pub fn resolved_text_align(element: &DrawElement) -> TextAlign {
+    element
+        .text_align
+        .unwrap_or(if element.container_id.is_some() {
+            TextAlign::Center
+        } else {
+            TextAlign::Left
+        })
+}
+
+/// Whether a text element sizes itself to its glyphs, or keeps the width it was given.
+///
+/// `None` means auto, because every text saved before the field existed did. Only
+/// `false` is ever written out, so an old scene round-trips byte-identically.
+pub fn is_auto_resize(element: &DrawElement) -> bool {
+    element.auto_resize.unwrap_or(true)
+}
+
+/// The vertical alignment to lay out with. See [`resolved_text_align`] for why it is not
+/// a plain `Default`.
+pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
+    element
+        .vertical_align
+        .unwrap_or(if element.container_id.is_some() {
+            VerticalAlign::Middle
+        } else {
+            VerticalAlign::Top
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawElementStyle {
@@ -118,12 +187,49 @@ pub struct DrawElement {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
+    /// Read it through [`resolved_text_align`], never directly: `None` is "nobody has
+    /// said", which is not the same as any of the three values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<TextAlign>,
+    /// Read it through [`resolved_vertical_align`], for the same reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_align: Option<VerticalAlign>,
+    /// Read it through [`is_auto_resize`]: `None` is auto, which is what every text
+    /// saved before this field existed did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resize: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_text_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    /// The frame that owns this element, if it is inside one.
+    ///
+    /// Membership is a property of the child, not a list on the frame, so moving an
+    /// element between frames is one write rather than two — and an element can never be
+    /// in two frames at once by construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<String>,
+    /// A frame's label. Nothing else carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The image itself, as a `data:` URL.
+    ///
+    /// Carried on the element rather than keyed into a separate file store, which is
+    /// what Excalidraw does. Theirs keeps the scene small and is the better end state;
+    /// this one makes saving, loading, undo, copy/paste, export and realtime work with
+    /// no new plumbing at all, because the image travels wherever the element does. The
+    /// cost is scene size, and the swap is mechanical when a blob endpoint exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_url: Option<String>,
+    /// The page an embed frames.
+    ///
+    /// The **resolved** embed URL, not the one that was pasted: a YouTube watch page in
+    /// an iframe shows a refusal rather than a video. Resolving once and storing the
+    /// result means the board does not depend on the rules still agreeing later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
     pub version: u32,
@@ -202,9 +308,16 @@ pub fn create_element(
         end_arrowhead: None,
         text: None,
         font_size: None,
+        text_align: None,
+        vertical_align: None,
+        auto_resize: None,
         container_id: None,
         bound_text_id: None,
         group_id: None,
+        frame_id: None,
+        name: None,
+        data_url: None,
+        embed_url: None,
         locked: None,
         version: 1,
         version_nonce: rand_int(),

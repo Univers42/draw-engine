@@ -10,7 +10,9 @@ use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
     pub fn begin_pointer(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
-        let world = self.screen_to_world(sx, sy);
+        // Snapped once, here, so every gesture that starts from a pointer position lands
+        // on the grid together. Applying it per-tool is how one of them ends up exempt.
+        let world = self.snap(self.screen_to_world(sx, sy));
         if is_shape_tool(self.tool) {
             self.begin_shape(world);
             return;
@@ -21,11 +23,47 @@ impl DrawEngine {
         }
         match self.tool {
             DrawTool::Eraser => {
-                self.interaction = Some(Interaction::Erase);
-                self.erase_at(sx, sy);
+                let at = self.screen_to_world(sx, sy);
+                self.interaction = Some(Interaction::Erase { last: at });
+                self.erase_along(at, at);
             }
-            DrawTool::Freedraw => self.begin_freedraw(world),
+            DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
+            DrawTool::Lasso => {
+                self.interaction = Some(Interaction::Lasso {
+                    path: vec![world],
+                    base: if additive {
+                        self.selected_ids.clone()
+                    } else {
+                        Default::default()
+                    },
+                });
+                if !additive {
+                    self.clear_selection();
+                }
+                self.request_draw();
+            }
+            DrawTool::Frame => self.begin_frame(world),
+            // Nothing to do with a pointer. The image arrives from a file picker, and
+            // until it does there is nothing to place — clicking must not start a
+            // marquee either, or the selection changes behind the open dialog.
+            DrawTool::Image | DrawTool::Embed => {}
+            // The click *is* the gesture: there is nothing to drag, and starting a
+            // marquee would change the selection under a fill that just happened.
+            DrawTool::BucketFill => {
+                if let Err(failure) = self.bucket_fill_at(sx, sy) {
+                    self.report_fill_failure(failure);
+                }
+            }
+            DrawTool::Laser => {
+                // Deliberately the unsnapped point. A laser follows the cursor; snapping
+                // it to the grid would make the beam jump between intersections while the
+                // hand it is meant to be tracking moves smoothly.
+                let exact = self.screen_to_world(sx, sy);
+                self.interaction = Some(Interaction::Laser);
+                self.laser.start(exact.x, exact.y, self.now_ms);
+                self.request_draw();
+            }
             DrawTool::Hand => {
                 self.interaction = Some(Interaction::Pan {
                     last_x: sx,
@@ -34,6 +72,30 @@ impl DrawEngine {
             }
             _ => self.begin_select(sx, sy, world, additive, duplicate),
         }
+    }
+
+    /// A frame is dragged out like a shape, but it is chrome rather than a drawing.
+    ///
+    /// It takes none of the current element style: a frame is always the same grey, at
+    /// the same weight, with the same corners, so it reads as a boundary rather than as
+    /// something someone drew. That is why this cannot just be another shape tool.
+    fn begin_frame(&mut self, world: Point) {
+        let mut element = create_element(
+            DrawElementType::Frame,
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            crate::scene::frame_style(),
+            self.now_ms,
+        );
+        element.name = Some(crate::scene::default_frame_name(self.scene.iter_ordered()));
+        let id = element.id.clone();
+        self.scene.add(element);
+        self.interaction = Some(Interaction::Draft { id, start: world });
+        self.request_draw();
     }
 
     fn begin_shape(&mut self, world: Point) {
@@ -115,34 +177,33 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    fn begin_text(&mut self, sx: f64, sy: f64, world: Point) {
+    /// Starts a text gesture, without yet knowing which of the two it is.
+    ///
+    /// A click makes text that grows with what you type; a drag makes a column fixed to
+    /// the width you dragged. Which one it was is only knowable on release, so the
+    /// editor cannot open here the way it used to — `end_text` opens it, once the
+    /// gesture has said how wide the thing is.
+    fn begin_text(&mut self, _sx: f64, _sy: f64, world: Point) {
         let style = merge_style(&default_element_style(), &self.next_style);
         let mut element = create_element(
             DrawElementType::Text,
             Geometry {
                 x: world.x,
                 y: world.y,
-                width: 4.0,
-                height: self.next_font_size,
+                width: 0.0,
+                height: 0.0,
             },
             style,
             self.now_ms,
         );
         element.text = Some(String::new());
         element.font_size = Some(self.next_font_size);
+        element.text_align = self.next_text_align;
+        element.vertical_align = self.next_vertical_align;
         let id = element.id.clone();
-        let color = element.stroke_color.clone();
         self.scene.add(element);
-        self.set_selection(vec![id.clone()]);
-        self.events.text_edit = Some(crate::engine::TextEditRequest {
-            id,
-            x: sx,
-            y: sy,
-            font_size: self.next_font_size,
-            color,
-            text: String::new(),
-        });
-        self.settle_tool();
+        self.interaction = Some(Interaction::TextDraft { id, start: world });
+        self.request_draw();
     }
 
     pub fn begin_pan(&mut self, sx: f64, sy: f64) {
@@ -232,7 +293,7 @@ impl DrawEngine {
                 // its handles are tested first and the box handles never apply to it.
                 // Excalidraw does the same: select an arrow there and you get circles
                 // on its ends, with no selection rectangle at all.
-                if crate::selection::linear::is_point_edited(&single) {
+                if self.shows_point_handles(&single) {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
                     if let Some(handle) =
@@ -246,7 +307,7 @@ impl DrawEngine {
                     }
                 }
 
-                let handle = if crate::selection::linear::is_point_edited(&single) {
+                let handle = if self.shows_point_handles(&single) {
                     None
                 } else {
                     // The same layout the painter uses, so a grab can only land on a
@@ -281,6 +342,7 @@ impl DrawEngine {
                         handle,
                         ratio,
                         origin,
+                        origin_points: single.points.clone(),
                     });
                     return;
                 }
@@ -315,6 +377,22 @@ impl DrawEngine {
             self.begin_move(world);
             return;
         }
+        // Nothing was hit — but the click may still be *inside what is selected*, and a
+        // click there can only sensibly mean "move this".
+        //
+        // It matters because a shape with no fill is hit on its outline only, so the
+        // middle of a selected empty rectangle is a hole. Falling through to a marquee
+        // there drops the selection that was just made and leaves the shape movable only
+        // by aiming at a two-pixel line. Checked *after* `selectable_hit` so a shape
+        // lying over the selection can still be clicked and selected in the normal way.
+        if !additive && self.pointer_is_inside_selection(world) {
+            if duplicate {
+                self.duplicate_selection(0.0, 0.0);
+            }
+            self.begin_move(world);
+            return;
+        }
+
         if !additive {
             self.clear_selection();
         }
@@ -326,9 +404,55 @@ impl DrawEngine {
         self.request_draw();
     }
 
+    /// Whether a world point falls within the frame drawn around the current selection.
+    ///
+    /// The same box the painter outlines, so what you can grab is what you can see. The
+    /// collision tolerance is added on top for the same reason it is added everywhere
+    /// else: the frame is a line, and a line is not something anyone can aim at exactly.
+    ///
+    /// A deliberate divergence from Excalidraw, which answers this only for two or more
+    /// elements (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx:9783`, returns
+    /// false below that). One element and two behaving differently is an asymmetry
+    /// nobody asks for.
+    fn pointer_is_inside_selection(&self, world: Point) -> bool {
+        let selected = self.get_selected_elements();
+        if selected.is_empty() || selected.iter().all(|el| el.locked()) {
+            return false;
+        }
+        let Some(bounds) = crate::scene_bounds(selected.iter()) else {
+            return false;
+        };
+        let pad = self.handle_layout().frame_pad + self.collision_tolerance();
+        world.x >= bounds.min_x - pad
+            && world.x <= bounds.max_x + pad
+            && world.y >= bounds.min_y - pad
+            && world.y <= bounds.max_y + pad
+    }
+
     fn begin_move(&mut self, world: Point) {
         let mut origins = std::collections::HashMap::new();
-        for element in self.get_selected_elements() {
+        // A frame carries what it contains. Expanding the set here rather than moving
+        // children separately means one code path moves everything: the children snap,
+        // re-bind and undo exactly as they would if you had selected them yourself.
+        let mut moving_elements = self.get_selected_elements();
+        let frame_ids: Vec<String> = moving_elements
+            .iter()
+            .filter(|el| crate::scene::is_frame(el))
+            .map(|el| el.id.clone())
+            .collect();
+        for frame_id in frame_ids {
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame_id) {
+                if origins.contains_key(&child_id) {
+                    continue;
+                }
+                if let Some(child) = self.scene.get(&child_id) {
+                    if !moving_elements.iter().any(|el| el.id == child_id) {
+                        moving_elements.push(child.clone());
+                    }
+                }
+            }
+        }
+        for element in moving_elements {
             if !element.locked() {
                 origins.insert(
                     element.id.clone(),
@@ -343,6 +467,15 @@ impl DrawEngine {
         // By reference: this runs once per drag-start but touches every element in the
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.
+        //
+        // Culled to the viewport as well. An alignment guide to something off screen is
+        // drawn where nobody can see it, so the shape appears to stick for no reason —
+        // and gathering candidates from the whole document makes `snap_move` cost the
+        // size of the board on *every frame of every drag*. Excalidraw gathers its
+        // candidates from the visible elements for the same two reasons.
+        //
+        // Once, here, rather than per frame: the viewport does not move during a drag.
+        let view = crate::visible_world_rect(self.camera, self.width, self.height);
         let static_bounds = self
             .scene
             .iter_ordered()
@@ -354,6 +487,12 @@ impl DrawEngine {
                         .is_none_or(|id| !moving.contains(id))
             })
             .map(element_bounds)
+            .filter(|b| {
+                b.min_x <= view.max_x
+                    && b.max_x >= view.min_x
+                    && b.min_y <= view.max_y
+                    && b.max_y >= view.min_y
+            })
             .collect();
         self.interaction = Some(Interaction::Move {
             ids: origins.keys().cloned().collect(),
@@ -364,12 +503,50 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    pub(crate) fn erase_at(&mut self, sx: f64, sy: f64) {
-        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
-            self.scene.remove(&hit.id, self.now_ms);
-            if self.selected_ids.remove(&hit.id) {
-                self.events.selection = Some(self.get_selection());
+    /// Erase everything the sweep from `from` to `to` touches.
+    ///
+    /// Two departures from what this replaced, both of which are why the eraser felt
+    /// broken rather than slow:
+    ///
+    /// - It takes a *segment*. Pointer moves are coalesced to one per animation frame, so
+    ///   a quick drag arrives as samples tens of pixels apart, and testing the samples
+    ///   steps over everything in between.
+    /// - It takes *every* element it touches, not the topmost. A board made by holding
+    ///   Ctrl+D is a stack of identical shapes in one place, so taking one per pass meant
+    ///   one pass per copy — each of which looked like it had done nothing.
+    pub(crate) fn erase_along(&mut self, from: Point, to: Point) {
+        let tolerance = self.collision_tolerance();
+        let doomed: Vec<String> = self
+            .scene
+            .iter_ordered()
+            .filter(|el| !el.locked() && crate::segment_hits_element(el, from, to, tolerance))
+            .map(|el| el.id.clone())
+            .collect();
+        if doomed.is_empty() {
+            return;
+        }
+
+        // A label belongs to its container: leaving it behind orphans it against a shape
+        // that is no longer there, which only surfaces later when something tries to lay
+        // it out.
+        let mut removed_any = false;
+        let mut selection_changed = false;
+        for id in doomed {
+            let bound = self.scene.get(&id).and_then(|el| el.bound_text_id.clone());
+            for id in std::iter::once(id).chain(bound) {
+                if self.scene.get(&id).is_none_or(|el| el.is_deleted) {
+                    continue;
+                }
+                self.scene.remove(&id, self.now_ms);
+                removed_any = true;
+                selection_changed |= self.selected_ids.remove(&id);
             }
+        }
+
+        if selection_changed {
+            self.events.selection = Some(self.get_selection());
+        }
+        if removed_any {
             self.request_draw();
         }
     }

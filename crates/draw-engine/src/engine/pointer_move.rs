@@ -11,7 +11,7 @@ impl DrawEngine {
         let Some(it) = self.interaction.take() else {
             return;
         };
-        let world = self.screen_to_world(sx, sy);
+        let world = self.snap(self.screen_to_world(sx, sy));
         let next = self.advance_interaction(it, sx, sy, world, square, bypass_snap);
         self.interaction = next;
     }
@@ -26,7 +26,8 @@ impl DrawEngine {
         bypass_snap: bool,
     ) -> Option<Interaction> {
         match it {
-            Interaction::Draft { ref id, start } => {
+            // Same rubber-band as a shape: the box you drag out is the column you get.
+            Interaction::TextDraft { ref id, start } | Interaction::Draft { ref id, start } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     let rect = rect_from_drag(start.x, start.y, world.x, world.y, square);
                     element.x = rect.x;
@@ -95,7 +96,20 @@ impl DrawEngine {
             Interaction::Freedraw { ref id, start } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     if let Some(mut points) = element.points.clone() {
-                        points.push([world.x - start.x, world.y - start.y]);
+                        // Streamlined as it arrives rather than smoothed afterwards, so
+                        // what is stored is what is drawn and what is exported — a
+                        // stroke smoothed only in the painter would change shape the
+                        // moment it was saved and reloaded.
+                        let raw = [world.x - start.x, world.y - start.y];
+                        let next = match points.last() {
+                            Some(&previous) => crate::freehand::streamline(
+                                previous,
+                                raw,
+                                crate::freehand::STREAMLINE,
+                            ),
+                            None => raw,
+                        };
+                        points.push(next);
                         element.points = Some(points);
                         self.scene.put(element);
                         self.request_draw();
@@ -103,9 +117,10 @@ impl DrawEngine {
                 }
                 Some(it)
             }
-            Interaction::Erase => {
-                self.erase_at(sx, sy);
-                Some(it)
+            Interaction::Erase { last } => {
+                let at = self.screen_to_world(sx, sy);
+                self.erase_along(last, at);
+                Some(Interaction::Erase { last: at })
             }
             Interaction::Pan { last_x, last_y } => {
                 self.pan_by(sx - last_x, sy - last_y);
@@ -120,8 +135,20 @@ impl DrawEngine {
                 handle,
                 ratio,
                 origin,
+                ref origin_points,
             } => {
-                self.move_resize(id, handle, world, square, ratio, origin);
+                let points = origin_points.clone();
+                self.move_resize(
+                    id,
+                    world,
+                    square,
+                    ResizeDrag {
+                        handle,
+                        ratio,
+                        origin,
+                        origin_points: points.as_deref(),
+                    },
+                );
                 Some(it)
             }
             Interaction::Rotate { ref id } => {
@@ -133,6 +160,27 @@ impl DrawEngine {
                     self.request_draw();
                 }
                 Some(it)
+            }
+            Interaction::Lasso { mut path, base } => {
+                // Sub-pixel moves add nothing the simplifier would keep, and a
+                // high-polling pointer emits a great many of them.
+                let keep = path
+                    .last()
+                    .is_none_or(|last| (last.x - world.x).hypot(last.y - world.y) >= 0.5);
+                if keep {
+                    path.push(world);
+                }
+                self.request_draw();
+                Some(Interaction::Lasso { path, base })
+            }
+            Interaction::Laser => {
+                // Unsnapped, and every sample kept: the trail's smoothing wants the raw
+                // pointer stream, and thinning it here would flatten the curves the
+                // streamlining exists to produce.
+                let exact = self.screen_to_world(sx, sy);
+                self.laser.add(exact.x, exact.y, self.now_ms);
+                self.request_draw();
+                Some(Interaction::Laser)
             }
             Interaction::Marquee { start, base, .. } => Some(Interaction::Marquee {
                 start,
@@ -324,7 +372,11 @@ impl DrawEngine {
         let mut dx = world.x - start.x;
         let mut dy = world.y - start.y;
         self.snap_guides.clear();
-        if !bypass_snap {
+        // Alignment guides pull toward other elements' edges, which is a different answer
+        // from the grid's. Running both makes the result depend on which won by a pixel,
+        // so the grid takes precedence while it is snapping.
+        let grid_snapping = self.grid().enabled && self.grid().snap;
+        if !bypass_snap && !grid_snapping {
             let moving: Vec<DrawElement> = ids
                 .iter()
                 .filter_map(|id| self.scene.get(id).cloned())
@@ -362,15 +414,13 @@ impl DrawEngine {
         }
     }
 
-    fn move_resize(
-        &mut self,
-        id: &str,
-        handle: HandleKind,
-        world: Point,
-        square: bool,
-        ratio: Option<f64>,
-        origin: crate::selection::Geometry,
-    ) {
+    fn move_resize(&mut self, id: &str, world: Point, square: bool, drag: ResizeDrag<'_>) {
+        let ResizeDrag {
+            handle,
+            ratio,
+            origin,
+            origin_points,
+        } = drag;
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
@@ -382,20 +432,108 @@ impl DrawEngine {
         from.y = origin.y;
         from.width = origin.width;
         from.height = origin.height;
+        // Images hold their proportions unless Shift is held; every other shape is the
+        // other way round. A photograph stretched by accident is a mistake you often do
+        // not notice until much later.
+        let lock = crate::scene::locks_aspect_ratio(&from, square);
         let geom = resize_element(
             &from,
             handle,
             world.x,
             world.y,
             1.0,
-            if square { ratio } else { None },
+            if lock { ratio } else { None },
         );
         element.x = geom.x;
         element.y = geom.y;
         element.width = geom.width;
         element.height = geom.height;
+        // A shape is generated into its box, so the box is the whole story. A path *is*
+        // its points, so the box on its own moves nothing that is drawn — the ring has to
+        // be scaled to match, from the ring the drag started with.
+        if let Some(points) = origin_points {
+            scale_ring(&mut element, points, &geom);
+        }
         self.scene.put(element);
         self.apply_bindings();
         self.request_draw();
+    }
+}
+
+/// Everything a resize drag remembers from the moment it began.
+///
+/// Grouped rather than passed one by one because they are one thing — the state of a
+/// gesture in progress — and because every one of them exists for the same reason: a
+/// resize must be measured from where the element *was*, never from where it has got to.
+struct ResizeDrag<'a> {
+    handle: HandleKind,
+    ratio: Option<f64>,
+    origin: crate::selection::Geometry,
+    origin_points: Option<&'a [[f64; 2]]>,
+}
+
+/// Scale a path's points so its ring follows the box the handle just dragged.
+///
+/// The awkward part is the anchor. A point-based element stores `points[0]` at `[0, 0]`
+/// and puts `x`/`y` where that first point sits, so the ring's own box is offset from the
+/// element's origin by however far the first point is from the ring's corner — and for a
+/// bucket fill that offset is whatever vertex the region walk happened to start on. So
+/// the points are scaled about `points[0]`, and then the origin is moved by exactly the
+/// amount that scaling shifted the ring's corner, which puts the corner back where the
+/// handle asked for it.
+fn scale_ring(
+    element: &mut DrawElement,
+    origin_points: &[[f64; 2]],
+    geom: &crate::selection::Geometry,
+) {
+    if origin_points.is_empty() {
+        return;
+    }
+    // Measured from the ring the drag *started* with, never from the live one. The live
+    // ring has already been scaled by every earlier move of this same gesture, so a scale
+    // derived from it and then applied to the original points compounds: the second move
+    // divides by a span the first move had already stretched, and the ring drifts away
+    // from the box under the hand. A single-step drag cannot see this, which is why the
+    // first test of it passed.
+    let before = ring_box(origin_points);
+    // A ring with no extent on an axis has no scale to speak of on it: leave it alone
+    // rather than divide by zero and send every point to infinity.
+    let sx = if before.width.abs() > f64::EPSILON {
+        geom.width / before.width
+    } else {
+        1.0
+    };
+    let sy = if before.height.abs() > f64::EPSILON {
+        geom.height / before.height
+    } else {
+        1.0
+    };
+    element.points = Some(
+        origin_points
+            .iter()
+            .map(|p| [p[0] * sx, p[1] * sy])
+            .collect(),
+    );
+    element.x = geom.x - before.x * sx;
+    element.y = geom.y - before.y * sy;
+    element.width = geom.width;
+    element.height = geom.height;
+}
+
+/// The box a ring covers, relative to its own first point.
+fn ring_box(points: &[[f64; 2]]) -> crate::scene::geometry::Rect {
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in points {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    crate::scene::geometry::Rect {
+        x: min_x,
+        y: min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
     }
 }
