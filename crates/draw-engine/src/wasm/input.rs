@@ -283,6 +283,22 @@ impl WasmEngine {
         self.flush();
     }
 
+    #[wasm_bindgen(js_name = zoomToSelection)]
+    pub fn zoom_to_selection(&self, padding: Option<f64>) {
+        self.cell
+            .borrow_mut()
+            .engine
+            .zoom_to_selection(padding.unwrap_or(96.0));
+        self.flush();
+    }
+
+    /// Move by a screenful. `pages_x`/`pages_y` are counts, so -1 is one page back.
+    #[wasm_bindgen(js_name = pageBy)]
+    pub fn page_by(&self, pages_x: f64, pages_y: f64) {
+        self.cell.borrow_mut().engine.page_by(pages_x, pages_y);
+        self.flush();
+    }
+
     #[wasm_bindgen(js_name = zoomIn)]
     pub fn zoom_in(&self) {
         self.cell.borrow_mut().engine.zoom_in();

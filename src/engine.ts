@@ -92,6 +92,16 @@ export class DrawEngine {
     this.inner.fit(padding);
   }
 
+  /** Frame the selection. Does nothing when nothing is selected. */
+  zoomToSelection(padding?: number): void {
+    this.inner.zoomToSelection(padding);
+  }
+
+  /** Move by a screenful, in page counts: `pageBy(0, -1)` is one page up. */
+  pageBy(pagesX: number, pagesY: number): void {
+    this.inner.pageBy(pagesX, pagesY);
+  }
+
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     const camera = this.camera;
     return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };

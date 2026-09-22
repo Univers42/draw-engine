@@ -37,6 +37,8 @@ export interface KeyEngine {
   copySelection(): string | null;
   cutSelection(): string | null;
   fit(): void;
+  zoomToSelection(): void;
+  pageBy(pagesX: number, pagesY: number): void;
   editSelectedText(): boolean;
   flipSelection(axis: FlipAxis): void;
   setToolLocked(locked: boolean): void;
@@ -125,6 +127,21 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
   }
   if (event.shiftKey && !(event.metaKey || event.ctrlKey) && event.code === "Digit1") {
     engine.fit();
+    return true;
+  }
+  if (event.shiftKey && !(event.metaKey || event.ctrlKey) && event.code === "Digit2") {
+    // Frame the selection rather than the board. `fit` cannot stand in for it: a fit has
+    // to hold everything, so the shape you are working on ends up as small as the
+    // furthest stray one allows.
+    engine.zoomToSelection();
+    return true;
+  }
+  if (event.key === "PageUp" || event.key === "PageDown") {
+    // Shift pages sideways, matching the wheel: shift turns vertical scrolling into
+    // horizontal everywhere else on the board, so it would be odd here alone.
+    const forward = event.key === "PageDown" ? 1 : -1;
+    if (event.shiftKey) engine.pageBy(forward, 0);
+    else engine.pageBy(0, forward);
     return true;
   }
   if (event.key === "Enter") {
