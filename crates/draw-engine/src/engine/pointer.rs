@@ -51,7 +51,9 @@ impl DrawEngine {
             // The click *is* the gesture: there is nothing to drag, and starting a
             // marquee would change the selection under a fill that just happened.
             DrawTool::BucketFill => {
-                let _ = self.bucket_fill_at(sx, sy);
+                if let Err(failure) = self.bucket_fill_at(sx, sy) {
+                    self.report_fill_failure(failure);
+                }
             }
             DrawTool::Laser => {
                 // Deliberately the unsnapped point. A laser follows the cursor; snapping

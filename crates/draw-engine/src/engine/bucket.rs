@@ -1,3 +1,4 @@
+use crate::engine::types::Notice;
 use crate::engine::DrawEngine;
 use crate::scene::is_transparent;
 use crate::scene::{
@@ -55,7 +56,16 @@ impl DrawEngine {
         // that did not contain it, and the fill was gone on the next load. It also left
         // the history top one state behind, so an undo went back too far.
         self.push_history();
-        self.select(vec![id.clone()]);
+        // Deliberately nothing selected. The tool stays active so that regions can be
+        // painted one after another, and a selection left on the last one puts handles
+        // over the paint, takes the next Delete, and keeps the overlay non-empty so every
+        // frame has to be composited again. Excalidraw leaves nothing selected for the
+        // same reason (`App.bucketFill.ts:281-284`).
+        //
+        // This used to select the fill, and that was load-bearing for the wrong reason:
+        // the style panel offered nothing while the bucket was the active tool, so the
+        // selection was the only thing that brought the colour swatches back — *after*
+        // the first fill had already been painted in a colour nobody chose.
         self.request_draw();
         Ok(id)
     }
@@ -67,22 +77,32 @@ impl DrawEngine {
     /// and serialises like anything else on the board, with no schema change and nothing
     /// for another frontend to special-case.
     fn fill_element(&self, fill: &BucketFill) -> DrawElement {
+        // The origin is the ring's *first* point and deliberately not its top-left corner:
+        // a point-based element is anchored so that `points[0]` is `[0, 0]`, so the rest
+        // of the ring may well be negative. Excalidraw anchors it the same way and does
+        // not normalise either (`App.bucketFill.ts:216-222`).
         let origin = fill.scene_points[0];
+        let points: Vec<[f64; 2]> = fill
+            .scene_points
+            .iter()
+            .map(|p| [p.x - origin.x, p.y - origin.y])
+            .collect();
+        // The extent the ring actually spans. This used to be hard-coded to zero, and the
+        // engine did not notice because `local_box` derives a point-based element's box
+        // from its points and ignores these two numbers — but everything that cannot see
+        // the points has only these to go on. The API has no WASM, so its bounds mirror
+        // read a fill as a zero-area box and framed board thumbnails on it.
+        let (width, height) = span_of(&points);
         let mut element = create_element_default(
             DrawElementType::Line,
             Geometry {
                 x: origin.x,
                 y: origin.y,
-                width: 0.0,
-                height: 0.0,
+                width,
+                height,
             },
         );
-        element.points = Some(
-            fill.scene_points
-                .iter()
-                .map(|p| [p.x - origin.x, p.y - origin.y])
-                .collect(),
-        );
+        element.points = Some(points);
         let style = self.get_next_style();
         element.background_color = fill_color(&style.background_color);
         element.fill_style = paint_fill_style(style.fill_style);
@@ -96,7 +116,34 @@ impl DrawEngine {
         // It also decides how the renderer builds the shape: with a roundness a line is
         // drawn as a curve, and rough has no pattern fill for a curve at all.
         element.roundness = None;
+        // Paint follows the region it was traced from, exactly. Roughness would wobble the
+        // ring away from the strokes that bound it, at precisely the edges the eye checks,
+        // and the ring is already a faithful trace of those strokes.
+        // `App.bucketFill.ts:245-265` sets the same.
+        element.roughness = 0.0;
+        element.stroke_width = 1.0;
         element
+    }
+
+    /// Say why a click painted nothing — when it is worth saying.
+    ///
+    /// A click on bare canvas is deliberately silent, and so is one whose fallback search
+    /// found nothing: aiming at empty space is not a mistake worth interrupting someone
+    /// over, and a tool that complains every time the pointer slips is one people stop
+    /// reading. Excalidraw draws the line in the same place (`App.bucketFill.ts:197`).
+    ///
+    /// Everything else means the person aimed at something and it did not work, which is
+    /// the case where silence reads as a broken tool.
+    pub(crate) fn report_fill_failure(&mut self, failure: BucketFillFailure) {
+        self.events.notice = match failure {
+            BucketFillFailure::NoOwner => None,
+            BucketFillFailure::TooComplex => Some(Notice::FillRegionTooComplex),
+            // All three mean the same thing to the person clicking: there is no region
+            // here to paint. Which stage refused is a fact about the algorithm.
+            BucketFillFailure::OpenRegion
+            | BucketFillFailure::TooSmall
+            | BucketFillFailure::InvalidPolygon => Some(Notice::FillRegionNotClosed),
+        };
     }
 
     /// Move the new fill to where the geometry said it belongs in the stack.
@@ -140,10 +187,31 @@ fn paint_fill_style(style: FillStyle) -> FillStyle {
     }
 }
 
+/// The box a ring of points spans, as a width and a height.
+///
+/// Signed extents are not a thing here: a ring has no drag direction to remember, so the
+/// span is always positive and `normalize_rect` has nothing to undo.
+fn span_of(points: &[[f64; 2]]) -> (f64, f64) {
+    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in points {
+        min_x = min_x.min(p[0]);
+        min_y = min_y.min(p[1]);
+        max_x = max_x.max(p[0]);
+        max_y = max_y.max(p[1]);
+    }
+    if !min_x.is_finite() {
+        return (0.0, 0.0);
+    }
+    (max_x - min_x, max_y - min_y)
+}
+
 /// Default paint for the bucket, for when nothing else is chosen.
 ///
-/// Excalidraw's first background swatch.
-pub const DEFAULT_BUCKET_FILL_COLOR: &str = "#a5d8ff";
+/// Excalidraw's green swatch, which is what their bucket falls back to when the shared
+/// background colour is transparent (`App.bucketFill.ts:293-300`) — not the first swatch
+/// in the picker, which is what this used to be.
+pub const DEFAULT_BUCKET_FILL_COLOR: &str = "#b2f2bb";
 
 /// The colour a fill should actually paint with.
 ///

@@ -27,7 +27,7 @@ pub use edit::{
     FlipAxis, ZOrderMode,
 };
 pub use engine::{
-    DrawEngine, EmbedFrame, EngineEvents, HoverCursor, NoopPainter, PaintView, Painter,
+    DrawEngine, EmbedFrame, EngineEvents, HoverCursor, NoopPainter, Notice, PaintView, Painter,
     TextEditRequest,
 };
 pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};

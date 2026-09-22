@@ -146,22 +146,15 @@ pub fn generate_rough_options(element: &DrawElement, continuous_path: bool) -> O
 /// `isPathALoop(points)` — whether the first and last point are close enough that the
 /// path reads as closed, and can therefore take a fill.
 ///
-/// Excalidraw uses a fixed threshold of `LINE_CONFIRM_THRESHOLD` (8px) scaled by zoom;
-/// the zoom term only matters while drawing, so the static form is used here.
+/// The rule itself lives in `scene::geometry`, because whether this path paints a
+/// background and whether a click in its middle belongs to it have to be the same
+/// question. They were once two answers in two files, and paint appeared that could not
+/// be picked up again.
 pub fn is_path_a_loop(element: &DrawElement) -> bool {
-    const LINE_CONFIRM_THRESHOLD: f64 = 8.0;
-
-    let Some(points) = element.points.as_ref() else {
-        return false;
-    };
-    if points.len() < 3 {
-        return false;
-    }
-    let first = points[0];
-    let last = points[points.len() - 1];
-    let dx = first[0] - last[0];
-    let dy = first[1] - last[1];
-    (dx * dx + dy * dy).sqrt() <= LINE_CONFIRM_THRESHOLD
+    element
+        .points
+        .as_deref()
+        .is_some_and(crate::scene::geometry::is_path_a_loop)
 }
 
 #[cfg(test)]

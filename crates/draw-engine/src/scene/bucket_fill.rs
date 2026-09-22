@@ -64,11 +64,11 @@ pub const BUCKET_FILL_COVER_MARGIN: f64 = 2.0;
 
 /// How close a path's ends must be for the renderer to treat it as closed.
 ///
-/// Excalidraw's `LINE_CONFIRM_THRESHOLD`. Whether a fill treats a stroke as closed has to
-/// agree with whether the renderer paints its background, or a shape that looks filled
-/// would not stop a fill — so this is deliberately the renderer's rule and not
-/// `gap_tolerance`.
-pub const LINE_CONFIRM_THRESHOLD: f64 = 8.0;
+/// Whether a fill treats a stroke as closed has to agree with whether the renderer paints
+/// its background, or a shape that looks filled would not stop a fill — so this is
+/// deliberately the renderer's rule and not `gap_tolerance`. Re-exported from the geometry
+/// rather than restated, so the two cannot drift apart.
+pub use crate::scene::geometry::LINE_CONFIRM_THRESHOLD;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BucketFillOptions {
@@ -396,15 +396,7 @@ fn is_opaque_color(color: &str) -> bool {
     true
 }
 
-/// A path whose ends are close enough that the renderer draws it closed.
-fn is_path_a_loop(points: &[[f64; 2]]) -> bool {
-    if points.len() < 3 {
-        return false;
-    }
-    let first = points[0];
-    let last = points[points.len() - 1];
-    (first[0] - last[0]).hypot(first[1] - last[1]) <= LINE_CONFIRM_THRESHOLD
-}
+use crate::scene::geometry::is_path_a_loop;
 
 /// A line element's points, closed and with more than three of them.
 fn is_valid_polygon(points: &[[f64; 2]]) -> bool {
