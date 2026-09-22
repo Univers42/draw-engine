@@ -37,19 +37,24 @@ impl DrawEngine {
             let mut next = existing.clone();
             let style = self.get_next_style();
             next.background_color = fill_color(&style.background_color);
-            next.fill_style = style.fill_style;
+            next.fill_style = paint_fill_style(style.fill_style);
             let id = next.id.clone();
-            self.push_history();
             self.scene.put(bump_version(next, self.now_ms));
+            self.push_history();
             self.request_draw();
             return Ok(id);
         }
 
         let element = self.fill_element(&fill);
         let id = element.id.clone();
-        self.push_history();
         self.scene.put(element);
         self.place_fill(&id, &fill);
+        // After the scene is final, never before. `push_history` both snapshots and tells
+        // the host what changed, so calling it first published the scene *without* the
+        // fill in it — the paint appeared on the canvas, the autosaver was handed a scene
+        // that did not contain it, and the fill was gone on the next load. It also left
+        // the history top one state behind, so an undo went back too far.
+        self.push_history();
         self.select(vec![id.clone()]);
         self.request_draw();
         Ok(id)
@@ -80,15 +85,17 @@ impl DrawEngine {
         );
         let style = self.get_next_style();
         element.background_color = fill_color(&style.background_color);
-        element.fill_style = match style.fill_style {
-            // A fill is paint. Asking for a hatched one would leave the region looking
-            // half-filled, which is never what a bucket is for.
-            FillStyle::Hachure | FillStyle::CrossHatch => FillStyle::Solid,
-            other => other,
-        };
+        element.fill_style = paint_fill_style(style.fill_style);
         // No stroke: the region is bounded by strokes that are already there, and drawing
         // another one along the ring would double every line it was derived from.
         element.stroke_color = "transparent".into();
+        // Sharp corners. Every vertex of this ring is a real junction between two strokes
+        // that were traced to find it, so rounding them pulls the paint away from the
+        // outline it was derived from — visibly, at exactly the corners the eye checks.
+        //
+        // It also decides how the renderer builds the shape: with a roundness a line is
+        // drawn as a curve, and rough has no pattern fill for a curve at all.
+        element.roundness = None;
         element
     }
 
@@ -112,6 +119,24 @@ impl DrawEngine {
         };
         order.insert(target.min(order.len()), element);
         self.scene.set_order(order);
+    }
+}
+
+/// The fill style a bucket actually paints with.
+///
+/// A bucket is paint. A hatched one would leave the region looking half-filled, which is
+/// never what the tool is for, so hachure and cross-hatch become solid whatever the
+/// current style says.
+///
+/// Shared by both paths on purpose. This rule used to be spelled out only where a fill is
+/// created, and the restyle branch assigned the raw style instead — and since the default
+/// style *is* hachure, a second click on a painted region turned its paint into a
+/// pattern-filled curve, which rough has no implementation for. The module aborted and
+/// the board stopped responding until the page was reloaded.
+fn paint_fill_style(style: FillStyle) -> FillStyle {
+    match style {
+        FillStyle::Hachure | FillStyle::CrossHatch => FillStyle::Solid,
+        other => other,
     }
 }
 

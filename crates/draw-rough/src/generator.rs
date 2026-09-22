@@ -137,11 +137,19 @@ pub fn ellipse(x: f64, y: f64, width: f64, height: f64, o: Options) -> Drawable 
 
 /// `generator.curve(points, options)`
 ///
-/// The pattern-fill branch is **not** ported: it needs `curveToBezier` plus
-/// `pointsOnBezierCurves` from `points-on-curve` to flatten the curve into a polygon
-/// first. Excalidraw only reaches it for a filled freedraw, which this engine does not
-/// yet produce. Solid fill and the unfilled stroke — the paths Excalidraw actually uses
-/// for lines and arrows — are complete.
+/// # Known gap: pattern fill
+///
+/// Solid fill and the unfilled stroke are exact. A **pattern** fill is approximated:
+/// rough runs `curveToBezier` then `pointsOnBezierCurves` to flatten the curve before
+/// hatching it, and neither is ported, so the control polygon is hatched instead. The
+/// hachure lines are therefore clipped slightly inside the curve where it bows outward.
+/// Same trade, and the same reason, as the flattening in [`path`].
+///
+/// This used to abort instead, on the stated grounds that only a filled freedraw could
+/// reach it and this engine produced none. That was wrong: a line with three or more
+/// points is drawn as a curve, so giving any hand-drawn polyline a background in the
+/// inspector reached it — and a `todo!()` in WASM is not an error, it is the module
+/// aborting and the board freezing until the page is reloaded.
 pub fn curve(points: &[[f64; 2]], o: Options) -> Drawable {
     let mut c = Ctx::new(o);
     let mut paths = Vec::new();
@@ -169,10 +177,8 @@ pub fn curve(points: &[[f64; 2]], o: Options) -> Drawable {
                 ops: merged_shape(fill_shape.ops),
             });
         } else {
-            unimplemented!(
-                "pattern-filled curve needs the points-on-curve flattening; \
-                 Excalidraw only reaches it for a filled freedraw"
-            );
+            // The control polygon, not the flattened curve — see the note above.
+            paths.push(pattern_fill_polygons(&[points.to_vec()], &mut c));
         }
     }
 
