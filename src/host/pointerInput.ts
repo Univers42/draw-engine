@@ -10,6 +10,8 @@ import { wheelIntent } from "./wheel";
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
   countEngineStep();
+  // Alt first: the eraser reads it to un-mark what it passes back over.
+  session.engine.setAltHeld(event.altKey);
   // Ctrl/Cmd inverts object snapping for the move, as in Excalidraw. Not Alt: Alt+drag
   // duplicates, and one key doing both meant a duplicate could never snap.
   session.engine.movePointer(x, y, event.shiftKey, event.ctrlKey || event.metaKey);

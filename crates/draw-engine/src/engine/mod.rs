@@ -14,6 +14,7 @@ mod autoshape;
 mod bucket;
 mod clipboard;
 mod debug;
+mod eraser;
 mod frame;
 mod hover;
 mod image;
@@ -140,6 +141,15 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
+    /// What the eraser sweep in progress has marked, drawn faded until release deletes
+    /// it. Session state, like the selection: nothing in the document changes until the
+    /// sweep ends, so Escape can let it all go. See `eraser.rs`.
+    erasing: HashSet<String>,
+    /// Bumped whenever `erasing` changes, so the painter's cached layer, which holds the
+    /// faded picture, is redrawn when the marks move.
+    erasing_revision: u64,
+    /// Alt, as of the last pointer move. See `set_alt_held`.
+    alt_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
     /// A peer's copy of an element with an uncommitted local change, refused because a
@@ -187,6 +197,9 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
+            erasing: HashSet::new(),
+            erasing_revision: 0,
+            alt_held: false,
             history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
             history_seq: 0,
             remote_refused: std::collections::HashMap::new(),
@@ -378,6 +391,15 @@ impl DrawEngine {
         // click of the line tool would carry on from wherever it was abandoned. Not
         // `finish_linear`, which settles the tool — the caller is already choosing one.
         self.finish_multi_linear();
+        // Leaving the eraser mid-sweep lets its marks go, as Excalidraw's `endPath` on a
+        // tool change does: with the eraser gone, nothing would ever delete them or
+        // clear them, and they would stay faded.
+        if self.tool == DrawTool::Eraser {
+            if matches!(self.interaction, Some(Interaction::Erase { .. })) {
+                self.interaction = None;
+            }
+            self.clear_erasing();
+        }
         // Remembered before the move, and never the tool being left if that tool is
         // itself a toggle — otherwise pressing E twice would bounce the eraser against
         // itself instead of returning you to what you were drawing.

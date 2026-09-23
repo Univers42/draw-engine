@@ -30,6 +30,11 @@ pub struct PaintView<'a> {
     /// signal that moved with the camera would throw the layer away exactly when it was
     /// most worth keeping.
     pub scene_revision: u64,
+    /// What the eraser sweep in progress has marked. Painted at a fifth of its opacity,
+    /// and so is everything a marked frame holds.
+    pub erasing: &'a std::collections::HashSet<String>,
+    /// Changes whenever `erasing` does. The painter keys its cached layer on it.
+    pub erasing_revision: u64,
     pub selected: Vec<&'a DrawElement>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
@@ -198,6 +203,8 @@ impl DrawEngine {
                 .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
                 .collect(),
             scene_revision,
+            erasing: &self.erasing,
+            erasing_revision: self.erasing_revision,
             selected,
             marquee,
             lasso,

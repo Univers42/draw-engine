@@ -92,6 +92,8 @@ pub struct DebugInteraction {
     /// Whether a move snaps to other elements. Off by default, and the first thing to
     /// check when a drag lands a few pixels from where the pointer let go.
     pub objects_snap: bool,
+    /// What the eraser sweep in progress has marked, sorted. Empty between sweeps.
+    pub marked_for_erasure: Vec<String>,
 }
 
 /// The name of a gesture, for a human reading a snapshot.
@@ -173,6 +175,7 @@ impl DrawEngine {
                 editing_linear: self.editing_linear.clone(),
                 editing_group_id: self.editing_group_id.clone(),
                 objects_snap: self.objects_snap,
+                marked_for_erasure: self.marked_for_erasure(),
             },
         }
     }

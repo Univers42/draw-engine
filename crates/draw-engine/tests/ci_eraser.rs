@@ -210,3 +210,235 @@ fn a_sweep_erases_each_element_once() {
         "the sweep became several undo steps"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Mark, then delete on release — Excalidraw's two stages
+//
+// The web host used to run its own eraser over this one, and it asked for the element
+// under each sample: the topmost. The top copy of a stack, once marked, went on answering
+// every sample, and the copies beneath were never reached — "it doesn't delete
+// everything". It also faded elements by rewriting their opacity as if a peer had sent
+// it, which undo then took for their real state. The two stages live here now.
+// ---------------------------------------------------------------------------
+
+/// A sweep across a stack of copies, in several coalesced moves — the reported case.
+#[test]
+fn a_sweep_across_a_stack_marks_every_copy_and_release_deletes_them_all() {
+    let mut engine = engine_with_scene(stack_of(50));
+    engine.set_tool(DrawTool::Eraser);
+
+    engine.begin_pointer(20.0, 175.0, false, false);
+    engine.move_pointer(150.0, 175.0, false, false);
+    engine.move_pointer(380.0, 175.0, false, false);
+    assert_eq!(
+        engine.marked_for_erasure().len(),
+        50,
+        "every copy is marked"
+    );
+    engine.end_pointer();
+
+    assert!(
+        alive(&engine).is_empty(),
+        "{} survived",
+        alive(&engine).len()
+    );
+}
+
+#[test]
+fn nothing_is_deleted_until_release() {
+    let mut engine = engine_with_scene(row_of_four());
+    engine.set_tool(DrawTool::Eraser);
+
+    engine.begin_pointer(0.0, 100.0, false, false);
+    engine.move_pointer(1000.0, 100.0, false, false);
+
+    assert_eq!(alive(&engine).len(), 4, "marked, not deleted");
+    assert_eq!(engine.marked_for_erasure().len(), 4);
+    assert_eq!(engine.debug_state().interaction.marked_for_erasure.len(), 4);
+    engine.end_pointer();
+    assert!(alive(&engine).is_empty());
+    assert!(engine.marked_for_erasure().is_empty());
+}
+
+/// Marking is not an edit: the elements are drawn faded, but the document is untouched.
+/// Faded by rewriting their opacity, undo brought erased elements back see-through.
+#[test]
+fn marking_does_not_touch_the_document() {
+    let mut engine = engine_with_scene(row_of_four());
+    let before = engine.get_scene();
+    engine.set_tool(DrawTool::Eraser);
+
+    engine.begin_pointer(0.0, 100.0, false, false);
+    engine.move_pointer(1000.0, 100.0, false, false);
+
+    assert_eq!(engine.get_scene(), before);
+    engine.end_pointer();
+    engine.undo();
+    for element in engine.get_scene() {
+        assert!(!element.is_deleted);
+        assert_close(element.opacity, 100.0);
+    }
+}
+
+#[test]
+fn escape_mid_sweep_deletes_nothing() {
+    let mut engine = engine_with_scene(row_of_four());
+    engine.set_tool(DrawTool::Eraser);
+    engine.begin_pointer(0.0, 100.0, false, false);
+    engine.move_pointer(1000.0, 100.0, false, false);
+
+    engine.cancel_pointer();
+    engine.end_pointer();
+
+    assert_eq!(alive(&engine).len(), 4);
+    assert!(
+        engine.marked_for_erasure().is_empty(),
+        "and nothing stays faded"
+    );
+    assert!(!engine.debug_state().scene.can_undo, "no step was recorded");
+}
+
+/// Excalidraw's restore: sweeping back over marked elements with Alt held un-marks them.
+#[test]
+fn sweeping_back_with_alt_unmarks() {
+    let mut engine = engine_with_scene(row_of_four());
+    let ids = alive(&engine);
+    engine.set_tool(DrawTool::Eraser);
+    engine.begin_pointer(0.0, 100.0, false, false);
+    engine.move_pointer(1000.0, 100.0, false, false);
+
+    // Round below the row to the gap at x = 400, touching nothing, then back along the
+    // row over the first two shapes (x = 100 and 300) with Alt held.
+    engine.move_pointer(1000.0, 300.0, false, false);
+    engine.move_pointer(400.0, 300.0, false, false);
+    engine.set_alt_held(true);
+    engine.move_pointer(400.0, 100.0, false, false);
+    assert_eq!(
+        engine.marked_for_erasure().len(),
+        4,
+        "setup: the detour touched nothing"
+    );
+    engine.move_pointer(0.0, 100.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(
+        alive(&engine),
+        ids[..2].to_vec(),
+        "the two swept back over stay"
+    );
+}
+
+#[test]
+fn erasing_one_member_takes_the_whole_group() {
+    let mut a = filled(box_at(100.0, 100.0, 60.0, 40.0));
+    let mut b = filled(box_at(400.0, 100.0, 60.0, 40.0));
+    a.group_ids = vec!["g".into()];
+    b.group_ids = vec!["g".into()];
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Eraser);
+
+    // A click on the first only.
+    engine.begin_pointer(130.0, 120.0, false, false);
+    engine.end_pointer();
+
+    assert!(alive(&engine).is_empty(), "a group is one thing");
+}
+
+/// A frame is what its contents live in; erasing it takes them, as Excalidraw's does,
+/// even when the sweep never touched them.
+#[test]
+fn a_marked_frame_takes_what_it_holds() {
+    let mut engine = engine_with_scene(vec![filled(box_at(150.0, 150.0, 60.0, 40.0))]);
+    engine.set_tool(DrawTool::Frame);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.move_pointer(400.0, 300.0, false, false);
+    engine.end_pointer();
+    assert!(
+        engine.get_scene().iter().any(|el| el.frame_id.is_some()),
+        "setup: the box is in the frame"
+    );
+    engine.set_tool(DrawTool::Eraser);
+
+    // Across the frame's right edge, well away from the box.
+    engine.begin_pointer(380.0, 250.0, false, false);
+    engine.move_pointer(420.0, 250.0, false, false);
+    engine.end_pointer();
+
+    assert!(
+        alive(&engine).is_empty(),
+        "left behind: {:?}",
+        alive(&engine)
+    );
+}
+
+/// An arrow that stays is let go of the shape erased from under it, as Excalidraw's
+/// `eraseElements` does — and in the same step, so undo binds it again.
+#[test]
+fn an_arrow_is_let_go_of_an_erased_shape_and_undo_binds_it_again() {
+    let left = filled(box_at(0.0, 0.0, 100.0, 80.0));
+    let right = filled(box_at(350.0, 0.0, 100.0, 80.0));
+    let right_id = right.id.clone();
+    let mut engine = engine_with_scene(vec![left, right]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(50.0, 40.0, false, false);
+    engine.move_pointer(200.0, 40.0, false, false);
+    engine.move_pointer(400.0, 40.0, false, false);
+    engine.end_pointer();
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow was drawn");
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(right_id.as_str()),
+        "setup"
+    );
+
+    // A click on the right box, clear of the arrow's end.
+    engine.set_tool(DrawTool::Eraser);
+    engine.begin_pointer(430.0, 70.0, false, false);
+    engine.end_pointer();
+
+    let get = |engine: &DrawEngine| {
+        engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == arrow.id)
+            .expect("the arrow is still there")
+    };
+    assert!(!get(&engine).is_deleted, "the arrow was not erased");
+    assert_eq!(get(&engine).end_binding, None);
+
+    engine.undo();
+    assert_eq!(get(&engine).end_binding.as_deref(), Some(right_id.as_str()));
+}
+
+#[test]
+fn leaving_the_eraser_mid_sweep_lets_the_marks_go() {
+    let mut engine = engine_with_scene(row_of_four());
+    engine.set_tool(DrawTool::Eraser);
+    engine.begin_pointer(0.0, 100.0, false, false);
+    engine.move_pointer(1000.0, 100.0, false, false);
+
+    engine.set_tool(DrawTool::Select);
+    engine.end_pointer();
+
+    assert_eq!(alive(&engine).len(), 4);
+    assert!(engine.marked_for_erasure().is_empty());
+}
+
+/// A locked element is left alone, as Excalidraw's eraser leaves it.
+#[test]
+fn a_locked_element_is_not_marked() {
+    let mut locked = filled(box_at(100.0, 80.0, 60.0, 40.0));
+    locked.locked = Some(true);
+    let mut engine = engine_with_scene(vec![locked]);
+    engine.set_tool(DrawTool::Eraser);
+
+    engine.begin_pointer(130.0, 100.0, false, false);
+    assert!(engine.marked_for_erasure().is_empty());
+    engine.end_pointer();
+
+    assert_eq!(alive(&engine).len(), 1);
+}
