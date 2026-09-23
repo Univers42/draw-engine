@@ -11,50 +11,72 @@
 //! same element (stamped, from the unmoved copy) reverted the move on every screen
 //! including the one that made it.
 //!
-//! # Once per commit, not per move
+//! # Once per commit, against the element as it was first touched
 //!
 //! Excalidraw stamps on every mutation (`mutateElement.ts:142-144`), so a drag bumps
 //! once per pointer event. Here nothing leaves the engine between commits — the host is
-//! told at `push_history` — so one stamp per element per commit says the same thing
-//! with a hundred times fewer nonces. The rule, applied at commit to every element
-//! touched since the last one:
+//! told at `push_history` — so one stamp per element per commit says the same thing.
+//! The scene records each element as it was before the first change since the last
+//! commit (its *baseline*), and the commit compares against that:
 //!
-//! - **new since the last commit** — keep the stamp it was created with, so a shape
-//!   drawn by hand commits at version 1 however many moves sized it;
-//! - **unchanged** (the same `Rc`, or equal content) — nothing, so a drag away and back
-//!   records no step and sends nothing;
+//! - **did not exist** — keep the stamp it was created with, so a shape drawn by hand
+//!   commits at version 1 however many moves sized it;
+//! - **unchanged** — nothing, so a drag away and back records no step and sends
+//!   nothing;
 //! - **changed, stamp unchanged** — bump;
 //! - **changed, already re-stamped** by a path that bumps its own (style, radius,
 //!   group, …) — nothing more: one edit, one bump.
 //!
-//! # Undo is a new edit
+//! The baseline is taken at the first touch, not read from the last commit, because a
+//! peer's patch can land in between. Comparing a peer's fresh element with a snapshot
+//! that predates it took it for new and never stamped the move; comparing a peer's
+//! re-stamped element with its stale copy took the peer's stamp for ours.
+//!
+//! # A gesture in progress wins
+//!
+//! A peer's copy of an element with an uncommitted local change is refused, as
+//! Excalidraw refuses it while the element is being edited (`data/reconcile.ts:31-33`):
+//! taking it would hand the gesture's final state the peer's stamp. The refused copy is
+//! kept. If the gesture changed the element, the commit stamps *above* it — the later
+//! edit wins, here and everywhere it is sent. If the gesture came to nothing, the copy
+//! is adopted then, rather than lost.
+//!
+//! # Undo is a new edit, of only what the step changed
 //!
 //! Restoring a snapshot restored its *stamps* too, so an undone edit came back with a
 //! version lower than the one already sent — refused by the server and by every peer as
 //! stale. Excalidraw applies undo "as a new user action" with fresh stamps
-//! (`history.ts:24-34`, `delta.ts:1732-1781`), and so does this: each restored element
-//! is stamped above both what is there now and what it is restored to.
+//! (`history.ts:24-34`, `delta.ts:1732-1781`), and so does this.
 //!
-//! And it restores **only what that step changed**. Snapshots are whole scenes, and a
-//! peer's edit that arrived before your next commit is in that commit's snapshot — so
-//! restoring the whole previous snapshot reverted the peer's work, and with fresh
-//! stamps would now have *propagated* that revert. Each history entry therefore records
-//! the ids its commit changed, and undo touches those and nothing else.
+//! And each step records the elements it changed, before and after, so undo puts back
+//! those and nothing else. Whole-scene snapshots carried every peer edit that had
+//! arrived before the commit, and restoring one reverted them — with fresh stamps, now,
+//! that revert would have been sent to everyone.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::engine::DrawEngine;
 use crate::scene::element::rand_int;
-use crate::scene::{DrawElement, Scene};
+use crate::scene::DrawElement;
 
-/// One step of undo history: the scene after it, and the ids this step changed.
+/// One element's part in a step: as it was before, and as the step left it. `None`
+/// means absent — created by the step, or discarded by it.
+#[derive(Clone, Debug)]
+pub(crate) struct Change {
+    pub before: Option<Rc<DrawElement>>,
+    pub after: Option<Rc<DrawElement>>,
+}
+
+/// One step of undo history.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HistoryEntry {
-    pub elements: Vec<Rc<DrawElement>>,
-    /// Behind an `Rc` because undo clones the entry it leaves, and a large paste can
-    /// change thousands of ids.
-    pub changed: Rc<HashSet<String>>,
+    /// Identifies the entry to `SnapshotHistory`, whose deduplication by signature is
+    /// not wanted here: a step is only recorded when it changed something.
+    pub seq: u64,
+    pub changes: Rc<HashMap<String, Change>>,
+    /// The z-order before and after, when the step reordered anything.
+    pub order: Option<Rc<(Vec<String>, Vec<String>)>>,
 }
 
 /// Equal in everything but the stamp.
@@ -66,6 +88,10 @@ fn same_content(a: &DrawElement, b: &DrawElement) -> bool {
     a == *b
 }
 
+fn same_stamp(a: &DrawElement, b: &DrawElement) -> bool {
+    a.version == b.version && a.version_nonce == b.version_nonce
+}
+
 fn stamped(mut element: DrawElement, version: u32, now: f64) -> DrawElement {
     element.version = version;
     element.version_nonce = rand_int();
@@ -74,124 +100,116 @@ fn stamped(mut element: DrawElement, version: u32, now: f64) -> DrawElement {
 }
 
 impl DrawEngine {
-    /// Stamps every element this commit changed and returns their ids.
-    pub(super) fn stamp_local_edits(&mut self) -> HashSet<String> {
-        let touched = self.scene.take_touched();
-        let floors = std::mem::take(&mut self.remote_floor);
-        if touched.is_empty() {
-            return HashSet::new();
-        }
+    /// Stamps what this commit changed, settles refused peer copies, and returns the
+    /// step to record — `None` when nothing changed.
+    pub(super) fn take_local_step(&mut self) -> Option<HistoryEntry> {
+        let baseline = self.scene.take_baseline();
+        let order_before = self.scene.take_order_baseline();
+        let refused = std::mem::take(&mut self.remote_refused);
+        let clock = self.now_ms;
 
-        // The last commit's copy of each touched element. One pass over the snapshot,
-        // looking only for the touched ids, rather than an index of the whole scene.
-        let before: HashMap<&str, &Rc<DrawElement>> = self
-            .history
-            .current()
-            .elements
-            .iter()
-            .filter(|element| touched.contains(&element.id))
-            .map(|element| (element.id.as_str(), element))
-            .collect();
-
-        let mut changed = HashSet::new();
-        let mut bumps: Vec<(String, u32)> = Vec::new();
-        for id in &touched {
-            let Some(now) = self.scene.get_rc(id) else {
-                // Discarded before it was ever committed: a draft below the minimum size.
-                continue;
+        let mut changes: HashMap<String, Change> = HashMap::new();
+        for (id, before) in baseline {
+            let now = self.scene.get_rc(&id).cloned();
+            let peer = refused.get(&id);
+            let unchanged = match (&before, &now) {
+                (None, None) => true,
+                (Some(b), Some(n)) => Rc::ptr_eq(b, n) || (same_stamp(b, n) && same_content(b, n)),
+                _ => false,
             };
-            let floor = floors.get(id).copied().unwrap_or(0);
-            match before.get(id.as_str()) {
-                None => {
-                    changed.insert(id.clone());
-                    // New, and its first stamp stands — unless a peer sent a copy of it
-                    // meanwhile, which only a paste of the same id could cause.
-                    if now.version <= floor {
-                        bumps.push((id.clone(), floor + 1));
+            if unchanged {
+                // The gesture came to nothing. A peer's copy refused meanwhile is the
+                // newest thing anyone has, and taking it now is the only way to have it.
+                if let (Some(peer), Some(now)) = (peer, &now) {
+                    if super::clipboard::remote_wins(peer, now) {
+                        self.scene.put(peer.clone());
                     }
                 }
-                Some(then) if Rc::ptr_eq(now, then) => {}
-                Some(then) => {
-                    let same_stamp =
-                        now.version == then.version && now.version_nonce == then.version_nonce;
-                    if same_stamp && same_content(now, then) {
-                        // Put back unchanged.
-                        continue;
-                    }
-                    changed.insert(id.clone());
-                    if same_stamp || now.version <= floor {
-                        bumps.push((id.clone(), now.version.max(floor) + 1));
-                    }
+                continue;
+            }
+
+            let mut after = now.clone();
+            if let Some(n) = &now {
+                let floor = peer.map_or(0, |p| p.version);
+                let unstamped = before.as_ref().is_some_and(|b| same_stamp(b, n));
+                if unstamped || n.version <= floor {
+                    let version = n.version.max(floor) + 1;
+                    self.scene.update(&id, |element| {
+                        element.version = version;
+                        element.version_nonce = rand_int();
+                        element.updated = clock;
+                    });
+                    after = self.scene.get_rc(&id).cloned();
                 }
             }
+            changes.insert(id, Change { before, after });
         }
+        // Stamping and adopting are not themselves edits for the next commit to find.
+        let _ = self.scene.take_baseline();
 
-        let clock = self.now_ms;
-        for (id, version) in bumps {
-            self.scene.update(&id, |element| {
-                element.version = version;
-                element.version_nonce = rand_int();
-                element.updated = clock;
-            });
+        let order = order_before
+            .map(|before| (before, self.scene.ids()))
+            .filter(|(before, after)| before != after);
+        if changes.is_empty() && order.is_none() {
+            return None;
         }
-        // Stamping is not itself an edit to stamp at the next commit.
-        let _ = self.scene.take_touched();
-        changed
+        self.history_seq += 1;
+        Some(HistoryEntry {
+            seq: self.history_seq,
+            changes: Rc::new(changes),
+            order: order.map(Rc::new),
+        })
     }
 
-    /// Makes the scene what `target` recorded for `ids`, as a new edit.
+    /// Replays one step backwards (`forward == false`) or forwards, as a new edit.
     ///
-    /// Every other element is left as it is now — which is what keeps a peer's edit
-    /// from being undone by yours. Z-order follows `target`, and anything it does not
-    /// know about (a peer's new element, say) stays on top in its current order.
-    pub(super) fn restore_step(&mut self, target: &HistoryEntry, ids: &HashSet<String>) {
+    /// Every element the step changed is made what it was before it (or after), and
+    /// stamped above both what is there now and what it becomes. Everything else is
+    /// left exactly as it is — which is what keeps a peer's edit from being undone by
+    /// yours.
+    pub(super) fn replay_step(&mut self, step: &HistoryEntry, forward: bool) {
         let clock = self.now_ms;
-        let in_target: HashSet<&str> = target.elements.iter().map(|e| e.id.as_str()).collect();
-        let mut next: Vec<Rc<DrawElement>> = Vec::with_capacity(target.elements.len());
+        // Whatever local change was pending before the replay stays pending; what the
+        // replay itself does is not a new edit.
+        let pending = self.scene.pending_ids();
+        let pending_order = self.scene.order_baseline();
 
-        for then in &target.elements {
-            let now = self.scene.get_rc(&then.id);
-            if !ids.contains(&then.id) {
-                // Not this step's: whatever it is now is the truth.
-                if let Some(now) = now {
-                    next.push(Rc::clone(now));
-                }
-                continue;
-            }
-            next.push(match now {
-                Some(now) if same_content(now, then) => Rc::clone(now),
-                Some(now) => Rc::new(stamped(
-                    (**then).clone(),
-                    now.version.max(then.version) + 1,
-                    clock,
-                )),
-                None => Rc::new(stamped((**then).clone(), then.version + 1, clock)),
-            });
-        }
-
-        for now in self.scene.snapshot() {
-            if in_target.contains(now.id.as_str()) {
-                continue;
-            }
-            if ids.contains(&now.id) && !now.is_deleted {
-                // Created by the step being undone. Tombstoned rather than dropped: a
-                // deletion has to reach the server and the peers as a stamped element,
-                // and redo then resurrects it with a stamp above the tombstone's.
-                let mut tombstone = stamped((*now).clone(), now.version + 1, clock);
-                tombstone.is_deleted = true;
-                next.push(Rc::new(tombstone));
+        for (id, change) in step.changes.iter() {
+            let want = if forward {
+                &change.after
             } else {
-                next.push(now);
+                &change.before
+            };
+            let now = self.scene.get_rc(id).cloned();
+            match (want, now) {
+                (Some(want), Some(now)) => {
+                    if !same_content(want, &now) {
+                        let version = now.version.max(want.version) + 1;
+                        self.scene.put(stamped((**want).clone(), version, clock));
+                    }
+                }
+                (Some(want), None) => {
+                    self.scene
+                        .put(stamped((**want).clone(), want.version + 1, clock));
+                }
+                (None, Some(now)) if !now.is_deleted => {
+                    // Created by the step being undone. Tombstoned rather than dropped:
+                    // a deletion has to reach the server and the peers as a stamped
+                    // element, and redo then resurrects it above the tombstone.
+                    let mut tombstone = stamped((*now).clone(), now.version + 1, clock);
+                    tombstone.is_deleted = true;
+                    tombstone.data_url = None;
+                    self.scene.put(tombstone);
+                }
+                _ => {}
             }
         }
+        if let Some(order) = &step.order {
+            self.scene
+                .apply_order(if forward { &order.1 } else { &order.0 });
+        }
 
-        self.scene = Scene::from_snapshot(next);
-        self.remote_floor.clear();
-        // The entry we landed on keeps its own record of what *it* changed; only its
-        // picture of the scene is brought up to date.
-        self.history.replace_current(HistoryEntry {
-            elements: self.scene.snapshot(),
-            changed: Rc::clone(&target.changed),
-        });
+        self.scene.retain_baseline(|id| pending.contains(id));
+        self.scene.set_order_baseline(pending_order);
     }
 }

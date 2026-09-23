@@ -48,15 +48,21 @@ pub struct Scene {
     /// board, so drawing one shape on a large board became slower than drawing the
     /// first one. Measured at 20k elements, that was ~60ms of JSON per shape.
     dirty: std::collections::HashSet<String>,
-    /// Ids changed since the last commit to history.
+    /// Every element changed since the last commit, as it was **before** the first
+    /// change — `None` for one that did not exist yet.
     ///
-    /// Not the same record as `dirty`. That one is drained whenever the host is told
-    /// something — including when a peer's patch lands in the middle of a drag — and
-    /// this one must survive that, because it is what the commit stamps: every element
-    /// a gesture changed gets a new version when the gesture ends, and a gesture that
-    /// forgot half its elements because a patch arrived would save half a move. See
-    /// `engine/stamp.rs`.
-    touched: std::collections::HashSet<String>,
+    /// This is what a commit compares against to decide what it changed and what to
+    /// stamp, and what undo puts back. It is taken at the first touch rather than read
+    /// from the last commit's snapshot because a peer's edit can land in between: an
+    /// element a peer created or re-stamped since then is not in that snapshot as it
+    /// is now, and comparing against the stale copy got both "is it new" and "is it
+    /// already stamped" wrong. See `engine/stamp.rs`.
+    ///
+    /// Not the same record as `dirty`, which is drained whenever the host is told
+    /// something — including when a peer's patch lands in the middle of a drag.
+    baseline: HashMap<String, Option<Rc<DrawElement>>>,
+    /// The z-order before the first local reorder since the last commit, if any.
+    order_baseline: Option<Vec<String>>,
     /// Set when a change cannot be expressed as "these elements differ" — a z-order
     /// rearrangement or a hard delete. The host then needs the whole scene.
     structural: bool,
@@ -138,17 +144,73 @@ impl Scene {
         self.index.get(id).map(|&i| &self.elements[i])
     }
 
-    /// Ids changed since the last commit. See the field.
-    pub(crate) fn touched(&self) -> &std::collections::HashSet<String> {
-        &self.touched
+    /// Ids changed since the last commit. See the `baseline` field.
+    pub(crate) fn pending_ids(&self) -> std::collections::HashSet<String> {
+        self.baseline.keys().cloned().collect()
     }
 
-    pub(crate) fn take_touched(&mut self) -> std::collections::HashSet<String> {
-        std::mem::take(&mut self.touched)
+    /// Whether the element was created since the last commit — a draft, a label being
+    /// typed — and so can be dropped without a trace, rather than deleted.
+    pub(crate) fn created_since_commit(&self, id: &str) -> bool {
+        matches!(self.baseline.get(id), Some(None))
     }
 
-    pub(crate) fn retain_touched(&mut self, keep: impl Fn(&str) -> bool) {
-        self.touched.retain(|id| keep(id));
+    pub(crate) fn take_baseline(&mut self) -> HashMap<String, Option<Rc<DrawElement>>> {
+        std::mem::take(&mut self.baseline)
+    }
+
+    /// Forgets the changes to every id `keep` rejects — for changes that were not this
+    /// client's edits: a peer's patch, or undo putting something back.
+    pub(crate) fn retain_baseline(&mut self, keep: impl Fn(&str) -> bool) {
+        self.baseline.retain(|id, _| keep(id));
+    }
+
+    pub(crate) fn order_baseline(&self) -> Option<Vec<String>> {
+        self.order_baseline.clone()
+    }
+
+    pub(crate) fn set_order_baseline(&mut self, order: Option<Vec<String>>) {
+        self.order_baseline = order;
+    }
+
+    pub(crate) fn take_order_baseline(&mut self) -> Option<Vec<String>> {
+        self.order_baseline.take()
+    }
+
+    fn note_order(&mut self) {
+        if self.order_baseline.is_none() {
+            self.order_baseline = Some(self.ids());
+        }
+    }
+
+    /// Every id, tombstones included, in z-order.
+    pub(crate) fn ids(&self) -> Vec<String> {
+        self.elements.iter().map(|e| e.id.clone()).collect()
+    }
+
+    /// Puts the ids in `order` in that order, beneath everything it does not mention,
+    /// which keeps its current order on top.
+    ///
+    /// For undoing a reorder: what the step reordered goes back, and an element that
+    /// arrived since — a peer's — stays where it is, above.
+    pub(crate) fn apply_order(&mut self, order: &[String]) {
+        self.revision = self.revision.wrapping_add(1);
+        let mut rest: Vec<Rc<DrawElement>> = Vec::with_capacity(self.elements.len());
+        let mut by_id: HashMap<String, Rc<DrawElement>> = HashMap::new();
+        let wanted: std::collections::HashSet<&str> = order.iter().map(String::as_str).collect();
+        for element in self.elements.drain(..) {
+            if wanted.contains(element.id.as_str()) {
+                by_id.insert(element.id.clone(), element);
+            } else {
+                rest.push(element);
+            }
+        }
+        let mut next: Vec<Rc<DrawElement>> =
+            order.iter().filter_map(|id| by_id.remove(id)).collect();
+        next.extend(rest);
+        self.elements = next;
+        self.reindex();
+        self.structural = true;
     }
 
     /// Puts an id back into the pending delta, for a change the host has not been told
@@ -171,9 +233,13 @@ impl Scene {
         self.revision = self.revision.wrapping_add(1);
         match self.index.get(id) {
             Some(&i) => {
+                if !self.baseline.contains_key(id) {
+                    // Shared, so `make_mut` below copies and this keeps the original.
+                    self.baseline
+                        .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+                }
                 f(Rc::make_mut(&mut self.elements[i]));
                 self.dirty.insert(id.to_string());
-                self.touched.insert(id.to_string());
                 true
             }
             None => false,
@@ -194,7 +260,10 @@ impl Scene {
     pub fn put(&mut self, element: DrawElement) {
         self.revision = self.revision.wrapping_add(1);
         self.dirty.insert(element.id.clone());
-        self.touched.insert(element.id.clone());
+        if !self.baseline.contains_key(&element.id) {
+            let before = self.get_rc(&element.id).cloned();
+            self.baseline.insert(element.id.clone(), before);
+        }
         match self.index.get(&element.id) {
             Some(&i) => self.elements[i] = Rc::new(element),
             None => {
@@ -217,6 +286,10 @@ impl Scene {
             // across machines.
             element.version_nonce = crate::scene::element::rand_int();
             element.updated = now;
+            // Nothing draws a tombstone, and a picture is most of an image's size: kept,
+            // every deleted image went on counting against the board's 16MB for good.
+            // Undo does not need it — it restores from its own copy of the element.
+            element.data_url = None;
         });
     }
 
@@ -225,6 +298,10 @@ impl Scene {
     pub fn discard(&mut self, id: &str) {
         self.revision = self.revision.wrapping_add(1);
         if let Some(&i) = self.index.get(id) {
+            if !self.baseline.contains_key(id) {
+                self.baseline
+                    .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+            }
             self.elements.remove(i);
             self.reindex();
             // A hard delete leaves no tombstone, so a delta cannot express it.
@@ -236,6 +313,7 @@ impl Scene {
         self.revision = self.revision.wrapping_add(1);
         if let Some(&i) = self.index.get(id) {
             if i + 1 != self.elements.len() {
+                self.note_order();
                 let element = self.elements.remove(i);
                 self.elements.push(element);
                 self.reindex();
@@ -250,6 +328,7 @@ impl Scene {
     /// drawn since, which is what the user expects.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
         self.revision = self.revision.wrapping_add(1);
+        self.note_order();
         let mut next: Vec<Rc<DrawElement>> = self
             .elements
             .iter()

@@ -11,7 +11,7 @@ use crate::scene::DrawElement;
 /// Comparing in that order means a skewed clock can only ever decide a tie that the
 /// edit counts could not — the ordering is deterministic, so every client reaches the
 /// same answer regardless of the order patches arrive in.
-fn remote_wins(incoming: &DrawElement, existing: &DrawElement) -> bool {
+pub(super) fn remote_wins(incoming: &DrawElement, existing: &DrawElement) -> bool {
     if incoming.version != existing.version {
         return incoming.version > existing.version;
     }
@@ -29,11 +29,12 @@ impl DrawEngine {
     /// autosave, the server's merge and every peer have — so an unstamped move was
     /// never saved and lost on reload. See `stamp.rs`.
     pub(super) fn push_history(&mut self) {
-        let changed = self.stamp_local_edits();
-        self.history.push(super::stamp::HistoryEntry {
-            elements: self.scene.snapshot(),
-            changed: std::rc::Rc::new(changed),
-        });
+        // Only a step that changed something is recorded. A click that selected, or a
+        // commit after a peer's patch and nothing of ours, used to push an entry anyway —
+        // one that undid nothing and threw the redo stack away.
+        if let Some(step) = self.take_local_step() {
+            self.history.push(step);
+        }
         self.emit_scene_change();
     }
 
@@ -56,12 +57,10 @@ impl DrawEngine {
 
     pub(super) fn reset_history(&mut self) {
         // A scene loaded wholesale is nobody's local edit.
-        let _ = self.scene.take_touched();
-        self.remote_floor.clear();
-        self.history.reset(super::stamp::HistoryEntry {
-            elements: self.scene.snapshot(),
-            changed: std::rc::Rc::default(),
-        });
+        let _ = self.scene.take_baseline();
+        let _ = self.scene.take_order_baseline();
+        self.remote_refused.clear();
+        self.history.reset(super::stamp::HistoryEntry::default());
     }
 
     fn after_history_step(&mut self) {
@@ -73,22 +72,22 @@ impl DrawEngine {
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
     }
 
-    /// Undo, as a new edit: see `stamp.rs` for why it is not a rewind.
+    /// Undo, as a new edit of only what the step changed: see `stamp.rs`.
     pub fn undo(&mut self) {
-        let leaving = self.history.current().changed.clone();
-        let Some(target) = self.history.undo().cloned() else {
+        if !self.history.can_undo() {
             return;
-        };
-        self.restore_step(&target, &leaving);
+        }
+        let step = self.history.current().clone();
+        self.history.undo();
+        self.replay_step(&step, false);
         self.after_history_step();
     }
 
     pub fn redo(&mut self) {
-        let Some(target) = self.history.redo().cloned() else {
+        let Some(step) = self.history.redo().cloned() else {
             return;
         };
-        let changed = target.changed.clone();
-        self.restore_step(&target, &changed);
+        self.replay_step(&step, true);
         self.after_history_step();
     }
 
@@ -144,13 +143,19 @@ impl DrawEngine {
         // would hand the gesture's final state the peer's stamp, and the two copies
         // would then carry one stamp and different content forever. The commit stamps
         // above the refused version instead, so the later edit — this one — wins.
-        let pending = self.scene.touched().clone();
+        let pending = self.scene.pending_ids();
+        let pending_order = self.scene.order_baseline();
 
         let mut changed = false;
         for element in incoming {
             if pending.contains(&element.id) {
-                let floor = self.remote_floor.entry(element.id.clone()).or_insert(0);
-                *floor = (*floor).max(element.version);
+                // Kept, not dropped: see `stamp.rs` for what the commit does with it.
+                match self.remote_refused.get(&element.id) {
+                    Some(kept) if !remote_wins(&element, kept) => {}
+                    _ => {
+                        self.remote_refused.insert(element.id.clone(), element);
+                    }
+                }
                 continue;
             }
             let accept = match self.scene.get(&element.id) {
@@ -202,10 +207,11 @@ impl DrawEngine {
             }
             self.request_draw();
         }
-        // What the peer's edit changed here — its elements, and arrows re-routed to
-        // follow them — is the peer's edit, not ours, and must not be stamped as ours
-        // at the next commit. Ids the local gesture had already changed stay.
-        self.scene.retain_touched(|id| pending.contains(id));
+        // What the peer's edit changed here — its elements, arrows re-routed to follow
+        // them, its z-order — is the peer's edit, not ours, and must not be recorded or
+        // stamped as ours at the next commit. Local changes already pending stay.
+        self.scene.retain_baseline(|id| pending.contains(id));
+        self.scene.set_order_baseline(pending_order);
         changed
     }
 

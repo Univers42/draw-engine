@@ -72,17 +72,6 @@ impl<T: Clone> SnapshotHistory<T> {
         &self.stack[self.index]
     }
 
-    /// Replaces the entry the history is on, without moving.
-    ///
-    /// Undo and redo re-stamp what they restore, so the scene they leave behind is not
-    /// byte-for-byte the entry they landed on. Without writing it back, the next push —
-    /// even one that changes nothing — would differ from the top by those stamps alone,
-    /// be recorded as a step, and throw the redo stack away.
-    pub fn replace_current(&mut self, value: T) {
-        self.current = (self.signature)(&value);
-        self.stack[self.index] = value;
-    }
-
     pub fn reset(&mut self, value: T) {
         self.current = (self.signature)(&value);
         self.stack = vec![value];

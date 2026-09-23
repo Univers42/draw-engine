@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::camera::{Camera, Point, WorldBounds};
 use crate::interaction::DrawTool;
-use crate::scene::{DrawElement, DrawElementStylePatch};
+use crate::scene::DrawElementStylePatch;
 use crate::selection::HandleKind;
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -226,35 +226,6 @@ pub(crate) fn default_measure(text: &str, font_size: f64) -> (f64, f64) {
         width.max(4.0),
         (lines.len() as f64 * font_size * crate::TEXT_LINE_HEIGHT).max(font_size),
     )
-}
-
-/// A cheap fingerprint of the scene, used to skip history pushes that change nothing.
-///
-/// Hashes exactly the fields the previous string form encoded — id, version, rounded
-/// geometry, angle and the tombstone flag — so the dedup behaviour is unchanged. What
-/// is gone is the allocation: this used to build one `String` per element and join
-/// them, which at 20k elements is several megabytes per keystroke-equivalent.
-///
-/// Coordinates are rounded before hashing, as before, so a sub-pixel jitter does not
-/// create a history entry.
-pub(crate) fn history_signature(elements: &[std::rc::Rc<DrawElement>]) -> u64 {
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    elements.len().hash(&mut hasher);
-    for el in elements {
-        el.id.hash(&mut hasher);
-        el.version.hash(&mut hasher);
-        el.x.round().to_bits().hash(&mut hasher);
-        el.y.round().to_bits().hash(&mut hasher);
-        el.width.round().to_bits().hash(&mut hasher);
-        el.height.round().to_bits().hash(&mut hasher);
-        // The string form printed the angle to 3 decimals; quantise to match, so a
-        // rotation smaller than a thousandth of a radian still does not record history.
-        ((el.angle * 1000.0).round() as i64).hash(&mut hasher);
-        el.is_deleted.hash(&mut hasher);
-    }
-    hasher.finish()
 }
 
 pub fn merge_style_patch(

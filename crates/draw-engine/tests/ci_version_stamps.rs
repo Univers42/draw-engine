@@ -423,3 +423,232 @@ fn a_delete_gets_a_fresh_nonce() {
     assert_eq!(tombstone.version, before.version + 1);
     assert_ne!(tombstone.version_nonce, before.version_nonce);
 }
+
+// ---------------------------------------------------------------------------
+// A peer's elements, edited here
+//
+// Found by review of the first version of this change, which compared each edit with
+// the last *local* commit — a snapshot that predates anything a peer sent since.
+// ---------------------------------------------------------------------------
+
+/// Two boxes a peer knows about, and a way to send this engine the peer's version of
+/// one of them.
+fn peer_box(x: f64, version: u32, nonce: u32) -> DrawElement {
+    let mut element = filled(box_at(x, 100.0, 120.0, 80.0));
+    element.id = "peers".into();
+    element.version = version;
+    element.version_nonce = nonce;
+    element
+}
+
+#[test]
+fn moving_a_box_a_peer_just_drew_is_stamped() {
+    let (mut engine, _) = one_box();
+    let drawn = peer_box(400.0, 1, 11);
+    engine.apply_remote_patch(&scene_to_json(std::slice::from_ref(&drawn)));
+
+    drag(&mut engine, (460.0, 140.0), (460.0, 240.0));
+
+    let after = get(&engine, "peers");
+    assert_close(after.y, 200.0);
+    assert_eq!(after.version, 2, "it was not new here: the peer drew it");
+    let mut peer = engine_with_scene(vec![drawn]);
+    assert!(sync(&engine, &mut peer), "and the peer takes the move");
+}
+
+#[test]
+fn moving_a_box_a_peer_just_recoloured_is_stamped_above_the_peer() {
+    let (mut engine, _) = one_box();
+    engine.apply_remote_patch(&scene_to_json(&[peer_box(400.0, 1, 11)]));
+    let mut recoloured = peer_box(400.0, 2, 777);
+    recoloured.stroke_color = "#e03131".into();
+    engine.apply_remote_patch(&scene_to_json(&[recoloured.clone()]));
+
+    drag(&mut engine, (460.0, 140.0), (460.0, 240.0));
+
+    let after = get(&engine, "peers");
+    assert_eq!(after.version, 3, "the peer's stamp is not ours");
+    let mut peer = engine_with_scene(vec![recoloured]);
+    assert!(sync(&engine, &mut peer), "so the peer takes the move");
+    assert_close(get(&peer, "peers").y, 200.0);
+}
+
+#[test]
+fn undoing_an_edit_to_a_peers_box_puts_the_peers_box_back() {
+    let (mut engine, _) = one_box();
+    engine.apply_remote_patch(&scene_to_json(&[peer_box(400.0, 1, 11)]));
+    drag(&mut engine, (460.0, 140.0), (460.0, 240.0));
+
+    engine.undo();
+
+    let after = get(&engine, "peers");
+    assert!(!after.is_deleted, "undo must not delete someone else's box");
+    assert_close(after.y, 100.0);
+}
+
+/// A peer's copy refused because this client was mid-drag, and then the drag came to
+/// nothing: the copy is the newest thing anyone has, and it is taken then.
+#[test]
+fn a_peers_edit_refused_mid_drag_is_taken_when_the_drag_comes_to_nothing() {
+    let (mut engine, id) = one_box();
+    let mut recoloured = get(&engine, &id);
+    recoloured.stroke_color = "#e03131".into();
+    recoloured.version = 2;
+
+    engine.begin_pointer(160.0, 140.0, false, false);
+    engine.move_pointer(200.0, 170.0, false, false);
+    assert!(
+        !engine.apply_remote_patch(&scene_to_json(&[recoloured])),
+        "setup: refused mid-drag"
+    );
+    engine.move_pointer(160.0, 140.0, false, false);
+    engine.end_pointer();
+
+    let after = get(&engine, &id);
+    assert_eq!(after.stroke_color, "#e03131");
+    assert_eq!(after.version, 2);
+}
+
+/// Escape in the middle of a drag leaves the shape where it was dragged — and that is
+/// committed, rather than left pending, unsaved, refusing every peer's edit of it.
+#[test]
+fn escape_mid_drag_commits_the_drag() {
+    let (mut engine, id) = one_box();
+    engine.begin_pointer(160.0, 140.0, false, false);
+    engine.move_pointer(200.0, 170.0, false, false);
+
+    engine.cancel_pointer();
+
+    let after = get(&engine, &id);
+    assert_close(after.x, 140.0);
+    assert_eq!(after.version, 2);
+    let mut later = after.clone();
+    later.version = 3;
+    later.stroke_color = "#e03131".into();
+    assert!(
+        engine.apply_remote_patch(&scene_to_json(&[later])),
+        "nothing is pending, so a peer's later edit is taken"
+    );
+}
+
+/// A label opened and abandoned before anything was typed leaves its box exactly as it
+/// was — and not pending, refusing the peers.
+#[test]
+fn an_abandoned_label_does_not_hold_its_box() {
+    let (mut engine, id) = one_box();
+    engine.select(vec![id.clone()]);
+    assert!(engine.edit_selected_text(), "setup: a label is being typed");
+    let label = engine.get_selection()[0].clone();
+
+    engine.set_element_text(&label, "");
+
+    let mut recoloured = get(&engine, &id);
+    recoloured.stroke_color = "#e03131".into();
+    recoloured.version += 1;
+    assert!(engine.apply_remote_patch(&scene_to_json(&[recoloured])));
+    assert_eq!(get(&engine, &id).stroke_color, "#e03131");
+}
+
+/// Undo pressed while a drag is still going: the drag is still this client's, and is
+/// stamped when it ends.
+#[test]
+fn undo_in_the_middle_of_a_drag_leaves_the_drag_pending() {
+    let mine = filled(box_at(100.0, 100.0, 120.0, 80.0));
+    let other = filled(box_at(400.0, 100.0, 120.0, 80.0));
+    let (mine_id, other_id) = (mine.id.clone(), other.id.clone());
+    let mut engine = engine_with_scene(vec![mine, other]);
+    engine.select(vec![other_id]);
+    engine.nudge_selection(5.0, 0.0);
+
+    engine.begin_pointer(160.0, 140.0, false, false);
+    engine.move_pointer(200.0, 170.0, false, false);
+    engine.undo();
+    engine.end_pointer();
+
+    let after = get(&engine, &mine_id);
+    assert_close(after.x, 140.0);
+    assert_eq!(after.version, 2, "the drag was committed and stamped");
+}
+
+// ---------------------------------------------------------------------------
+// Z-order and empty steps
+// ---------------------------------------------------------------------------
+
+fn order(engine: &DrawEngine) -> Vec<String> {
+    engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| !el.is_deleted)
+        .map(|el| el.id)
+        .collect()
+}
+
+#[test]
+fn undo_leaves_a_peers_reorder_alone() {
+    let a = filled(box_at(100.0, 100.0, 120.0, 80.0));
+    let b = filled(box_at(400.0, 100.0, 120.0, 80.0));
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a.clone(), b.clone()]);
+    engine.select(vec![a_id.clone()]);
+    engine.apply_style(DrawElementStylePatch {
+        stroke_color: Some("#e03131".into()),
+        ..Default::default()
+    });
+    let patch =
+        format!(r#"{{"type":"osidraw","version":1,"elements":[],"order":["{b_id}","{a_id}"]}}"#);
+    engine.apply_remote_patch(&patch);
+
+    engine.undo();
+
+    assert_eq!(order(&engine), vec![b_id, a_id], "the peer's order stands");
+}
+
+#[test]
+fn undoing_a_reorder_puts_the_order_back() {
+    let a = filled(box_at(100.0, 100.0, 120.0, 80.0));
+    let b = filled(box_at(400.0, 100.0, 120.0, 80.0));
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.select(vec![a_id.clone()]);
+    engine.reorder_selection(ZOrderMode::Front);
+    assert_eq!(order(&engine), vec![b_id.clone(), a_id.clone()], "setup");
+
+    engine.undo();
+    assert_eq!(order(&engine), vec![a_id.clone(), b_id.clone()]);
+
+    engine.redo();
+    assert_eq!(order(&engine), vec![b_id, a_id]);
+}
+
+/// A click after a peer's patch, and nothing of ours: no step. It used to record an
+/// empty one, which undid nothing and threw away redo.
+#[test]
+fn a_click_after_a_peers_patch_keeps_redo() {
+    let (mut engine, _) = one_box();
+    drag(&mut engine, (160.0, 140.0), (260.0, 200.0));
+    engine.undo();
+    engine.apply_remote_patch(&scene_to_json(&[peer_box(400.0, 1, 11)]));
+
+    engine.begin_pointer(700.0, 500.0, false, false);
+    engine.end_pointer();
+
+    assert!(engine.debug_state().scene.can_redo);
+}
+
+/// A deleted image does not go on carrying its picture: nothing draws a tombstone, and
+/// the picture is most of the board's size.
+#[test]
+fn a_deleted_image_drops_its_picture_and_undo_brings_it_back() {
+    let mut engine = engine_with_scene(vec![]);
+    let id = engine
+        .insert_image("data:image/png;base64,AAAA", 400.0, 200.0, 400.0, 300.0)
+        .expect("inserted");
+
+    engine.delete_selection();
+    assert_eq!(get(&engine, &id).data_url, None);
+
+    engine.undo();
+    let back = get(&engine, &id);
+    assert!(!back.is_deleted);
+    assert_eq!(back.data_url.as_deref(), Some("data:image/png;base64,AAAA"));
+}
