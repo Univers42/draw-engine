@@ -47,6 +47,7 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     spaceHeld: false,
     moveRaf: 0,
     pendingMove: null,
+    toolBeforePenEraser: null,
   };
 
   const applySize = () => {
