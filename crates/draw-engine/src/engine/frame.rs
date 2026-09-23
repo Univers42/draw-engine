@@ -101,6 +101,16 @@ pub struct PaintView<'a> {
     pub radius_handles: Vec<crate::camera::Point>,
     /// The radius handle being dragged, painted in the focus colour.
     pub active_radius_handle: Option<usize>,
+    /// Who else is here and what they hold: outlined in their colour, with their name.
+    pub peer_marks: Vec<PeerMark<'a>>,
+}
+
+/// One peer's hold, as the painter draws it. See `peers.rs`.
+pub struct PeerMark<'a> {
+    pub name: &'a str,
+    pub color: &'a str,
+    /// What they hold, as it is shown — their preview of it, when they have one.
+    pub elements: Vec<&'a DrawElement>,
 }
 
 pub trait Painter {
@@ -208,6 +218,57 @@ impl DrawEngine {
             }
         }
 
+        // What peers are doing right now, painted in place of what is committed: a shape
+        // moves on every screen while it is being moved. See `peers.rs`.
+        let previews = self.previews();
+        let mut elements: Vec<&DrawElement> = self
+            .scene
+            .iter_ordered()
+            .map(|element| {
+                previews
+                    .get(element.id.as_str())
+                    .copied()
+                    .unwrap_or(element)
+            })
+            .filter(|element| {
+                !element.is_deleted && crate::render::bounds::intersects_viewport(element, &visible)
+            })
+            .collect();
+        // What a peer is drawing that is not in the scene yet goes on top, where it will be.
+        for peer in self.peers() {
+            for element in &peer.preview {
+                if self.scene.get(&element.id).is_none()
+                    && !element.is_deleted
+                    && crate::render::bounds::intersects_viewport(element, &visible)
+                {
+                    elements.push(element);
+                }
+            }
+        }
+        let peer_marks = self
+            .peers()
+            .iter()
+            .filter_map(|peer| {
+                let held: Vec<&DrawElement> = peer
+                    .holds
+                    .iter()
+                    .chain(peer.preview.iter().map(|element| &element.id))
+                    .filter_map(|id| {
+                        previews
+                            .get(id.as_str())
+                            .copied()
+                            .or_else(|| self.scene.get(id))
+                    })
+                    .filter(|element| !element.is_deleted)
+                    .collect();
+                (!held.is_empty()).then_some(PeerMark {
+                    name: &peer.name,
+                    color: &peer.color,
+                    elements: held,
+                })
+            })
+            .collect();
+
         PaintView {
             scene: &self.scene,
             camera: self.camera,
@@ -221,11 +282,7 @@ impl DrawEngine {
             // Culled here rather than in the painter: an element off-screen costs a
             // bounds check instead of a full path replay, which is what keeps a large
             // document responsive when you are zoomed in on one corner of it.
-            elements: self
-                .scene
-                .iter_ordered()
-                .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
-                .collect(),
+            elements,
             scene_revision,
             live: self.scene.live(),
             static_revision: self.scene.static_revision(),
@@ -250,6 +307,7 @@ impl DrawEngine {
             active_handle,
             radius_handles,
             active_radius_handle,
+            peer_marks,
         }
     }
 

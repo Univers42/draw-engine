@@ -10,6 +10,7 @@ import type {
   DrawElement,
   DrawElementStyle,
   DrawEngineOptions,
+  DrawPeer,
   DrawTheme,
   DrawTool,
   FlipAxis,
@@ -126,6 +127,29 @@ export class DrawEngine {
     // is runtime-agnostic and has no clock of its own.
     const json = timeHitTest(() => this.inner.hitTest(sx, sy, tolerance));
     return json ? parseJson<DrawElement | null>(json, null) : null;
+  }
+
+  /**
+   * Who else is in the room, what they hold and what they are doing right now. Replaces
+   * what the engine knew; `[]` when everyone has left. What this engine had selected and
+   * a peer now holds is let go — see `engine/peers.rs`.
+   */
+  setPeers(peers: readonly DrawPeer[]): void {
+    this.inner.setPeers(JSON.stringify(peers));
+  }
+
+  /** The id of the peer holding what is under the pointer, if someone does. */
+  peerAt(sx: number, sy: number): string | null {
+    return this.inner.peerAt(sx, sy) ?? null;
+  }
+
+  /**
+   * The elements the gesture in progress is changing, as they are this instant — empty
+   * between gestures. What a host streams to peers while something is being drawn,
+   * moved or resized, so it moves on their screens too.
+   */
+  gestureElements(): DrawElement[] {
+    return parseJson<DrawElement[]>(this.inner.gestureElementsJson(), []);
   }
 
   /**

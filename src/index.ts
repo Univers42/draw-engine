@@ -28,6 +28,7 @@ export {
   type DrawTheme,
   LIGHT_THEME,
   type DrawEngineOptions,
+  type DrawPeer,
   type TextEditRequest,
   type DrawTool,
   type ZOrderMode,

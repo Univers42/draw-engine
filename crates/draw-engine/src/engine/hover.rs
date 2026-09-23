@@ -139,7 +139,7 @@ impl DrawEngine {
             .scene
             .iter_ordered()
             .rev()
-            .any(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, reach))
+            .any(|el| !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, reach))
         {
             return HoverCursor::Move;
         }

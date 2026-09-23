@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
@@ -20,7 +20,9 @@ mod hover;
 mod image;
 mod live;
 pub use image::EmbedFrame;
+pub use peers::Peer;
 mod multi_linear;
+mod peers;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -31,7 +33,7 @@ mod text;
 mod types;
 
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
-pub use frame::{NoopPainter, PaintView, Painter};
+pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
@@ -158,6 +160,10 @@ pub struct DrawEngine {
     /// it if the gesture came to nothing. See `stamp.rs`.
     remote_refused: std::collections::HashMap<String, DrawElement>,
     events: EngineEvents,
+    /// The other people in the room, and what they hold. See `peers.rs`.
+    peers: Vec<peers::Peer>,
+    /// Element id to the index in `peers` of whoever holds it.
+    held: HashMap<String, usize>,
 }
 
 impl Default for DrawEngine {
@@ -205,6 +211,8 @@ impl DrawEngine {
             history_seq: 0,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
+            peers: Vec::new(),
+            held: HashMap::new(),
         }
     }
 
@@ -355,7 +363,7 @@ impl DrawEngine {
     fn selectable(&self) -> Vec<DrawElement> {
         self.scene
             .iter_ordered()
-            .filter(|el| !el.locked())
+            .filter(|el| !self.untouchable(el))
             .cloned()
             .collect()
     }
@@ -371,7 +379,9 @@ impl DrawEngine {
         self.scene
             .iter_ordered()
             .rev()
-            .find(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, tolerance))
+            .find(|el| {
+                !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, tolerance)
+            })
             .cloned()
     }
 
@@ -486,7 +496,13 @@ impl DrawEngine {
     }
 
     fn set_selection(&mut self, ids: impl IntoIterator<Item = String>) {
-        self.selected_ids = ids.into_iter().collect();
+        // The one door every selection goes through — a click, a marquee, a lasso, select
+        // all, a group expanding — so what someone else holds can never be let in, and
+        // nothing that acts on the selection can touch it. See `peers.rs`.
+        self.selected_ids = ids
+            .into_iter()
+            .filter(|id| !self.held.contains_key(id))
+            .collect();
         // The point editor belongs to one element, and closes the moment that element
         // stops being the only thing held. Without this it survives onto whatever is
         // picked up next, which shows a stranger's corners over the new selection.
