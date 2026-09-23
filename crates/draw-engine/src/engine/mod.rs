@@ -226,6 +226,11 @@ impl DrawEngine {
 
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
+        // Built by adding every element, so every element was pending for the host —
+        // and the first edit after loading a board sent the whole board as its delta:
+        // five megabytes of JSON for one stroke on a board of 2,000, serialised here and
+        // parsed twice more on the other side. The host supplied this scene; it has it.
+        self.scene.forget_pending();
         self.reset_history();
         self.request_draw();
     }

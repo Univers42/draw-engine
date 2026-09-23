@@ -445,6 +445,13 @@ impl Scene {
         self.structural = true;
     }
 
+    /// Forgets any pending delta without asking for a sync: the host already has this
+    /// scene, because it is the one that supplied it.
+    pub(crate) fn forget_pending(&mut self) {
+        self.dirty.clear();
+        self.structural = false;
+    }
+
     pub fn bounds(&self) -> Option<WorldBounds> {
         scene_bounds(self.iter_ordered())
     }

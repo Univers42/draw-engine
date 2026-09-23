@@ -139,3 +139,21 @@ fn a_path_placed_point_by_point_is_live_between_clicks() {
     engine.finish_linear();
     assert!(live(&engine).is_empty());
 }
+
+/// Loading a scene leaves nothing pending for the host, which supplied it: the first
+/// edit after opening a board used to ship the whole board as its delta.
+#[test]
+fn the_first_edit_after_a_load_sends_only_itself() {
+    let board: Vec<DrawElement> = (0..50)
+        .map(|i| filled(box_at(f64::from(i) * 20.0, 400.0, 10.0, 10.0)))
+        .collect();
+    let mut engine = engine_with_scene(board);
+    let _ = engine.drain_events();
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.move_pointer(200.0, 180.0, false, false);
+    engine.end_pointer();
+
+    let delta = engine.drain_events().scene_delta.expect("a delta");
+    assert_eq!(delta.updated.len(), 1, "the new shape, not the board");
+}
