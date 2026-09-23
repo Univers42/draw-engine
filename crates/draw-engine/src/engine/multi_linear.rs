@@ -29,6 +29,7 @@ use crate::camera::Point;
 use crate::engine::types::MultiLinear;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
+use crate::scene::binding::{bindable_among, is_binding_element};
 use crate::scene::{
     bump_version, is_path_a_loop_within, DrawElement, DrawElementType, LINE_CONFIRM_THRESHOLD,
 };
@@ -129,8 +130,49 @@ impl DrawEngine {
             }
         }
 
+        // Clicking a shape the pending point would bind to ends the path there, the same
+        // as clicking back on the point just placed: a bind is as deliberate a "done" as
+        // a close is, and asking for a second, separate confirmation (Enter, Escape,
+        // clicking the point again) after the highlight already promised the attach
+        // would happen just makes the suggestion a lie for one more click. Checked after
+        // the click-back case, not before, so re-clicking the same spot still ends the
+        // path through that simpler path even when it also happens to sit on a shape.
+        if self.bindable_end_at(&element, world).is_some() {
+            // Same as landing back on the point just placed (above): whatever a hover
+            // would have put there, this press puts there too, so the commit below has a
+            // real point to fix rather than whatever was left over from before the press
+            // arrived — a click with no preceding move at this exact spot is not
+            // something the engine can tell apart from one that had it, but it must not
+            // matter to either.
+            self.track_multi_linear(world, false);
+            self.commit_multi_point();
+            self.finish_linear();
+            return;
+        }
+
         // Otherwise the press is placing a point, and the release is what places it.
         self.interaction = Some(Interaction::MultiLinearPress);
+    }
+
+    /// The shape a binding-eligible path's pending point would attach to at `world`, or
+    /// `None` — a line, a shape already holding `start_binding`, and nothing near enough
+    /// all read as no target. Shared by the live highlight, the click-to-bind-and-finish
+    /// check, and the end committed at finish, so the three cannot drift apart on what
+    /// counts as "close enough".
+    fn bindable_end_at(&self, element: &DrawElement, world: Point) -> Option<String> {
+        if !is_binding_element(element) {
+            return None;
+        }
+        let tolerance = self.binding_tolerance();
+        bindable_among(
+            self.scene.iter_ordered().rev(),
+            world.x,
+            world.y,
+            tolerance,
+            Some(element.id.as_str()),
+        )
+        .map(|shape| shape.id.clone())
+        .filter(|hit| Some(hit) != element.start_binding.as_ref())
     }
 
     /// Fixes the preview point in place, so the next move starts a new segment from it.
@@ -165,6 +207,14 @@ impl DrawEngine {
             self.multi_linear = None;
             return;
         };
+
+        // Live suggestion for the point about to be placed — the painter outlines
+        // whatever shape a click would attach to, the same as a dragged arrow's
+        // endpoint (`move_linear`). Visual only: nothing here touches the element,
+        // since the pending point is not necessarily the path's actual end until a
+        // click on it (`press_multi_linear`) or `finish_multi_linear` says so.
+        self.binding_highlight = self.bindable_end_at(&element, world);
+
         let Some(mut points) = element.points.clone() else {
             return;
         };
@@ -244,6 +294,22 @@ impl DrawEngine {
 
         element.points = Some(points);
         reseat_points(&mut element);
+
+        // The path's real end is only known now — unlike a drag, where the point being
+        // moved always *is* the end, a waypoint placed mid-path is not. Evaluated once,
+        // here, rather than on every click — except when `press_multi_linear` already
+        // decided the last point was a bind and finished on the strength of it, where
+        // this just confirms the same answer again. `start_binding` needs no equivalent:
+        // it was already set by `begin_linear` on the very first press, before this path
+        // existed, and nothing in this module touches it.
+        if let Some(&last) = element.points.as_ref().and_then(|points| points.last()) {
+            let end = Point {
+                x: element.x + last[0],
+                y: element.y + last[1],
+            };
+            element.end_binding = self.bindable_end_at(&element, end);
+        }
+
         self.scene.put(bump_version(element, self.now_ms));
         self.apply_bindings();
         self.set_selection(vec![state.id]);

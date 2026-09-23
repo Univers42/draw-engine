@@ -46,6 +46,76 @@ fn bindable_at_with_tolerance() {
     assert!(bindable_at(&[rect], 5.0, 15.0, 6.0, None).is_some());
 }
 
+/// The user-reported case: a big shape drawn or raised *after* a small one it happens to
+/// enclose must not shadow it. Z-order alone used to decide this — the first match while
+/// walking topmost-first — so a container added last always won, for every point inside
+/// it, however small and specific a shape sat underneath. The rule now is: real
+/// per-shape geometry decides who matches at all, and among the matches the smallest
+/// bounding-box area wins; z-order is only the tiebreak (see the two z-order tests
+/// above, both still passing on equal-sized boxes).
+#[test]
+fn bindable_at_prefers_the_smaller_nested_shape_even_when_it_is_not_topmost() {
+    let small = ellipse_at(150.0, 150.0, 50.0, 50.0);
+    let big = box_at(0.0, 0.0, 400.0, 400.0);
+    let (small_id, big_id) = (small.id.clone(), big.id.clone());
+    // small first (bottom of z-order), big last (topmost) — the exact "circle drawn,
+    // then framed by a rectangle around it" workflow.
+    let scene = vec![small, big];
+
+    assert_eq!(
+        bindable_at(&scene, 175.0, 175.0, 0.0, None).map(|h| &h.id),
+        Some(&small_id),
+        "the small shape should win even though the big one is on top"
+    );
+    assert_ne!(
+        bindable_at(&scene, 175.0, 175.0, 0.0, None).map(|h| h.id.clone()),
+        Some(big_id),
+        "the big container must not shadow what it encloses"
+    );
+}
+
+/// The same guarantee, now confirmed for the ordering that already worked before this
+/// fix (small shape topmost) — locking in that the new area comparison doesn't disturb
+/// the case that was never broken.
+#[test]
+fn bindable_at_prefers_the_smaller_nested_shape_when_it_is_topmost() {
+    let big = box_at(0.0, 0.0, 400.0, 400.0);
+    let small = ellipse_at(150.0, 150.0, 50.0, 50.0);
+    let small_id = small.id.clone();
+    let scene = vec![big, small];
+
+    assert_eq!(
+        bindable_at(&scene, 175.0, 175.0, 0.0, None).map(|h| &h.id),
+        Some(&small_id)
+    );
+}
+
+/// A bounding box is not a shape. A point in the corner of an ellipse's bounding square,
+/// outside its actual round outline, must miss — the raw AABB check this replaces would
+/// have matched it.
+#[test]
+fn bindable_at_tests_the_real_outline_not_the_bounding_box() {
+    let circle = ellipse_at(0.0, 0.0, 100.0, 100.0);
+    // (95, 95): 0.9 out on both axes of a circle of radius 50 centred at (50, 50) —
+    // 0.9² + 0.9² = 1.62 > 1, outside the circle, but trivially inside its 100×100
+    // bounding square.
+    assert_eq!(bindable_at(&[circle], 95.0, 95.0, 0.0, None), None);
+}
+
+/// Rotation was ignored entirely — the check ran against the element's raw, unrotated
+/// `x`/`y`/`width`/`height` regardless of `angle`. A point can sit squarely inside a
+/// rotated shape's true, visible outline while falling outside the stale axis-aligned
+/// box the old check actually tested.
+#[test]
+fn bindable_at_accounts_for_rotation() {
+    // A 100×20 rectangle centred at (50, 10), turned 90°: its true footprint is now
+    // ~20 wide by ~100 tall, centred the same place — so (50, 50) sits inside the turned
+    // shape while sitting well outside the untouched box's original y-range of [0, 20].
+    let mut rotated = box_at(0.0, 0.0, 100.0, 20.0);
+    rotated.angle = std::f64::consts::FRAC_PI_2;
+    assert!(bindable_at(&[rotated], 50.0, 50.0, 0.0, None).is_some());
+}
+
 #[test]
 fn element_center_calculation() {
     let rect = box_at(20.0, 40.0, 100.0, 60.0);

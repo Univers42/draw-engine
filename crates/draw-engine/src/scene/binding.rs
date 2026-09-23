@@ -75,10 +75,37 @@ pub fn attach_point(shape: &DrawElement, toward: Point, gap: f64) -> Point {
     }
 }
 
-/// Topmost shape an endpoint at `(x, y)` would attach to.
+/// The shape an endpoint at `(x, y)` would attach to.
 ///
 /// Generic over the iterator so the hot paths can walk the scene by reference.
-/// `candidates` must already run **top of the z-order first**.
+/// `candidates` must already run **top of the z-order first** — it is still what breaks
+/// a tie, just no longer the whole rule (see below).
+///
+/// Two things a bounding-box-only, first-match check got wrong, both corrected here by
+/// reusing the same per-shape test [`crate::scene::geometry::hit_test_element`] already
+/// uses for selection:
+///
+/// - **The box is not the shape.** A point in the corner of an ellipse's or diamond's
+///   bounding box is not on the ellipse or diamond. `within_shape` (imported from
+///   `geometry`) tests the real outline per kind, and `to_element_local` un-rotates the
+///   query point first, so a turned shape is tested against where it actually is rather
+///   than against `x`/`y`/`width`/`height` with `angle` silently ignored.
+/// - **Z-order alone is not specificity.** A small shape nested inside a larger one is
+///   the more specific — and almost always intended — target, regardless of which was
+///   drawn or brought to front last. A container shape added *after* the things it
+///   encloses (drawing content, then framing it) used to shadow every one of them for
+///   any point inside it. Now every match is collected and the smallest bounding-box
+///   area wins; z-order only decides a genuine tie, which is exactly what it decided
+///   before for two similarly-sized overlapping shapes.
+///
+/// Deliberately **not** fill-aware the way selection is: unlike `hit_test_element`, a
+/// transparent shape is a full-strength binding target everywhere within it, not just
+/// its outline. Every existing binding test aims at a shape's interior expecting a bind,
+/// which is this codebase's own established, tested answer to what a shape means as a
+/// target — an arrow drawn into an empty rectangle still means "this one," fill or not.
+///
+/// **Not yet checked against the oracle** (see `docs/reference/binding.md`): reasoned
+/// from this codebase's own tests, not read from Excalidraw's source.
 pub fn bindable_among<'a>(
     candidates: impl Iterator<Item = &'a DrawElement>,
     x: f64,
@@ -86,6 +113,7 @@ pub fn bindable_among<'a>(
     tolerance: f64,
     exclude_id: Option<&str>,
 ) -> Option<&'a DrawElement> {
+    let mut best: Option<(&'a DrawElement, f64)> = None;
     for element in candidates {
         if element.is_deleted
             || Some(element.id.as_str()) == exclude_id
@@ -93,16 +121,20 @@ pub fn bindable_among<'a>(
         {
             continue;
         }
-        let rect = normalize_rect(element.x, element.y, element.width, element.height);
-        if x >= rect.x - tolerance
-            && x <= rect.x + rect.width + tolerance
-            && y >= rect.y - tolerance
-            && y <= rect.y + rect.height + tolerance
-        {
-            return Some(element);
+        let (lx, ly) = crate::scene::geometry::to_element_local(element, x, y);
+        if !crate::scene::geometry::within_shape(element, lx, ly, tolerance) {
+            continue;
+        }
+        let area = element.width.abs() * element.height.abs();
+        let replace = match &best {
+            None => true,
+            Some((_, best_area)) => area < *best_area,
+        };
+        if replace {
+            best = Some((element, area));
         }
     }
-    None
+    best.map(|(element, _)| element)
 }
 
 pub fn bindable_at<'a>(
