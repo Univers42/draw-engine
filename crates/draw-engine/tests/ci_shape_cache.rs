@@ -202,8 +202,8 @@ fn position_and_colour_do_not_change_the_fingerprint() {
 #[test]
 fn resizing_changes_the_fingerprint() {
     // The invalidation that has to keep working. Rough's output depends on w/h, and the
-    // drag handlers write geometry without bumping `version`, so size has to be in the
-    // key on its own account.
+    // drag handlers write geometry on every move while `version` is bumped only once, at
+    // commit (`engine/stamp.rs`), so size has to be in the key on its own account.
     let base = create_element_default(
         DrawElementType::Rectangle,
         Geometry {

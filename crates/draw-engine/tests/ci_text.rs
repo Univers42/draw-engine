@@ -140,10 +140,32 @@ fn set_element_text_empty_string_deletes_label() {
     let mut engine = engine_with_measure(vec![rect.clone(), label.clone()]);
     engine.set_element_text(&label.id, "");
 
-    let scene = engine.get_scene();
-    assert_eq!(scene.len(), 1);
-    assert_eq!(scene[0].id, rect.id);
-    assert!(scene[0].bound_text_id.is_none());
+    let live: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|e| !e.is_deleted)
+        .collect();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].id, rect.id);
+    assert!(live[0].bound_text_id.is_none());
+}
+
+/// A committed text emptied is deleted, not dropped: the tombstone is what tells the
+/// server and the peers, and what undo stamps the text back above.
+#[test]
+fn emptying_a_committed_text_leaves_a_tombstone() {
+    let label = text_at(0.0, 0.0, 50.0, 20.0);
+    let mut engine = engine_with_measure(vec![label.clone()]);
+
+    engine.set_element_text(&label.id, "");
+
+    let tombstone = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| e.id == label.id)
+        .expect("a tombstone");
+    assert!(tombstone.is_deleted);
+    assert_eq!(tombstone.version, label.version + 1);
 }
 
 #[test]
@@ -151,7 +173,7 @@ fn set_element_text_whitespace_only_deletes_label() {
     let label = text_at(0.0, 0.0, 50.0, 20.0);
     let mut engine = engine_with_measure(vec![label.clone()]);
     engine.set_element_text(&label.id, "   \n\t  ");
-    assert!(engine.get_scene().is_empty());
+    assert!(engine.get_scene().iter().all(|e| e.is_deleted));
 }
 
 #[test]

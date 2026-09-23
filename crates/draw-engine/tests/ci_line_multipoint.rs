@@ -483,10 +483,13 @@ fn one_undo_takes_the_whole_path_away() {
 
     engine.undo();
 
+    // Live elements: an undone creation is a tombstone now, so that the deletion
+    // reaches the server and the peers as a stamped element (see `engine/stamp.rs`).
     assert!(
         engine
             .get_scene()
             .iter()
+            .filter(|el| !el.is_deleted)
             .all(|el| el.kind != DrawElementType::Line),
         "one undo should take the whole path"
     );

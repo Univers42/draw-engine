@@ -67,6 +67,11 @@ impl<T: Clone> SnapshotHistory<T> {
         Some(&self.stack[self.index])
     }
 
+    /// The entry the history is on now.
+    pub fn current(&self) -> &T {
+        &self.stack[self.index]
+    }
+
     pub fn reset(&mut self, value: T) {
         self.current = (self.signature)(&value);
         self.stack = vec![value];

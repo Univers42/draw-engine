@@ -89,6 +89,9 @@ pub struct DebugInteraction {
     /// The group that has been stepped into, if any. Session state, never serialized:
     /// which level you are looking at is a property of your view, not of the drawing.
     pub editing_group_id: Option<String>,
+    /// Whether a move snaps to other elements. Off by default, and the first thing to
+    /// check when a drag lands a few pixels from where the pointer let go.
+    pub objects_snap: bool,
 }
 
 /// The name of a gesture, for a human reading a snapshot.
@@ -169,6 +172,7 @@ impl DrawEngine {
                 placing_linear: self.linear_in_progress(),
                 editing_linear: self.editing_linear.clone(),
                 editing_group_id: self.editing_group_id.clone(),
+                objects_snap: self.objects_snap,
             },
         }
     }

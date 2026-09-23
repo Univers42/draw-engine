@@ -199,6 +199,15 @@ export class DrawEngine {
     return parseJson<GridSettings>(this.inner.getGridJson(), DEFAULT_GRID);
   }
 
+  /** Snapping to other elements while moving. Off by default, as in Excalidraw. */
+  setObjectsSnap(on: boolean): void {
+    this.inner.setObjectsSnap(on);
+  }
+
+  getObjectsSnap(): boolean {
+    return this.inner.getObjectsSnap();
+  }
+
   setTool(tool: DrawTool): void {
     this.inner.setTool(tool);
   }
@@ -459,8 +468,9 @@ export class DrawEngine {
     this.inner.beginPan(sx, sy);
   }
 
-  movePointer(sx: number, sy: number, square = false, bypassSnap = false): void {
-    this.inner.movePointer(sx, sy, square, bypassSnap);
+  /** `invertSnap` flips object snapping for this move — the host's Ctrl/Cmd. */
+  movePointer(sx: number, sy: number, square = false, invertSnap = false): void {
+    this.inner.movePointer(sx, sy, square, invertSnap);
   }
 
   endPointer(): void {

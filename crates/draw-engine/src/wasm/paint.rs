@@ -41,8 +41,14 @@ thread_local! {
 ///
 /// Decoding is asynchronous even for a `data:` URL, so the first frame after an image is
 /// inserted usually has nothing to draw. Rather than leave a hole until something else
-/// happens to repaint, loading asks the engine for another frame — see
-/// `super::request_repaint`.
+/// happens to repaint, loading throws away the cached static layer and asks for another
+/// frame.
+///
+/// Both halves are needed. Asking for a frame alone stopped working when the static
+/// layer started being reused between frames: that layer is keyed by the scene revision,
+/// which a decode does not change, so the "repaint" was served from the layer painted
+/// *before* the image existed and the placeholder stayed on screen until something
+/// unrelated edited the scene. Loading a board full of images showed only empty boxes.
 fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
     IMAGES.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -53,6 +59,7 @@ fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
             return None;
         };
         let on_load = wasm_bindgen::closure::Closure::once_into_js(move || {
+            invalidate_layer();
             super::request_repaint();
         });
         image.set_onload(Some(on_load.unchecked_ref()));
@@ -91,26 +98,29 @@ fn evict_images(live: &[&DrawElement]) {
 ///
 /// The placeholder is the element's own box, faint: it shows that something is arriving
 /// and where it will land, so the board does not appear to have swallowed the file.
+///
+/// **Drawn in element-local space**, at `(0, 0, |w|, |h|)`, like every other element.
+/// `with_element_transform` has already moved the origin to the element and applied its
+/// mirror and rotation. This used to draw at the element's *world* position inside that
+/// transform, so the translation was applied twice: the picture appeared at double the
+/// element's coordinates, away from the element itself. Clicking the picture hit
+/// nothing and the real, grabbable image sat in empty-looking space. That was the whole
+/// of "an image cannot be dragged". Excalidraw draws it the same local way
+/// (`renderElement.ts:606-616`).
 fn paint_image(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
-    let rect = crate::scene::normalize_rect(element.x, element.y, element.width, element.height);
+    let (w, h) = (element.width.abs(), element.height.abs());
     let decoded = element.data_url.as_deref().and_then(decoded_image);
 
     with_element_transform(ctx, view, element, || match decoded {
         Some(image) => {
-            let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
-                &image,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-            );
+            let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(&image, 0.0, 0.0, w, h);
         }
         None => {
             ctx.save();
             set_stroke(ctx, "#bbbbbb");
             ctx.set_line_width(1.0);
             ctx.begin_path();
-            ctx.rect(rect.x, rect.y, rect.width, rect.height);
+            ctx.rect(0.0, 0.0, w, h);
             ctx.stroke();
             ctx.restore();
         }
@@ -531,6 +541,20 @@ pub fn path_cache_stats() -> (u64, u64) {
 /// How many Path2D objects are being kept alive.
 pub fn path_cache_len() -> usize {
     PATHS.with(|cache| cache.borrow().len())
+}
+
+/// Forgets the static layer, so the next frame redraws the scene instead of reusing it.
+///
+/// For changes to the picture that the layer's key cannot see. The key is the scene
+/// revision plus theme and grid, and an image finishing its decode changes none of
+/// them — so without this the frame after a decode was served from a layer painted
+/// before the image existed.
+fn invalidate_layer() {
+    LAYERS.with(|cell| {
+        if let Some(layers) = cell.borrow_mut().as_mut() {
+            layers.painted = None;
+        }
+    });
 }
 
 /// Redraws, scrolls and reuses since the last call, then resets.

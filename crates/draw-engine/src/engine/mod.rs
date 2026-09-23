@@ -23,6 +23,7 @@ mod pointer;
 mod pointer_end;
 mod pointer_move;
 mod radius;
+mod stamp;
 mod style;
 mod text;
 mod types;
@@ -30,7 +31,7 @@ mod types;
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
-pub(crate) use types::{default_measure, history_signature, Interaction};
+pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
@@ -119,6 +120,14 @@ pub struct DrawEngine {
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
+    /// Whether a moving selection snaps to other elements' edges and centres.
+    ///
+    /// **Off by default**, as Excalidraw's `objectsSnapModeEnabled` is (`appState.ts:129`).
+    /// It used to be always on, and the guides pulled every drag a few pixels sideways
+    /// toward whatever happened to be near — with no way to turn that off short of
+    /// holding a modifier through every drag. Holding Ctrl/Cmd inverts it for one
+    /// gesture either way; see `move_selection`.
+    objects_snap: bool,
     /// The shape a dragged arrow endpoint would attach to, if released now.
     ///
     /// The painter outlines it, so the attachment is visible before it is committed —
@@ -131,7 +140,12 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
-    history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
+    history: SnapshotHistory<stamp::HistoryEntry>,
+    history_seq: u64,
+    /// A peer's copy of an element with an uncommitted local change, refused because a
+    /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
+    /// it if the gesture came to nothing. See `stamp.rs`.
+    remote_refused: std::collections::HashMap<String, DrawElement>,
     events: EngineEvents,
 }
 
@@ -170,9 +184,12 @@ impl DrawEngine {
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
+            objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
-            history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
+            history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
+            history_seq: 0,
+            remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
         }
     }
@@ -219,6 +236,21 @@ impl DrawEngine {
 
     pub fn grid(&self) -> GridSettings {
         self.grid
+    }
+
+    /// Turns snapping to other elements on or off.
+    ///
+    /// A preference, like the grid: not part of the drawing, and not undoable.
+    pub fn set_objects_snap(&mut self, on: bool) {
+        self.objects_snap = on;
+        if !on {
+            self.snap_guides.clear();
+        }
+        self.request_draw();
+    }
+
+    pub fn objects_snap(&self) -> bool {
+        self.objects_snap
     }
 
     /// A world point rounded onto the grid, or unchanged when the grid is not snapping.
