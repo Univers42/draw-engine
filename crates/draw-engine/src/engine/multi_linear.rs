@@ -29,6 +29,7 @@ use crate::camera::Point;
 use crate::engine::types::MultiLinear;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
+use crate::scene::binding::{bindable_among, is_binding_element};
 use crate::scene::{
     bump_version, is_path_a_loop_within, DrawElement, DrawElementType, LINE_CONFIRM_THRESHOLD,
 };
@@ -165,6 +166,27 @@ impl DrawEngine {
             self.multi_linear = None;
             return;
         };
+
+        // Live suggestion for the point about to be placed — the painter outlines
+        // whatever shape a click would attach to, the same as a dragged arrow's
+        // endpoint (`move_linear`). Visual only: nothing here touches the element,
+        // since the pending point is not necessarily the path's actual end until
+        // `finish_multi_linear` says so.
+        let tolerance = self.binding_tolerance();
+        self.binding_highlight = is_binding_element(&element)
+            .then(|| {
+                bindable_among(
+                    self.scene.iter_ordered().rev(),
+                    world.x,
+                    world.y,
+                    tolerance,
+                    Some(state.id.as_str()),
+                )
+                .map(|shape| shape.id.clone())
+            })
+            .flatten()
+            .filter(|hit| Some(hit) != element.start_binding.as_ref());
+
         let Some(mut points) = element.points.clone() else {
             return;
         };
@@ -244,6 +266,31 @@ impl DrawEngine {
 
         element.points = Some(points);
         reseat_points(&mut element);
+
+        // The path's real end is only known now — unlike a drag, where the point being
+        // moved always *is* the end, a waypoint placed mid-path is not. Evaluated once,
+        // here, rather than on every click. `start_binding` needs no equivalent: it was
+        // already set by `begin_linear` on the very first press, before this path
+        // existed, and nothing in this module touches it.
+        if is_binding_element(&element) {
+            if let Some(&last) = element.points.as_ref().and_then(|points| points.last()) {
+                let end = Point {
+                    x: element.x + last[0],
+                    y: element.y + last[1],
+                };
+                let tolerance = self.binding_tolerance();
+                element.end_binding = bindable_among(
+                    self.scene.iter_ordered().rev(),
+                    end.x,
+                    end.y,
+                    tolerance,
+                    Some(element.id.as_str()),
+                )
+                .map(|shape| shape.id.clone())
+                .filter(|hit| Some(hit) != element.start_binding.as_ref());
+            }
+        }
+
         self.scene.put(bump_version(element, self.now_ms));
         self.apply_bindings();
         self.set_selection(vec![state.id]);

@@ -435,6 +435,34 @@ fn an_arrow_still_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
 }
 
+/// The same guarantee as `an_arrow_still_binds`, but placed point by point instead of
+/// dragged. The two gestures share `begin_linear`/`end_linear` up to the release and then
+/// fork into `multi_linear.rs`, which has to keep offering the binding the drag gesture
+/// does — a waypoint in open space in between should not lose it.
+#[test]
+fn a_multi_click_arrow_still_binds() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    // Click on A to start the path, a waypoint in open space, then finish on B.
+    click(&mut engine, 50.0, 30.0);
+    place(&mut engine, &[(200.0, 150.0)]);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+    engine.finish_linear();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
 /// A line already on the board must not be dragged about by a shape it happens to
 /// overlap either. Binding is refreshed for the whole scene whenever anything moves, so
 /// the rule has to hold there as well as at creation.
