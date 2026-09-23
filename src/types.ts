@@ -297,6 +297,10 @@ export interface DebugSnapshot {
     editingLinear: string | null;
     /** The group stepped into, if any. Never serialized. */
     editingGroupId: string | null;
+    /** Whether a move snaps to other elements. Off by default. */
+    objectsSnap: boolean;
+    /** What the eraser sweep in progress has marked, sorted. Empty between sweeps. */
+    markedForErasure: string[];
   };
   rendering: {
     frames: number;

@@ -33,6 +33,7 @@ impl DrawEngine {
             Interaction::MultiLinearPress => self.commit_multi_point(),
             Interaction::CornerRadius { id, .. } => self.end_corner_radius(&id),
             Interaction::Freedraw { id, .. } => self.end_freedraw(&id),
+            Interaction::Erase { .. } => self.erase_marked(),
             Interaction::Lasso { path, base } => {
                 // The engine decides what the loop caught, not the host: this is
                 // geometry, and every frontend on this engine must answer it the same.
@@ -287,6 +288,14 @@ impl DrawEngine {
             self.finish_linear();
             return;
         }
+        // A sweep in progress is backed out of first. Escape is how you change your mind
+        // about what the eraser has marked, and stepping out of a group instead — the
+        // next rule down — left the sweep running, and the release deleted it all.
+        if matches!(self.interaction, Some(Interaction::Erase { .. })) {
+            self.interaction = None;
+            self.clear_erasing();
+            return;
+        }
         // Escape steps out of a group before it does anything else. It is the way back
         // up, and without it the only exit is clicking something outside — which is
         // awkward when the group fills the screen.
@@ -309,6 +318,9 @@ impl DrawEngine {
             // uncommitted meant it was never saved — and, pending, it kept refusing
             // every peer's edit of those elements until some unrelated commit came.
             Some(Interaction::CornerRadius { id, .. }) => self.end_corner_radius(&id),
+            // Escape mid-sweep lets the marks go: nothing was deleted yet, and the point
+            // of marking first is that you can still back out.
+            Some(Interaction::Erase { .. }) => self.clear_erasing(),
             Some(
                 Interaction::Move { .. }
                 | Interaction::Resize { .. }

@@ -1,4 +1,5 @@
 use crate::engine::{DrawEngine, TextEditRequest};
+use crate::interaction::DrawTool;
 use crate::scene::{
     bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
     is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
@@ -135,6 +136,15 @@ impl DrawEngine {
     }
 
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
+        // Only with the selection tools, as Excalidraw's `handleCanvasDoubleClick` has it
+        // (`App.tsx:7200-7209`): a double click with the eraser, say, put an empty text
+        // box on the board and opened an editor on it.
+        if !matches!(
+            self.tool,
+            DrawTool::Select | DrawTool::Lasso | DrawTool::AutoShape
+        ) {
+            return;
+        }
         let world = self.screen_to_world(sx, sy);
         // Stepping into a group comes first. A double click inside one means "show me
         // what is in here", and letting the text branch run first would put a label on

@@ -363,6 +363,13 @@ impl WasmEngine {
 
     /// Snapping to other elements while moving. Off by default; see
     /// `DrawEngine::set_objects_snap`.
+    /// Alt, as held during the pointer move about to be reported. The eraser reads it
+    /// to un-mark; see `DrawEngine::set_alt_held`.
+    #[wasm_bindgen(js_name = setAltHeld)]
+    pub fn set_alt_held(&self, held: bool) {
+        self.cell.borrow_mut().engine.set_alt_held(held);
+    }
+
     #[wasm_bindgen(js_name = setObjectsSnap)]
     pub fn set_objects_snap(&self, on: bool) {
         self.cell.borrow_mut().engine.set_objects_snap(on);
