@@ -45,6 +45,12 @@ const HANDLE_HIT_PX: f64 = 10.0;
 /// pixels, because it is a statement about the hand rather than about the drawing — the
 /// same wobble is the same wobble at every zoom.
 const LINEAR_CLICK_PX: f64 = 20.0;
+/// Excalidraw's `DRAGGING_THRESHOLD` (`packages/common/src/constants.ts:21`): how far a
+/// bound arrow has to be dragged before the drag is allowed to detach it.
+///
+/// The click that selects an arrow is never perfectly still, and without a floor that
+/// click would quietly unbind it. Screen pixels, because it is about the hand.
+const DRAGGING_THRESHOLD_PX: f64 = 10.0;
 /// How long a segment must be on screen before it gets its own midpoint handle.
 /// Two handles a few pixels apart cannot be aimed at deliberately.
 const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
