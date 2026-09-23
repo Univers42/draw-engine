@@ -1,10 +1,12 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
+import { readProbe, resetProbe, timeHitTest } from "./host/probe";
 import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, Scene } from "./types";
 import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
   Arrowhead,
   Camera,
+  DebugSnapshot,
   DrawElement,
   DrawElementStyle,
   DrawEngineOptions,
@@ -119,8 +121,34 @@ export class DrawEngine {
   }
 
   hitTest(sx: number, sy: number, tolerance = 0): DrawElement | null {
-    const json = this.inner.hitTest(sx, sy, tolerance);
+    // Timed here rather than in the engine: hit testing is a linear scan with no spatial
+    // index, so its cost is the first thing to look at on a large board — and the engine
+    // is runtime-agnostic and has no clock of its own.
+    const json = timeHitTest(() => this.inner.hitTest(sx, sy, tolerance));
     return json ? parseJson<DrawElement | null>(json, null) : null;
+  }
+
+  /**
+   * Everything the engine and the host know about the current state, in one object.
+   *
+   * `scene` / `viewport` / `interaction` come from the engine; `rendering` from the WASM
+   * frame loop, which is the only place a frame is visible; `host` from the browser
+   * side, which is the only place a raw pointer event or a clock is.
+   *
+   * Read by `tools/editor-inspector`. Safe to poll — nothing here is computed for the
+   * call, it is all state that already exists.
+   */
+  debugSnapshot(): DebugSnapshot {
+    const engine = parseJson<Omit<DebugSnapshot, "host">>(
+      this.inner.debugSnapshotJson(),
+      {} as Omit<DebugSnapshot, "host">,
+    );
+    return { ...engine, host: readProbe() };
+  }
+
+  /** Zeroes the host counters, so one gesture can be measured rather than a session. */
+  resetDebugCounters(): void {
+    resetProbe();
   }
 
   /**
@@ -332,6 +360,22 @@ export class DrawEngine {
 
   groupSelection(): void {
     this.inner.groupSelection();
+  }
+
+  /**
+   * Ctrl+G: groups what is loose, ungroups what is already exactly one group.
+   *
+   * Deliberately not the oracle's behaviour — theirs is a no-op on a grouped selection,
+   * which leaves no way out of a group with the key you reached for. On a nested
+   * selection this peels one level, never all of them.
+   */
+  toggleGroupSelection(): void {
+    this.inner.toggleGroupSelection();
+  }
+
+  /** The group that has been stepped into, if any. */
+  editingGroupId(): string | null {
+    return this.inner.editingGroupId() ?? null;
   }
 
   ungroupSelection(): void {

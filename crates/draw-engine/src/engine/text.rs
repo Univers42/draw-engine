@@ -103,8 +103,46 @@ impl DrawEngine {
             .cloned()
     }
 
+    /// Descends one level into the group under the pointer, if there is one.
+    ///
+    /// `editing_group_id` becomes the group the click resolves to *now*, and the
+    /// selection becomes what the next level down holds. Because
+    /// `selected_group_for` truncates at the edited group and takes the outermost of
+    /// what remains, repeating this walks inward exactly one level per double click —
+    /// to any depth, with no special case for how deep the nesting goes.
+    ///
+    /// Returns whether it descended, so the caller knows not to fall through to text.
+    fn step_into_group(&mut self, sx: f64, sy: f64) -> bool {
+        let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) else {
+            return false;
+        };
+        let editing = self.editing_group_id.clone();
+        let Some(group) = crate::edit::selected_group_for(&hit, editing.as_deref()) else {
+            // Nothing above this element inside the group being edited: the leaf is
+            // already reachable, so there is nowhere further to go.
+            return false;
+        };
+        let group = group.clone();
+        self.editing_group_id = Some(group);
+        let ids = crate::edit::expand_within(
+            self.scene.iter_ordered(),
+            [hit.id.clone()],
+            self.editing_group_id.as_deref(),
+        );
+        self.set_selection(ids);
+        self.request_draw();
+        true
+    }
+
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
         let world = self.screen_to_world(sx, sy);
+        // Stepping into a group comes first. A double click inside one means "show me
+        // what is in here", and letting the text branch run first would put a label on
+        // the shape instead — which is what happened, and why a group could not be
+        // opened at all.
+        if self.step_into_group(sx, sy) {
+            return;
+        }
         if let Some(hit) = crate::hit_test(
             &self.selectable(),
             world.x,

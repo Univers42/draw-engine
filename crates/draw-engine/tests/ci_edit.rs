@@ -161,6 +161,9 @@ fn flip_vertical_preserves_bounds() {
     assert_close(b_new.max_y, 60.0);
 }
 
+/// The three group primitives against one another. `None` for the editing group
+/// throughout: this is the top-level case, and nesting has its own file
+/// (`ci_groups_nested.rs`).
 #[test]
 fn grouping_expand_and_ungroup() {
     let (a, b, c, _) = make_three_elements();
@@ -168,16 +171,22 @@ fn grouping_expand_and_ungroup() {
         &[a.clone(), b.clone(), c.clone()],
         &ids(&[a.clone(), b.clone()]),
         "group_1",
+        None,
     );
     assert!(is_single_group(
         &grouped,
-        &ids(&[grouped[0].clone(), grouped[1].clone()])
+        &ids(&[grouped[0].clone(), grouped[1].clone()]),
+        None,
     ));
 
     let expanded = expand_to_groups(&grouped, [a.id.clone()]);
     assert_eq!(expanded, HashSet::from([a.id, b.id]));
 
-    let ungrouped = ungroup_patches(&grouped, &ids(&[grouped[0].clone(), grouped[1].clone()]));
-    assert!(ungrouped[0].group_id.is_none());
-    assert!(ungrouped[1].group_id.is_none());
+    let ungrouped = ungroup_patches(
+        &grouped,
+        &ids(&[grouped[0].clone(), grouped[1].clone()]),
+        None,
+    );
+    assert!(ungrouped[0].group_ids.is_empty());
+    assert!(ungrouped[1].group_ids.is_empty());
 }

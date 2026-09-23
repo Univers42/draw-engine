@@ -29,7 +29,17 @@ pub struct GroupFrame {
     pub origins: Vec<(String, GroupOrigin)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// One member's geometry at the moment the drag began.
+///
+/// Deliberately not `Copy`, and the `points` field is why. It used to be, and the
+/// consequence was subtle: a `Vec` cannot be `Copy`, so the ring had nowhere to live
+/// here, so `resize_group` scaled the box from this captured state but the *points* from
+/// the live element — which every earlier move of the same gesture had already scaled.
+/// The box grew by `sx` and the ring by `sx` per move, and after a real drag of twenty
+/// frames the drawing was far outside its own bounds.
+///
+/// A single-move drag cannot see that, which is how it survived having tests.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GroupOrigin {
     pub x: f64,
     pub y: f64,
@@ -37,6 +47,10 @@ pub struct GroupOrigin {
     pub height: f64,
     pub angle: f64,
     pub font_size: Option<f64>,
+    /// The ring as it was when the drag began, for a point-based element.
+    ///
+    /// `None` for a shape, which is generated into its box and has no ring to keep up.
+    pub points: Option<Vec<[f64; 2]>>,
 }
 
 impl GroupFrame {
@@ -56,6 +70,7 @@ impl GroupFrame {
                         height: e.height,
                         angle: e.angle,
                         font_size: e.font_size,
+                        points: e.points.clone(),
                     },
                 )
             })
@@ -166,7 +181,7 @@ pub fn resize_group(
                 .origins
                 .iter()
                 .find(|(id, _)| id == &element.id)
-                .map(|(_, o)| *o)?;
+                .map(|(_, o)| o)?;
 
             let mut next = element.clone();
             next.x = ax + (origin.x - ax) * sx;
@@ -185,9 +200,15 @@ pub fn resize_group(
                 next.height = -next.height;
             }
 
-            // Points ride the same scale, or a line inside a group would keep its old
-            // shape while its box changed.
-            if let Some(points) = element.points.as_ref() {
+            // The ring rides the same scale as the box, or a drawing inside a group
+            // keeps its old shape while its box changes.
+            //
+            // Scaled from `origin.points` — the ring as it was when the drag began — and
+            // never from `element.points`, which every earlier move of this gesture has
+            // already scaled. Reading the live ring compounds: the box ends up right and
+            // the drawing `sx²` too big, bursting out of its own bounds. Exactly the
+            // reason `scale_ring` on the single-element path captures its ring too.
+            if let Some(points) = origin.points.as_ref() {
                 next.points = Some(
                     points
                         .iter()
@@ -232,7 +253,7 @@ pub fn rotate_group(
                 .origins
                 .iter()
                 .find(|(id, _)| id == &element.id)
-                .map(|(_, o)| *o)?;
+                .map(|(_, o)| o)?;
 
             let ox = origin.x + origin.width / 2.0;
             let oy = origin.y + origin.height / 2.0;

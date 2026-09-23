@@ -104,6 +104,22 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Ctrl+G: group what is loose, ungroup what is already exactly one group.
+    ///
+    /// A deliberate divergence — the oracle's Ctrl+G is a no-op on a grouped selection,
+    /// which leaves the key with no inverse. See `docs/reference/groups.md`.
+    #[wasm_bindgen(js_name = toggleGroupSelection)]
+    pub fn toggle_group_selection(&self) {
+        self.cell.borrow_mut().engine.toggle_group_selection();
+        self.flush();
+    }
+
+    /// The group that has been stepped into, if any.
+    #[wasm_bindgen(js_name = editingGroupId)]
+    pub fn editing_group_id(&self) -> Option<String> {
+        self.cell.borrow().engine.editing_group_id()
+    }
+
     #[wasm_bindgen(js_name = ungroupSelection)]
     pub fn ungroup_selection(&self) {
         self.cell.borrow_mut().engine.ungroup_selection();

@@ -126,7 +126,14 @@ export interface DrawElement extends DrawElementStyle {
   autoResize?: boolean;
   containerId?: string | null;
   boundTextId?: string | null;
-  groupId?: string | null;
+  /**
+   * The groups this element is in, **innermost first**.
+   *
+   * The array *is* the nesting — there is no group entity and no parent pointer, just
+   * ids that several elements share, so an element two levels down carries both. See
+   * `docs/reference/groups.md`.
+   */
+  groupIds?: string[];
   locked?: boolean;
   version: number;
   versionNonce: number;
@@ -236,4 +243,84 @@ export interface OsidrawFile {
   type: "osidraw";
   version: number;
   elements: DrawElement[];
+}
+
+/**
+ * A structured view of what the editor is doing, for an inspector or a human.
+ *
+ * Four sections, each from the only place that can see it: `scene`/`viewport`/
+ * `interaction` from the engine, `rendering` from the WASM frame loop, `host` from the
+ * browser. Produced by `DrawEngine.debugSnapshot()` and read by
+ * `tools/editor-inspector`; DEV builds only, like `window.__drawEngine` itself.
+ */
+export interface DebugSnapshot {
+  scene: {
+    /** Live elements. Tombstones are counted separately, not here. */
+    elementCount: number;
+    /** Tombstones. They stay in the store because a deletion has to be *sent*. */
+    deletedCount: number;
+    selectedCount: number;
+    /** Sorted, so two snapshots of one selection compare equal. */
+    selectedIds: string[];
+    /** Moves when the scene does — the nearest analogue to a state-update count. */
+    revision: number;
+    canUndo: boolean;
+    canRedo: boolean;
+  };
+  viewport: {
+    x: number;
+    y: number;
+    /** Camera scale; 1 is 100%. */
+    zoom: number;
+    /** CSS pixels. `rendering.canvasWidth` over this is the dpr in force. */
+    width: number;
+    height: number;
+    dpr: number;
+    /** `[minX, minY, maxX, maxY]` of the world on screen — what culling keeps. */
+    visibleWorld: [number, number, number, number];
+  };
+  interaction: {
+    tool: string;
+    toolLocked: boolean;
+    /** The gesture in progress, by name, or null between gestures. */
+    kind: string | null;
+    dragging: boolean;
+    resizing: boolean;
+    placingLinear: string | null;
+    editingLinear: string | null;
+    /** The group stepped into, if any. Never serialized. */
+    editingGroupId: string | null;
+  };
+  rendering: {
+    frames: number;
+    /** Wall time between frames: display cadence plus everything else on the page. */
+    medianFrameMs: number;
+    p95FrameMs: number;
+    /** Our own CPU, kept apart from the interval above. */
+    medianBuildMs: number;
+    medianPaintMs: number;
+    p95PaintMs: number;
+    lastBuildMs: number;
+    lastPaintMs: number;
+    /** After culling. Against `scene.elementCount`, this says whether culling works. */
+    elementsRendered: number;
+    /** Rough geometry reused vs regenerated. Misses during a pan mean trouble. */
+    shapeCacheHits: number;
+    shapeCacheMisses: number;
+    shapeCacheLen: number;
+    /** Device pixels. */
+    canvasWidth: number;
+    canvasHeight: number;
+    /** Whether a frame is owed. There are no dirty *regions*; the canvas repaints whole. */
+    dirty: boolean;
+  };
+  host: {
+    /** Raw pointermove events seen. */
+    pointerEvents: number;
+    /** Moves forwarded after per-frame coalescing. The ratio is the coalescing. */
+    engineSteps: number;
+    hitTests: number;
+    hitTestMs: number;
+    maxHitTestMs: number;
+  };
 }

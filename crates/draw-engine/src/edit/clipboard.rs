@@ -86,12 +86,20 @@ pub fn materialize(
         source
             .into_iter()
             .map(|mut element| {
-                let group_id = element.group_id.as_ref().map(|old| {
-                    group_map
-                        .entry(old.clone())
-                        .or_insert_with(new_element_id)
-                        .clone()
-                });
+                // Every level gets a fresh id, and two elements that shared a group
+                // still share its copy — the map is keyed by the old id, so the
+                // structure survives while the identity does not. Remapping only the
+                // outermost would join the copy to the original one level down.
+                let group_ids: Vec<String> = element
+                    .group_ids
+                    .iter()
+                    .map(|old| {
+                        group_map
+                            .entry(old.clone())
+                            .or_insert_with(new_element_id)
+                            .clone()
+                    })
+                    .collect();
                 element.id = id_map
                     .get(&element.id)
                     .cloned()
@@ -102,7 +110,7 @@ pub fn materialize(
                 element.end_binding = remap_ref(element.end_binding.as_deref(), &id_map);
                 element.container_id = remap_ref(element.container_id.as_deref(), &id_map);
                 element.bound_text_id = remap_ref(element.bound_text_id.as_deref(), &id_map);
-                element.group_id = group_id;
+                element.group_ids = group_ids;
                 element.version = 1;
                 element.updated = now;
                 element.is_deleted = false;

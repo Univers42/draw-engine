@@ -25,8 +25,97 @@ pub(crate) struct PaintStats {
     pub visible: usize,
 }
 
+/// How many frames of history the log keeps.
+///
+/// Two seconds at 60Hz. Long enough that a gesture is described by a distribution rather
+/// than by whichever frame happened to be last, short enough that the buffer is a fixed
+/// two kilobytes and the median is cheap to take.
+const FRAME_HISTORY: usize = 120;
+
+/// One frame's cost.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct FrameSample {
+    pub build_ms: f64,
+    pub paint_ms: f64,
+    /// Wall time since the previous frame started.
+    ///
+    /// Deliberately kept apart from `build_ms + paint_ms`, which is *our* CPU. The
+    /// interval is the display cadence plus everything else on the page, so a slow
+    /// interval with a fast paint means the time is going somewhere that is not us —
+    /// and reporting one number would make those two indistinguishable.
+    pub interval_ms: f64,
+}
+
+/// A fixed window of recent frames.
+///
+/// A ring rather than a growing list: this is written every frame forever, and an
+/// unbounded log of a debugging metric is a leak that only shows up in the sessions that
+/// last long enough to matter.
+#[derive(Clone, Debug)]
+pub(crate) struct FrameLog {
+    samples: [FrameSample; FRAME_HISTORY],
+    next: usize,
+    filled: usize,
+    last_start: f64,
+    /// Every frame since the engine started, not just the ones still in the window.
+    pub total: u64,
+}
+
+impl Default for FrameLog {
+    fn default() -> Self {
+        Self {
+            samples: [FrameSample::default(); FRAME_HISTORY],
+            next: 0,
+            filled: 0,
+            last_start: 0.0,
+            total: 0,
+        }
+    }
+}
+
+impl FrameLog {
+    fn record(&mut self, started: f64, build_ms: f64, paint_ms: f64) {
+        // The first frame has no predecessor, so it has no interval — recording one
+        // would put the whole time since page load into the distribution.
+        let interval_ms = if self.total == 0 {
+            0.0
+        } else {
+            started - self.last_start
+        };
+        self.last_start = started;
+        self.samples[self.next] = FrameSample {
+            build_ms,
+            paint_ms,
+            interval_ms,
+        };
+        self.next = (self.next + 1) % FRAME_HISTORY;
+        self.filled = (self.filled + 1).min(FRAME_HISTORY);
+        self.total += 1;
+    }
+
+    fn window(&self) -> &[FrameSample] {
+        &self.samples[..self.filled]
+    }
+
+    /// The value at `q` through the sorted window, or 0 when nothing has been recorded.
+    ///
+    /// A quantile rather than a mean: frame costs are not normally distributed — they are
+    /// a floor with occasional spikes — and a mean hides exactly the spikes anyone
+    /// looking at this is trying to find.
+    fn quantile(&self, pick: impl Fn(&FrameSample) -> f64, q: f64) -> f64 {
+        let mut values: Vec<f64> = self.window().iter().map(&pick).collect();
+        if values.is_empty() {
+            return 0.0;
+        }
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let index = ((values.len() - 1) as f64 * q).round() as usize;
+        values[index]
+    }
+}
+
 pub(crate) struct EngineCell {
     pub stats: PaintStats,
+    pub frames: FrameLog,
     pub(crate) engine: DrawEngine,
     pub(crate) canvas: HtmlCanvasElement,
     pub(crate) ctx: CanvasRenderingContext2d,
@@ -116,6 +205,7 @@ impl WasmEngine {
         engine.set_measure_text(measure_via_ctx);
         let cell = Rc::new(RefCell::new(EngineCell {
             stats: PaintStats::default(),
+            frames: FrameLog::default(),
             engine,
             canvas,
             ctx,
@@ -289,6 +379,8 @@ fn paint_frame(cell: &Rc<RefCell<EngineCell>>) {
         paint_ms: painted - built,
         visible,
     };
+    cell.frames
+        .record(started, built - started, painted - built);
 }
 
 fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
