@@ -17,6 +17,7 @@ mod frame;
 mod hover;
 mod image;
 pub use image::EmbedFrame;
+mod multi_linear;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -34,6 +35,14 @@ const HANDLE_PX: f64 = 8.0;
 /// the point handles on a line or arrow, which sit *on* the geometry and so have no
 /// element interior to stay clear of.
 const HANDLE_HIT_PX: f64 = 10.0;
+/// Excalidraw's `MINIMUM_ARROW_SIZE` (`constants.ts:22`), used as they use it: the fork
+/// between the two gestures a linear tool offers.
+///
+/// Below this the press and release was a **click**, which starts a path taken point by
+/// point; above it, a **drag**, which draws one segment and ends. Measured in screen
+/// pixels, because it is a statement about the hand rather than about the drawing — the
+/// same wobble is the same wobble at every zoom.
+const LINEAR_CLICK_PX: f64 = 20.0;
 /// How long a segment must be on screen before it gets its own midpoint handle.
 /// Two handles a few pixels apart cannot be aimed at deliberately.
 const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
@@ -85,6 +94,13 @@ pub struct DrawEngine {
     ///
     /// Held by id rather than by index because the scene is reordered underneath it.
     editing_linear: Option<String>,
+    /// The path being placed point by point, if one is.
+    ///
+    /// Distinct from [`Self::interaction`] because this is the one gesture that spans
+    /// several of them: press, release, move, press, release, and only then — perhaps a
+    /// dozen clicks later — an end. Putting it in `Interaction` would have it thrown away
+    /// by the release that places its second point.
+    multi_linear: Option<types::MultiLinear>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -134,6 +150,7 @@ impl DrawEngine {
             next_vertical_align: None,
             interaction: None,
             editing_linear: None,
+            multi_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
@@ -308,6 +325,11 @@ impl DrawEngine {
         if tool == self.tool {
             return;
         }
+        // Reaching for another tool is an answer to "is this path finished?" too, and
+        // leaving it open would strand it: nothing else would ever end it, and the next
+        // click of the line tool would carry on from wherever it was abandoned. Not
+        // `finish_linear`, which settles the tool — the caller is already choosing one.
+        self.finish_multi_linear();
         // Remembered before the move, and never the tool being left if that tool is
         // itself a toggle — otherwise pressing E twice would bounce the eraser against
         // itself instead of returning you to what you were drawing.

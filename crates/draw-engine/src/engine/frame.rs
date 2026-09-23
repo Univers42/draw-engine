@@ -59,12 +59,20 @@ pub struct PaintView<'a> {
     /// The shape a dragged arrow endpoint would bind to. Painted as a halo on its
     /// outline, so the attachment is visible before it is committed.
     pub binding_highlight: Option<&'a DrawElement>,
-    /// Point handles for a selected line or arrow.
+    /// Point handles for a selected line or arrow, **or** for one being placed.
     ///
-    /// Non-empty only when exactly one linear element is selected. When it is, the
-    /// selection frame and box handles are suppressed entirely — a linear element is
-    /// edited by its points, and Excalidraw shows no bounding box for one either.
+    /// Non-empty when exactly one linear element is selected, and while a path is being
+    /// built point by point. In the selected case the frame and box handles are
+    /// suppressed entirely — a linear element is edited by its points, and Excalidraw
+    /// shows no bounding box for one either.
     pub linear_handles: Vec<crate::selection::LinearHandlePoint>,
+    /// The handle the pointer is currently moving, if any.
+    ///
+    /// Painted in the focus colour rather than the resting one, so that during a drag it
+    /// is obvious *which* point is being moved. On a path whose points are a few pixels
+    /// apart that is otherwise guesswork, and letting go of the wrong one is a bend in
+    /// the wrong place.
+    pub active_handle: Option<crate::selection::LinearHandle>,
 }
 
 pub trait Painter {
@@ -110,14 +118,36 @@ impl DrawEngine {
         let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
-        let linear_handles = match selected.as_slice() {
-            [single] if self.shows_point_handles(single) => {
-                crate::selection::linear::handle_points(
-                    single,
-                    super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
-                )
-            }
-            _ => Vec::new(),
+        let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
+        let linear_handles = match self.multi_linear.as_ref() {
+            // A path being placed shows a joint on every point it has taken, so the
+            // articulation of what is being drawn is visible while it is being drawn —
+            // without them a polyline is an anonymous run of segments and there is no
+            // way to see where the corners you placed actually landed.
+            //
+            // Committed points only: the last one follows the cursor and a circle riding
+            // under the pointer would obscure exactly the spot being aimed at. Midpoints
+            // are left out for the same reason — they add a point when dragged, which is
+            // not a thing to offer on a path that is still growing.
+            Some(state) => self
+                .scene
+                .get(&state.id)
+                .map(|element| {
+                    let mut handles = crate::selection::linear::handle_points(element, f64::MAX);
+                    handles.truncate(state.committed);
+                    handles
+                })
+                .unwrap_or_default(),
+            None => match selected.as_slice() {
+                [single] if self.shows_point_handles(single) => {
+                    crate::selection::linear::handle_points(single, min_segment)
+                }
+                _ => Vec::new(),
+            },
+        };
+        let active_handle = match &self.interaction {
+            Some(super::Interaction::LinearPoint { handle, .. }) => Some(*handle),
+            _ => None,
         };
         // Frame chrome, decided here so every host paints the same boundaries and clips
         // the same children. A host is handed boxes and labels, not rules.
@@ -174,6 +204,7 @@ impl DrawEngine {
                 .as_deref()
                 .and_then(|id| self.scene.get(id)),
             linear_handles,
+            active_handle,
         }
     }
 

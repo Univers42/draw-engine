@@ -1131,6 +1131,15 @@ fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
 /// Radius of a point handle on a line or arrow.
 const POINT_HANDLE_R: f64 = 5.0;
 
+/// Fill for the point being moved right now.
+///
+/// Excalidraw's `POINT_HANDLE_SELECTED_FILL` — `rgba(134, 131, 226, 0.9)`, read off
+/// `interactiveScene.ts` at the pinned SHA. A resting joint is white and a moving one is
+/// violet, which is the whole of what the colour is for: on a path whose points are a few
+/// pixels apart, knowing which one is under the pointer is otherwise guesswork, and
+/// letting go of the wrong one puts a bend somewhere nobody meant.
+const POINT_HANDLE_ACTIVE_FILL: &str = "rgba(134, 131, 226, 0.9)";
+
 /// Draws everything that is not the document itself: the marquee, snap guides, the
 /// selection frame and handles, and the binding hint.
 ///
@@ -1147,6 +1156,12 @@ const POINT_HANDLE_R: f64 = 5.0;
 fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     set_stroke(ctx, &view.theme.accent);
     ctx.set_line_width(1.0);
+    // Solid, said rather than assumed. The dash is sticky canvas state and the element
+    // pass leaves it wherever the last element wanted it, so selecting a dashed or dotted
+    // shape drew its own selection frame in that shape's dash — a frame made of widely
+    // spaced dots, which reads as nothing at all. Every piece of chrome below that wants
+    // something other than solid sets it and puts it back.
+    set_dash_cached(ctx, None);
 
     if let Some(rect) = view.marquee {
         let tl = crate::world_to_screen(view.camera, rect.min_x, rect.min_y);
@@ -1247,7 +1262,13 @@ fn paint_lasso(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 /// [`selection_handles`] call the pointer code hit-tests against, so the two cannot
 /// drift. They did: the cardinal handles were hit-testable but never painted, which made
 /// grabbing the middle of an edge resize a shape you were only trying to move.
-fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
+/// The outline around one element, turned with it.
+///
+/// Pulled out of [`paint_shape_selection`] because a multi-selection needs exactly this
+/// and nothing else: Excalidraw gives every selected element its own border and *then*
+/// draws the group's box around all of them (`interactiveScene.ts:1922-1948` and
+/// `:2027-2052`). Only the single-element case adds handles on top.
+fn paint_element_outline(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
     let corners = selection_corners_padded(element, view.handle_layout.frame_pad);
     ctx.begin_path();
     let first = crate::world_to_screen(view.camera, corners[0].x, corners[0].y);
@@ -1258,6 +1279,10 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
     }
     ctx.close_path();
     ctx.stroke();
+}
+
+fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
+    paint_element_outline(ctx, view, element);
 
     let half = view.handle_px / 2.0;
     for point in selection_handles(element, view.handle_layout) {
@@ -1313,10 +1338,23 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         return;
     };
 
+    // Every member gets its own outline first. Without them a multi-selection showed only
+    // the box around the whole lot, so you could see *that* a region was held but not
+    // *which* shapes in it were — and an unselected shape sitting inside those bounds was
+    // indistinguishable from a selected one.
+    for element in view.selected.iter().copied() {
+        paint_element_outline(ctx, view, element);
+    }
+
     let pad = view.handle_layout.frame_pad;
     let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
     let br = crate::world_to_screen(view.camera, bounds.max_x + pad, bounds.max_y + pad);
+    // Dotted, so the group's box reads as chrome around the outlines rather than as a
+    // sixth rectangle someone drew. Excalidraw dots this one and only this one
+    // (`setLineDash([2 / zoom])`, `interactiveScene.ts:2037`) for the same reason.
+    set_dash_cached(ctx, Some([2.0, 2.0]));
     ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+    set_dash_cached(ctx, None);
 
     // The handles sit further out than the frame, exactly as they do on a single shape.
     let off = view.handle_layout.handle_offset;
@@ -1365,6 +1403,9 @@ fn paint_linear_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
             ctx.set_global_alpha(0.55);
             ctx.fill();
             ctx.restore();
+        } else if view.active_handle == Some(handle.handle) {
+            set_fill(ctx, POINT_HANDLE_ACTIVE_FILL);
+            ctx.fill();
         } else {
             set_fill(ctx, &view.theme.background);
             ctx.fill();
