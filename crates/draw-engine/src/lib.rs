@@ -85,8 +85,8 @@ pub use scene::{
     IMAGE_MIN_VIEWPORT_HEIGHT, IMAGE_VIEWPORT_FRACTION, IMAGE_VIEWPORT_MARGIN,
 };
 pub use scene::{
-    embed_link, is_allowed_embed_host, parse_timestamp, EmbedKind, EmbedLink, ALLOWED_EMBED_HOSTS,
-    DEFAULT_EMBED_HEIGHT, DEFAULT_EMBED_WIDTH, SAME_ORIGIN_EMBED_HOSTS, VIDEO_EMBED_HEIGHT,
+    embed_link, embed_src_of, is_allowed_embed_host, parse_timestamp, EmbedKind, EmbedLink,
+    ALLOWED_EMBED_HOSTS, DEFAULT_EMBED_HEIGHT, DEFAULT_EMBED_WIDTH, VIDEO_EMBED_HEIGHT,
     VIDEO_EMBED_WIDTH,
 };
 pub use selection::{
