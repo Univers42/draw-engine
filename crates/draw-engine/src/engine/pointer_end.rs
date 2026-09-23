@@ -83,7 +83,7 @@ impl DrawEngine {
                     // By reference: this used to clone the whole document twice, once to
                     // test the rectangle against it and once to expand groups.
                     ids.extend(elements_in_marquee_among(
-                        self.scene.iter_ordered().filter(|el| !el.locked()),
+                        self.scene.iter_ordered().filter(|el| !self.untouchable(el)),
                         rect,
                     ));
                 }

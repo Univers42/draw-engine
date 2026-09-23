@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
@@ -20,7 +20,9 @@ mod hover;
 mod image;
 mod live;
 pub use image::EmbedFrame;
+pub use peers::Peer;
 mod multi_linear;
+mod peers;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -31,7 +33,7 @@ mod text;
 mod types;
 
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
-pub use frame::{NoopPainter, PaintView, Painter};
+pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
@@ -142,6 +144,9 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
+    /// Each peer's laser trails, by peer id — see `peers.rs`. Session state like the
+    /// local ones: in no scene, no history, no save.
+    peer_lasers: HashMap<String, peers::PeerLaser>,
     /// What the eraser sweep in progress has marked, drawn faded until release deletes
     /// it. Session state, like the selection: nothing in the document changes until the
     /// sweep ends, so Escape can let it all go. See `eraser.rs`.
@@ -158,6 +163,10 @@ pub struct DrawEngine {
     /// it if the gesture came to nothing. See `stamp.rs`.
     remote_refused: std::collections::HashMap<String, DrawElement>,
     events: EngineEvents,
+    /// The other people in the room, and what they hold. See `peers.rs`.
+    peers: Vec<peers::Peer>,
+    /// Element id to the index in `peers` of whoever holds it.
+    held: HashMap<String, usize>,
 }
 
 impl Default for DrawEngine {
@@ -198,6 +207,7 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
+            peer_lasers: HashMap::new(),
             erasing: HashSet::new(),
             erasing_revision: 0,
             alt_held: false,
@@ -205,6 +215,8 @@ impl DrawEngine {
             history_seq: 0,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
+            peers: Vec::new(),
+            held: HashMap::new(),
         }
     }
 
@@ -214,6 +226,7 @@ impl DrawEngine {
         // view can stay borrow-only. Without it a long presentation keeps one dead stroke
         // per flick and walks all of them every frame to draw nothing.
         self.laser.prune(now_ms);
+        self.prune_peer_lasers(now_ms);
     }
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
@@ -312,7 +325,11 @@ impl DrawEngine {
     /// Answering here rather than in each host is the point — otherwise every frontend
     /// has to learn, separately, every reason the engine might still have work to do.
     pub fn needs_frame(&self) -> bool {
-        !self.disposed && (self.dirty || self.in_motion() || self.laser.is_active(self.now_ms))
+        !self.disposed
+            && (self.dirty
+                || self.in_motion()
+                || self.laser.is_active(self.now_ms)
+                || self.peer_laser_active())
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -355,7 +372,7 @@ impl DrawEngine {
     fn selectable(&self) -> Vec<DrawElement> {
         self.scene
             .iter_ordered()
-            .filter(|el| !el.locked())
+            .filter(|el| !self.untouchable(el))
             .cloned()
             .collect()
     }
@@ -371,7 +388,9 @@ impl DrawEngine {
         self.scene
             .iter_ordered()
             .rev()
-            .find(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, tolerance))
+            .find(|el| {
+                !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, tolerance)
+            })
             .cloned()
     }
 
@@ -486,7 +505,13 @@ impl DrawEngine {
     }
 
     fn set_selection(&mut self, ids: impl IntoIterator<Item = String>) {
-        self.selected_ids = ids.into_iter().collect();
+        // The one door every selection goes through — a click, a marquee, a lasso, select
+        // all, a group expanding — so what someone else holds can never be let in, and
+        // nothing that acts on the selection can touch it. See `peers.rs`.
+        self.selected_ids = ids
+            .into_iter()
+            .filter(|id| !self.held.contains_key(id))
+            .collect();
         // The point editor belongs to one element, and closes the moment that element
         // stops being the only thing held. Without this it survives onto whatever is
         // picked up next, which shows a stranger's corners over the new selection.

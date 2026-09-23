@@ -23,7 +23,17 @@ impl DrawEngine {
         self.scene.set_live(live);
     }
 
+    /// This engine's live elements and the ones peers are previewing: the painter draws
+    /// both fresh each frame over its cached picture of everything else.
     fn live_ids(&self) -> HashSet<String> {
+        let mut ids = self.local_live_ids();
+        ids.extend(self.previewed_ids().cloned());
+        ids
+    }
+
+    /// What this engine's own gesture changes — never a peer's preview, which would be
+    /// sent back to them as ours.
+    pub(crate) fn local_live_ids(&self) -> HashSet<String> {
         let mut ids: HashSet<String> = HashSet::new();
         match &self.interaction {
             Some(

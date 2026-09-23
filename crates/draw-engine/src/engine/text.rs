@@ -11,7 +11,7 @@ impl DrawEngine {
         let Some(single) = self.single_selected() else {
             return false;
         };
-        if single.is_deleted || single.locked() {
+        if single.is_deleted || self.untouchable(&single) {
             return false;
         }
         if single.kind == DrawElementType::Text {
@@ -264,6 +264,27 @@ impl DrawEngine {
             self.request_draw();
             return;
         }
+        let next = self.with_text(element, text);
+        self.scene.put(bump_version(next, self.now_ms));
+        self.apply_bindings();
+        self.push_history();
+        self.request_draw();
+    }
+
+    /// A text element as it would be with `text` in it, uncommitted — what peers are
+    /// shown while it is being typed, so a word appears on their screens as it is
+    /// written rather than all at once when the editor closes. `None` for an id that is
+    /// not a text in the scene.
+    pub fn text_preview(&self, id: &str, text: &str) -> Option<DrawElement> {
+        let element = self.scene.get(id)?;
+        if element.kind != DrawElementType::Text {
+            return None;
+        }
+        Some(self.with_text(element.clone(), text))
+    }
+
+    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
+    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
         let font_size = self.font_size_of(&element);
         // Three ways a text element gets its width, and only the last lets the glyphs
         // decide. A label takes its container's; a dragged-out column keeps the one it
@@ -293,10 +314,7 @@ impl DrawEngine {
         next.height = height.max(
             font_size.max(final_text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT),
         );
-        self.scene.put(bump_version(next, self.now_ms));
-        self.apply_bindings();
-        self.push_history();
-        self.request_draw();
+        next
     }
 }
 

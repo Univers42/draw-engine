@@ -246,6 +246,24 @@ export class Scene {
   }
 }
 
+/**
+ * Someone else in the room, as the host last heard of them. Mirrors the engine's `Peer`
+ * (`engine/peers.rs`).
+ *
+ * What they `hold` nobody else can touch — it cannot be selected, moved, resized, edited,
+ * deleted or erased — and it is outlined in their `color` with their `name` on it.
+ * `preview` is their gesture in progress, painted in place of the committed elements
+ * until the commit arrives: not in the scene, not in its history, not saved.
+ */
+export interface DrawPeer {
+  id: string;
+  name: string;
+  /** A CSS colour. */
+  color: string;
+  holds?: string[];
+  preview?: DrawElement[];
+}
+
 export interface OsidrawFile {
   type: "osidraw";
   version: number;

@@ -31,7 +31,12 @@ impl DrawEngine {
         let touched: Vec<String> = self
             .scene
             .iter_ordered()
-            .filter(|el| !el.locked() && crate::segment_hits_element(el, from, to, tolerance))
+            // Not what someone else holds: erasing a shape a colleague is moving only for
+            // their next edit to bring it back is correct by the merge rule, and nothing
+            // like what either of them meant.
+            .filter(|el| {
+                !self.untouchable(el) && crate::segment_hits_element(el, from, to, tolerance)
+            })
             .map(|el| el.id.clone())
             .collect();
         if touched.is_empty() {

@@ -122,7 +122,9 @@ impl DrawEngine {
                 // newest thing anyone has, and taking it now is the only way to have it.
                 if let (Some(peer), Some(now)) = (peer, &now) {
                     if super::clipboard::remote_wins(peer, now) {
-                        self.scene.put(peer.clone());
+                        let mut taken = peer.clone();
+                        super::clipboard::inherit_picture(&mut taken, now);
+                        self.scene.put(taken);
                     }
                 }
                 continue;
@@ -175,6 +177,11 @@ impl DrawEngine {
         let pending_order = self.scene.order_baseline();
 
         for (id, change) in step.changes.iter() {
+            // What someone else holds is theirs right now. Undoing an old edit of it
+            // would snap it back under their hands; the rest of the step still applies.
+            if self.held.contains_key(id) {
+                continue;
+            }
             let want = if forward {
                 &change.after
             } else {
