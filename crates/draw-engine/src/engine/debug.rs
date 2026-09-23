@@ -86,6 +86,9 @@ pub struct DebugInteraction {
     pub placing_linear: Option<String>,
     /// The linear element whose points are on offer.
     pub editing_linear: Option<String>,
+    /// The group that has been stepped into, if any. Session state, never serialized:
+    /// which level you are looking at is a property of your view, not of the drawing.
+    pub editing_group_id: Option<String>,
 }
 
 /// The name of a gesture, for a human reading a snapshot.
@@ -161,6 +164,7 @@ impl DrawEngine {
                 resizing: matches!(kind, Some("resize" | "resize-group" | "linear-point")),
                 placing_linear: self.linear_in_progress(),
                 editing_linear: self.editing_linear.clone(),
+                editing_group_id: self.editing_group_id.clone(),
             },
         }
     }

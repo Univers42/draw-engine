@@ -76,22 +76,49 @@ impl DrawEngine {
         if self.selected_ids.len() < 2 {
             return;
         }
+        let editing = self.editing_group_id.clone();
         self.apply_patches(group_patches(
             &self.scene.ordered_cloned(),
             &self.selected_ids,
             &new_element_id(),
+            editing.as_deref(),
         ));
     }
 
     pub fn ungroup_selection(&mut self) {
+        let editing = self.editing_group_id.clone();
         self.apply_patches(ungroup_patches(
             &self.scene.ordered_cloned(),
             &self.selected_ids,
+            editing.as_deref(),
         ));
     }
 
+    /// Ctrl+G: group what is loose, ungroup what is already exactly one group.
+    ///
+    /// A deliberate divergence. Excalidraw's Ctrl+G on an already-grouped selection is a
+    /// **no-op** — observed on excalidraw.com, not assumed — which leaves the key with no
+    /// inverse, so there is no way out of a group using the key you reached for. A toggle
+    /// costs nothing and makes the key undo itself; Ctrl+Shift+G still matches the
+    /// oracle exactly, so nothing is given up.
+    ///
+    /// On a nested selection it peels **one** level, because `ungroup_selection` removes
+    /// only the level `selected_group_for` would have selected. Flattening would make one
+    /// grouping impossible to undo without losing the structure beneath it.
+    pub fn toggle_group_selection(&mut self) {
+        if self.selection_is_group() {
+            self.ungroup_selection();
+        } else {
+            self.group_selection();
+        }
+    }
+
     pub fn selection_is_group(&self) -> bool {
-        is_single_group(&self.scene.ordered_cloned(), &self.selected_ids)
+        is_single_group(
+            &self.scene.ordered_cloned(),
+            &self.selected_ids,
+            self.editing_group_id.as_deref(),
+        )
     }
 
     pub fn toggle_lock_selection(&mut self) {

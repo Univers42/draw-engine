@@ -1164,7 +1164,7 @@ fn a_fill_that_works_says_nothing() {
 
 /// The owner of a region, grouped with something else so the group is real.
 fn grouped(mut element: DrawElement, group: &str) -> DrawElement {
-    element.group_id = Some(group.to_string());
+    element.group_ids = vec![group.to_string()];
     element
 }
 
@@ -1177,8 +1177,8 @@ fn the_paint_joins_the_group_its_owner_belongs_to() {
     engine.end_pointer();
 
     assert_eq!(
-        painted(&engine).group_id.as_deref(),
-        Some("g1"),
+        painted(&engine).group_ids,
+        vec!["g1".to_string()],
         "paint that belongs to a group moves when the group moves"
     );
 }
@@ -1235,7 +1235,7 @@ fn an_ownerless_region_joins_the_group_all_its_walls_share() {
     engine.begin_pointer(100.0, 100.0, false, false);
     engine.end_pointer();
 
-    assert_eq!(painted(&engine).group_id.as_deref(), Some("g2"));
+    assert_eq!(painted(&engine).group_ids, vec!["g2".to_string()]);
 }
 
 #[test]
@@ -1253,7 +1253,7 @@ fn walls_that_disagree_give_the_paint_no_group() {
     engine.begin_pointer(100.0, 100.0, false, false);
     engine.end_pointer();
 
-    assert_eq!(painted(&engine).group_id, None);
+    assert!(painted(&engine).group_ids.is_empty());
 }
 
 #[test]
@@ -1264,7 +1264,7 @@ fn a_plain_region_belongs_to_nothing() {
     engine.end_pointer();
 
     let paint = painted(&engine);
-    assert_eq!(paint.group_id, None);
+    assert!(paint.group_ids.is_empty());
     assert_eq!(paint.frame_id, None);
 }
 

@@ -1,5 +1,5 @@
 use crate::camera::Point;
-use crate::edit::expand_to_groups_among;
+use crate::edit::{expand_within, is_in_group};
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::bindable_among;
@@ -367,7 +367,24 @@ impl DrawEngine {
         }
 
         if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
-            let hit_ids = expand_to_groups_among(self.scene.iter_ordered(), [hit.id.clone()]);
+            // Pressing something outside the group being edited steps back out of it,
+            // before the selection is worked out — otherwise the click would be resolved
+            // relative to a group it has nothing to do with and select nothing at all.
+            if let Some(editing) = self.editing_group_id.clone() {
+                if !is_in_group(&hit, &editing) {
+                    // Dropped directly rather than through `leave_group`, which also
+                    // re-derives the selection: this click is about to compute its own,
+                    // and a re-derivation here would make the hit look already-selected
+                    // and turn the press into a drag of the wrong thing.
+                    self.editing_group_id = None;
+                }
+            }
+            let editing = self.editing_group_id.clone();
+            let hit_ids = expand_within(
+                self.scene.iter_ordered(),
+                [hit.id.clone()],
+                editing.as_deref(),
+            );
             if additive {
                 let has = self.selected_ids.contains(&hit.id);
                 for id in hit_ids {

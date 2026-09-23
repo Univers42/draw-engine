@@ -30,6 +30,7 @@ export interface KeyEngine {
   duplicateSelection(): void;
   ungroupSelection(): void;
   groupSelection(): void;
+  toggleGroupSelection(): void;
   reorderSelection(mode: ZOrderMode): void;
   zoomIn(): void;
   zoomOut(): void;
@@ -75,8 +76,12 @@ function handleModChords(session: KeySession, event: KeyEvent, key: string): boo
     return true;
   }
   if (key === "g") {
+    // Ctrl+G toggles rather than only grouping. Excalidraw's is a no-op on a selection
+    // that is already exactly one group — observed, not assumed — which leaves the key
+    // with no inverse and no way out of a group using the key you reached for. Ctrl+
+    // Shift+G is left alone and still matches the oracle exactly.
     if (event.shiftKey) engine.ungroupSelection();
-    else engine.groupSelection();
+    else engine.toggleGroupSelection();
     return true;
   }
   if (event.key === "]" || event.key === "[") {

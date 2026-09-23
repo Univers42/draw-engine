@@ -1,4 +1,4 @@
-use crate::edit::expand_to_groups_among;
+use crate::edit::expand_within;
 use crate::engine::{DrawEngine, Interaction};
 use crate::freehand::points_bounds;
 use crate::interaction::{is_degenerate_linear, DrawTool};
@@ -41,7 +41,8 @@ impl DrawEngine {
                     &path,
                     LassoMode::Contain,
                 ));
-                let expanded = expand_to_groups_among(self.scene.iter_ordered(), ids);
+                let editing = self.editing_group_id.clone();
+                let expanded = expand_within(self.scene.iter_ordered(), ids, editing.as_deref());
                 self.set_selection(expanded);
                 self.settle_tool();
             }
@@ -79,7 +80,8 @@ impl DrawEngine {
                         rect,
                     ));
                 }
-                let expanded = expand_to_groups_among(self.scene.iter_ordered(), ids);
+                let editing = self.editing_group_id.clone();
+                let expanded = expand_within(self.scene.iter_ordered(), ids, editing.as_deref());
                 self.set_selection(expanded);
             }
             _ => {
@@ -280,6 +282,12 @@ impl DrawEngine {
         // that exists for changing your mind.
         if self.multi_linear.is_some() {
             self.finish_linear();
+            return;
+        }
+        // Escape steps out of a group before it does anything else. It is the way back
+        // up, and without it the only exit is clicking something outside — which is
+        // awkward when the group fills the screen.
+        if self.leave_group() {
             return;
         }
         let it = self.interaction.take();

@@ -362,6 +362,22 @@ export class DrawEngine {
     this.inner.groupSelection();
   }
 
+  /**
+   * Ctrl+G: groups what is loose, ungroups what is already exactly one group.
+   *
+   * Deliberately not the oracle's behaviour — theirs is a no-op on a grouped selection,
+   * which leaves no way out of a group with the key you reached for. On a nested
+   * selection this peels one level, never all of them.
+   */
+  toggleGroupSelection(): void {
+    this.inner.toggleGroupSelection();
+  }
+
+  /** The group that has been stepped into, if any. */
+  editingGroupId(): string | null {
+    return this.inner.editingGroupId() ?? null;
+  }
+
   ungroupSelection(): void {
     this.inner.ungroupSelection();
   }

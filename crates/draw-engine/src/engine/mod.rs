@@ -96,6 +96,12 @@ pub struct DrawEngine {
     ///
     /// Held by id rather than by index because the scene is reordered underneath it.
     editing_linear: Option<String>,
+    /// The group that has been stepped into, if any.
+    ///
+    /// Session state, not document state: which level you are looking at is a property of
+    /// your view, so it is never serialized. Every click and every group operation is
+    /// resolved relative to it by `selected_group_for`.
+    editing_group_id: Option<String>,
     /// The path being placed point by point, if one is.
     ///
     /// Distinct from [`Self::interaction`] because this is the one gesture that spans
@@ -152,6 +158,7 @@ impl DrawEngine {
             next_vertical_align: None,
             interaction: None,
             editing_linear: None,
+            editing_group_id: None,
             multi_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
@@ -492,6 +499,36 @@ impl DrawEngine {
 
     pub fn get_tool_locked(&self) -> bool {
         self.tool_locked
+    }
+
+    /// The group currently stepped into, if any.
+    pub fn editing_group_id(&self) -> Option<String> {
+        self.editing_group_id.clone()
+    }
+
+    /// Steps back out to the top level.
+    ///
+    /// Not a selection change on its own: leaving a group keeps what is held, so the
+    /// next click behaves normally rather than the selection vanishing under you.
+    pub(crate) fn leave_group(&mut self) -> bool {
+        if self.editing_group_id.take().is_none() {
+            return false;
+        }
+        // The selection is re-derived at the new level, so stepping out leaves you
+        // holding the group you stepped out of rather than the pieces you were looking
+        // at inside it. Without this the old inner selection survives, and the next
+        // click on one of its members reads as "grab what is already selected" and never
+        // re-expands — so the group could be entered but never properly left.
+        if !self.selected_ids.is_empty() {
+            let ids = crate::edit::expand_within(
+                self.scene.iter_ordered(),
+                self.selected_ids.iter().cloned(),
+                None,
+            );
+            self.set_selection(ids);
+        }
+        self.request_draw();
+        true
     }
 
     pub fn snap_guides(&self) -> &[SnapGuide] {

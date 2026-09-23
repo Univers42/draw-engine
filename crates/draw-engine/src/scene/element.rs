@@ -202,8 +202,26 @@ pub struct DrawElement {
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_text_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_id: Option<String>,
+    /// The groups this element belongs to, **innermost first**.
+    ///
+    /// The array *is* the nesting: there is no group entity, no tree and no parent
+    /// pointer — a group is an id that several elements happen to carry, and an element
+    /// inside two groups carries both. Verified against the oracle twice, by reading
+    /// `packages/element/src/types.ts` and by grouping three rectangles on
+    /// excalidraw.com and reading the result back; see `docs/reference/groups.md`.
+    ///
+    /// This was a single `Option<String>`, which made a group inside a group
+    /// unrepresentable — and grouping a group silently destroyed the inner one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_ids: Vec<String>,
+    /// The pre-array spelling, read and never written.
+    ///
+    /// Boards saved before groups could nest carry a single `groupId`. Kept as a capture
+    /// field so those files still load: [`normalize_group_ids`] folds it into
+    /// `group_ids`, so a scene is only ever in the new shape once in memory, and only the
+    /// new shape is written back.
+    #[serde(default, rename = "groupId", skip_serializing)]
+    pub legacy_group_id: Option<String>,
     /// The frame that owns this element, if it is inside one.
     ///
     /// Membership is a property of the child, not a list on the frame, so moving an
@@ -313,7 +331,8 @@ pub fn create_element(
         auto_resize: None,
         container_id: None,
         bound_text_id: None,
-        group_id: None,
+        group_ids: Vec::new(),
+        legacy_group_id: None,
         frame_id: None,
         name: None,
         data_url: None,
@@ -424,5 +443,18 @@ pub fn apply_style_patch(element: &mut DrawElement, patch: &DrawElementStylePatc
     }
     if let Some(v) = patch.roundness {
         element.roundness = v;
+    }
+}
+
+/// Folds a legacy single `groupId` into `group_ids`.
+///
+/// Called on every element arriving from outside — a file, the clipboard, a remote
+/// patch — so nothing downstream ever has to know the old spelling existed. Idempotent:
+/// an element already in the new shape is untouched.
+pub fn normalize_group_ids(element: &mut DrawElement) {
+    if let Some(legacy) = element.legacy_group_id.take() {
+        if element.group_ids.is_empty() {
+            element.group_ids.push(legacy);
+        }
     }
 }

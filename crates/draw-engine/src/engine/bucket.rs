@@ -202,7 +202,7 @@ impl DrawEngine {
             } else {
                 owner.frame_id.clone()
             };
-            element.group_id = owner.group_id.clone();
+            element.group_ids = owner.group_ids.clone();
             return;
         }
 
@@ -210,10 +210,13 @@ impl DrawEngine {
         // them agree it does. Anything less than unanimous means there is no one place
         // the region sits, and guessing would drag a stranger's shape along with the
         // paint every time the group moved.
-        element.group_id = shared_among(
+        // Only the groups *every* wall agrees on. Anything less than unanimous means
+        // there is no one place the region sits, and guessing would drag a stranger's
+        // shape along with the paint every time the group moved.
+        element.group_ids = shared_groups_among(
             fill.boundary_element_ids
                 .iter()
-                .map(|id| self.scene.get(id).and_then(|el| el.group_id.clone())),
+                .map(|id| self.scene.get(id).map(|el| el.group_ids.as_slice())),
         );
         // The frame is asked of the finished ring rather than of the walls, because a
         // frame holds whatever is drawn within its bounds — which is the same question
@@ -305,15 +308,32 @@ fn paint_fill_style(style: FillStyle) -> FillStyle {
 /// Unanimity rather than a majority or a first-wins: the question is "is there a single
 /// place this region sits", and anything short of every wall saying the same place means
 /// there is not one.
-fn shared_among(values: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+/// The groups every wall agrees on, in the order the first wall lists them.
+///
+/// An intersection rather than a common prefix: walls at different depths of the same
+/// nesting share their outer groups while differing on the inner ones, and the paint
+/// belongs to exactly the levels they all sit inside. A wall that is not in the scene at
+/// all yields nothing, because "all of them agree" cannot be true of a set with a hole in
+/// it.
+///
+/// Order is taken from the first wall, which keeps the innermost-first convention the
+/// rest of the engine relies on.
+fn shared_groups_among<'a>(values: impl IntoIterator<Item = Option<&'a [String]>>) -> Vec<String> {
     let mut items = values.into_iter();
-    let first = items.next().flatten()?;
+    let Some(Some(first)) = items.next() else {
+        return Vec::new();
+    };
+    let mut shared: Vec<String> = first.to_vec();
     for value in items {
-        if value.as_deref() != Some(first.as_str()) {
-            return None;
+        let Some(groups) = value else {
+            return Vec::new();
+        };
+        shared.retain(|id| groups.contains(id));
+        if shared.is_empty() {
+            break;
         }
     }
-    Some(first)
+    shared
 }
 
 /// The box a ring of points spans, as a width and a height.

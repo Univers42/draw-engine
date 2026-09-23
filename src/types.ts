@@ -281,6 +281,8 @@ export interface DebugSnapshot {
     resizing: boolean;
     placingLinear: string | null;
     editingLinear: string | null;
+    /** The group stepped into, if any. Never serialized. */
+    editingGroupId: string | null;
   };
   rendering: {
     frames: number;
