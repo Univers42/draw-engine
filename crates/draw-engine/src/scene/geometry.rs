@@ -723,29 +723,69 @@ pub fn segment_intersection_point(
 ///
 /// The fill rule is the same one the rest of hit-testing uses, because it comes from the
 /// same place: `hit_test_element` on the endpoints covers a click and a sweep that begins
-/// or ends inside a filled shape, and the edge crossings cover passing through. A hollow
-/// rectangle is therefore erased by its outline and not by its empty middle, exactly as
-/// it is selected by its outline and not by its middle.
+/// or ends inside a filled shape. A hollow rectangle is therefore erased by its outline
+/// and not by its empty middle, exactly as it is selected by its outline and not by its
+/// middle.
+///
+/// **The same reach all along the sweep.** The endpoints were tested with the aiming
+/// tolerance and the rest of the segment only for an exact crossing, so an element passed
+/// within a few pixels was erased by a slow sweep — some sample landed near it — and
+/// missed by a fast one over the same path. On a pile of offset copies, which copies went
+/// depended on where the frames happened to sample. Now the sweep is a band of the same
+/// width everywhere, as Excalidraw's `lineSegmentsDistance` test is.
+///
+/// **A freehand stroke is its ink.** Its hit test for clicking is its box, deliberately
+/// (`ci_hit_fill.rs`), and the eraser inherited that: a sweep through the empty middle of
+/// a scribble erased it from a hundred pixels away. Excalidraw's eraser tests the stroke
+/// itself, and only a filled loop by its inside (`eraserTest`, `shouldTestInside`).
 pub fn segment_hits_element(element: &DrawElement, a: Point, b: Point, tolerance: f64) -> bool {
-    // Boxes first. The exact tests below build an outline — a fresh allocation per
-    // element — and a sweep asks this of every element on the board on every frame, so
-    // almost all of that work is for elements the segment comes nowhere near.
-    if !segment_box_overlaps(a, b, element, tolerance) {
+    // A path carries half its stroke either side of it, which is genuinely part of it;
+    // the tolerance is the aiming margin on top, as `hit_linear` has it.
+    let reach = if is_point_based(element) {
+        tolerance + element.stroke_width / 2.0
+    } else {
+        tolerance
+    };
+    // Boxes first. The tests below build an outline — a fresh allocation per element —
+    // and a sweep asks this of every element on the board on every frame, so almost all
+    // of that work is for elements the segment comes nowhere near.
+    if !segment_box_overlaps(a, b, element, reach) {
         return false;
     }
-    if hit_test_element(element, a.x, a.y, tolerance)
+    if element.kind == DrawElementType::Freedraw {
+        if encloses_its_interior(element) {
+            let inside = |p: Point| {
+                let (x, y) = to_element_local(element, p.x, p.y);
+                interior_contains(element, x, y)
+            };
+            if inside(a) || inside(b) {
+                return true;
+            }
+        }
+    } else if hit_test_element(element, a.x, a.y, tolerance)
         || hit_test_element(element, b.x, b.y, tolerance)
     {
         return true;
     }
-    // A zero-length sweep is a click, and the endpoints above have already answered it.
-    if (b.x - a.x).abs() < f64::EPSILON && (b.y - a.y).abs() < f64::EPSILON {
-        return false;
-    }
     let outline = element_outline(element);
+    if let [only] = outline.as_slice() {
+        return distance_to_segment(only.x, only.y, a.x, a.y, b.x, b.y) <= reach;
+    }
     outline_edges(&outline, outline_is_closed(element))
         .into_iter()
-        .any(|(from, to)| segments_intersect(a, b, from, to))
+        .any(|(from, to)| segment_distance(a, b, from, to) <= reach)
+}
+
+/// The shortest distance between two segments: zero when they cross, otherwise the
+/// nearest of each one's ends to the other.
+fn segment_distance(a: Point, b: Point, p: Point, q: Point) -> f64 {
+    if segments_intersect(a, b, p, q) {
+        return 0.0;
+    }
+    distance_to_segment(a.x, a.y, p.x, p.y, q.x, q.y)
+        .min(distance_to_segment(b.x, b.y, p.x, p.y, q.x, q.y))
+        .min(distance_to_segment(p.x, p.y, a.x, a.y, b.x, b.y))
+        .min(distance_to_segment(q.x, q.y, a.x, a.y, b.x, b.y))
 }
 
 /// Whether the segment's bounding box overlaps the element's, allowing `tolerance`.

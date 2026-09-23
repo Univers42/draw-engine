@@ -24,10 +24,14 @@ impl DrawEngine {
         match self.tool {
             DrawTool::Eraser => {
                 let at = self.screen_to_world(sx, sy);
-                self.alt_held = duplicate;
                 self.clear_erasing();
                 self.interaction = Some(Interaction::Erase { last: at });
+                // The press marks what is under it whatever Alt says — a click erases
+                // it, Alt held or not, as Excalidraw's pointer-up does. Alt then governs
+                // the moves.
+                self.alt_held = false;
                 self.mark_along(at, at);
+                self.alt_held = duplicate;
             }
             DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),

@@ -14,6 +14,8 @@
 //! real state. Here the marking is session state beside the scene, like the selection,
 //! and the fade exists only in the painter.
 
+use std::collections::HashSet;
+
 use crate::camera::Point;
 use crate::engine::DrawEngine;
 
@@ -37,19 +39,22 @@ impl DrawEngine {
         }
 
         let restore = self.alt_held;
+        // Only what would change: restoring what is not marked, or marking what already
+        // is, does nothing.
+        let seeds: Vec<String> = touched
+            .into_iter()
+            .filter(|id| restore == self.erasing.contains(id))
+            .collect();
+        if seeds.is_empty() {
+            return;
+        }
         let mut changed = false;
-        for id in touched {
-            if restore != self.erasing.contains(&id) {
-                // Restoring what is not marked, or marking what already is.
-                continue;
-            }
-            for member in self.erased_with(&id) {
-                changed |= if restore {
-                    self.erasing.remove(&member)
-                } else {
-                    self.erasing.insert(member)
-                };
-            }
+        for member in self.erased_with(&seeds) {
+            changed |= if restore {
+                self.erasing.remove(&member)
+            } else {
+                self.erasing.insert(member)
+            };
         }
         if changed {
             self.erasing_revision = self.erasing_revision.wrapping_add(1);
@@ -57,22 +62,43 @@ impl DrawEngine {
         }
     }
 
-    /// What goes with an element: its whole outermost group, and a container with its
-    /// label either way round — as `updateElementsToBeErased` takes them. A group is
-    /// one thing, and a label left behind is debris pinned to a shape that is gone.
-    fn erased_with(&self, id: &str) -> Vec<String> {
-        let Some(element) = self.scene.get(id) else {
-            return Vec::new();
-        };
-        let mut members: Vec<String> = match element.group_ids.last() {
-            Some(outermost) => self
-                .scene
-                .iter_ordered()
-                .filter(|el| el.group_ids.contains(outermost))
-                .map(|el| el.id.clone())
-                .collect(),
-            None => vec![id.to_string()],
-        };
+    /// What goes with the elements touched: each one's whole outermost group, everything
+    /// a touched frame holds, and a container with its label either way round — as
+    /// `updateElementsToBeErased` and `eraseElements` take them. A group is one thing, a
+    /// frame is what its contents live in, and a label left behind is debris pinned to a
+    /// shape that is gone.
+    ///
+    /// One pass over the scene for all of them, not one per group: a sweep through a
+    /// pile of grouped copies touches every group at once, and a scan per group made one
+    /// pointer move cost the square of the board.
+    fn erased_with(&self, seeds: &[String]) -> HashSet<String> {
+        let touched: Vec<&crate::scene::DrawElement> =
+            seeds.iter().filter_map(|id| self.scene.get(id)).collect();
+        let groups: HashSet<&str> = touched
+            .iter()
+            .filter_map(|el| el.group_ids.last().map(String::as_str))
+            .collect();
+        let frames: HashSet<&str> = touched
+            .iter()
+            .filter(|el| crate::scene::is_frame(el))
+            .map(|el| el.id.as_str())
+            .collect();
+
+        let mut members: HashSet<String> = seeds.iter().cloned().collect();
+        if !groups.is_empty() || !frames.is_empty() {
+            for el in self.scene.iter_ordered() {
+                let grouped = el.group_ids.iter().any(|g| groups.contains(g.as_str()));
+                let framed = el
+                    .frame_id
+                    .as_deref()
+                    .is_some_and(|frame| frames.contains(frame));
+                if grouped || framed {
+                    members.insert(el.id.clone());
+                }
+            }
+        }
+        // Labels last, so a frame's shapes bring theirs: a label carries no frame of its
+        // own, only its container.
         let partners: Vec<String> = members
             .iter()
             .filter_map(|member| self.scene.get(member))
@@ -97,12 +123,21 @@ impl DrawEngine {
             return;
         }
 
+        // What a marked frame holds was marked with it; taken again here, with every
+        // label of what is going, so nothing marked while a peer's patch moved things
+        // around is left behind as an orphan.
         let mut doomed = marked.clone();
         for id in &marked {
             if self.scene.get(id).is_some_and(crate::scene::is_frame) {
                 doomed.extend(crate::scene::frame_children(self.scene.iter_ordered(), id));
             }
         }
+        let labels: Vec<String> = doomed
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .filter_map(|el| el.bound_text_id.clone())
+            .collect();
+        doomed.extend(labels);
         let released: Vec<(String, bool, bool)> = self
             .scene
             .iter_ordered()
@@ -150,6 +185,15 @@ impl DrawEngine {
             self.erasing_revision = self.erasing_revision.wrapping_add(1);
             self.request_draw();
         }
+    }
+
+    /// Ends a sweep without deleting anything: drops the gesture and lets its marks go.
+    /// For leaving the eraser by any route, as Excalidraw's `endPath` on a tool change.
+    pub(super) fn abandon_sweep(&mut self) {
+        if matches!(self.interaction, Some(super::Interaction::Erase { .. })) {
+            self.interaction = None;
+        }
+        self.clear_erasing();
     }
 
     /// What the sweep in progress has marked, sorted. Empty between sweeps.

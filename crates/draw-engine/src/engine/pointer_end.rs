@@ -288,6 +288,14 @@ impl DrawEngine {
             self.finish_linear();
             return;
         }
+        // A sweep in progress is backed out of first. Escape is how you change your mind
+        // about what the eraser has marked, and stepping out of a group instead — the
+        // next rule down — left the sweep running, and the release deleted it all.
+        if matches!(self.interaction, Some(Interaction::Erase { .. })) {
+            self.interaction = None;
+            self.clear_erasing();
+            return;
+        }
         // Escape steps out of a group before it does anything else. It is the way back
         // up, and without it the only exit is clicking something outside — which is
         // awkward when the group fills the screen.

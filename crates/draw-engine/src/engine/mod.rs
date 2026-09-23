@@ -395,10 +395,7 @@ impl DrawEngine {
         // tool change does: with the eraser gone, nothing would ever delete them or
         // clear them, and they would stay faded.
         if self.tool == DrawTool::Eraser {
-            if matches!(self.interaction, Some(Interaction::Erase { .. })) {
-                self.interaction = None;
-            }
-            self.clear_erasing();
+            self.abandon_sweep();
         }
         // Remembered before the move, and never the tool being left if that tool is
         // itself a toggle — otherwise pressing E twice would bounce the eraser against
@@ -432,6 +429,12 @@ impl DrawEngine {
     /// which is why the two doors are separate.
     pub fn activate_tool(&mut self, tool: DrawTool) {
         if tool == self.tool && crate::is_toggle_tool(tool) {
+            // Toggling back is leaving the tool too, and skips `set_tool`: pressing E
+            // again mid-sweep switched to select while the sweep went on marking, and
+            // the release deleted what it had marked.
+            if tool == DrawTool::Eraser {
+                self.abandon_sweep();
+            }
             let back = self.tool_before_toggle;
             self.tool = back;
             self.events.tool = Some(back);
