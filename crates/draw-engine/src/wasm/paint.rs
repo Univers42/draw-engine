@@ -325,14 +325,23 @@ fn with_element_transform(
     let fade = ERASE_FADE.with(std::cell::Cell::get);
     set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0) * fade);
 
+    let m = mul(view, element_matrix(element));
+    let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+
+    body();
+}
+
+/// An element's own transform — mirror, position, rotation — from its local space to the
+/// world.
+fn element_matrix(element: &DrawElement) -> [f64; 6] {
     // Shapes only: a line or arrow carries its mirror in its points, so the sign of its
     // width means nothing and applying it would reverse the element a second time.
     let (sx, sy) = crate::scene::geometry::mirror_signs(element);
 
     // Element-local: mirror, then translate to the origin, and rotate about the centre
     // if turned.
-    let (a, b, c, d, e, f) = if element.angle == 0.0 {
-        (sx, 0.0, 0.0, sy, element.x, element.y)
+    if element.angle == 0.0 {
+        [sx, 0.0, 0.0, sy, element.x, element.y]
     } else {
         // The pivot in the element's own coordinates, and the same pivot in world space.
         // For a shape this is the middle of its box, as before. For a line or arrow it is
@@ -343,20 +352,15 @@ fn with_element_transform(
         let centre = crate::scene::geometry::rotation_center(element);
         let (sin, cos) = element.angle.sin_cos();
         // T(centre) * R * S(sx, sy) * T(-local centre)
-        (
+        [
             sx * cos,
             sx * sin,
             -sy * sin,
             sy * cos,
             centre.x - sx * cos * lcx + sy * sin * lcy,
             centre.y - sx * sin * lcx - sy * cos * lcy,
-        )
-    };
-
-    let m = mul(view, [a, b, c, d, e, f]);
-    let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-
-    body();
+        ]
+    }
 }
 
 /// Multiplies two 2x3 affine transforms in Canvas2D's `[a, b, c, d, e, f]` order.
@@ -1721,6 +1725,106 @@ fn handle_square(ctx: &CanvasRenderingContext2d, cx: f64, cy: f64, half: f64, an
     ctx.close_path();
 }
 
+/// How wide a member's trace is, in CSS pixels.
+const MEMBER_OUTLINE_PX: f64 = 1.5;
+
+/// Traces each member of a multi-selection along its own shape, in the selection colour.
+///
+/// It used to be a padded box around each member — Excalidraw's look — which on a board of
+/// neighbouring shapes was a lattice of rectangles over everything, the same for a circle
+/// as for a scribble, hiding what it was meant to point at. The trace is the shape itself:
+/// the edge of a rectangle, the curve of an ellipse or a line, the ink of a stroke. See
+/// [`crate::render::outline`].
+fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    use crate::render::outline::{element_outline, Outline};
+    use draw_rough::renderer::Segment;
+
+    let dpr = view.dpr;
+    let s = view.camera.scale;
+    let view_transform = [
+        dpr * s,
+        0.0,
+        0.0,
+        dpr * s,
+        dpr * view.camera.x,
+        dpr * view.camera.y,
+    ];
+    let level = crate::render::path_data::lod_level(view.detail_scale);
+    let selected: std::collections::HashSet<&str> =
+        view.selected.iter().map(|e| e.id.as_str()).collect();
+
+    ctx.save();
+    // In the element's own units, where one CSS pixel is `1 / scale`.
+    ctx.set_line_width(MEMBER_OUTLINE_PX / s.max(f64::MIN_POSITIVE));
+    ctx.set_line_join("round");
+    ctx.set_line_cap("round");
+    for element in view.selected.iter().copied() {
+        // A label is traced by its container, which is the shape someone sees.
+        if element
+            .container_id
+            .as_deref()
+            .is_some_and(|id| selected.contains(id))
+        {
+            continue;
+        }
+        let Some(outline) = element_outline(element) else {
+            continue;
+        };
+        let m = mul(view_transform, element_matrix(element));
+        let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+        match outline {
+            Outline::Path(segments) => {
+                ctx.begin_path();
+                for segment in segments {
+                    match segment {
+                        Segment::MoveTo([x, y]) => ctx.move_to(x, y),
+                        Segment::LineTo([x, y]) => ctx.line_to(x, y),
+                        Segment::CurveTo([x1, y1, x2, y2, x, y]) => {
+                            ctx.bezier_curve_to(x1, y1, x2, y2, x, y)
+                        }
+                        Segment::Close => ctx.close_path(),
+                    }
+                }
+                ctx.stroke();
+            }
+            Outline::Ellipse { w, h } => {
+                ctx.begin_path();
+                let _ = ctx.ellipse(
+                    w / 2.0,
+                    h / 2.0,
+                    w / 2.0,
+                    h / 2.0,
+                    0.0,
+                    0.0,
+                    std::f64::consts::PI * 2.0,
+                );
+                ctx.stroke();
+            }
+            Outline::Freehand => {
+                // The same `Path2D` the ink is filled from, so the trace hugs the stroke
+                // exactly and costs no new geometry.
+                let points = element.points.as_deref().unwrap_or(&[]);
+                let key = crate::render::path_data::freehand_fingerprint(
+                    points,
+                    element.stroke_width,
+                    level,
+                );
+                FREEHAND_USED.with(|used| used.borrow_mut().insert(key));
+                FREEHAND.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    let path = cache
+                        .entry(key)
+                        .or_insert_with(|| freehand_path(points, element.stroke_width, level));
+                    if let Some(path) = path {
+                        ctx.stroke_with_path(path);
+                    }
+                });
+            }
+        }
+    }
+    ctx.restore();
+}
+
 /// The frame, corner handles and rotation handle for a multi-element selection.
 ///
 /// These used to be absent entirely: a multi-selection got a bare rectangle with no
@@ -1731,13 +1835,11 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         return;
     };
 
-    // Every member gets its own outline first. Without them a multi-selection showed only
-    // the box around the whole lot, so you could see *that* a region was held but not
-    // *which* shapes in it were — and an unselected shape sitting inside those bounds was
+    // Every member is traced first. Without it a multi-selection showed only the box
+    // around the whole lot, so you could see *that* a region was held but not *which*
+    // shapes in it were — and an unselected shape sitting inside those bounds was
     // indistinguishable from a selected one.
-    for element in view.selected.iter().copied() {
-        paint_element_outline(ctx, view, element);
-    }
+    paint_member_outlines(ctx, view);
 
     let pad = view.handle_layout.frame_pad;
     let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
