@@ -99,12 +99,14 @@ fn turned_on_holding_ctrl_does_not_snap() {
 }
 
 /// Grid and object snapping give different answers, and a result that depends on which
-/// won by a pixel is worse than either. The grid wins, whichever way Ctrl points.
+/// won by a pixel is worse than either. The grid wins — over the preference, and over
+/// Ctrl/Cmd turning object snapping on for a drag, which is the case Excalidraw's
+/// `!isGridModeEnabled` term exists for.
 #[test]
 fn a_snapping_grid_wins_over_objects() {
-    for ctrl in [false, true] {
+    for (preference, ctrl) in [(true, false), (false, true)] {
         let (mut engine, _) = two_boxes();
-        engine.set_objects_snap(true);
+        engine.set_objects_snap(preference);
         engine.set_grid(GridSettings {
             enabled: true,
             snap: true,
@@ -115,7 +117,7 @@ fn a_snapping_grid_wins_over_objects() {
 
         assert!(
             !guides,
-            "no object guides while the grid snaps (ctrl: {ctrl})"
+            "no object guides while the grid snaps (preference {preference}, ctrl {ctrl})"
         );
     }
 }
