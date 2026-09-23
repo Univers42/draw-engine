@@ -7,6 +7,11 @@ import { countEngineStep, countPointerEvent } from "./probe";
 import { localPoint, type HostSession } from "./session";
 import { wheelIntent } from "./wheel";
 
+/**
+ * `PointerEvent.button` for a pen's eraser end. Excalidraw's `POINTER_BUTTON.ERASER`.
+ */
+const PEN_ERASER_BUTTON = 5;
+
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
   countEngineStep();
@@ -56,6 +61,13 @@ export function attachPointerInput(session: HostSession): () => void {
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
     canvas.setPointerCapture(event.pointerId);
+    // Turning the pen round erases, whatever tool is in hand, and releasing puts that
+    // tool back — Excalidraw's handling of the eraser button (`App.tsx:8700-8730`).
+    // Switched before the host is told of the press, so the host sees the eraser too.
+    if (event.button === PEN_ERASER_BUTTON && engine.getTool() !== "eraser") {
+      session.toolBeforePenEraser = engine.getTool();
+      engine.setTool("eraser");
+    }
     // A pan is decided before the host sees the press. It is never a host gesture, and
     // asking the host first let one start: the eraser drew its trail across a
     // space-drag, and the sticky-note tool claimed the press instead of panning.
@@ -117,6 +129,10 @@ export function attachPointerInput(session: HostSession): () => void {
     session.down = false;
     engine.endPointer();
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (session.toolBeforePenEraser !== null) {
+      engine.setTool(session.toolBeforePenEraser);
+      session.toolBeforePenEraser = null;
+    }
   };
 
   const onDoubleClick = (event: MouseEvent) => {
