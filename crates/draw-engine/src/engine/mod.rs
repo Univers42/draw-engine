@@ -22,6 +22,7 @@ mod multi_linear;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
+mod radius;
 mod style;
 mod text;
 mod types;

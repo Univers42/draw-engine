@@ -95,6 +95,13 @@ export const DEFAULT_ELEMENT_STYLE: DrawElementStyle = {
 };
 
 export interface DrawElement extends DrawElementStyle {
+  /**
+   * An explicit corner radius, set by dragging a corner-radius handle. Absent means the
+   * adaptive corner every rounded shape has always had — and absent is what every board
+   * saved before this carries, so none of them change. Only applies while `roundness` is
+   * set: Sharp wins, and the radius is remembered for when it is Round again.
+   */
+  cornerRadius?: number;
   id: string;
   type: DrawElementType;
   x: number;

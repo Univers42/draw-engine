@@ -1272,6 +1272,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 
     if view.selected.len() == 1 {
         paint_shape_selection(ctx, view, view.selected[0]);
+        paint_radius_handles(ctx, view);
     } else if view.selected.len() > 1 {
         paint_group_selection(ctx, view);
     }
@@ -1370,6 +1371,34 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
         ctx.stroke();
     }
 }
+
+/// Corner-radius handles: a small circle inside each corner of a selected rectangle.
+///
+/// Circles, where the resize handles are squares, so the two read as different tools at
+/// a glance — one changes the size, the other the shape of the corner. Smaller than the
+/// resize handles because they sit *inside* the shape, over the drawing. The one being
+/// dragged takes the same focus fill as a moving line point.
+fn paint_radius_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.radius_handles.is_empty() {
+        return;
+    }
+    set_dash_cached(ctx, None);
+    for (corner, handle) in view.radius_handles.iter().enumerate() {
+        let s = crate::world_to_screen(view.camera, handle.x, handle.y);
+        ctx.begin_path();
+        let _ = ctx.arc(s.x, s.y, RADIUS_HANDLE_R, 0.0, std::f64::consts::PI * 2.0);
+        if view.active_radius_handle == Some(corner) {
+            set_fill(ctx, POINT_HANDLE_ACTIVE_FILL);
+        } else {
+            set_fill(ctx, &view.theme.background);
+        }
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+/// Radius of a corner-radius handle, in screen pixels.
+const RADIUS_HANDLE_R: f64 = 4.0;
 
 /// A `half`-radius square centred on `(cx, cy)` and turned by `angle`.
 ///

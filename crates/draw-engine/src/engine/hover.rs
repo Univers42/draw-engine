@@ -97,6 +97,11 @@ impl DrawEngine {
 
         if let Some(single) = self.single_selected() {
             if !single.locked() {
+                // Same order as `begin_select`, so what the cursor promises is what a
+                // press does.
+                if self.radius_handle_at(world).is_some() {
+                    return HoverCursor::PointHandle;
+                }
                 if self.shows_point_handles(&single) {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
@@ -148,7 +153,9 @@ impl DrawEngine {
             Interaction::Pan { .. } => HoverCursor::Grabbing,
             Interaction::Move { .. } => HoverCursor::Grabbing,
             Interaction::Rotate { .. } | Interaction::RotateGroup { .. } => HoverCursor::Grabbing,
-            Interaction::LinearPoint { .. } => HoverCursor::PointHandle,
+            Interaction::LinearPoint { .. } | Interaction::CornerRadius { .. } => {
+                HoverCursor::PointHandle
+            }
             Interaction::Resize { id, handle, .. } => {
                 let angle = self.scene.get(id).map(|el| el.angle).unwrap_or(0.0);
                 resize_cursor(*handle, angle)

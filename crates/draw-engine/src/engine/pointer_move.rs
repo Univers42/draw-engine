@@ -144,6 +144,15 @@ impl DrawEngine {
                 })
             }
             Interaction::Move { .. } => Some(self.move_selection(it, world, bypass_snap)),
+            Interaction::CornerRadius {
+                ref id,
+                corner,
+                start_radius,
+                grab,
+            } => {
+                self.move_corner_radius(id, corner, start_radius, grab, world);
+                Some(it)
+            }
             Interaction::Resize {
                 ref id,
                 handle,

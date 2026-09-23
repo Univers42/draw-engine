@@ -3,6 +3,7 @@ pub mod handles;
 pub mod lasso;
 pub mod linear;
 pub mod marquee;
+pub mod radius;
 pub mod transform;
 
 pub use group_transform::{GroupFrame, GroupOrigin};

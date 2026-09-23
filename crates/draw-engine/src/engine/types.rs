@@ -169,6 +169,18 @@ pub(crate) enum Interaction {
         current: Point,
         base: HashSet<String>,
     },
+    /// Dragging a corner-radius handle.
+    ///
+    /// Holds the radius and the pointer position at the grab, and every move is measured
+    /// from those — never from the previous move, so the drag cannot compound.
+    CornerRadius {
+        id: String,
+        /// Which handle, clockwise from the top-left. Each measures inward from its own
+        /// corner, though all four drive the one radius.
+        corner: usize,
+        start_radius: f64,
+        grab: Point,
+    },
     /// A press while a path is being placed point by point.
     ///
     /// Carries nothing, because the path itself is not part of the gesture: it lives on

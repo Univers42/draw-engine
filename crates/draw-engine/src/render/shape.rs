@@ -35,6 +35,15 @@ pub fn corner_radius(x: f64, element: &DrawElement) -> f64 {
     if element.roundness.is_none() {
         return 0.0;
     }
+    // An explicit radius, from a corner-radius handle. Clamped to half the span, which is
+    // a pill: any more and opposite corners would overlap.
+    //
+    // Deliberately past the oracle's own cap. `getCornerRadius` limits every radius to a
+    // quarter of the short side, which would make a handle stop a quarter of the way in
+    // and feel broken.
+    if let Some(explicit) = element.corner_radius {
+        return explicit.clamp(0.0, x / 2.0);
+    }
     match element.kind {
         // Excalidraw gives rectangles (and rectangle-likes) the adaptive rule.
         DrawElementType::Rectangle

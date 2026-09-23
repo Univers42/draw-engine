@@ -297,6 +297,12 @@ impl DrawEngine {
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         if let Some(single) = self.single_selected() {
             if !single.locked() {
+                // Radius handles first. They sit *inside* the shape, so a press on one of
+                // a filled rectangle would otherwise pick the whole shape up and move it.
+                if let Some(corner) = self.radius_handle_at(world) {
+                    self.begin_corner_radius(&single, corner, world);
+                    return;
+                }
                 let world_tol = super::HANDLE_HIT_PX / self.camera.scale;
 
                 // A line or arrow is edited by its points, not its bounding box — so
