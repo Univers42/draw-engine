@@ -1168,7 +1168,7 @@ impl Painter for CanvasPainter<'_> {
                 view.selected.len() + view.peer_marks.len(),
                 view.marquee.is_some(),
                 view.lasso.len(),
-                view.laser.len(),
+                view.laser.len() + view.peer_lasers.len(),
                 view.snap_guides.len(),
                 view.binding_highlight.is_some(),
                 view.linear_handles.len(),
@@ -1296,12 +1296,25 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 /// get differently. Filled rather than stroked: a stroke has one width, and the whole
 /// point of the trail is that it tapers.
 fn paint_laser(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    if view.laser.is_empty() {
+    // The others' first, so a trail of one's own stays on top of theirs.
+    for (color, outlines) in &view.peer_lasers {
+        fill_outlines(ctx, view, color, outlines);
+    }
+    fill_outlines(ctx, view, &view.laser_color, &view.laser);
+}
+
+fn fill_outlines(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    color: &str,
+    outlines: &[Vec<crate::interaction::LaserPoint>],
+) {
+    if outlines.is_empty() {
         return;
     }
     ctx.save();
-    set_fill(ctx, &view.laser_color);
-    for outline in &view.laser {
+    set_fill(ctx, color);
+    for outline in outlines {
         let Some(first) = outline.first() else {
             continue;
         };

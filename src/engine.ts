@@ -138,6 +138,15 @@ export class DrawEngine {
     this.inner.setPeers(JSON.stringify(peers));
   }
 
+  /**
+   * Where a peer's laser pointer is, in world units, and whether they are pressing it —
+   * their trail is drawn in their colour and fades as it does on their screen. See
+   * `engine/peers.rs`.
+   */
+  peerLaser(id: string, color: string, x: number, y: number, down: boolean): void {
+    this.inner.peerLaser(id, color, x, y, down);
+  }
+
   /** The id of the peer holding what is under the pointer, if someone does. */
   peerAt(sx: number, sy: number): string | null {
     return this.inner.peerAt(sx, sy) ?? null;

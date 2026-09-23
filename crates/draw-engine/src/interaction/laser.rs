@@ -612,6 +612,24 @@ impl LaserTrails {
         }
     }
 
+    /// Whether a stroke is being drawn.
+    pub fn is_drawing(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// Ends the stroke in progress if nothing has been added to it for as long as a point
+    /// takes to fade — a peer's stroke whose release never arrived. Left open, it would
+    /// keep asking for frames with nothing left to show.
+    pub fn end_if_idle(&mut self, now: f64) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|stroke| !stroke.is_visible(now))
+        {
+            self.end();
+        }
+    }
+
     /// Forget every trail immediately, faded or not.
     pub fn clear(&mut self) {
         self.current = None;

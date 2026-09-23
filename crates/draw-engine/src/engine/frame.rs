@@ -73,6 +73,8 @@ pub struct PaintView<'a> {
     pub laser: Vec<Vec<crate::interaction::LaserPoint>>,
     /// The colour laser strokes are filled with.
     pub laser_color: String,
+    /// Each peer's laser strokes, with the colour they are filled with: theirs.
+    pub peer_lasers: Vec<(String, Vec<Vec<crate::interaction::LaserPoint>>)>,
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
@@ -295,6 +297,7 @@ impl DrawEngine {
             frame_names,
             laser: self.laser.outlines(self.now_ms, self.camera.scale),
             laser_color: crate::interaction::DEFAULT_LASER_COLOR.to_string(),
+            peer_lasers: self.peer_laser_outlines(),
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,

@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use crate::engine::DrawEngine;
+use crate::interaction::{LaserPoint, LaserTrails};
 use crate::scene::DrawElement;
 
 /// One other person in the room, as the host last heard of them.
@@ -188,4 +189,77 @@ impl DrawEngine {
     pub fn peers(&self) -> &[Peer] {
         &self.peers
     }
+
+    /// Where a peer's laser pointer is, and whether they are pressing it.
+    ///
+    /// Their trail is drawn here as it is on their screen — traced from their pointer,
+    /// fading the same way, in their colour — as Excalidraw traces a collaborator's from
+    /// their pointer updates (`laserTrails.ts`, `updateCollabTrails`). It was drawn on
+    /// theirs alone, which made the laser useless for the one thing it is for: pointing
+    /// something out to the others.
+    ///
+    /// Stamped with this engine's clock as each point arrives, so a peer's clock has no
+    /// say in how long it lasts.
+    pub fn peer_laser(&mut self, id: &str, color: &str, x: f64, y: f64, down: bool) {
+        let now = self.now_ms;
+        let laser = self
+            .peer_lasers
+            .entry(id.to_string())
+            .or_insert_with(|| PeerLaser {
+                color: color.to_string(),
+                trails: LaserTrails::default(),
+            });
+        if laser.color != color {
+            laser.color = color.to_string();
+        }
+        match (down, laser.trails.is_drawing()) {
+            (true, false) => laser.trails.start(x, y, now),
+            (true, true) => laser.trails.add(x, y, now),
+            (false, true) => {
+                laser.trails.add(x, y, now);
+                laser.trails.end();
+            }
+            (false, false) => return,
+        }
+        self.request_draw();
+    }
+
+    /// Every peer's laser trails still on screen, each set with its colour.
+    pub(crate) fn peer_laser_outlines(&self) -> Vec<(String, Vec<Vec<LaserPoint>>)> {
+        self.peer_lasers
+            .values()
+            .map(|laser| {
+                (
+                    laser.color.clone(),
+                    laser.trails.outlines(self.now_ms, self.camera.scale),
+                )
+            })
+            .filter(|(_, outlines)| !outlines.is_empty())
+            .collect()
+    }
+
+    /// Settles every peer's trails at `now`: ends a stroke whose release never came,
+    /// drops what has faded, and forgets a peer with nothing left on screen.
+    pub(crate) fn prune_peer_lasers(&mut self, now: f64) {
+        for laser in self.peer_lasers.values_mut() {
+            laser.trails.end_if_idle(now);
+            laser.trails.prune(now);
+        }
+        self.peer_lasers
+            .retain(|_, laser| laser.trails.is_active(now));
+    }
+
+    /// Whether any peer's trail is still on screen.
+    pub(crate) fn peer_laser_active(&self) -> bool {
+        self.peer_lasers
+            .values()
+            .any(|laser| laser.trails.is_active(self.now_ms))
+    }
+}
+
+/// One peer's laser pointer, as this screen draws it.
+#[derive(Clone, Debug)]
+pub(crate) struct PeerLaser {
+    color: String,
+    trails: LaserTrails,
 }
