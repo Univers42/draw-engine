@@ -238,6 +238,15 @@ impl Scene {
         matches!(self.baseline.get(id), Some(None))
     }
 
+    /// What every element changed since the last commit was before it — `None` for one
+    /// the change created. Left in place: see `engine/peers.rs`, which puts them back.
+    pub(crate) fn baseline(&self) -> Vec<(String, Option<Rc<DrawElement>>)> {
+        self.baseline
+            .iter()
+            .map(|(id, before)| (id.clone(), before.clone()))
+            .collect()
+    }
+
     pub(crate) fn take_baseline(&mut self) -> HashMap<String, Option<Rc<DrawElement>>> {
         std::mem::take(&mut self.baseline)
     }

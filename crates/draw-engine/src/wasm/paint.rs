@@ -1153,7 +1153,7 @@ impl Painter for CanvasPainter<'_> {
             let appended = paint_on_top(layers, view, key, digest);
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
-                view.selected.len(),
+                view.selected.len() + view.peer_marks.len(),
                 view.marquee.is_some(),
                 view.lasso.len(),
                 view.laser.len(),
@@ -1648,6 +1648,10 @@ const POINT_HANDLE_ACTIVE_FILL: &str = "rgba(134, 131, 226, 0.9)";
 ///   omits the cardinal handles by default; drawing them adds four targets that mostly
 ///   get in the way of the corners.
 fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    // Under this engine's own chrome: what someone else holds is context, what you hold
+    // is what you are working on.
+    paint_peer_marks(ctx, view);
+
     set_stroke(ctx, &view.theme.accent);
     ctx.set_line_width(1.0);
     // Solid, said rather than assumed. The dash is sticky canvas state and the element
@@ -1862,6 +1866,78 @@ const MEMBER_OUTLINE_PX: f64 = 1.5;
 /// the edge of a rectangle, the curve of an ellipse or a line, the ink of a stroke. See
 /// [`crate::render::outline`].
 fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    trace_outlines(ctx, view, &view.selected, MEMBER_OUTLINE_PX);
+}
+
+/// How wide the trace around what a peer holds is, in CSS pixels: wider than a member's,
+/// because it has to read against whatever colour that peer was given.
+const PEER_OUTLINE_PX: f64 = 2.0;
+
+/// What other people hold, each traced in their colour with their name above it — the
+/// way Figma shows who is working where. See `engine/peers.rs`.
+fn paint_peer_marks(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.peer_marks.is_empty() {
+        return;
+    }
+    set_dash_cached(ctx, None);
+    for mark in &view.peer_marks {
+        // Set outside the trace's save/restore, so the cache and the context agree after.
+        set_stroke(ctx, mark.color);
+        trace_outlines(ctx, view, &mark.elements, PEER_OUTLINE_PX);
+    }
+    for mark in &view.peer_marks {
+        paint_name_tag(ctx, view, mark);
+    }
+    // The tags set the font behind the cache's back.
+    FONT.with(|f| *f.borrow_mut() = None);
+}
+
+/// Height of a peer's name tag, and the size of the name in it, in CSS pixels.
+const NAME_TAG_PX: f64 = 18.0;
+const NAME_TAG_FONT: &str = "600 11px system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+/// A peer's name on a tag of their colour, sitting on the top-left corner of what they
+/// hold. At a fixed size on screen, like a frame's name: it labels the board rather than
+/// being drawn on it.
+fn paint_name_tag(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    mark: &crate::engine::PeerMark,
+) {
+    let Some(bounds) = crate::scene_bounds(mark.elements.iter().copied()) else {
+        return;
+    };
+    let pad = view.handle_layout.frame_pad;
+    let corner = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
+    ctx.set_font(NAME_TAG_FONT);
+    let text_w = ctx
+        .measure_text(mark.name)
+        .map(|metrics| metrics.width())
+        .unwrap_or(0.0);
+    let (w, h) = (text_w + 12.0, NAME_TAG_PX);
+    // Above the corner, or inside the top of the screen when that is off it.
+    let x = corner.x.max(0.0);
+    let y = (corner.y - h - 2.0).max(0.0);
+    set_fill(ctx, mark.color);
+    ctx.begin_path();
+    let _ = ctx.round_rect_with_f64(x, y, w, h, 4.0);
+    ctx.fill();
+    set_fill(ctx, PEER_TAG_TEXT);
+    ctx.set_text_baseline("middle");
+    let _ = ctx.fill_text(mark.name, x + 6.0, y + h / 2.0);
+}
+
+/// The name on a peer's tag. White reads on every colour the host hands out.
+const PEER_TAG_TEXT: &str = "#ffffff";
+
+/// Traces `elements` along their own shapes in the current stroke colour, `width_px` CSS
+/// pixels wide. See [`paint_member_outlines`].
+fn trace_outlines(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    elements: &[&DrawElement],
+    width_px: f64,
+) {
     use crate::render::outline::{element_outline, Outline};
     use draw_rough::renderer::Segment;
 
@@ -1877,14 +1953,14 @@ fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     ];
     let level = crate::render::path_data::lod_level(view.detail_scale);
     let selected: std::collections::HashSet<&str> =
-        view.selected.iter().map(|e| e.id.as_str()).collect();
+        elements.iter().map(|e| e.id.as_str()).collect();
 
     ctx.save();
     // In the element's own units, where one CSS pixel is `1 / scale`.
-    ctx.set_line_width(MEMBER_OUTLINE_PX / s.max(f64::MIN_POSITIVE));
+    ctx.set_line_width(width_px / s.max(f64::MIN_POSITIVE));
     ctx.set_line_join("round");
     ctx.set_line_cap("round");
-    for element in view.selected.iter().copied() {
+    for element in elements.iter().copied() {
         // A label is traced by its container, which is the shape someone sees.
         if element
             .container_id
