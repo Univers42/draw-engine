@@ -1,4 +1,5 @@
 use crate::camera::Point;
+use crate::scene::geometry::element_bounds;
 use crate::scene::DrawElement;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,12 +180,30 @@ impl HandleLayout {
     }
 }
 
+/// The element's world-space centre and unrotated half-extents.
+///
+/// `element.x + element.width / 2.0` only gives the centre for a box element, whose
+/// `x`/`width` describe a directed interval — for a line or arrow `x` is the position of
+/// its **first point**, not a box corner (`scene::geometry::is_point_based`), so the same
+/// arithmetic centres on whatever the first point happens to be rather than on the
+/// drawing. `element_bounds` already carries the fix (it is where the marquee, the
+/// eraser sweep and `rotation_center` get theirs); this is the one place selection reads
+/// it from, so the frame, the handles and the hit test cannot drift apart on it again.
+fn world_box(element: &DrawElement) -> (f64, f64, f64, f64) {
+    let b = element_bounds(element);
+    (
+        (b.min_x + b.max_x) / 2.0,
+        (b.min_y + b.max_y) / 2.0,
+        (b.max_x - b.min_x) / 2.0,
+        (b.max_y - b.min_y) / 2.0,
+    )
+}
+
 /// The frame corners: the element's box grown by `pad`, then rotated about its centre.
 pub fn selection_corners_padded(element: &DrawElement, pad: f64) -> [Point; 4] {
-    let cx = element.x + element.width / 2.0;
-    let cy = element.y + element.height / 2.0;
-    let hw = element.width.abs() / 2.0 + pad;
-    let hh = element.height.abs() / 2.0 + pad;
+    let (cx, cy, hw, hh) = world_box(element);
+    let hw = hw + pad;
+    let hh = hh + pad;
     [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(|[lx, ly]| {
         let rotated = rotate_point(lx, ly, element.angle);
         Point {
@@ -205,14 +224,11 @@ pub fn selection_corners(element: &DrawElement) -> [Point; 4] {
 /// used to be hit-testable but never painted, so grabbing the middle of an edge to move a
 /// shape silently resized it instead.
 pub fn selection_handles(element: &DrawElement, layout: HandleLayout) -> Vec<HandlePoint> {
-    let cx = element.x + element.width / 2.0;
-    let cy = element.y + element.height / 2.0;
-    // `abs` because a shape dragged out leftwards or upwards has negative extent, and a
-    // handle on the "west" side must stay on the west side regardless.
-    let hw = element.width.abs() / 2.0 + layout.handle_offset;
-    let hh = element.height.abs() / 2.0 + layout.handle_offset;
-    let wide = element.width.abs() > layout.min_side;
-    let tall = element.height.abs() > layout.min_side;
+    let (cx, cy, hw, hh) = world_box(element);
+    let wide = hw * 2.0 > layout.min_side;
+    let tall = hh * 2.0 > layout.min_side;
+    let hw = hw + layout.handle_offset;
+    let hh = hh + layout.handle_offset;
 
     let mut points: Vec<HandlePoint> = RESIZE_HANDLES
         .iter()

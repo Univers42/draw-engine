@@ -463,6 +463,114 @@ fn a_multi_click_arrow_still_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
 }
 
+/// The selection frame has to actually contain the arrow it is drawn around.
+///
+/// `x`/`y` is a linear element's **first point**, not a box corner
+/// (`scene::geometry::is_point_based`) — reading `x + width` as an edge is wrong for any
+/// arrow that does not run left-to-right or top-to-bottom, and `selection_corners_padded`
+/// used to do exactly that. It read as fine for a two-point drag, where the sign of
+/// `width` happens to keep the arithmetic correct, and broke silently for a bound,
+/// waypoint-carrying one: the frame stayed pinned near the first point while the arrow
+/// itself moved to its attach point underneath it — the selection sitting where the
+/// arrow used to be, not where it now is.
+#[test]
+fn the_selection_frame_contains_a_bound_waypoint_arrow() {
+    let a = box_at(300.0, 0.0, 100.0, 60.0);
+    let b = box_at(600.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    // The waypoint sits well to the left of A, so the point the retargeted start aims
+    // toward — its own adjacent point — pulls it leftward past the waypoint: exactly the
+    // shape that leaves `x` (pinned to the first point, the retargeted start) short of
+    // the box's true left edge.
+    click(&mut engine, 350.0, 30.0);
+    place(&mut engine, &[(100.0, 30.0)]);
+    hover(&mut engine, 650.0, 30.0);
+    click(&mut engine, 650.0, 30.0);
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert!(arrow.start_binding.is_some(), "setup: bound at the start");
+    assert!(arrow.end_binding.is_some(), "setup: bound at the end");
+
+    assert_frame_contains_points(&arrow);
+}
+
+/// The same guarantee, after the shape moves again. `linear_retarget` runs on every move
+/// of a bound shape, not only once at bind time, so a fix reaching only the selection
+/// code and not every caller of it would still miss this — the exact "the div stays
+/// where it was originally drawn, and moves the trail independently from the shape"
+/// symptom this is guarding against.
+#[test]
+fn the_selection_frame_contains_a_bound_waypoint_arrow_after_the_shape_moves() {
+    let a = box_at(300.0, 0.0, 100.0, 60.0);
+    let b = box_at(600.0, 0.0, 100.0, 60.0);
+    let a_id = a.id.clone();
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 350.0, 30.0);
+    place(&mut engine, &[(100.0, 30.0)]);
+    hover(&mut engine, 650.0, 30.0);
+    click(&mut engine, 650.0, 30.0);
+
+    // Grab A off its top edge — y=10, clear of the arrow's own y=30, since every point
+    // in this path shares that y and a grab on it would pick up the arrow instead
+    // (transparent shapes are only grabbable by their outline unless selected first,
+    // and an explicit select puts the whole frame up for it).
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![a_id]);
+    engine.begin_pointer(350.0, 10.0, false, false);
+    engine.move_pointer(350.0, 480.0, false, false);
+    engine.end_pointer();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert!(
+        arrow.start_binding.is_some() && arrow.end_binding.is_some(),
+        "setup: still bound at both ends after the move"
+    );
+
+    assert_frame_contains_points(&arrow);
+}
+
+/// Every point of `element`, in world space, must fall within the padding-free selection
+/// frame drawn around it — the same corners the painter strokes and the marquee/handles
+/// are laid out from (`selection_corners_padded(element, 0.0)`).
+fn assert_frame_contains_points(element: &DrawElement) {
+    let corners = selection_corners_padded(element, 0.0);
+    let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    for &[px, py] in element.points.as_deref().unwrap_or_default().iter() {
+        let wx = element.x + px;
+        let wy = element.y + py;
+        assert!(
+            wx >= min_x - 0.001 && wx <= max_x + 0.001,
+            "a point at world x={wx} falls outside the selection frame [{min_x}, {max_x}]"
+        );
+        assert!(
+            wy >= min_y - 0.001 && wy <= max_y + 0.001,
+            "a point at world y={wy} falls outside the selection frame [{min_y}, {max_y}]"
+        );
+    }
+}
+
 /// Clicking a shape the pending point would bind to finishes the path right there — no
 /// Enter, no Escape, no second click on the point just placed. The suggestion already
 /// promised the attach; asking for a separate confirmation after it would make the
