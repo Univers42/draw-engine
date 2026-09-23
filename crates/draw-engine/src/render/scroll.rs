@@ -212,3 +212,57 @@ pub fn overlay_is_empty(
         && !has_binding_highlight
         && linear_handles == 0
 }
+
+/// How to show a cached layer under a camera it was not drawn for: scale it by `scale`
+/// and move it by `(dx, dy)` device pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MotionBlit {
+    pub scale: f64,
+    pub dx: f64,
+    pub dy: f64,
+}
+
+/// How much a reused picture may leave uncovered before it is repainted instead.
+const MOTION_MIN_COVERAGE: f64 = 0.85;
+/// How far the zoom may drift from the picture's before it is repainted instead: the
+/// picture is resampled, which a quarter either way hides while it is moving.
+const MOTION_MAX_DRIFT: f64 = 1.25;
+
+/// Whether a frame **in motion** can reuse a layer drawn for another camera — moved, or
+/// scaled about the new camera — and how.
+///
+/// A pan or a zoom used to repaint every visible element on every frame, which at 15% on
+/// a board of 2,000 strokes was the whole board, fourteen milliseconds a frame and more
+/// with every stroke added. While the camera is moving the eye cannot tell a moved or
+/// slightly scaled picture from a repainted one, so the picture is reused until it would
+/// leave more than a sixth of the screen blank or has been scaled by more than a quarter —
+/// then one real repaint, and reuse again from that. The frame after motion stops is
+/// always drawn from scratch, so nothing approximate is ever left on screen.
+///
+/// `None` means repaint.
+pub fn plan_motion(
+    painted: Camera,
+    now: Camera,
+    dpr: f64,
+    device_width: f64,
+    device_height: f64,
+) -> Option<MotionBlit> {
+    if painted.scale <= 0.0 || device_width <= 0.0 || device_height <= 0.0 {
+        return None;
+    }
+    let scale = now.scale / painted.scale;
+    if !(1.0 / MOTION_MAX_DRIFT..=MOTION_MAX_DRIFT).contains(&scale) {
+        return None;
+    }
+    // A screen point s under the old camera shows world point (s - c_old) / s_old, which
+    // the new camera puts at (s - c_old) * scale + c_new.
+    let dx = (now.x - scale * painted.x) * dpr;
+    let dy = (now.y - scale * painted.y) * dpr;
+    let covered_w = (dx + device_width * scale).min(device_width) - dx.max(0.0);
+    let covered_h = (dy + device_height * scale).min(device_height) - dy.max(0.0);
+    if covered_w <= 0.0 || covered_h <= 0.0 {
+        return None;
+    }
+    let coverage = (covered_w * covered_h) / (device_width * device_height);
+    (coverage >= MOTION_MIN_COVERAGE).then_some(MotionBlit { scale, dx, dy })
+}

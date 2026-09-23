@@ -385,3 +385,111 @@ fn the_revision_does_not_depend_on_the_camera() {
     // not a property of the document.
     assert_eq!(scene.revision(), before);
 }
+
+// ---------------------------------------------------------------------------
+// Reusing a picture while the camera moves
+// ---------------------------------------------------------------------------
+
+use draw_engine::render::scroll::{plan_motion, MotionBlit};
+
+fn cam(x: f64, y: f64, scale: f64) -> Camera {
+    Camera { x, y, scale }
+}
+
+#[test]
+fn a_small_pan_reuses_the_picture_moved() {
+    let plan = plan_motion(
+        cam(0.0, 0.0, 0.15),
+        cam(-30.0, 0.0, 0.15),
+        1.0,
+        1280.0,
+        800.0,
+    );
+    assert_eq!(
+        plan,
+        Some(MotionBlit {
+            scale: 1.0,
+            dx: -30.0,
+            dy: 0.0
+        })
+    );
+}
+
+#[test]
+fn the_move_is_in_device_pixels() {
+    let plan = plan_motion(cam(0.0, 0.0, 1.0), cam(10.0, 5.0, 1.0), 2.0, 2560.0, 1600.0);
+    assert_eq!(
+        plan,
+        Some(MotionBlit {
+            scale: 1.0,
+            dx: 20.0,
+            dy: 10.0
+        })
+    );
+}
+
+#[test]
+fn a_pan_that_would_leave_too_much_blank_repaints() {
+    // A sixth of the width gone: more than the picture may leave uncovered.
+    assert_eq!(
+        plan_motion(
+            cam(0.0, 0.0, 1.0),
+            cam(-220.0, 0.0, 1.0),
+            1.0,
+            1280.0,
+            800.0
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_zoom_about_a_point_reuses_the_picture_scaled_about_it() {
+    // Zooming in 10% about the screen point (640, 400): that point stays put.
+    let before = cam(100.0, 50.0, 0.5);
+    let anchor = (640.0, 400.0);
+    let world = (
+        (anchor.0 - before.x) / before.scale,
+        (anchor.1 - before.y) / before.scale,
+    );
+    let scale = 0.55;
+    let after = cam(
+        anchor.0 - world.0 * scale,
+        anchor.1 - world.1 * scale,
+        scale,
+    );
+
+    let plan = plan_motion(before, after, 1.0, 1280.0, 800.0).expect("reused");
+
+    assert!((plan.scale - 1.1).abs() < 1e-9);
+    // The anchor maps to itself: anchor * scale + d = anchor.
+    assert!((anchor.0 * plan.scale + plan.dx - anchor.0).abs() < 1e-9);
+    assert!((anchor.1 * plan.scale + plan.dy - anchor.1).abs() < 1e-9);
+}
+
+#[test]
+fn a_zoom_that_drifts_too_far_repaints() {
+    assert_eq!(
+        plan_motion(cam(0.0, 0.0, 0.5), cam(0.0, 0.0, 0.7), 1.0, 1280.0, 800.0),
+        None
+    );
+    assert_eq!(
+        plan_motion(cam(0.0, 0.0, 0.5), cam(0.0, 0.0, 0.38), 1.0, 1280.0, 800.0),
+        None
+    );
+}
+
+#[test]
+fn zooming_out_leaves_a_border_and_repaints_once_it_is_too_wide() {
+    // Out by 5% about the centre: a 2.5% border all round, which is fine…
+    assert!(plan_motion(
+        cam(0.0, 0.0, 1.0),
+        cam(32.0, 20.0, 0.95),
+        1.0,
+        1280.0,
+        800.0
+    )
+    .is_some());
+    // …but out by 10% leaves a fifth of the screen blank, which is not.
+    assert!(plan_motion(cam(0.0, 0.0, 1.0), cam(64.0, 40.0, 0.9), 1.0, 1280.0, 800.0).is_none());
+}

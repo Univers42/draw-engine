@@ -977,6 +977,46 @@ impl Painter for CanvasPainter<'_> {
                 return Some(paint_live(ctx, layers, view, key, device));
             }
 
+            // While the camera is moving, the last picture moved or scaled to where the
+            // camera is now, instead of the whole board painted again — see
+            // `plan_motion`. Only for the same picture: anything else about the frame
+            // changing means painting it.
+            if view.in_motion {
+                if let Some((painted_key, painted_camera)) = layers.painted {
+                    let same_picture = painted_key.content == key.content
+                        && painted_key.chrome == key.chrome
+                        && painted_key.dpr == key.dpr
+                        && painted_key.width == key.width
+                        && painted_key.height == key.height;
+                    let blit = same_picture
+                        .then(|| {
+                            crate::render::scroll::plan_motion(
+                                painted_camera,
+                                view.camera,
+                                dpr,
+                                f64::from(device.0),
+                                f64::from(device.1),
+                            )
+                        })
+                        .flatten();
+                    if let Some(blit) = blit {
+                        count_plan(0, 1, 0);
+                        STATE.with(|s| s.borrow_mut().reset());
+                        FONT.with(|f| *f.borrow_mut() = None);
+                        ctx.set_global_alpha(1.0);
+                        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                        // The paper first, for whatever the moved picture leaves bare.
+                        set_fill(ctx, &view.theme.background);
+                        ctx.fill_rect(0.0, 0.0, f64::from(device.0), f64::from(device.1));
+                        let _ =
+                            ctx.set_transform(blit.scale, 0.0, 0.0, blit.scale, blit.dx, blit.dy);
+                        let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+                        layers.overlay_drawn = true;
+                        return Some(false);
+                    }
+                }
+            }
+
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
                 view.selected.len(),
