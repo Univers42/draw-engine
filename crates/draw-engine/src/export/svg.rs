@@ -182,7 +182,12 @@ fn element_svg(element: &DrawElement) -> String {
         }
         DrawElementType::Text => text_svg(element, &rect, &transform),
         _ => {
-            let radius = element.roundness.unwrap_or(0.0);
+            // The same radius the canvas draws, from the same function. This used to be
+            // `roundness.unwrap_or(0.0)` — the `8` every rounded shape carries and the
+            // canvas has always ignored — so an exported rectangle had an 8px corner
+            // while the board showed 32, and an explicit corner radius did not export
+            // at all.
+            let radius = crate::render::shape::corner_radius(rect.width.min(rect.height), element);
             format!(
                 "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{radius}\" {common}{dash}{transform}/>",
                 rect.x, rect.y, rect.width, rect.height

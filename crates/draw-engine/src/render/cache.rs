@@ -87,6 +87,16 @@ impl ShapeKey {
             }
             None => eat(&[0]),
         }
+        // The explicit radius changes the outline as much as `roundness` does. Left out,
+        // dragging a corner-radius handle would keep serving the old geometry from both
+        // caches and the handle would appear to do nothing at all.
+        match element.corner_radius {
+            Some(r) => {
+                eat(&[1]);
+                eat(&r.to_bits().to_le_bytes());
+            }
+            None => eat(&[0]),
+        }
         // Linear geometry lives in the points, not in width and height.
         if let Some(points) = element.points.as_deref() {
             eat(&(points.len() as u64).to_le_bytes());

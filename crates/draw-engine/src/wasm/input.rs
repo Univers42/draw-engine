@@ -37,8 +37,27 @@ struct DebugRendering {
     /// After viewport culling. Compare against `scene.elementCount` to see whether
     /// culling is doing anything.
     elements_rendered: usize,
-    /// Rough geometry reused vs regenerated. A miss count climbing during a pan or a
-    /// drag means the cache fingerprint covers something it should not.
+    /// How each frame was served. **Read these first.** They are the outermost of three
+    /// stacked caches: on a `reuse` frame the static layer's bitmap is kept and no
+    /// element is replayed at all, so neither cache below is consulted. A high `reuses`
+    /// against `frames` is the renderer working — and it is also why the cache counters
+    /// below will look frozen, which is correct rather than broken.
+    redraws: u32,
+    scrolls: u32,
+    reuses: u32,
+    /// **The cache that decides per-frame work** *when a redraw happens.* One `Path2D`
+    /// per piece of geometry,
+    /// stroked with a single canvas call thereafter, so a hit is the difference between
+    /// one call and thousands. Misses climbing during a pan or a drag mean the geometry
+    /// fingerprint covers something it should not — position, zoom and rotation are
+    /// applied to the *context* and must not move it.
+    path_cache_hits: u64,
+    path_cache_misses: u64,
+    path_cache_len: usize,
+    /// Rough geometry, the layer *behind* the path cache. Consulted only when that one
+    /// misses, so `shapeCacheHits` is normally zero however well things are going and
+    /// `shapeCacheMisses` settles at the number of distinct shapes ever drawn. Reported
+    /// for completeness; `pathCache*` is the number to read.
     shape_cache_hits: u64,
     shape_cache_misses: u64,
     shape_cache_len: usize,
@@ -378,6 +397,10 @@ impl WasmEngine {
             return "{}".into();
         };
         let (hits, misses) = crate::wasm::paint::shape_cache_stats();
+        let (path_hits, path_misses) = crate::wasm::paint::path_cache_stats();
+        // Read, not taken: `paintStatsJson` resets these, and a snapshot must not
+        // disturb a measurement somebody else is in the middle of.
+        let (redraws, scrolls, reuses) = crate::wasm::paint::plan_counts();
         let snapshot = DebugSnapshot {
             state: cell.engine.debug_state(),
             rendering: DebugRendering {
@@ -392,9 +415,15 @@ impl WasmEngine {
                 last_build_ms: cell.stats.build_ms,
                 last_paint_ms: cell.stats.paint_ms,
                 elements_rendered: cell.stats.visible,
+                redraws,
+                scrolls,
+                reuses,
                 shape_cache_hits: hits,
                 shape_cache_misses: misses,
                 shape_cache_len: crate::wasm::paint::shape_cache_len(),
+                path_cache_hits: path_hits,
+                path_cache_misses: path_misses,
+                path_cache_len: crate::wasm::paint::path_cache_len(),
                 canvas_width: cell.canvas.width(),
                 canvas_height: cell.canvas.height(),
                 dirty: cell.engine.needs_frame(),

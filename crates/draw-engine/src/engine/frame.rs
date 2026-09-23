@@ -73,6 +73,11 @@ pub struct PaintView<'a> {
     /// apart that is otherwise guesswork, and letting go of the wrong one is a bend in
     /// the wrong place.
     pub active_handle: Option<crate::selection::LinearHandle>,
+    /// Corner-radius handles in world space, clockwise from the top-left; empty unless
+    /// exactly one rectangle is selected and it is large enough on screen to hold them.
+    pub radius_handles: Vec<crate::camera::Point>,
+    /// The radius handle being dragged, painted in the focus colour.
+    pub active_radius_handle: Option<usize>,
 }
 
 pub trait Painter {
@@ -149,6 +154,11 @@ impl DrawEngine {
             Some(super::Interaction::LinearPoint { handle, .. }) => Some(*handle),
             _ => None,
         };
+        let radius_handles = self.radius_handles();
+        let active_radius_handle = match &self.interaction {
+            Some(super::Interaction::CornerRadius { corner, .. }) => Some(*corner),
+            _ => None,
+        };
         // Frame chrome, decided here so every host paints the same boundaries and clips
         // the same children. A host is handed boxes and labels, not rules.
         let mut frame_clips = std::collections::HashMap::new();
@@ -205,6 +215,8 @@ impl DrawEngine {
                 .and_then(|id| self.scene.get(id)),
             linear_handles,
             active_handle,
+            radius_handles,
+            active_radius_handle,
         }
     }
 

@@ -114,6 +114,7 @@ fn interaction_kind(interaction: &Interaction) -> &'static str {
         Interaction::Lasso { .. } => "lasso",
         Interaction::Laser => "laser",
         Interaction::Marquee { .. } => "marquee",
+        Interaction::CornerRadius { .. } => "corner-radius",
     }
 }
 
@@ -161,7 +162,10 @@ impl DrawEngine {
                 tool_locked: self.tool_locked,
                 kind,
                 dragging: matches!(kind, Some("move" | "draft" | "freedraw" | "linear")),
-                resizing: matches!(kind, Some("resize" | "resize-group" | "linear-point")),
+                resizing: matches!(
+                    kind,
+                    Some("resize" | "resize-group" | "linear-point" | "corner-radius")
+                ),
                 placing_linear: self.linear_in_progress(),
                 editing_linear: self.editing_linear.clone(),
                 editing_group_id: self.editing_group_id.clone(),

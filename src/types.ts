@@ -95,6 +95,13 @@ export const DEFAULT_ELEMENT_STYLE: DrawElementStyle = {
 };
 
 export interface DrawElement extends DrawElementStyle {
+  /**
+   * An explicit corner radius, set by dragging a corner-radius handle. Absent means the
+   * adaptive corner every rounded shape has always had — and absent is what every board
+   * saved before this carries, so none of them change. Only applies while `roundness` is
+   * set: Sharp wins, and the radius is remembered for when it is Round again.
+   */
+  cornerRadius?: number;
   id: string;
   type: DrawElementType;
   x: number;
@@ -304,7 +311,29 @@ export interface DebugSnapshot {
     lastPaintMs: number;
     /** After culling. Against `scene.elementCount`, this says whether culling works. */
     elementsRendered: number;
-    /** Rough geometry reused vs regenerated. Misses during a pan mean trouble. */
+    /**
+     * How each frame was served. **Read these first.** Three caches are stacked here and
+     * this is the outermost: on a `reuse` frame the static layer's bitmap is kept and no
+     * element is replayed, so neither cache below is consulted. High `reuses` against
+     * `frames` is the renderer working — and is why the counters below look frozen.
+     */
+    redraws: number;
+    scrolls: number;
+    reuses: number;
+    /**
+     * **The cache that decides per-frame work** *when a redraw happens.* One Path2D per
+     * piece of geometry,
+     * stroked with a single canvas call thereafter. Misses climbing during a pan or a
+     * drag mean the geometry fingerprint covers something it should not.
+     */
+    pathCacheHits: number;
+    pathCacheMisses: number;
+    pathCacheLen: number;
+    /**
+     * Rough geometry, the layer *behind* the path cache — consulted only when that one
+     * misses. So `shapeCacheHits` is normally zero however well things are going, and
+     * reading it as "the cache is broken" is exactly backwards. Use `pathCache*`.
+     */
     shapeCacheHits: number;
     shapeCacheMisses: number;
     shapeCacheLen: number;
@@ -319,6 +348,11 @@ export interface DebugSnapshot {
     pointerEvents: number;
     /** Moves forwarded after per-frame coalescing. The ratio is the coalescing. */
     engineSteps: number;
+    /**
+     * Calls to the host's `hitTest()` wrapper only. Clicking to select does not go
+     * through it — the engine hit-tests internally on the pointer path — so ordinary
+     * use reads zero, which is correct rather than broken.
+     */
     hitTests: number;
     hitTestMs: number;
     maxHitTestMs: number;

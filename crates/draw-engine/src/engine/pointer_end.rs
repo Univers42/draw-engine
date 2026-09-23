@@ -31,6 +31,7 @@ impl DrawEngine {
             // freeze it where the button went down, so it could never be nudged before
             // being let go of.
             Interaction::MultiLinearPress => self.commit_multi_point(),
+            Interaction::CornerRadius { id, .. } => self.end_corner_radius(&id),
             Interaction::Freedraw { id, .. } => self.end_freedraw(&id),
             Interaction::Lasso { path, base } => {
                 // The engine decides what the loop caught, not the host: this is
