@@ -101,7 +101,7 @@ fn moving_a_selection_asks_for_a_frame() {
     engine.select(vec![id]);
     engine.begin_pointer(160.0, 140.0, false, false);
 
-    assert!(asked_for_a_frame(&mut engine, |e| e.move_pointer(200.0, 170.0, false, true)));
+    assert!(asked_for_a_frame(&mut engine, |e| e.move_pointer(200.0, 170.0, false, false)));
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn resizing_asks_for_a_frame() {
     // South-east handle: `handle_offset` outside the corner at (220, 180).
     engine.begin_pointer(228.0, 188.0, false, false);
 
-    assert!(asked_for_a_frame(&mut engine, |e| e.move_pointer(260.0, 220.0, false, true)));
+    assert!(asked_for_a_frame(&mut engine, |e| e.move_pointer(260.0, 220.0, false, false)));
 }
 
 #[test]

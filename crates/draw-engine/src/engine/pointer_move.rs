@@ -7,7 +7,9 @@ use crate::scene::{scene_bounds, DrawElement};
 use crate::selection::{resize_element, rotate_element, HandleKind};
 
 impl DrawEngine {
-    pub fn move_pointer(&mut self, sx: f64, sy: f64, square: bool, bypass_snap: bool) {
+    /// `invert_snap` is the host's Ctrl/Cmd: it flips object snapping for this move, on
+    /// when it is off and off when it is on, exactly as Excalidraw's `isSnappingEnabled`.
+    pub fn move_pointer(&mut self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         let Some(it) = self.interaction.take() else {
             // No gesture in progress — but a path being placed point by point still
             // follows the cursor between its clicks, which is the whole of how it is
@@ -19,7 +21,7 @@ impl DrawEngine {
             return;
         };
         let world = self.snap(self.screen_to_world(sx, sy));
-        let next = self.advance_interaction(it, sx, sy, world, square, bypass_snap);
+        let next = self.advance_interaction(it, sx, sy, world, square, invert_snap);
         self.interaction = next;
     }
 
@@ -30,7 +32,7 @@ impl DrawEngine {
         sy: f64,
         world: Point,
         square: bool,
-        bypass_snap: bool,
+        invert_snap: bool,
     ) -> Option<Interaction> {
         match it {
             // Same rubber-band as a shape: the box you drag out is the column you get.
@@ -143,7 +145,7 @@ impl DrawEngine {
                     last_y: sy,
                 })
             }
-            Interaction::Move { .. } => Some(self.move_selection(it, world, bypass_snap)),
+            Interaction::Move { .. } => Some(self.move_selection(it, world, invert_snap)),
             Interaction::CornerRadius {
                 ref id,
                 corner,
@@ -453,7 +455,7 @@ impl DrawEngine {
         }
     }
 
-    fn move_selection(&mut self, it: Interaction, world: Point, bypass_snap: bool) -> Interaction {
+    fn move_selection(&mut self, it: Interaction, world: Point, invert_snap: bool) -> Interaction {
         let Interaction::Move {
             ids,
             start,
@@ -469,8 +471,13 @@ impl DrawEngine {
         // Alignment guides pull toward other elements' edges, which is a different answer
         // from the grid's. Running both makes the result depend on which won by a pixel,
         // so the grid takes precedence while it is snapping.
+        //
+        // Otherwise Excalidraw's rule (`snapping.ts:180-183`): the preference, inverted
+        // for as long as Ctrl/Cmd is held. Theirs also refuses the inverted case while the
+        // grid is on; here the grid already wins outright, which covers it.
         let grid_snapping = self.grid().enabled && self.grid().snap;
-        if !bypass_snap && !grid_snapping {
+        let snap_to_objects = self.objects_snap != invert_snap;
+        if snap_to_objects && !grid_snapping {
             let moving: Vec<DrawElement> = ids
                 .iter()
                 .filter_map(|id| self.scene.get(id).cloned())

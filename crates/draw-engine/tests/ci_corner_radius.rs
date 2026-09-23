@@ -58,7 +58,7 @@ fn drag(engine: &mut DrawEngine, from: Point, dx: f64, dy: f64) {
     engine.begin_pointer(from.x, from.y, false, false);
     for step in 1..=4 {
         let t = step as f64 / 4.0;
-        engine.move_pointer(from.x + dx * t, from.y + dy * t, false, true);
+        engine.move_pointer(from.x + dx * t, from.y + dy * t, false, false);
     }
     engine.end_pointer();
 }
@@ -271,7 +271,7 @@ fn grabbing_a_handle_without_moving_leaves_the_radius_alone() {
     let h = handles(&engine)[0];
 
     engine.begin_pointer(h.x, h.y, false, false);
-    engine.move_pointer(h.x, h.y, false, true);
+    engine.move_pointer(h.x, h.y, false, false);
     engine.end_pointer();
 
     assert_close(drawn_radius(&get(&engine, &id)), 4.0);

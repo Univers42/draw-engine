@@ -291,6 +291,8 @@ fn snapping_ignores_elements_that_are_off_screen() {
     let dragged = engine.get_scene()[0].id.clone();
     engine.select(vec![dragged.clone()]);
     engine.set_tool(DrawTool::Select);
+    // On, or this passes for the wrong reason: snapping is off by default.
+    engine.set_objects_snap(true);
 
     // Pick it up and drop it a hair away from the far element's top edge.
     engine.begin_pointer(130.0, 120.0, false, false);
@@ -317,6 +319,7 @@ fn snapping_still_works_for_elements_that_are_on_screen() {
     let dragged = engine.get_scene()[0].id.clone();
     engine.select(vec![dragged.clone()]);
     engine.set_tool(DrawTool::Select);
+    engine.set_objects_snap(true);
 
     engine.begin_pointer(130.0, 120.0, false, false);
     engine.move_pointer(130.0, 322.0, false, false);

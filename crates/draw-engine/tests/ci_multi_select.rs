@@ -184,13 +184,13 @@ fn dragging_one_member_carries_the_others() {
     let (mut engine, a, b, _c) = three_boxes();
     marquee(&mut engine, (20.0, 20.0), (300.0, 140.0), false);
 
-    // Snapping bypassed. Alignment guides pull a moving selection onto the edges and
-    // centres of what is *not* moving, and the third box is close enough that a 25px
-    // nudge lands on its bottom edge instead — correct behaviour, and nothing to do with
-    // whether the other member came along.
+    // Snapping to objects off, which is the default. Alignment guides pull a moving
+    // selection onto the edges and centres of what is *not* moving, and the third box is
+    // close enough that a 25px nudge lands on its bottom edge instead — correct behaviour,
+    // and nothing to do with whether the other member came along.
     let (x, y) = middle_of(0);
     engine.begin_pointer(x, y, false, false);
-    engine.move_pointer(x + 40.0, y + 25.0, false, true);
+    engine.move_pointer(x + 40.0, y + 25.0, false, false);
     engine.end_pointer();
 
     let scene = engine.get_scene();
@@ -248,7 +248,7 @@ fn a_multi_selection_can_be_scaled_by_its_frame() {
     // that looks like a resize and changes no widths at all.
     let corner = 280.0 + 8.0;
     engine.begin_pointer(corner, 110.0 + 8.0, false, false);
-    engine.move_pointer(560.0 + 8.0, 220.0 + 8.0, false, true);
+    engine.move_pointer(560.0 + 8.0, 220.0 + 8.0, false, false);
     engine.end_pointer();
 
     let after = engine.get_scene();

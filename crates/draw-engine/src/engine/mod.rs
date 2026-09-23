@@ -119,6 +119,14 @@ pub struct DrawEngine {
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
+    /// Whether a moving selection snaps to other elements' edges and centres.
+    ///
+    /// **Off by default**, as Excalidraw's `objectsSnapModeEnabled` is (`appState.ts:129`).
+    /// It used to be always on, and the guides pulled every drag a few pixels sideways
+    /// toward whatever happened to be near — with no way to turn that off short of
+    /// holding a modifier through every drag. Holding Ctrl/Cmd inverts it for one
+    /// gesture either way; see `move_selection`.
+    objects_snap: bool,
     /// The shape a dragged arrow endpoint would attach to, if released now.
     ///
     /// The painter outlines it, so the attachment is visible before it is committed —
@@ -170,6 +178,7 @@ impl DrawEngine {
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
+            objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
             history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
@@ -219,6 +228,21 @@ impl DrawEngine {
 
     pub fn grid(&self) -> GridSettings {
         self.grid
+    }
+
+    /// Turns snapping to other elements on or off.
+    ///
+    /// A preference, like the grid: not part of the drawing, and not undoable.
+    pub fn set_objects_snap(&mut self, on: bool) {
+        self.objects_snap = on;
+        if !on {
+            self.snap_guides.clear();
+        }
+        self.request_draw();
+    }
+
+    pub fn objects_snap(&self) -> bool {
+        self.objects_snap
     }
 
     /// A world point rounded onto the grid, or unchanged when the grid is not snapping.
