@@ -435,6 +435,36 @@ fn an_arrow_still_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
 }
 
+/// The reported bug, end to end through the real gesture: a big rectangle drawn (or
+/// raised) *after* a small circle it happens to enclose must not shadow the circle as a
+/// bind target. `bindable_among` used to pick whichever candidate it reached first
+/// walking topmost-first, with no regard for size — a container added last, however
+/// large, always won for every point inside it.
+#[test]
+fn an_arrow_binds_to_a_small_shape_nested_inside_a_larger_one() {
+    let circle = ellipse_at(150.0, 150.0, 50.0, 50.0);
+    let frame = box_at(0.0, 0.0, 400.0, 400.0);
+    let circle_id = circle.id.clone();
+    // circle first (bottom of z-order), frame last (topmost) — draw content, then frame
+    // it, the workflow that exposed this.
+    let mut engine = engine_with_scene(vec![circle, frame]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(500.0, 175.0, false, false);
+    engine.move_pointer(175.0, 175.0, false, false);
+    engine.end_pointer();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(circle_id.as_str()),
+        "the arrow should bind to the circle, not the rectangle framing it"
+    );
+}
+
 /// The same guarantee as `an_arrow_still_binds`, but placed point by point instead of
 /// dragged. The two gestures share `begin_linear`/`end_linear` up to the release and then
 /// fork into `multi_linear.rs`, which has to keep offering the binding the drag gesture

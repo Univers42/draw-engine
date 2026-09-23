@@ -390,7 +390,7 @@ fn has_solid_interior(element: &DrawElement) -> bool {
 /// `grow` is signed: positive inflates the shape, negative shrinks it. Testing both
 /// gives the band around the outline without needing a separate distance function per
 /// shape.
-fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -> bool {
+pub(crate) fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -> bool {
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
     let cx = rect.x + rect.width / 2.0;
     let cy = rect.y + rect.height / 2.0;
