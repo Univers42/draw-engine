@@ -535,6 +535,15 @@ export class DrawEngine {
     this.inner.setElementText(id, text);
   }
 
+  /**
+   * The text element `id` as it would be with `text` in it, without committing it —
+   * what a host streams to peers while someone types, so the words appear on their
+   * screens as they are written. Null when `id` is not a text.
+   */
+  textPreview(id: string, text: string): DrawElement | null {
+    return parseJson<DrawElement | null>(this.inner.textPreviewJson(id, text), null);
+  }
+
   setArrowheads(patch: { start?: Arrowhead; end?: Arrowhead }): void {
     this.inner.setArrowheadsJson(JSON.stringify(patch));
   }

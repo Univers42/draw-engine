@@ -28,16 +28,22 @@ thread_local! {
     /// any moment is correct, just slower.
     static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::new());
 
-    /// Decoded images, by the `data:` URL that produced them.
+    /// Decoded images, by the id of the element that shows them, each with the length
+    /// of the `data:` URL it was decoded from.
     ///
     /// Decoding happens once and is reused for every frame afterwards. Without this the
     /// painter would hand the canvas a fresh `HTMLImageElement` sixty times a second and
     /// the browser would decode the same megabyte over and over.
-    static IMAGES: std::cell::RefCell<HashMap<String, web_sys::HtmlImageElement>> =
+    ///
+    /// By id, not by the URL itself: that hashed the whole URL — megabytes — for every
+    /// image in every frame that painted it, which is every frame while anything near it
+    /// moves. An element's picture does not change once it has one; the length is there
+    /// to notice if it ever did.
+    static IMAGES: std::cell::RefCell<HashMap<String, (usize, web_sys::HtmlImageElement)>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
-/// The decoded image for a `data:` URL, if it is ready yet.
+/// The decoded picture of an image element, if it is ready yet.
 ///
 /// Decoding is asynchronous even for a `data:` URL, so the first frame after an image is
 /// inserted usually has nothing to draw. Rather than leave a hole until something else
@@ -49,11 +55,19 @@ thread_local! {
 /// which a decode does not change, so the "repaint" was served from the layer painted
 /// *before* the image existed and the placeholder stayed on screen until something
 /// unrelated edited the scene. Loading a board full of images showed only empty boxes.
-fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
+fn decoded_image(element: &DrawElement) -> Option<web_sys::HtmlImageElement> {
     IMAGES.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(image) = cache.get(data_url) {
-            return image.complete().then(|| image.clone());
+        let cached = cache.get(&element.id);
+        let Some(data_url) = element.data_url.as_deref() else {
+            // A peer's gesture, sent without the picture it cannot change: the one
+            // already decoded for this element.
+            return cached.and_then(|(_, image)| image.complete().then(|| image.clone()));
+        };
+        if let Some((len, image)) = cached {
+            if *len == data_url.len() {
+                return image.complete().then(|| image.clone());
+            }
         }
         let Ok(image) = web_sys::HtmlImageElement::new() else {
             return None;
@@ -65,7 +79,7 @@ fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
         image.set_onload(Some(on_load.unchecked_ref()));
         image.set_src(data_url);
         let ready = image.complete();
-        cache.insert(data_url.to_string(), image.clone());
+        cache.insert(element.id.clone(), (data_url.len(), image.clone()));
         ready.then_some(image)
     })
 }
@@ -86,11 +100,9 @@ fn evict_images(live: &[&DrawElement]) {
         if cache.len() <= MAX_CACHED_IMAGES {
             return;
         }
-        let visible: std::collections::HashSet<&str> = live
-            .iter()
-            .filter_map(|element| element.data_url.as_deref())
-            .collect();
-        cache.retain(|url, _| visible.contains(url.as_str()));
+        let visible: std::collections::HashSet<&str> =
+            live.iter().map(|element| element.id.as_str()).collect();
+        cache.retain(|id, _| visible.contains(id.as_str()));
     });
 }
 
@@ -109,7 +121,7 @@ fn evict_images(live: &[&DrawElement]) {
 /// (`renderElement.ts:606-616`).
 fn paint_image(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     let (w, h) = (element.width.abs(), element.height.abs());
-    let decoded = element.data_url.as_deref().and_then(decoded_image);
+    let decoded = decoded_image(element);
 
     with_element_transform(ctx, view, element, || match decoded {
         Some(image) => {

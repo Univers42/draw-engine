@@ -570,6 +570,20 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// The text element `id` as it would be with `text` in it, uncommitted, as JSON —
+    /// empty when `id` is not a text. What the host streams to peers while typing.
+    #[wasm_bindgen(js_name = textPreviewJson)]
+    pub fn text_preview_json(&self, id: &str, text: &str) -> String {
+        let Ok(state) = self.cell.try_borrow() else {
+            return String::new();
+        };
+        state
+            .engine
+            .text_preview(id, text)
+            .and_then(|element| serde_json::to_string(&element).ok())
+            .unwrap_or_default()
+    }
+
     /// Re-widths a dragged-out text column and re-wraps it. Ignored for auto-sizing
     /// text, which has no width of its own to impose.
     #[wasm_bindgen(js_name = setTextBoxWidth)]

@@ -122,7 +122,9 @@ impl DrawEngine {
                 // newest thing anyone has, and taking it now is the only way to have it.
                 if let (Some(peer), Some(now)) = (peer, &now) {
                     if super::clipboard::remote_wins(peer, now) {
-                        self.scene.put(peer.clone());
+                        let mut taken = peer.clone();
+                        super::clipboard::inherit_picture(&mut taken, now);
+                        self.scene.put(taken);
                     }
                 }
                 continue;

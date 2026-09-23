@@ -3,7 +3,7 @@ use crate::engine::DrawEngine;
 use crate::export::scene_to_json;
 use crate::interaction::DrawTool;
 use crate::scene::geometry::scene_bounds;
-use crate::scene::DrawElement;
+use crate::scene::{DrawElement, DrawElementType};
 
 /// Last-writer-wins between two versions of the same element.
 ///
@@ -19,6 +19,47 @@ pub(super) fn remote_wins(incoming: &DrawElement, existing: &DrawElement) -> boo
         return incoming.version_nonce > existing.version_nonce;
     }
     incoming.updated > existing.updated
+}
+
+/// A peer's patch as it arrives: its elements and order are read one at a time, so what
+/// cannot be read costs only itself.
+#[derive(serde::Deserialize)]
+struct RemotePatch {
+    #[serde(rename = "type", default)]
+    kind: String,
+    #[serde(default)]
+    elements: Vec<serde_json::Value>,
+    #[serde(default)]
+    order: Option<Vec<serde_json::Value>>,
+}
+
+/// Whether `copy` is a live image the scene's `existing` shows, missing only a picture.
+fn lacks_picture(copy: &DrawElement, existing: &DrawElement) -> bool {
+    copy.kind == DrawElementType::Image
+        && !copy.is_deleted
+        && !existing.is_deleted
+        && copy.data_url.is_none()
+        && existing.data_url.is_some()
+}
+
+/// Gives `copy` the picture this scene already has for it.
+///
+/// An image's picture never changes once it has one, so peers send it once and leave it
+/// off every later edit of the same image: moving a photo is then a few hundred bytes
+/// rather than megabytes, every time. The copy without it keeps the one here.
+pub(super) fn inherit_picture(copy: &mut DrawElement, existing: &DrawElement) {
+    if lacks_picture(copy, existing) {
+        copy.data_url = existing.data_url.clone();
+    }
+}
+
+/// Whether the only thing to take from `incoming` is its picture: the same edit as the
+/// scene's, which arrived without one — an edit that overtook the picture's first
+/// arrival. The stamps tie, so the merge alone would never take it.
+fn brings_picture(incoming: &DrawElement, existing: &DrawElement) -> bool {
+    lacks_picture(existing, incoming)
+        && incoming.version == existing.version
+        && incoming.version_nonce == existing.version_nonce
 }
 
 impl DrawEngine {
@@ -131,18 +172,20 @@ impl DrawEngine {
     }
 
     fn apply_remote_patch_step(&mut self, json: &str) -> bool {
-        let Ok(data) = serde_json::from_str::<serde_json::Value>(json) else {
+        let Ok(patch) = serde_json::from_str::<RemotePatch>(json) else {
             return false;
         };
-        if data.get("type").and_then(|value| value.as_str()) != Some("osidraw") {
+        if patch.kind != "osidraw" {
             return false;
         }
-        let Some(incoming) = data
-            .get("elements")
-            .and_then(|value| serde_json::from_value::<Vec<DrawElement>>(value.clone()).ok())
-        else {
-            return false;
-        };
+        // One by one, so an element this engine cannot read costs only itself. Read as
+        // one array, a single element from a newer engine — a shape type, a field of the
+        // wrong kind — refused the whole patch, and every other edit in it was lost.
+        let incoming: Vec<DrawElement> = patch
+            .elements
+            .into_iter()
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect();
 
         // Elements this client has changed and not yet committed — a drag in progress,
         // a path being placed. A peer's copy of one is refused, as Excalidraw refuses
@@ -154,7 +197,18 @@ impl DrawEngine {
         let pending_order = self.scene.order_baseline();
 
         let mut changed = false;
-        for element in incoming {
+        for mut element in incoming {
+            if self
+                .scene
+                .get(&element.id)
+                .is_some_and(|existing| brings_picture(&element, existing))
+            {
+                let picture = element.data_url.take();
+                self.scene
+                    .update(&element.id, |ours| ours.data_url = picture);
+                changed = true;
+                continue;
+            }
             if pending.contains(&element.id) {
                 // Kept, not dropped: see `stamp.rs` for what the commit does with it.
                 match self.remote_refused.get(&element.id) {
@@ -167,7 +221,13 @@ impl DrawEngine {
             }
             let accept = match self.scene.get(&element.id) {
                 None => true,
-                Some(existing) => remote_wins(&element, existing),
+                Some(existing) => {
+                    let wins = remote_wins(&element, existing);
+                    if wins {
+                        inherit_picture(&mut element, existing);
+                    }
+                    wins
+                }
             };
             if accept {
                 self.scene.put(element);
@@ -175,10 +235,10 @@ impl DrawEngine {
             }
         }
 
-        if let Some(order_ids) = data.get("order").and_then(|value| value.as_array()) {
+        if let Some(order_ids) = &patch.order {
             let ids: Vec<&str> = order_ids
                 .iter()
-                .filter_map(|value| value.as_str())
+                .filter_map(serde_json::Value::as_str)
                 .collect();
             if !ids.is_empty() {
                 let mut live: Vec<DrawElement> = Vec::with_capacity(ids.len());
