@@ -129,6 +129,24 @@ pub fn to_local(element: &DrawElement, world: Point) -> [f64; 2] {
 ///
 /// Midpoints are omitted when the segment is too short to be worth a separate target —
 /// two handles a few pixels apart are impossible to hit deliberately.
+///
+/// # Why the midpoints are not simply `(a + b) / 2`
+///
+/// Because the path is usually not drawn straight. `roundness` defaults to `Some(8.0)`
+/// on every element, and a rounded linear element goes through `generator::curve` — a
+/// Catmull-Rom spline through the points. The chord centre of a curved segment is not on
+/// the curve, so every midpoint handle floated beside the line it belonged to, and since
+/// the hit test reads these same positions, the place you had to click was not the place
+/// you could see.
+///
+/// Excalidraw forks on exactly this, `LinearElementEditor.getSegmentMidPoint`
+/// (`element/linearElementEditor.ts:971-1012`): the chord centre for a path built of
+/// straight segments, `curvePointAtLength(segment, 0.5)` for one built of curves.
+///
+/// The curve is rebuilt from the **world** points rather than the local ones, which is
+/// safe and saves a round trip: a Catmull-Rom control point is a weighted sum of the
+/// points it spans, so rotating the points and then building the curve gives the same
+/// answer as building it and then rotating.
 pub fn handle_points(element: &DrawElement, min_segment: f64) -> Vec<LinearHandlePoint> {
     let points = world_points(element);
     let mut out = Vec::with_capacity(points.len() * 2);
@@ -141,16 +159,32 @@ pub fn handle_points(element: &DrawElement, min_segment: f64) -> Vec<LinearHandl
         });
     }
 
+    // Only for a rounded path; `None` means sharp corners, and a sharp path really is
+    // its chords.
+    let curves = element.roundness.map(|_| {
+        let flat: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
+        crate::math::catmull_rom_cubics(&flat, crate::math::CURVE_TIGHTNESS)
+    });
+
     for i in 0..points.len().saturating_sub(1) {
         let a = points[i];
         let b = points[i + 1];
         if (b.x - a.x).hypot(b.y - a.y) < min_segment {
             continue;
         }
+        // Half way *along* the segment, not half way through its parameter: a cubic
+        // covers more ground in one half of `t` than the other wherever it bends, so
+        // `t = 0.5` would stay on the line but sit away from the middle you can see.
+        let centre = curves
+            .as_ref()
+            .and_then(|curves| curves.get(i))
+            .map(|curve| crate::math::bezier_point_at_fraction(curve, 0.5))
+            .unwrap_or([(a.x + b.x) / 2.0, (a.y + b.y) / 2.0]);
+
         out.push(LinearHandlePoint {
             handle: LinearHandle::Midpoint(i),
-            x: (a.x + b.x) / 2.0,
-            y: (a.y + b.y) / 2.0,
+            x: centre[0],
+            y: centre[1],
         });
     }
 

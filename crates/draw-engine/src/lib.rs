@@ -41,7 +41,10 @@ pub use interaction::{
     DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH,
     LASER_SIZE, LASER_STREAMLINE,
 };
-pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
+pub use math::{
+    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp, round_px,
+    smoothstep, Cubic, CURVE_TIGHTNESS,
+};
 pub use render::{
     canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, label_offset_y,
     light_theme, text_anchor_x, DrawTheme, GridSettings, DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP,
