@@ -237,8 +237,20 @@ impl DrawEngine {
                     self.scene.put(container);
                 }
             }
-            self.scene.discard(id);
+            if self.scene.created_since_commit(id) {
+                self.scene.discard(id);
+            } else {
+                // A committed text emptied is a deletion, and a deletion is a tombstone:
+                // the server and the peers have to be told, and undo has to be able to
+                // stamp the text back above it.
+                self.scene.remove(id, self.now_ms);
+            }
             self.clear_selection();
+            // Settled here, although it usually changes nothing: a label abandoned before
+            // anything was typed leaves its container exactly as committed, and without
+            // a commit the container stayed pending — refusing every peer's edit of it.
+            // Removing a committed text records its deletion.
+            self.push_history();
             self.request_draw();
             return;
         }

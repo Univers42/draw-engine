@@ -85,17 +85,19 @@ impl DrawEngine {
                 let expanded = expand_within(self.scene.iter_ordered(), ids, editing.as_deref());
                 self.set_selection(expanded);
             }
-            _ => {
-                // Membership follows position, so it is settled once the gesture is:
-                // re-deriving it per pointer move would make an element flicker between
-                // frames as it crossed a border mid-drag, and would put a history-worthy
-                // change behind every sample.
-                self.refresh_frame_membership();
-                self.apply_bindings();
-                self.push_history();
-                self.request_draw();
-            }
+            _ => self.settle_gesture(),
         }
+    }
+
+    /// Commits what a move, resize, rotation or point drag did to the scene.
+    fn settle_gesture(&mut self) {
+        // Membership follows position, so it is settled once the gesture is: re-deriving
+        // it per pointer move would make an element flicker between frames as it crossed
+        // a border mid-drag, and would put a history-worthy change behind every sample.
+        self.refresh_frame_membership();
+        self.apply_bindings();
+        self.push_history();
+        self.request_draw();
     }
 
     /// Re-derive which frame owns what, across the whole scene.
@@ -293,14 +295,29 @@ impl DrawEngine {
         }
         let it = self.interaction.take();
         self.snap_guides.clear();
-        if let Some(
-            Interaction::Draft { id, .. }
-            | Interaction::Freedraw { id, .. }
-            | Interaction::Linear { id, .. },
-        ) = it
-        {
-            self.scene.discard(&id);
-            self.set_tool(DrawTool::Select);
+        match it {
+            Some(
+                Interaction::Draft { id, .. }
+                | Interaction::Freedraw { id, .. }
+                | Interaction::Linear { id, .. },
+            ) => {
+                self.scene.discard(&id);
+                self.set_tool(DrawTool::Select);
+            }
+            // A gesture that already changed elements is committed, not abandoned: the
+            // elements stay where the drag left them either way, and leaving that
+            // uncommitted meant it was never saved — and, pending, it kept refusing
+            // every peer's edit of those elements until some unrelated commit came.
+            Some(Interaction::CornerRadius { id, .. }) => self.end_corner_radius(&id),
+            Some(
+                Interaction::Move { .. }
+                | Interaction::Resize { .. }
+                | Interaction::Rotate { .. }
+                | Interaction::ResizeGroup { .. }
+                | Interaction::RotateGroup { .. }
+                | Interaction::LinearPoint { .. },
+            ) => self.settle_gesture(),
+            _ => {}
         }
         self.clear_selection();
         self.request_draw();

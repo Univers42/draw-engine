@@ -12,6 +12,29 @@ fn dash(style: StrokeStyle) -> &'static str {
     }
 }
 
+/// A flipped image's transform: the mirror the canvas applies, about the same centre.
+///
+/// A flip is stored as a negative width or height and the canvas draws it through a
+/// scale of -1 (`with_element_transform`); an `<image>` with the normalized box and only
+/// the rotation came out unflipped — and, rotated as well, turned the wrong way.
+fn image_transform(
+    element: &DrawElement,
+    rect: &crate::scene::geometry::Rect,
+    rotation_only: &str,
+) -> String {
+    let (sx, sy) = crate::scene::geometry::mirror_signs(element);
+    if sx > 0.0 && sy > 0.0 {
+        return rotation_only.to_string();
+    }
+    let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+    format!(
+        " transform=\"translate({cx} {cy}) rotate({}) scale({sx} {sy}) translate({} {})\"",
+        (element.angle * 180.0) / std::f64::consts::PI,
+        -cx,
+        -cy
+    )
+}
+
 fn escape_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -187,13 +210,14 @@ fn element_svg(element: &DrawElement) -> String {
         // rather than as a reference to nowhere.
         DrawElementType::Image => match element.data_url.as_deref() {
             Some(url) => format!(
-                "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"{}\" preserveAspectRatio=\"none\" opacity=\"{}\"{transform}/>",
+                "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"{}\" preserveAspectRatio=\"none\" opacity=\"{}\"{}/>",
                 rect.x,
                 rect.y,
                 rect.width,
                 rect.height,
                 escape_xml(url),
-                element.opacity / 100.0
+                element.opacity / 100.0,
+                image_transform(element, &rect, &transform)
             ),
             None => String::new(),
         },

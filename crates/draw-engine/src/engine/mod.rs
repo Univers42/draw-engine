@@ -23,6 +23,7 @@ mod pointer;
 mod pointer_end;
 mod pointer_move;
 mod radius;
+mod stamp;
 mod style;
 mod text;
 mod types;
@@ -30,7 +31,7 @@ mod types;
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
-pub(crate) use types::{default_measure, history_signature, Interaction};
+pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
@@ -139,7 +140,12 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
-    history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
+    history: SnapshotHistory<stamp::HistoryEntry>,
+    history_seq: u64,
+    /// A peer's copy of an element with an uncommitted local change, refused because a
+    /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
+    /// it if the gesture came to nothing. See `stamp.rs`.
+    remote_refused: std::collections::HashMap<String, DrawElement>,
     events: EngineEvents,
 }
 
@@ -181,7 +187,9 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
-            history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
+            history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
+            history_seq: 0,
+            remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
         }
     }

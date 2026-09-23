@@ -359,10 +359,36 @@ fn an_svg_export_carries_the_picture() {
     let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
     assert!(svg.contains("<image"), "no <image> element in {svg}");
     assert!(svg.contains(url), "the data URL is not in the export");
-    assert!(
-        !svg.contains("<rect x=\"0\""),
-        "and no empty box standing in for it"
+    assert_eq!(
+        svg.matches("<rect").count(),
+        1,
+        "the background only — no empty box standing in for the picture: {svg}"
     );
+}
+
+/// Flipped, it exports flipped: a flip is a negative width, which the canvas draws
+/// through a scale of -1 and a bare `<image>` with the normalized box does not.
+#[test]
+fn a_flipped_image_exports_flipped() {
+    let mut engine = engine_with_scene(vec![]);
+    let id = engine
+        .insert_image(
+            "data:image/png;base64,iVBORw0KGgo=",
+            400.0,
+            200.0,
+            400.0,
+            300.0,
+        )
+        .expect("inserted");
+    engine.select(vec![id]);
+    engine.flip_selection(FlipAxis::Horizontal);
+    let scene = engine.get_scene();
+    assert!(scene[0].width < 0.0, "setup: a flip is a negative width");
+
+    let bounds = scene_bounds(&scene).unwrap();
+    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+
+    assert!(svg.contains("scale(-1 1)"), "{svg}");
 }
 
 /// An image with no picture yet — a board loaded without its file — exports as nothing
@@ -382,4 +408,10 @@ fn an_image_without_a_picture_exports_no_broken_reference() {
     let bounds = element_bounds(&element);
     let svg = scene_to_svg(&[element], bounds, 10.0, "#ffffff");
     assert!(!svg.contains("<image"), "{svg}");
+    // Nothing at all: not an `<image>`, and not the stroked box it used to fall through to.
+    assert_eq!(
+        svg.matches("<rect").count(),
+        1,
+        "the background only: {svg}"
+    );
 }
