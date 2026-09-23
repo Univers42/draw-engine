@@ -136,6 +136,10 @@ impl DrawEngine {
 
     /// The elements this engine's gesture in progress is changing, as they are right now
     /// — what the host sends peers while the gesture runs. Empty between gestures.
+    ///
+    /// Without their pictures: a photo being dragged went out whole twenty times a
+    /// second, megabytes a frame, and a gesture never changes a picture. Peers paint the
+    /// one they already decoded for the element (`wasm/paint.rs`).
     pub fn gesture_elements(&self) -> Vec<DrawElement> {
         let live = self.local_live_ids();
         if live.is_empty() {
@@ -144,7 +148,11 @@ impl DrawEngine {
         self.scene
             .iter_ordered()
             .filter(|element| live.contains(&element.id))
-            .cloned()
+            .map(|element| {
+                let mut sent = element.clone();
+                sent.data_url = None;
+                sent
+            })
             .collect()
     }
 
