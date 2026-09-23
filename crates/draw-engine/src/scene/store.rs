@@ -229,6 +229,15 @@ impl Scene {
     ///
     /// Deliberately not a hash of the contents: this is asked once per frame and has to
     /// cost nothing, and a counter cannot miss a field the way a hash can.
+    /// Every element the store holds, tombstones included.
+    ///
+    /// Tombstones stay in the scene because a deletion has to be *sent* to the other
+    /// editors — it is a live element with `is_deleted`, not an absence. So this is the
+    /// memory cost, while `iter_ordered().count()` is the drawing.
+    pub fn total_len(&self) -> usize {
+        self.elements.len()
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }

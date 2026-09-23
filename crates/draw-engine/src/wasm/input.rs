@@ -1,8 +1,54 @@
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use super::WasmEngine;
-use crate::engine::DrawEngine;
+use crate::engine::{DebugState, DrawEngine};
 use crate::scene::Scene;
+
+/// The engine's own state, plus the render timings only the frame loop can see.
+///
+/// Flattened rather than nested so the JSON reads as one object with four sections —
+/// `scene`, `viewport`, `interaction`, `rendering` — which is the shape an inspector
+/// wants, rather than `state.scene` alongside `rendering`.
+#[derive(Serialize)]
+struct DebugSnapshot {
+    #[serde(flatten)]
+    state: DebugState,
+    rendering: DebugRendering,
+}
+
+/// What a frame costs, and what it cost over the last two seconds.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugRendering {
+    /// Every frame since the engine started.
+    frames: u64,
+    /// Wall time between frames — display cadence plus everything else on the page.
+    median_frame_ms: f64,
+    p95_frame_ms: f64,
+    /// Our own CPU, split into assembling the display list and issuing the drawing.
+    /// Kept apart from the interval: a slow interval with a fast paint means the time is
+    /// going somewhere that is not us.
+    median_build_ms: f64,
+    median_paint_ms: f64,
+    p95_paint_ms: f64,
+    last_build_ms: f64,
+    last_paint_ms: f64,
+    /// After viewport culling. Compare against `scene.elementCount` to see whether
+    /// culling is doing anything.
+    elements_rendered: usize,
+    /// Rough geometry reused vs regenerated. A miss count climbing during a pan or a
+    /// drag means the cache fingerprint covers something it should not.
+    shape_cache_hits: u64,
+    shape_cache_misses: u64,
+    shape_cache_len: usize,
+    /// Device pixels, not CSS pixels. This over the viewport size is the dpr in force.
+    canvas_width: u32,
+    canvas_height: u32,
+    /// Whether another frame is already owed. There are no dirty *regions* here — the
+    /// whole canvas repaints — so this is a boolean and that is the whole truth.
+    dirty: bool,
+}
 
 /// The name a small enum travels under, which is the one serde writes into a scene.
 ///
@@ -311,6 +357,50 @@ impl WasmEngine {
     pub fn wheel_zoom(&self, sx: f64, sy: f64, delta_y: f64) {
         self.cell.borrow_mut().engine.wheel_zoom(sx, sy, delta_y);
         self.flush();
+    }
+
+    /// Everything the engine knows about itself, in one call.
+    ///
+    /// The scene, geometry, hit testing and selection all live in WASM and none of it is
+    /// reachable from the DOM, so without this anyone debugging from outside is reduced
+    /// to inferring state from pixels. This is what `tools/editor-inspector` reads.
+    ///
+    /// Merges two sources that cannot be merged anywhere else: the engine's own state,
+    /// which is runtime-agnostic and knows nothing about clocks, and the render timings,
+    /// which only exist here because a frame is only visible from the frame loop.
+    ///
+    /// `try_borrow` like the rest of the re-entrant surface — a snapshot taken while a
+    /// frame is in flight returns nothing rather than panicking, and a panic in WASM
+    /// aborts the instance for the rest of the session.
+    #[wasm_bindgen(js_name = debugSnapshotJson)]
+    pub fn debug_snapshot_json(&self) -> String {
+        let Ok(cell) = self.cell.try_borrow() else {
+            return "{}".into();
+        };
+        let (hits, misses) = crate::wasm::paint::shape_cache_stats();
+        let snapshot = DebugSnapshot {
+            state: cell.engine.debug_state(),
+            rendering: DebugRendering {
+                frames: cell.frames.total,
+                // A distribution, not a number: frame costs are a floor with spikes, and
+                // one sample cannot tell a slow frame from a slow session.
+                median_frame_ms: cell.frames.quantile(|f| f.interval_ms, 0.5),
+                p95_frame_ms: cell.frames.quantile(|f| f.interval_ms, 0.95),
+                median_build_ms: cell.frames.quantile(|f| f.build_ms, 0.5),
+                median_paint_ms: cell.frames.quantile(|f| f.paint_ms, 0.5),
+                p95_paint_ms: cell.frames.quantile(|f| f.paint_ms, 0.95),
+                last_build_ms: cell.stats.build_ms,
+                last_paint_ms: cell.stats.paint_ms,
+                elements_rendered: cell.stats.visible,
+                shape_cache_hits: hits,
+                shape_cache_misses: misses,
+                shape_cache_len: crate::wasm::paint::shape_cache_len(),
+                canvas_width: cell.canvas.width(),
+                canvas_height: cell.canvas.height(),
+                dirty: cell.engine.needs_frame(),
+            },
+        };
+        serde_json::to_string(&snapshot).unwrap_or_else(|_| "{}".into())
     }
 
     /// How the last frames were served: `{redraws, scrolls, reuses}`, then reset.

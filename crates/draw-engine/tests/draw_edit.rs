@@ -101,13 +101,20 @@ fn clipboard_remaps_group_ids() {
     let g = "group-1";
     let mut a = box_at(0.0, 0.0, 100.0, 60.0);
     let mut b = box_at(200.0, 0.0, 100.0, 60.0);
-    a.group_id = Some(g.into());
-    b.group_id = Some(g.into());
+    a.group_ids = vec![g.into()];
+    b.group_ids = vec![g.into()];
     let json = serialize_selection(&[a.clone(), b.clone()], &ids(&[a, b])).unwrap();
     let copies = materialize_elements(&json, 0.0, 0.0, 0.0).unwrap();
-    assert!(copies[0].group_id.is_some());
-    assert_eq!(copies[0].group_id, copies[1].group_id);
-    assert_ne!(copies[0].group_id.as_deref(), Some(g));
+    assert_eq!(copies[0].group_ids.len(), 1);
+    assert_eq!(
+        copies[0].group_ids, copies[1].group_ids,
+        "the copies still share a group"
+    );
+    assert_ne!(
+        copies[0].group_ids,
+        vec![g.to_string()],
+        "but a fresh one, or the copy would be joined to the original"
+    );
 }
 
 #[test]
@@ -286,13 +293,20 @@ fn group_expand_and_detect() {
     let a = box_at(0.0, 0.0, 100.0, 60.0);
     let b = box_at(200.0, 0.0, 100.0, 60.0);
     let c = box_at(400.0, 0.0, 100.0, 60.0);
-    let grouped = group_patches(&[a.clone(), b.clone()], &ids(&[a.clone(), b.clone()]), "g1");
+    // `None` for the editing group throughout: this is the top-level case. Nesting has
+    // its own file, `ci_groups_nested.rs`.
+    let grouped = group_patches(
+        &[a.clone(), b.clone()],
+        &ids(&[a.clone(), b.clone()]),
+        "g1",
+        None,
+    );
     assert_eq!(
         grouped
             .iter()
-            .map(|e| e.group_id.clone())
+            .map(|e| e.group_ids.clone())
             .collect::<Vec<_>>(),
-        vec![Some("g1".into()), Some("g1".into())]
+        vec![vec!["g1".to_string()], vec!["g1".to_string()]]
     );
     let mut scene = grouped.clone();
     scene.push(c.clone());
@@ -309,17 +323,20 @@ fn group_expand_and_detect() {
     );
     assert!(is_single_group(
         &scene,
-        &ids(&[grouped[0].clone(), grouped[1].clone()])
+        &ids(&[grouped[0].clone(), grouped[1].clone()]),
+        None,
     ));
-    assert!(!is_single_group(&scene, &ids(&[grouped[0].clone(), c])));
-    let ungrouped = ungroup_patches(&scene, &ids(&[grouped[0].clone(), grouped[1].clone()]));
-    assert_eq!(
-        ungrouped
-            .iter()
-            .map(|e| e.group_id.clone())
-            .collect::<Vec<_>>(),
-        vec![None, None]
+    assert!(!is_single_group(
+        &scene,
+        &ids(&[grouped[0].clone(), c]),
+        None
+    ));
+    let ungrouped = ungroup_patches(
+        &scene,
+        &ids(&[grouped[0].clone(), grouped[1].clone()]),
+        None,
     );
+    assert!(ungrouped.iter().all(|e| e.group_ids.is_empty()));
 }
 
 #[test]

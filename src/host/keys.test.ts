@@ -41,6 +41,7 @@ function recording(
     duplicateSelection: () => calls.push("duplicateSelection"),
     ungroupSelection: () => calls.push("ungroupSelection"),
     groupSelection: () => calls.push("groupSelection"),
+    toggleGroupSelection: () => calls.push("toggleGroupSelection"),
     reorderSelection: (mode: string) => calls.push(`reorder:${mode}`),
     zoomIn: () => calls.push("zoomIn"),
     zoomOut: () => calls.push("zoomOut"),
@@ -105,6 +106,23 @@ describe("dispatchKeyDown", () => {
     const result = dispatchKeyDown(session(engine), event({ key: "Enter" }));
     assert.equal(result, "pass");
     assert.deepEqual(calls, ["editSelectedText"]);
+  });
+
+  /**
+   * Ctrl+G toggles; Ctrl+Shift+G is still the explicit ungroup. The oracle's Ctrl+G is a
+   * no-op once a selection is grouped, which leaves the key with no inverse.
+   */
+  it("toggles grouping on Ctrl+G and ungroups on Ctrl+Shift+G", () => {
+    const toggled = recording(["a", "b"]);
+    dispatchKeyDown(session(toggled.engine), event({ key: "g", ctrlKey: true }));
+    assert.deepEqual(toggled.calls, ["toggleGroupSelection"]);
+
+    const ungrouped = recording(["a", "b"]);
+    dispatchKeyDown(
+      session(ungrouped.engine),
+      event({ key: "g", ctrlKey: true, shiftKey: true }),
+    );
+    assert.deepEqual(ungrouped.calls, ["ungroupSelection"]);
   });
 
   it("deletes the selection on Delete and prevents default", () => {

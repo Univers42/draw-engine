@@ -29,6 +29,14 @@ pub fn elements_from_json(json: &str) -> Option<Vec<DrawElement>> {
     if data.get("type")?.as_str()? != "osidraw" {
         return None;
     }
-    data.get("elements")
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
+    let mut elements: Vec<DrawElement> = data
+        .get("elements")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())?;
+    // Boards saved before groups could nest carry a single `groupId`. Folded here, at
+    // the one door scenes come in through, so nothing downstream has to know the old
+    // spelling ever existed.
+    for element in &mut elements {
+        crate::scene::element::normalize_group_ids(element);
+    }
+    Some(elements)
 }
