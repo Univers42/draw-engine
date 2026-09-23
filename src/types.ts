@@ -126,7 +126,14 @@ export interface DrawElement extends DrawElementStyle {
   autoResize?: boolean;
   containerId?: string | null;
   boundTextId?: string | null;
-  groupId?: string | null;
+  /**
+   * The groups this element is in, **innermost first**.
+   *
+   * The array *is* the nesting — there is no group entity and no parent pointer, just
+   * ids that several elements share, so an element two levels down carries both. See
+   * `docs/reference/groups.md`.
+   */
+  groupIds?: string[];
   locked?: boolean;
   version: number;
   versionNonce: number;
