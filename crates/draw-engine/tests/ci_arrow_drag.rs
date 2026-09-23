@@ -54,12 +54,12 @@ fn get(engine: &DrawEngine, id: &str) -> DrawElement {
         .expect("element is gone")
 }
 
-/// Drags from `from` by `(dx, dy)` in several steps, snapping off.
+/// Drags from `from` by `(dx, dy)` in several steps, with object snapping at its default: off.
 fn drag(engine: &mut DrawEngine, from: (f64, f64), dx: f64, dy: f64) {
     engine.begin_pointer(from.0, from.1, false, false);
     for step in 1..=5 {
         let t = step as f64 / 5.0;
-        engine.move_pointer(from.0 + dx * t, from.1 + dy * t, false, true);
+        engine.move_pointer(from.0 + dx * t, from.1 + dy * t, false, false);
     }
     engine.end_pointer();
 }
@@ -77,7 +77,7 @@ const SHAFT: (f64, f64) = (160.0, 40.0);
 fn grabbing_the_shaft_starts_a_move() {
     let (mut engine, _arrow, _l, _r) = bound_arrow();
     engine.begin_pointer(SHAFT.0, SHAFT.1, false, false);
-    engine.move_pointer(SHAFT.0, SHAFT.1 + 30.0, false, true);
+    engine.move_pointer(SHAFT.0, SHAFT.1 + 30.0, false, false);
     assert_eq!(engine.debug_state().interaction.kind, Some("move"));
     engine.end_pointer();
 }

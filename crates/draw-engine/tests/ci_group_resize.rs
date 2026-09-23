@@ -98,9 +98,9 @@ fn drag_se_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), ste
             from.0 + (to.0 - from.0) * t,
             from.1 + (to.1 - from.1) * t,
             false,
-            // Snapping off: alignment guides pull toward other elements and would make
-            // this a test of the guides rather than of the scale.
-            true,
+            // Snapping to objects stays off (the default): alignment guides pull toward
+            // other elements and would make this a test of the guides, not of the scale.
+            false,
         );
     }
     engine.end_pointer();

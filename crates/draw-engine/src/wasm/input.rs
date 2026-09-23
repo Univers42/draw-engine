@@ -234,8 +234,8 @@ impl WasmEngine {
     }
 
     #[wasm_bindgen(js_name = movePointer)]
-    pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, bypass_snap: bool) {
-        self.with_now(|eng| eng.move_pointer(sx, sy, square, bypass_snap));
+    pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
+        self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));
     }
 
     #[wasm_bindgen(js_name = endPointer)]
@@ -359,6 +359,19 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = getGridJson)]
     pub fn get_grid_json(&self) -> String {
         serde_json::to_string(&self.cell.borrow().engine.grid()).unwrap_or_default()
+    }
+
+    /// Snapping to other elements while moving. Off by default; see
+    /// `DrawEngine::set_objects_snap`.
+    #[wasm_bindgen(js_name = setObjectsSnap)]
+    pub fn set_objects_snap(&self, on: bool) {
+        self.cell.borrow_mut().engine.set_objects_snap(on);
+        self.flush();
+    }
+
+    #[wasm_bindgen(js_name = getObjectsSnap)]
+    pub fn get_objects_snap(&self) -> bool {
+        self.cell.borrow().engine.objects_snap()
     }
 
     #[wasm_bindgen(js_name = zoomAt)]
