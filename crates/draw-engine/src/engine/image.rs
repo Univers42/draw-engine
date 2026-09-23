@@ -130,6 +130,12 @@ impl DrawEngine {
 pub struct EmbedFrame {
     pub id: String,
     pub url: String,
+    /// The document to frame instead of `url`, for a provider with no address that can
+    /// be framed — see [`crate::scene::EmbedLink::document`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub srcdoc: Option<String>,
+    /// `"video"` or `"generic"`: a player's viewport is kept legible when zoomed out.
+    pub kind: &'static str,
     /// Whether the frame may keep its origin. Decided by the engine, per provider, so a
     /// host cannot quietly grant it to everything.
     pub allow_same_origin: bool,
@@ -139,6 +145,10 @@ pub struct EmbedFrame {
     pub height: f64,
     /// Radians. A turned embed needs a CSS rotation about its own centre.
     pub angle: f64,
+    /// The camera's zoom. The host lays the page out at the embed's size on the board
+    /// and scales it by this, so the page zooms with the board instead of reflowing into
+    /// a box that grows and shrinks around it.
+    pub scale: f64,
 }
 
 impl DrawEngine {
@@ -153,10 +163,13 @@ impl DrawEngine {
             .filter(|element| {
                 element.kind == DrawElementType::Embed
                     && !element.is_deleted
-                    && element.embed_url.is_some()
                     && crate::render::bounds::intersects_viewport(element, &visible)
             })
-            .map(|element| {
+            .filter_map(|element| {
+                // Resolved again, not read back as stored: a board saved under older
+                // rules — a tweet framed at its own page, which refuses — gets the rules
+                // as they are now. A link the rules no longer accept gets no frame.
+                let resolved = crate::scene::embed_link(element.embed_url.as_deref()?)?;
                 let rect = crate::scene::normalize_rect(
                     element.x,
                     element.y,
@@ -164,21 +177,22 @@ impl DrawEngine {
                     element.height,
                 );
                 let top_left = crate::world_to_screen(self.camera, rect.x, rect.y);
-                EmbedFrame {
+                Some(EmbedFrame {
                     id: element.id.clone(),
-                    url: element.embed_url.clone().unwrap_or_default(),
-                    allow_same_origin: element
-                        .embed_url
-                        .as_deref()
-                        .and_then(crate::scene::embed_link)
-                        .map(|resolved| resolved.allow_same_origin)
-                        .unwrap_or(false),
+                    url: resolved.url,
+                    srcdoc: resolved.document,
+                    kind: match resolved.kind {
+                        crate::scene::EmbedKind::Video => "video",
+                        crate::scene::EmbedKind::Generic => "generic",
+                    },
+                    allow_same_origin: resolved.allow_same_origin,
                     x: top_left.x,
                     y: top_left.y,
                     width: rect.width * self.camera.scale,
                     height: rect.height * self.camera.scale,
                     angle: element.angle,
-                }
+                    scale: self.camera.scale,
+                })
             })
             .collect()
     }

@@ -385,3 +385,193 @@ fn the_revision_does_not_depend_on_the_camera() {
     // not a property of the document.
     assert_eq!(scene.revision(), before);
 }
+
+// ---------------------------------------------------------------------------
+// Reusing a picture while the camera moves
+// ---------------------------------------------------------------------------
+
+use draw_engine::render::scroll::{plan_motion, MotionBlit};
+
+fn cam(x: f64, y: f64, scale: f64) -> Camera {
+    Camera { x, y, scale }
+}
+
+#[test]
+fn a_small_pan_reuses_the_picture_moved() {
+    let plan = plan_motion(
+        cam(0.0, 0.0, 0.15),
+        cam(-30.0, 0.0, 0.15),
+        1.0,
+        1280.0,
+        800.0,
+    );
+    assert_eq!(
+        plan,
+        Some(MotionBlit {
+            scale: 1.0,
+            dx: -30.0,
+            dy: 0.0
+        })
+    );
+}
+
+#[test]
+fn the_move_is_in_device_pixels() {
+    let plan = plan_motion(cam(0.0, 0.0, 1.0), cam(10.0, 5.0, 1.0), 2.0, 2560.0, 1600.0);
+    assert_eq!(
+        plan,
+        Some(MotionBlit {
+            scale: 1.0,
+            dx: 20.0,
+            dy: 10.0
+        })
+    );
+}
+
+#[test]
+fn a_pan_that_would_leave_too_much_blank_repaints() {
+    // A sixth of the width gone: more than the picture may leave uncovered.
+    assert_eq!(
+        plan_motion(
+            cam(0.0, 0.0, 1.0),
+            cam(-220.0, 0.0, 1.0),
+            1.0,
+            1280.0,
+            800.0
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_zoom_about_a_point_reuses_the_picture_scaled_about_it() {
+    // Zooming in 10% about the screen point (640, 400): that point stays put.
+    let before = cam(100.0, 50.0, 0.5);
+    let anchor = (640.0, 400.0);
+    let world = (
+        (anchor.0 - before.x) / before.scale,
+        (anchor.1 - before.y) / before.scale,
+    );
+    let scale = 0.55;
+    let after = cam(
+        anchor.0 - world.0 * scale,
+        anchor.1 - world.1 * scale,
+        scale,
+    );
+
+    let plan = plan_motion(before, after, 1.0, 1280.0, 800.0).expect("reused");
+
+    assert!((plan.scale - 1.1).abs() < 1e-9);
+    // The anchor maps to itself: anchor * scale + d = anchor.
+    assert!((anchor.0 * plan.scale + plan.dx - anchor.0).abs() < 1e-9);
+    assert!((anchor.1 * plan.scale + plan.dy - anchor.1).abs() < 1e-9);
+}
+
+#[test]
+fn a_zoom_that_drifts_too_far_repaints() {
+    assert_eq!(
+        plan_motion(cam(0.0, 0.0, 0.5), cam(0.0, 0.0, 0.7), 1.0, 1280.0, 800.0),
+        None
+    );
+    assert_eq!(
+        plan_motion(cam(0.0, 0.0, 0.5), cam(0.0, 0.0, 0.38), 1.0, 1280.0, 800.0),
+        None
+    );
+}
+
+#[test]
+fn zooming_out_leaves_a_border_and_repaints_once_it_is_too_wide() {
+    // Out by 5% about the centre: a 2.5% border all round, which is fine…
+    assert!(plan_motion(
+        cam(0.0, 0.0, 1.0),
+        cam(32.0, 20.0, 0.95),
+        1.0,
+        1280.0,
+        800.0
+    )
+    .is_some());
+    // …but out by 10% leaves a fifth of the screen blank, which is not.
+    assert!(plan_motion(cam(0.0, 0.0, 1.0), cam(64.0, 40.0, 0.9), 1.0, 1280.0, 800.0).is_none());
+}
+
+#[test]
+fn a_pan_paints_the_edge_it_uncovers() {
+    // Moved 30 pixels left: the right-hand 30 pixels are what the picture no longer
+    // reaches, and they are painted rather than left as bare paper.
+    let blit = MotionBlit {
+        scale: 1.0,
+        dx: -30.0,
+        dy: 0.0,
+    };
+    assert_eq!(
+        blit.exposed(1280.0, 800.0),
+        vec![Rect {
+            x: 1250.0,
+            y: 0.0,
+            width: 30.0,
+            height: 800.0
+        }]
+    );
+}
+
+#[test]
+fn a_diagonal_pan_paints_both_edges() {
+    let blit = MotionBlit {
+        scale: 1.0,
+        dx: 12.0,
+        dy: -8.0,
+    };
+    let exposed = blit.exposed(1280.0, 800.0);
+    assert_eq!(exposed.len(), 2);
+    assert!(exposed.contains(&Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 12.0,
+        height: 800.0
+    }));
+    assert!(exposed.contains(&Rect {
+        x: 0.0,
+        y: 792.0,
+        width: 1280.0,
+        height: 8.0
+    }));
+}
+
+#[test]
+fn zooming_out_paints_the_border_all_round_in_whole_pixels() {
+    // Out by 5% about the centre: the picture shrinks to a 1216 x 760 box starting at
+    // (32, 20), and the border is rounded outward so it overlaps the picture's soft edge.
+    let blit = plan_motion(
+        cam(0.0, 0.0, 1.0),
+        cam(32.0, 20.0, 0.95),
+        1.0,
+        1280.0,
+        800.0,
+    )
+    .expect("reused");
+    let exposed = blit.exposed(1280.0, 800.0);
+    assert_eq!(exposed.len(), 4);
+    for rect in &exposed {
+        for v in [rect.x, rect.y, rect.width, rect.height] {
+            assert_eq!(v, v.round(), "{rect:?} is not in whole pixels");
+        }
+    }
+    let covers = |x: f64, y: f64| {
+        exposed
+            .iter()
+            .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+    };
+    assert!(covers(5.0, 400.0) && covers(1275.0, 400.0));
+    assert!(covers(640.0, 5.0) && covers(640.0, 795.0));
+    assert!(!covers(640.0, 400.0), "the middle is the moved picture");
+}
+
+#[test]
+fn zooming_in_uncovers_nothing() {
+    let blit = MotionBlit {
+        scale: 1.1,
+        dx: -64.0,
+        dy: -40.0,
+    };
+    assert!(blit.exposed(1280.0, 800.0).is_empty());
+}

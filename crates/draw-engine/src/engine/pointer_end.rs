@@ -17,6 +17,11 @@ const TEXT_BOX_MIN_DRAG: f64 = 12.0;
 
 impl DrawEngine {
     pub fn end_pointer(&mut self) {
+        self.end_pointer_step();
+        self.refresh_live();
+    }
+
+    fn end_pointer_step(&mut self) {
         // The binding hint belongs to the drag, not to the document.
         self.binding_highlight = None;
         let Some(it) = self.interaction.take() else {
@@ -280,6 +285,11 @@ impl DrawEngine {
     }
 
     pub fn cancel_pointer(&mut self) {
+        self.cancel_pointer_step();
+        self.refresh_live();
+    }
+
+    fn cancel_pointer_step(&mut self) {
         // Escape ends an open path rather than throwing it away, which is Excalidraw's
         // binding too: both Escape and Enter run `actionFinalize`. A path of six points
         // lost to a reflexive Escape is six points of work gone, and undo is the thing

@@ -410,3 +410,245 @@ fn a_deleted_embed_reports_no_frame() {
     engine.delete_selection();
     assert!(engine.embed_frames().is_empty());
 }
+
+// ------------------------------------------------------------- every provider
+
+/// Pasted link → the address that is framed. One row per way of writing a link that a
+/// share button or an address bar actually produces.
+const REWRITES: &[(&str, &str)] = &[
+    // YouTube, beyond the watch page.
+    ("https://m.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    ("https://music.youtube.com/watch?v=dQw4w9WgXcQ&feature=share", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    ("https://www.youtube.com/watch?feature=shared&v=dQw4w9WgXcQ", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    ("https://youtu.be/dQw4w9WgXcQ?si=abcDEF123", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    ("https://www.youtube.com/live/jfKfPfyJRdk?si=x", "https://www.youtube.com/embed/jfKfPfyJRdk?enablejsapi=1"),
+    ("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    ("https://www.youtube.com/v/dQw4w9WgXcQ", "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1"),
+    // Vimeo: channels, the player, and an unlisted video's hash.
+    ("https://vimeo.com/channels/staffpicks/76979871", "https://player.vimeo.com/video/76979871?api=1"),
+    ("https://vimeo.com/76979871/abc123def0", "https://player.vimeo.com/video/76979871?api=1&h=abc123def0"),
+    ("https://player.vimeo.com/video/76979871?h=abc123def0", "https://player.vimeo.com/video/76979871?api=1&h=abc123def0"),
+    // Google.
+    ("https://docs.google.com/document/d/1AbC_d-EF/edit?usp=sharing", "https://docs.google.com/document/d/1AbC_d-EF/preview"),
+    ("https://docs.google.com/presentation/d/1AbC/edit#slide=id.p", "https://docs.google.com/presentation/d/1AbC/embed"),
+    ("https://docs.google.com/spreadsheets/d/1AbC/edit#gid=0", "https://docs.google.com/spreadsheets/d/1AbC/preview"),
+    ("https://docs.google.com/forms/d/e/1FAIpQL/viewform?usp=sf_link", "https://docs.google.com/forms/d/e/1FAIpQL/viewform?embedded=true"),
+    ("https://docs.google.com/document/d/e/2PACX-1v/pub", "https://docs.google.com/document/d/e/2PACX-1v/pub?embedded=true"),
+    ("https://www.google.com/maps/embed?pb=!1m18!1m12", "https://www.google.com/maps/embed?pb=!1m18!1m12"),
+    ("https://calendar.google.com/calendar/embed?src=abc%40group.calendar.google.com", "https://calendar.google.com/calendar/embed?src=abc%40group.calendar.google.com"),
+    // Social.
+    ("https://twitter.com/jack/status/20", "https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true"),
+    ("https://x.com/jack/status/20?s=46&t=abc", "https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true"),
+    ("https://mobile.twitter.com/jack/status/20", "https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true"),
+    ("https://www.reddit.com/r/rust/comments/abc123/some_title/", "https://embed.reddit.com/r/rust/comments/abc123/some_title/?embed=true"),
+    ("https://old.reddit.com/r/rust/comments/abc123/", "https://embed.reddit.com/r/rust/comments/abc123/_/?embed=true"),
+    ("https://www.instagram.com/p/CvRHtJvLTdy/", "https://www.instagram.com/p/CvRHtJvLTdy/embed"),
+    ("https://www.instagram.com/reel/CvRHtJvLTdy/?igsh=x", "https://www.instagram.com/reel/CvRHtJvLTdy/embed"),
+    ("https://www.facebook.com/facebook/videos/10153231379946729/", "https://www.facebook.com/plugins/video.php?href=https%3A%2F%2Fwww.facebook.com%2Ffacebook%2Fvideos%2F10153231379946729%2F&show_text=false"),
+    ("https://www.tiktok.com/@scout2015/video/6718335390845095173", "https://www.tiktok.com/embed/v2/6718335390845095173"),
+    ("https://giphy.com/gifs/cat-funny-JIX9t2j0ZTN9S", "https://giphy.com/embed/JIX9t2j0ZTN9S"),
+    ("https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif", "https://giphy.com/embed/JIX9t2j0ZTN9S"),
+    // Video and audio.
+    ("https://www.loom.com/share/e5b8c04bca094dd8a5507925ab887002?sid=1", "https://www.loom.com/embed/e5b8c04bca094dd8a5507925ab887002"),
+    ("https://www.dailymotion.com/video/x8abcd_some-title", "https://www.dailymotion.com/embed/video/x8abcd"),
+    ("https://dai.ly/x8abcd", "https://www.dailymotion.com/embed/video/x8abcd"),
+    ("https://streamable.com/moo", "https://streamable.com/e/moo"),
+    ("https://www.twitch.tv/monstercat", "https://player.twitch.tv/?channel=monstercat"),
+    ("https://www.twitch.tv/videos/123456", "https://player.twitch.tv/?video=123456"),
+    ("https://clips.twitch.tv/AwkwardClip-abc", "https://clips.twitch.tv/embed?clip=AwkwardClip-abc"),
+    ("https://www.bilibili.com/video/BV1GJ411x7h7/?spm_id_from=x", "https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&autoplay=0"),
+    ("https://www.ted.com/talks/ken_robinson_do_schools_kill_creativity", "https://embed.ted.com/talks/ken_robinson_do_schools_kill_creativity"),
+    ("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT?si=x", "https://open.spotify.com/embed/track/4cOdK2wGLETKBW3PvgPWqT"),
+    ("https://open.spotify.com/intl-fr/album/6XhjNHCyCDyyGJRM5mg40G", "https://open.spotify.com/embed/album/6XhjNHCyCDyyGJRM5mg40G"),
+    ("https://soundcloud.com/forss/flickermood", "https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fforss%2Fflickermood"),
+    ("https://www.mixcloud.com/spartacus/party-time/", "https://www.mixcloud.com/widget/iframe/?feed=%2Fspartacus%2Fparty-time%2F"),
+    ("https://podcasts.apple.com/us/podcast/the-daily/id1200361736", "https://embed.podcasts.apple.com/us/podcast/the-daily/id1200361736"),
+    ("https://music.apple.com/us/album/whenever/1440818839?i=1440819032", "https://embed.music.apple.com/us/album/whenever/1440818839?i=1440819032"),
+    // Code and tools.
+    ("https://gist.github.com/octocat/6cad326836d38bd3a7ae", "https://gist.github.com/octocat/6cad326836d38bd3a7ae"),
+    ("https://codepen.io/team/codepen/pen/PNaGbb", "https://codepen.io/team/codepen/embed/PNaGbb?default-tab=result"),
+    ("https://codesandbox.io/s/new", "https://codesandbox.io/embed/new"),
+    ("https://codesandbox.io/p/sandbox/react-abc123", "https://codesandbox.io/embed/react-abc123"),
+    ("https://jsfiddle.net/zalun/NmudS/", "https://jsfiddle.net/zalun/NmudS/embedded/"),
+    ("https://stackblitz.com/edit/vitejs-vite", "https://stackblitz.com/edit/vitejs-vite?embed=1"),
+    ("https://www.val.town/v/stevekrouse.whatIsValTown", "https://val.town/embed/stevekrouse.whatIsValTown"),
+    ("https://www.desmos.com/calculator/zukjgk9iry", "https://www.desmos.com/calculator/zukjgk9iry?embed"),
+    ("https://miro.com/app/board/uXjVOfjmJQo=/", "https://miro.com/app/live-embed/uXjVOfjmJQo=/"),
+    ("https://forms.office.com/r/abc123", "https://forms.office.com/r/abc123?embed=true"),
+    ("https://www.openstreetmap.org/export/embed.html?bbox=1,2,3,4&layer=mapnik", "https://www.openstreetmap.org/export/embed.html?bbox=1,2,3,4&layer=mapnik"),
+];
+
+#[test]
+fn every_provider_rewrites_its_share_link_to_its_player() {
+    for (raw, expected) in REWRITES {
+        assert_eq!(url_of(raw).as_deref(), Some(*expected), "{raw}");
+    }
+}
+
+#[test]
+fn a_resolved_link_resolves_to_itself() {
+    // The board stores what this returns and resolves it again every time the frame is
+    // shown. A rewrite that did not survive a second pass would wrap an embed in another
+    // embed each time the board was opened.
+    let pasted = REWRITES.iter().map(|(raw, _)| *raw).chain([
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90",
+        "https://www.youtube.com/playlist?list=PL1234",
+        "https://www.figma.com/file/abc/Design?node-id=1%3A2",
+        "https://drive.google.com/file/d/FILE123/view?resourcekey=0-abc",
+    ]);
+    for raw in pasted {
+        let once = embed_link(raw).unwrap_or_else(|| panic!("{raw} was refused"));
+        let twice = embed_link(&once.url).unwrap_or_else(|| panic!("{} was refused", once.url));
+        assert_eq!(twice.url, once.url, "{raw}");
+        assert_eq!(twice.document, once.document, "{raw}");
+        assert_eq!(twice.kind, once.kind, "{raw}");
+    }
+}
+
+#[test]
+fn a_page_of_a_provider_that_is_not_a_post_is_refused() {
+    // These hosts are allowed, but their own pages refuse to be framed: a profile or a
+    // front page would arrive as an empty box that looks like our bug.
+    for raw in [
+        "https://twitter.com/jack",
+        "https://x.com/home",
+        "https://www.reddit.com/r/rust/",
+        "https://www.instagram.com/instagram/",
+        "https://www.facebook.com/facebook",
+        "https://www.tiktok.com/@scout2015",
+        "https://open.spotify.com/user/spotify",
+        "https://docs.google.com/",
+        "https://www.google.com/search?q=x",
+        "https://mail.google.com/mail/u/0/",
+        "https://www.loom.com/looms/videos",
+        "https://codepen.io/trending",
+    ] {
+        assert!(embed_link(raw).is_none(), "{raw} was allowed");
+    }
+}
+
+#[test]
+fn an_id_that_is_not_an_id_is_refused_everywhere() {
+    // Every id goes straight into a URL on someone else's domain. A path or a query
+    // smuggled in as an id would build a link the rules never looked at.
+    for raw in [
+        "https://youtu.be/..%2F..%2Fx",
+        "https://www.youtube.com/watch?v=abc%26list%3Dx",
+        "https://twitter.com/jack/status/20abc",
+        "https://www.loom.com/share/abc%2F..",
+        "https://open.spotify.com/track/a.b",
+        "https://streamable.com/e/a%2Fb",
+        "https://www.tiktok.com/@a/video/12x",
+        "https://codesandbox.io/s/a%3Fb",
+    ] {
+        assert!(embed_link(raw).is_none(), "{raw} was allowed");
+    }
+}
+
+#[test]
+fn a_gist_is_a_document_that_runs_its_script_without_our_origin() {
+    // GitHub serves a gist only as a script that writes it into the page running it, so
+    // there is no address to frame — and a document we frame would have *our* origin.
+    // It gets none: the script runs in a sandbox that cannot reach the board.
+    let gist = embed_link("https://gist.github.com/octocat/6cad326836d38bd3a7ae").expect("gist");
+    let document = gist.document.expect("a gist is a document");
+    assert!(document.contains(
+        "<script src=\"https://gist.github.com/octocat/6cad326836d38bd3a7ae.js\"></script>"
+    ));
+    assert!(!gist.allow_same_origin);
+}
+
+#[test]
+fn only_a_document_is_denied_its_origin() {
+    // A frame loaded from the provider's address has the provider's origin, not ours, so
+    // letting it keep that origin reaches nothing of ours — and players need it.
+    for (raw, _) in REWRITES {
+        let link = embed_link(raw).expect("resolved");
+        assert_eq!(link.allow_same_origin, link.document.is_none(), "{raw}");
+    }
+}
+
+#[test]
+fn a_pasted_snippet_is_resolved_by_the_link_inside_it() {
+    // What a provider's "embed" button copies. Only the link is taken out of it, and the
+    // link goes through the same rules as one pasted on its own.
+    let cases = [
+        (
+            r#"<iframe width="560" height="315" src="https://www.youtube.com/embed/dQw4w9WgXcQ?si=x" title="YouTube video player" frameborder="0" allowfullscreen></iframe>"#,
+            "https://www.youtube.com/embed/dQw4w9WgXcQ?enablejsapi=1",
+        ),
+        (
+            r#"<blockquote class="twitter-tweet"><p lang="en">just setting up my twttr</p>&mdash; jack (@jack) <a href="https://twitter.com/jack/status/20?ref_src=twsrc">March 21, 2006</a></blockquote>"#,
+            "https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true",
+        ),
+        (
+            r#"<script src="https://gist.github.com/octocat/6cad326836d38bd3a7ae.js"></script>"#,
+            "https://gist.github.com/octocat/6cad326836d38bd3a7ae",
+        ),
+        (
+            r#"<iframe src="https://player.vimeo.com/video/76979871?h=8272103f6e" width="640" height="360"></iframe>"#,
+            "https://player.vimeo.com/video/76979871?api=1&h=8272103f6e",
+        ),
+    ];
+    for (snippet, expected) in cases {
+        assert_eq!(url_of(snippet).as_deref(), Some(expected), "{snippet}");
+    }
+    // A snippet framing somewhere not allowed is refused like the bare link would be.
+    assert!(embed_link(r#"<iframe src="https://evil.test/x"></iframe>"#).is_none());
+}
+
+#[test]
+fn a_frame_is_resolved_again_so_an_old_board_gets_the_current_rules() {
+    // A board saved when tweets were framed at their own page — which Twitter refuses —
+    // shows the tweet once it is opened under the current rules.
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    let id = engine
+        .insert_embed("https://youtu.be/abc", 600.0, 450.0)
+        .expect("embed was not inserted");
+    let mut scene = engine.get_scene();
+    for element in &mut scene {
+        if element.id == id {
+            element.embed_url = Some("https://twitter.com/jack/status/20".into());
+        }
+    }
+    engine.set_scene(Scene::new(scene));
+
+    let frames = engine.embed_frames();
+    assert_eq!(
+        frames[0].url,
+        "https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true"
+    );
+}
+
+#[test]
+fn a_frame_says_what_it_is_and_how_far_the_board_is_zoomed() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    engine
+        .insert_embed("https://youtu.be/abc", 600.0, 450.0)
+        .expect("video");
+    engine
+        .insert_embed(
+            "https://gist.github.com/octocat/6cad326836d38bd3a7ae",
+            300.0,
+            300.0,
+        )
+        .expect("gist");
+    engine.zoom_at(600.0, 450.0, 0.5);
+
+    let frames = engine.embed_frames();
+    let video = frames
+        .iter()
+        .find(|f| f.url.contains("youtube"))
+        .expect("video frame");
+    assert_eq!(video.kind, "video");
+    assert!(video.srcdoc.is_none());
+    assert_near(video.scale, engine.camera.scale, 1e-12);
+    let gist = frames
+        .iter()
+        .find(|f| f.url.contains("gist"))
+        .expect("gist frame");
+    assert_eq!(gist.kind, "generic");
+    assert!(gist.srcdoc.is_some() && !gist.allow_same_origin);
+}

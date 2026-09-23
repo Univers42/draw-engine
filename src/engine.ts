@@ -259,6 +259,8 @@ export class DrawEngine {
     intrinsicHeight: number;
     kind: "video" | "generic";
     allowSameOrigin: boolean;
+    /** Framed as a document of its own rather than at an address — a gist. */
+    document: boolean;
   } | null {
     const json = this.inner.resolveEmbed(rawUrl);
     return json ? JSON.parse(json) : null;

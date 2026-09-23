@@ -203,6 +203,7 @@ impl WasmEngine {
                 crate::scene::EmbedKind::Generic => "generic",
             },
             "allowSameOrigin": resolved.allow_same_origin,
+            "document": resolved.document.is_some(),
         }))
         .ok()
     }
