@@ -11,7 +11,7 @@ impl DrawEngine {
         let Some(single) = self.single_selected() else {
             return false;
         };
-        if single.is_deleted || single.locked() {
+        if single.is_deleted || self.untouchable(&single) {
             return false;
         }
         if single.kind == DrawElementType::Text {

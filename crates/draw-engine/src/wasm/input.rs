@@ -315,6 +315,39 @@ impl WasmEngine {
         }
     }
 
+    /// Tells the engine who else is in the room, what they hold and what their gesture in
+    /// progress looks like: a JSON array of [`crate::engine::Peer`]. See `engine/peers.rs`.
+    /// Anything unreadable is ignored rather than clearing the peers — a malformed frame
+    /// from one peer must not release everyone's holds.
+    #[wasm_bindgen(js_name = setPeers)]
+    pub fn set_peers(&self, json: &str) {
+        if let Ok(peers) = serde_json::from_str(json) {
+            self.cell.borrow_mut().engine.set_peers(peers);
+            self.flush();
+        }
+    }
+
+    /// The id of the peer holding what is under `(sx, sy)`, if someone does — so a click
+    /// on something in use can say who is using it.
+    #[wasm_bindgen(js_name = peerAt)]
+    pub fn peer_at(&self, sx: f64, sy: f64) -> Option<String> {
+        let state = self.cell.try_borrow().ok()?;
+        state.engine.peer_at(sx, sy).map(|peer| peer.id.clone())
+    }
+
+    /// The elements this engine's gesture in progress is changing, as they are right now,
+    /// as a JSON array — `[]` between gestures. What the host streams to peers while a
+    /// shape is being drawn, moved or resized.
+    #[wasm_bindgen(js_name = gestureElementsJson)]
+    pub fn gesture_elements_json(&self) -> String {
+        match self.cell.try_borrow() {
+            Ok(state) => {
+                serde_json::to_string(&state.engine.gesture_elements()).unwrap_or_default()
+            }
+            Err(_) => String::new(),
+        }
+    }
+
     /// The size of a run of text, in world units, using the font the canvas draws with.
     ///
     /// Exposed so the host's editing overlay can size itself from the same measurement

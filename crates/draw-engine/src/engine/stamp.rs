@@ -175,6 +175,11 @@ impl DrawEngine {
         let pending_order = self.scene.order_baseline();
 
         for (id, change) in step.changes.iter() {
+            // What someone else holds is theirs right now. Undoing an old edit of it
+            // would snap it back under their hands; the rest of the step still applies.
+            if self.held.contains_key(id) {
+                continue;
+            }
             let want = if forward {
                 &change.after
             } else {
