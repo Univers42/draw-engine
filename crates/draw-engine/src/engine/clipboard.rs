@@ -124,6 +124,13 @@ impl DrawEngine {
     /// event either — the caller is told through the return value, so nothing
     /// re-broadcasts what it was just sent.
     pub fn apply_remote_patch(&mut self, json: &str) -> bool {
+        let changed = self.apply_remote_patch_step(json);
+        // A peer's element can bind to one being dragged here, and then moves with it.
+        self.refresh_live();
+        changed
+    }
+
+    fn apply_remote_patch_step(&mut self, json: &str) -> bool {
         let Ok(data) = serde_json::from_str::<serde_json::Value>(json) else {
             return false;
         };

@@ -18,6 +18,7 @@ mod eraser;
 mod frame;
 mod hover;
 mod image;
+mod live;
 pub use image::EmbedFrame;
 mod multi_linear;
 mod pointer;
@@ -383,6 +384,11 @@ impl DrawEngine {
     }
 
     pub fn set_tool(&mut self, tool: DrawTool) {
+        self.set_tool_step(tool);
+        self.refresh_live();
+    }
+
+    fn set_tool_step(&mut self, tool: DrawTool) {
         if tool == self.tool {
             return;
         }
@@ -428,6 +434,11 @@ impl DrawEngine {
     /// active, so switching away on a second click would contradict what is on screen —
     /// which is why the two doors are separate.
     pub fn activate_tool(&mut self, tool: DrawTool) {
+        self.activate_tool_step(tool);
+        self.refresh_live();
+    }
+
+    fn activate_tool_step(&mut self, tool: DrawTool) {
         if tool == self.tool && crate::is_toggle_tool(tool) {
             // Toggling back is leaving the tool too, and skips `set_tool`: pressing E
             // again mid-sweep switched to select while the sweep went on marking, and

@@ -35,6 +35,17 @@ use crate::camera::WorldBounds;
 use crate::scene::element::DrawElement;
 use crate::scene::geometry::scene_bounds;
 
+/// A revision number no other change, in any scene, has had.
+///
+/// One counter for the whole process rather than one per scene: the painter keys its
+/// cached layers on these numbers, and a scene loaded wholesale used to start counting
+/// again from nothing — so a layer painted for the old scene could carry the same number
+/// as the new one, match, and be shown in its place.
+fn next_revision() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     /// Every element, live and tombstoned, in z-order.
@@ -74,6 +85,17 @@ pub struct Scene {
     /// merely by culling different ones, and the layer was thrown away exactly when it
     /// was most reusable. A counter is O(1), exact, and says nothing about the camera.
     revision: u64,
+    /// The elements the gesture in progress changes from frame to frame. Set by the
+    /// engine; see [`Self::set_live`].
+    live: std::collections::HashSet<String>,
+    /// Like `revision`, but moved only by changes to elements **outside** `live`.
+    ///
+    /// The painter caches everything that is not live in its layers and draws the live
+    /// elements over them each frame, so a drag or a stroke costs what it touches rather
+    /// than the whole board. This is what tells it the cached part is still good: it
+    /// stays put while only live elements change, and moves the moment anything else
+    /// does — a peer's edit arriving mid-drag, say.
+    static_revision: u64,
 }
 
 /// What changed since the host was last told.
@@ -194,7 +216,8 @@ impl Scene {
     /// For undoing a reorder: what the step reordered goes back, and an element that
     /// arrived since — a peer's — stays where it is, above.
     pub(crate) fn apply_order(&mut self, order: &[String]) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.static_revision = next_revision();
         let mut rest: Vec<Rc<DrawElement>> = Vec::with_capacity(self.elements.len());
         let mut by_id: HashMap<String, Rc<DrawElement>> = HashMap::new();
         let wanted: std::collections::HashSet<&str> = order.iter().map(String::as_str).collect();
@@ -230,7 +253,8 @@ impl Scene {
     /// Copy-on-write: `Rc::make_mut` clones the element only if a history snapshot
     /// still holds it, so a drag that touches one shape copies one shape.
     pub fn update<F: FnOnce(&mut DrawElement)>(&mut self, id: &str, f: F) -> bool {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.touch_static(id);
         match self.index.get(id) {
             Some(&i) => {
                 if !self.baseline.contains_key(id) {
@@ -251,14 +275,15 @@ impl Scene {
     }
 
     pub fn add(&mut self, element: DrawElement) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
         self.put(element);
     }
 
     /// Inserts or replaces an element, **keeping its existing z-position** when it is
     /// already present. A style change must not bring a shape to the front.
     pub fn put(&mut self, element: DrawElement) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.touch_static(&element.id);
         self.dirty.insert(element.id.clone());
         if !self.baseline.contains_key(&element.id) {
             let before = self.get_rc(&element.id).cloned();
@@ -276,7 +301,7 @@ impl Scene {
     /// Soft delete: the element stays, marked, so a later merge can distinguish a
     /// deletion from an element it has simply never seen.
     pub fn remove(&mut self, id: &str, now: f64) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
         self.update(id, |element| {
             element.is_deleted = true;
             element.version += 1;
@@ -296,7 +321,8 @@ impl Scene {
     /// Hard delete, leaving no tombstone. Used when discarding an element that was
     /// never committed, such as a drag that ended below the minimum size.
     pub fn discard(&mut self, id: &str) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.touch_static(id);
         if let Some(&i) = self.index.get(id) {
             if !self.baseline.contains_key(id) {
                 self.baseline
@@ -310,7 +336,8 @@ impl Scene {
     }
 
     pub fn bring_to_front(&mut self, id: &str) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.static_revision = next_revision();
         if let Some(&i) = self.index.get(id) {
             if i + 1 != self.elements.len() {
                 self.note_order();
@@ -327,7 +354,8 @@ impl Scene {
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
-        self.revision = self.revision.wrapping_add(1);
+        self.revision = next_revision();
+        self.static_revision = next_revision();
         self.note_order();
         let mut next: Vec<Rc<DrawElement>> = self
             .elements
@@ -362,6 +390,31 @@ impl Scene {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// See the `static_revision` field.
+    pub fn static_revision(&self) -> u64 {
+        self.static_revision
+    }
+
+    /// The elements the gesture in progress changes from frame to frame.
+    pub fn live(&self) -> &std::collections::HashSet<String> {
+        &self.live
+    }
+
+    /// Declares which elements are live. Changing the set moves `static_revision`,
+    /// because what the painter caches is "everything but these".
+    pub(crate) fn set_live(&mut self, live: std::collections::HashSet<String>) {
+        if live != self.live {
+            self.live = live;
+            self.static_revision = next_revision();
+        }
+    }
+
+    fn touch_static(&mut self, id: &str) {
+        if !self.live.contains(id) {
+            self.static_revision = next_revision();
+        }
     }
 
     pub fn take_delta(&mut self) -> Option<SceneDelta> {
@@ -420,7 +473,7 @@ impl Scene {
         };
         scene.reindex();
         scene.structural = true;
-        scene.revision = scene.revision.wrapping_add(1);
+        scene.revision = next_revision();
         scene
     }
 }

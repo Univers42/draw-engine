@@ -150,6 +150,18 @@ thread_local! {
     /// Fingerprints drawn since the last eviction.
     static PATHS_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// One `Path2D` per freehand stroke per detail level, keyed by its geometry.
+    ///
+    /// See `paint_freedraw`: before this, every stroke's outline was computed and
+    /// replayed call by call on every frame.
+    static FREEHAND: std::cell::RefCell<HashMap<u64, Option<Path2d>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FREEHAND_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// The detail level of the frame being painted. See `PaintView::detail_scale`.
+    static DETAIL_LEVEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
 /// The paths built for one piece of geometry.
@@ -254,6 +266,14 @@ fn evict_paths(live: &[&DrawElement]) {
     PATHS.with(|cache| {
         let mut cache = cache.borrow_mut();
         let used = PATHS_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
+        if cache.len() <= budget {
+            return;
+        }
+        cache.retain(|fingerprint, _| used.contains(fingerprint));
+    });
+    FREEHAND.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let used = FREEHAND_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
         if cache.len() <= budget {
             return;
         }
@@ -511,6 +531,10 @@ struct Layers {
     /// When it has not, and nothing has changed, the canvas already shows the right
     /// picture and the frame can be skipped entirely.
     overlay_drawn: bool,
+    /// While a gesture runs: what sits above the live elements, cached like `front`,
+    /// which then holds what sits below them. Made the first time it is needed.
+    above: Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)>,
+    above_painted: Option<(crate::render::scroll::LayerKey, crate::camera::Camera)>,
 }
 
 thread_local! {
@@ -661,46 +685,136 @@ fn device_bounds(view: &PaintView, element: &DrawElement) -> crate::scene::geome
     }
 }
 
-/// Draws the static scene — background, grid, elements, frame names — into `ctx`.
-///
-/// `only` limits it to the strips that have just come into view — elements outside them
-/// are skipped rather than clipped, because a clipped draw still builds every path before
-/// the rasteriser discards it. Nothing passes anything but `None` today: see the note on
-/// `LayerPlan::Scroll` in `paint` for why the strip path is not taken yet.
-fn paint_static(
-    ctx: &CanvasRenderingContext2d,
-    view: &PaintView,
-    only: Option<&[crate::scene::geometry::Rect]>,
-) {
-    let dpr = view.dpr;
-    // A fresh context has none of the state the cache believes it set.
-    STATE.with(|s| s.borrow_mut().reset());
-    FONT.with(|f| *f.borrow_mut() = None);
+/// Marks a layer key with what it holds, so a picture of one part of the scene can never
+/// be taken for a picture of another that happens to share the numbers.
+const WHOLE_SCENE: u64 = 0x5ce3_e000;
+const BELOW_LIVE: u64 = 0xb3_10e0;
+const ABOVE_LIVE: u64 = 0xab_0e00;
 
-    ctx.save();
-    if let Some(rects) = only {
-        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
-        // Cleared before the clip is set, not after. A clipped clear antialiases against
-        // the clip edge, so the boundary pixel ends up a blend of the shifted old content
-        // and the new — a seam one pixel wide, which then travels with the picture on
-        // every later scroll. Clearing the exact integer rectangle first means those
-        // pixels are fully replaced rather than blended into.
-        for rect in rects {
-            ctx.clear_rect(rect.x, rect.y, rect.width, rect.height);
-        }
-        ctx.begin_path();
-        for rect in rects {
-            ctx.rect(rect.x, rect.y, rect.width, rect.height);
-        }
-        ctx.clip();
+/// Paints a frame while a gesture runs: cached pictures of everything the gesture does
+/// not touch, and only the live elements drawn fresh.
+///
+/// Everything below the first live element in stacking order is one cached layer, and
+/// everything above it another; the live elements are drawn between the two, so stacking
+/// order holds. Both layers are keyed on the scene's `static_revision`, which stays put
+/// while only live elements change — so a frame of a drag or a stroke copies two
+/// pictures and draws what moved, where it used to repaint the whole board. Returns
+/// whether both layers had to be drawn from scratch.
+fn paint_live(
+    ctx: &CanvasRenderingContext2d,
+    layers: &mut Layers,
+    view: &PaintView,
+    key: crate::render::scroll::LayerKey,
+    device: (u32, u32),
+) -> bool {
+    use crate::render::scroll::{plan_layer, LayerKey, LayerPlan};
+
+    let split = view
+        .elements
+        .iter()
+        .position(|element| view.live.contains(&element.id))
+        .unwrap_or(view.elements.len());
+    let below = &view.elements[..split];
+    let (live, above): (Vec<&DrawElement>, Vec<&DrawElement>) = view.elements[split..]
+        .iter()
+        .partition(|element| view.live.contains(&element.id));
+
+    let keyed = |part: u64| LayerKey {
+        content: view.static_revision,
+        chrome: key.chrome ^ part,
+        ..key
+    };
+
+    let below_key = keyed(BELOW_LIVE);
+    let mut drew_below = false;
+    if !matches!(
+        plan_layer(layers.painted, below_key, view.camera),
+        LayerPlan::Reuse
+    ) {
+        paint_layer(&layers.front_ctx, view, below, true);
+        layers.painted = Some((below_key, view.camera));
+        drew_below = true;
     }
 
-    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
-    ctx.clear_rect(0.0, 0.0, view.width, view.height);
-    set_fill(ctx, &view.theme.background);
-    ctx.fill_rect(0.0, 0.0, view.width, view.height);
-    paint_grid(ctx, view);
+    let mut drew_above = above.is_empty();
+    if !above.is_empty() {
+        if layers.above.is_none() {
+            layers.above = make_layer(device.0, device.1);
+            layers.above_painted = None;
+        }
+        if let Some((_, above_ctx)) = &layers.above {
+            let above_key = keyed(ABOVE_LIVE);
+            if !matches!(
+                plan_layer(layers.above_painted, above_key, view.camera),
+                LayerPlan::Reuse
+            ) {
+                paint_layer(above_ctx, view, &above, false);
+                layers.above_painted = Some((above_key, view.camera));
+                drew_above = true;
+            }
+        }
+    }
+    count_plan(
+        u32::from(drew_below || drew_above),
+        0,
+        u32::from(!(drew_below || drew_above)),
+    );
 
+    // Composed on the target: what is below, what is live, what is above.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    ctx.set_global_alpha(1.0);
+    let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, f64::from(device.0), f64::from(device.1));
+    let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+    paint_elements(ctx, view, &live);
+    if !above.is_empty() {
+        if let Some((above_canvas, _)) = &layers.above {
+            STATE.with(|s| s.borrow_mut().reset());
+            ctx.set_global_alpha(1.0);
+            let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+            let _ = ctx.draw_image_with_html_canvas_element(above_canvas, 0.0, 0.0);
+        }
+    }
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    paint_frame_names(ctx, view);
+    // The chrome is always redrawn over a live frame; nothing here is ever "already on
+    // the canvas".
+    layers.overlay_drawn = true;
+    drew_below && drew_above
+}
+
+/// Draws a cached layer from scratch: the paper and the grid when it is the bottom one,
+/// then `elements`.
+fn paint_layer(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    elements: &[&DrawElement],
+    backdrop: bool,
+) {
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    ctx.save();
+    ctx.set_global_alpha(1.0);
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, view.width, view.height);
+    if backdrop {
+        set_fill(ctx, &view.theme.background);
+        ctx.fill_rect(0.0, 0.0, view.width, view.height);
+        paint_grid(ctx, view);
+    }
+    paint_elements(ctx, view, elements);
+    ctx.restore();
+}
+
+/// Draws `elements` in order, each with its own transform, frame clip and eraser fade.
+///
+/// The context's transform is left as the last element set it.
+fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[&DrawElement]) {
+    let dpr = view.dpr;
+    DETAIL_LEVEL.with(|level| {
+        level.set(crate::render::path_data::lod_level(view.detail_scale));
+    });
     // Device pixel ratio and camera, folded into one matrix and combined with each
     // element's own transform rather than pushed and popped around every element.
     let s = view.camera.scale;
@@ -713,12 +827,7 @@ fn paint_static(
         dpr * view.camera.y,
     ];
 
-    for element in &view.elements {
-        if let Some(rects) = only {
-            if !crate::render::scroll::intersects_any(device_bounds(view, element), rects) {
-                continue;
-            }
-        }
+    for element in elements {
         // A child that pokes out of its frame is cut off at the frame's edge — that
         // is what makes a frame read as a window onto a region rather than as a
         // rectangle drawn behind things. The engine decides which children need it.
@@ -763,6 +872,60 @@ fn paint_static(
         }
     }
     ERASE_FADE.with(|fade| fade.set(1.0));
+}
+
+/// Draws the static scene — background, grid, elements, frame names — into `ctx`.
+///
+/// `only` limits it to the strips that have just come into view — elements outside them
+/// are skipped rather than clipped, because a clipped draw still builds every path before
+/// the rasteriser discards it. Nothing passes anything but `None` today: see the note on
+/// `LayerPlan::Scroll` in `paint` for why the strip path is not taken yet.
+fn paint_static(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    only: Option<&[crate::scene::geometry::Rect]>,
+) {
+    let dpr = view.dpr;
+    // A fresh context has none of the state the cache believes it set.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+
+    ctx.save();
+    if let Some(rects) = only {
+        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        // Cleared before the clip is set, not after. A clipped clear antialiases against
+        // the clip edge, so the boundary pixel ends up a blend of the shifted old content
+        // and the new — a seam one pixel wide, which then travels with the picture on
+        // every later scroll. Clearing the exact integer rectangle first means those
+        // pixels are fully replaced rather than blended into.
+        for rect in rects {
+            ctx.clear_rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.begin_path();
+        for rect in rects {
+            ctx.rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.clip();
+    }
+
+    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, view.width, view.height);
+    set_fill(ctx, &view.theme.background);
+    ctx.fill_rect(0.0, 0.0, view.width, view.height);
+    paint_grid(ctx, view);
+
+    let elements: Vec<&DrawElement> = match only {
+        Some(rects) => view
+            .elements
+            .iter()
+            .filter(|element| {
+                crate::render::scroll::intersects_any(device_bounds(view, element), rects)
+            })
+            .copied()
+            .collect(),
+        None => view.elements.clone(),
+    };
+    paint_elements(ctx, view, &elements);
     paint_frame_names(ctx, view);
     ctx.restore();
 }
@@ -787,7 +950,7 @@ impl Painter for CanvasPainter<'_> {
             // layer on every pan — which is precisely the frame the layer exists for.
             // Measured before the change: 120 redraws and zero scrolls across a pan.
             content: view.scene_revision,
-            chrome: chrome_digest(view),
+            chrome: chrome_digest(view) ^ WHOLE_SCENE,
         };
 
         let drew_everything = LAYERS.with(|cell| {
@@ -804,9 +967,15 @@ impl Painter for CanvasPainter<'_> {
                     painted: None,
                     device,
                     overlay_drawn: true,
+                    above: None,
+                    above_painted: None,
                 });
             }
             let layers = slot.as_mut().expect("just built");
+
+            if !view.live.is_empty() {
+                return Some(paint_live(ctx, layers, view, key, device));
+            }
 
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
@@ -1158,35 +1327,51 @@ fn paint_freedraw(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &Draw
     if points.len() < 2 {
         return;
     }
+    let level = DETAIL_LEVEL.with(std::cell::Cell::get);
+    let key = crate::render::path_data::freehand_fingerprint(points, element.stroke_width, level);
+    FREEHAND_USED.with(|used| used.borrow_mut().insert(key));
     with_element_transform(ctx, view, element, || {
         // Filled, not stroked. The width varies along the stroke — faster means thinner,
         // the way a real nib behaves — and `lineWidth` is one number for a whole path,
         // so the only way to draw a varying width is to fill the region between the two
-        // sides of it. `stroke_outline` walks down one side and back up the other.
+        // sides of it.
         set_fill(ctx, &element.stroke_color);
-        let outline = crate::freehand::stroke_outline(
-            points,
-            element.stroke_width,
-            crate::freehand::THINNING,
-        );
-        if outline.len() < 3 {
-            return;
-        }
-        ctx.begin_path();
-        ctx.move_to(outline[0][0], outline[0][1]);
-        // Through the midpoints, with each sample as the control point of a quadratic.
-        // Drawing straight to the samples puts a hard corner at every one of them, which
-        // is the shake this whole path exists to remove — the streamlining softens where
-        // the samples *are*, and this softens the joins between them.
-        for i in 1..outline.len() {
-            let current = outline[i];
-            let next = outline[(i + 1) % outline.len()];
-            let mid = [(current[0] + next[0]) / 2.0, (current[1] + next[1]) / 2.0];
-            ctx.quadratic_curve_to(current[0], current[1], mid[0], mid[1]);
-        }
-        ctx.close_path();
-        ctx.fill();
+        FREEHAND.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let path = cache.entry(key).or_insert_with(|| {
+                count_path_lookup(false);
+                freehand_path(points, element.stroke_width, level)
+            });
+            if let Some(path) = path {
+                ctx.fill_with_path_2d(path);
+            }
+        });
     });
+}
+
+/// The `Path2D` of a freehand stroke at one detail level, or `None` for a stroke with no
+/// outline to fill.
+///
+/// Built once and kept: it depends on the samples and the width, not on where the stroke
+/// is or how it is turned — those are the context's transform — so panning, zooming
+/// within a level and dragging all reuse it. It used to be recomputed and replayed call
+/// by call on every frame, for every stroke on the board.
+fn freehand_path(points: &[[f64; 2]], stroke_width: f64, level: i32) -> Option<Path2d> {
+    let outline = crate::freehand::stroke_outline(points, stroke_width, crate::freehand::THINNING);
+    if outline.len() < 3 {
+        return None;
+    }
+    let simplified = crate::render::path_data::simplify(
+        &outline,
+        crate::render::path_data::lod_tolerance(level),
+    );
+    // A stroke so small it simplifies away entirely still has to show up as something.
+    let shape = if simplified.len() >= 3 {
+        simplified
+    } else {
+        outline
+    };
+    Path2d::new_with_path_string(&crate::render::path_data::smooth_closed_outline(&shape)).ok()
 }
 
 /// Draws a text element.

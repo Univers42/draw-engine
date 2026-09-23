@@ -19,6 +19,13 @@ pub struct PaintView<'a> {
     pub width: f64,
     pub height: f64,
     pub dpr: f64,
+    /// Device pixels per world unit **at rest** — the camera scale times the quality
+    /// device-pixel ratio. What geometry is simplified for.
+    ///
+    /// Not the scale actually being drawn at, which drops while things move: simplifying
+    /// for that would rebuild every cached path when motion starts and again when it
+    /// stops, which is exactly the hitch simplifying is meant to prevent.
+    pub detail_scale: f64,
     pub in_motion: bool,
     /// Visible elements in z-order. Already culled to the viewport.
     pub elements: Vec<&'a DrawElement>,
@@ -30,6 +37,12 @@ pub struct PaintView<'a> {
     /// signal that moved with the camera would throw the layer away exactly when it was
     /// most worth keeping.
     pub scene_revision: u64,
+    /// The elements the gesture in progress changes each frame, drawn live over a cached
+    /// picture of everything else. Empty between gestures. See `engine/live.rs`.
+    pub live: &'a std::collections::HashSet<String>,
+    /// Moves only when something *outside* `live` changes: what the cached picture of
+    /// everything else is keyed on while a gesture runs.
+    pub static_revision: u64,
     /// What the eraser sweep in progress has marked. Painted at a fifth of its opacity,
     /// and so is everything a marked frame holds.
     pub erasing: &'a std::collections::HashSet<String>,
@@ -199,6 +212,7 @@ impl DrawEngine {
             width: self.width,
             height: self.height,
             dpr,
+            detail_scale: self.camera.scale * self.quality_dpr(),
             in_motion: self.in_motion(),
             // Culled here rather than in the painter: an element off-screen costs a
             // bounds check instead of a full path replay, which is what keeps a large
@@ -209,6 +223,8 @@ impl DrawEngine {
                 .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
                 .collect(),
             scene_revision,
+            live: self.scene.live(),
+            static_revision: self.scene.static_revision(),
             erasing: &self.erasing,
             erasing_revision: self.erasing_revision,
             selected,
