@@ -3,11 +3,13 @@
  * Coalesces pointermove to one engine step per animation frame.
  */
 
+import { countEngineStep, countPointerEvent } from "./probe";
 import { localPoint, type HostSession } from "./session";
 import { wheelIntent } from "./wheel";
 
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
+  countEngineStep();
   session.engine.movePointer(x, y, event.shiftKey, event.altKey);
 }
 
@@ -75,6 +77,9 @@ export function attachPointerInput(session: HostSession): () => void {
   const wantsMove = (): boolean => session.down || engine.linearInProgress();
 
   const onPointerMove = (event: PointerEvent) => {
+    // Counted before the gate, so the ratio of events to engine steps is honest about
+    // what the device actually sent rather than about what we chose to forward.
+    countPointerEvent();
     if (!wantsMove()) return;
     const { x, y } = localPoint(canvas, event);
     // Still only while a button is held. Hosts read this callback as "a drag is

@@ -502,6 +502,24 @@ pub fn take_plan_counts() -> (u32, u32, u32) {
     PLAN_COUNTS.with(|c| c.replace((0, 0, 0)))
 }
 
+/// Cumulative shape-cache hits and misses.
+///
+/// The number that says whether rough geometry is being regenerated. Position, zoom and
+/// rotation are applied to the *context*, so none of them should move it — a miss count
+/// climbing during a pan or a drag means the fingerprint covers something it should not,
+/// and that is the difference between a smooth board and a slow one.
+///
+/// Read, not taken: it is a running total, so two reads either side of a gesture give
+/// that gesture's cost without disturbing anyone else's measurement.
+pub fn shape_cache_stats() -> (u64, u64) {
+    SHAPES.with(|shapes| shapes.borrow().stats())
+}
+
+/// How many pieces of geometry are being kept alive.
+pub fn shape_cache_len() -> usize {
+    SHAPES.with(|shapes| shapes.borrow().len())
+}
+
 fn count_plan(redraw: u32, scroll: u32, reuse: u32) {
     PLAN_COUNTS.with(|c| {
         let (r, s, u) = c.get();

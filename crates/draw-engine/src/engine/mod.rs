@@ -13,6 +13,7 @@ mod arrange;
 mod autoshape;
 mod bucket;
 mod clipboard;
+mod debug;
 mod frame;
 mod hover;
 mod image;
@@ -25,6 +26,7 @@ mod style;
 mod text;
 mod types;
 
+pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, history_signature, Interaction};
