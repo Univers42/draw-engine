@@ -135,7 +135,7 @@ impl DrawEngine {
             }
             Interaction::Erase { last } => {
                 let at = self.screen_to_world(sx, sy);
-                self.erase_along(last, at);
+                self.mark_along(last, at);
                 Some(Interaction::Erase { last: at })
             }
             Interaction::Pan { last_x, last_y } => {

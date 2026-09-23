@@ -468,6 +468,11 @@ export class DrawEngine {
     this.inner.beginPan(sx, sy);
   }
 
+  /** Alt, as held for the move about to be reported. The eraser un-marks with it. */
+  setAltHeld(held: boolean): void {
+    this.inner.setAltHeld(held);
+  }
+
   /** `invertSnap` flips object snapping for this move — the host's Ctrl/Cmd. */
   movePointer(sx: number, sy: number, square = false, invertSnap = false): void {
     this.inner.movePointer(sx, sy, square, invertSnap);

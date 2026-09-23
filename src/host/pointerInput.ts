@@ -10,6 +10,8 @@ import { wheelIntent } from "./wheel";
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
   countEngineStep();
+  // Alt first: the eraser reads it to un-mark what it passes back over.
+  session.engine.setAltHeld(event.altKey);
   // Ctrl/Cmd inverts object snapping for the move, as in Excalidraw. Not Alt: Alt+drag
   // duplicates, and one key doing both meant a duplicate could never snap.
   session.engine.movePointer(x, y, event.shiftKey, event.ctrlKey || event.metaKey);
@@ -54,16 +56,20 @@ export function attachPointerInput(session: HostSession): () => void {
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
     canvas.setPointerCapture(event.pointerId);
+    // A pan is decided before the host sees the press. It is never a host gesture, and
+    // asking the host first let one start: the eraser drew its trail across a
+    // space-drag, and the sticky-note tool claimed the press instead of panning.
+    if (event.button === 1 || session.spaceHeld) {
+      intercepted = false;
+      event.preventDefault();
+      engine.beginPan(x, y);
+      return;
+    }
     if (callbacks.onPointerDown?.({ x, y }, event)) {
       intercepted = true;
       return;
     }
     intercepted = false;
-    if (event.button === 1 || session.spaceHeld) {
-      event.preventDefault();
-      engine.beginPan(x, y);
-      return;
-    }
     engine.beginPointer(x, y, event.shiftKey, event.altKey);
   };
 

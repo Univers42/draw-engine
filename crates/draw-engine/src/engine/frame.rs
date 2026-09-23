@@ -30,6 +30,11 @@ pub struct PaintView<'a> {
     /// signal that moved with the camera would throw the layer away exactly when it was
     /// most worth keeping.
     pub scene_revision: u64,
+    /// What the eraser sweep in progress has marked. Painted at a fifth of its opacity,
+    /// and so is everything a marked frame holds.
+    pub erasing: &'a std::collections::HashSet<String>,
+    /// Changes whenever `erasing` does. The painter keys its cached layer on it.
+    pub erasing_revision: u64,
     pub selected: Vec<&'a DrawElement>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
@@ -41,7 +46,9 @@ pub struct PaintView<'a> {
     /// for no visible difference.
     pub frame_clips: std::collections::HashMap<String, WorldBounds>,
     /// Where each frame's name sits, and what it says.
-    pub frame_names: Vec<(crate::camera::Point, String)>,
+    /// `(anchor, name, frame id)` — the id so a name fades with a frame the eraser has
+    /// marked.
+    pub frame_names: Vec<(crate::camera::Point, String, String)>,
     /// Laser strokes to fill, oldest first, in world space.
     ///
     /// Already shaped: each is a closed outline whose width varies along its length, not
@@ -169,7 +176,11 @@ impl DrawEngine {
                 && crate::render::bounds::intersects_viewport(el, &visible)
         }) {
             if let Some(name) = frame.name.clone() {
-                frame_names.push((crate::scene::frame_name_anchor(frame), name));
+                frame_names.push((
+                    crate::scene::frame_name_anchor(frame),
+                    name,
+                    frame.id.clone(),
+                ));
             }
             let clip = crate::scene::frame_clip_bounds(frame);
             for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
@@ -198,6 +209,8 @@ impl DrawEngine {
                 .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
                 .collect(),
             scene_revision,
+            erasing: &self.erasing,
+            erasing_revision: self.erasing_revision,
             selected,
             marquee,
             lasso,

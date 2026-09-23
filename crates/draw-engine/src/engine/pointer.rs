@@ -24,8 +24,14 @@ impl DrawEngine {
         match self.tool {
             DrawTool::Eraser => {
                 let at = self.screen_to_world(sx, sy);
+                self.clear_erasing();
                 self.interaction = Some(Interaction::Erase { last: at });
-                self.erase_along(at, at);
+                // The press marks what is under it whatever Alt says — a click erases
+                // it, Alt held or not, as Excalidraw's pointer-up does. Alt then governs
+                // the moves.
+                self.alt_held = false;
+                self.mark_along(at, at);
+                self.alt_held = duplicate;
             }
             DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
             DrawTool::Text => self.begin_text(sx, sy, world),
@@ -534,53 +540,5 @@ impl DrawEngine {
             static_bounds,
         });
         self.request_draw();
-    }
-
-    /// Erase everything the sweep from `from` to `to` touches.
-    ///
-    /// Two departures from what this replaced, both of which are why the eraser felt
-    /// broken rather than slow:
-    ///
-    /// - It takes a *segment*. Pointer moves are coalesced to one per animation frame, so
-    ///   a quick drag arrives as samples tens of pixels apart, and testing the samples
-    ///   steps over everything in between.
-    /// - It takes *every* element it touches, not the topmost. A board made by holding
-    ///   Ctrl+D is a stack of identical shapes in one place, so taking one per pass meant
-    ///   one pass per copy — each of which looked like it had done nothing.
-    pub(crate) fn erase_along(&mut self, from: Point, to: Point) {
-        let tolerance = self.collision_tolerance();
-        let doomed: Vec<String> = self
-            .scene
-            .iter_ordered()
-            .filter(|el| !el.locked() && crate::segment_hits_element(el, from, to, tolerance))
-            .map(|el| el.id.clone())
-            .collect();
-        if doomed.is_empty() {
-            return;
-        }
-
-        // A label belongs to its container: leaving it behind orphans it against a shape
-        // that is no longer there, which only surfaces later when something tries to lay
-        // it out.
-        let mut removed_any = false;
-        let mut selection_changed = false;
-        for id in doomed {
-            let bound = self.scene.get(&id).and_then(|el| el.bound_text_id.clone());
-            for id in std::iter::once(id).chain(bound) {
-                if self.scene.get(&id).is_none_or(|el| el.is_deleted) {
-                    continue;
-                }
-                self.scene.remove(&id, self.now_ms);
-                removed_any = true;
-                selection_changed |= self.selected_ids.remove(&id);
-            }
-        }
-
-        if selection_changed {
-            self.events.selection = Some(self.get_selection());
-        }
-        if removed_any {
-            self.request_draw();
-        }
     }
 }

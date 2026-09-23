@@ -302,7 +302,8 @@ fn with_element_transform(
     element: &DrawElement,
     body: impl FnOnce(),
 ) {
-    set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0));
+    let fade = ERASE_FADE.with(std::cell::Cell::get);
+    set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0) * fade);
 
     // Shapes only: a line or arrow carries its mirror in its points, so the sign of its
     // width means nothing and applying it would reverse the element a second time.
@@ -376,7 +377,18 @@ impl PaintState {
 thread_local! {
     static STATE: std::cell::RefCell<PaintState> =
         std::cell::RefCell::new(PaintState::default());
+
+    /// The factor the element being painted is faded by: 1, or
+    /// [`READY_TO_ERASE_OPACITY`] while the eraser has it marked.
+    ///
+    /// Set per element by the scene loop and read where every element sets its alpha, so
+    /// no painting function has to take the eraser as a parameter.
+    static ERASE_FADE: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
+
+/// How visible an element marked by the eraser stays: Excalidraw's
+/// `ELEMENT_READY_TO_ERASE_OPACITY` (20), multiplied into the element's own.
+const READY_TO_ERASE_OPACITY: f64 = 0.2;
 
 fn set_line_width_cached(ctx: &CanvasRenderingContext2d, width: f64) {
     STATE.with(|s| {
@@ -630,6 +642,9 @@ fn chrome_digest(view: &PaintView) -> u64 {
     eat(&[u8::from(view.grid.enabled)]);
     eat(&view.grid.size.to_bits().to_le_bytes());
     eat(&(view.grid.step as u64).to_le_bytes());
+    // The eraser's marks are painted into the layer, faded, so the layer is only good
+    // for the marks it was painted with.
+    eat(&view.erasing_revision.to_le_bytes());
     hash
 }
 
@@ -721,6 +736,14 @@ fn paint_static(
             ctx.rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
             ctx.clip();
         }
+        // Faded while the eraser has it marked — or has marked the frame it is in, which
+        // takes it too — as Excalidraw's `resolveElementRenderState` does.
+        let marked = view.erasing.contains(&element.id)
+            || element
+                .frame_id
+                .as_ref()
+                .is_some_and(|frame| view.erasing.contains(frame));
+        ERASE_FADE.with(|fade| fade.set(if marked { READY_TO_ERASE_OPACITY } else { 1.0 }));
         paint_element(
             ctx,
             view_transform,
@@ -730,8 +753,16 @@ fn paint_static(
         );
         if clip.is_some() {
             ctx.restore();
+            // `restore` put the context's alpha, stroke, fill, dash and font back to what
+            // they were before the clip, and the caches still hold what was set inside
+            // it. Left alone, the next element with the same values skipped setting them
+            // and drew with the restored ones — a marked element at full strength, or an
+            // unmarked one faded.
+            STATE.with(|s| s.borrow_mut().reset());
+            FONT.with(|f| *f.borrow_mut() = None);
         }
     }
+    ERASE_FADE.with(|fade| fade.set(1.0));
     paint_frame_names(ctx, view);
     ctx.restore();
 }
@@ -882,7 +913,15 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         crate::scene::FRAME_NAME_FONT_SIZE,
     ));
     ctx.set_text_baseline("alphabetic");
-    for (anchor, name) in &view.frame_names {
+    for (anchor, name, frame) in &view.frame_names {
+        // Set for each name, not inherited: the last element painted leaves its own
+        // alpha behind, which faded every name whenever the eraser had marked it. A
+        // name fades with its own frame, as Excalidraw's `renderFrameNames` does.
+        ctx.set_global_alpha(if view.erasing.contains(frame) {
+            READY_TO_ERASE_OPACITY
+        } else {
+            1.0
+        });
         let at = crate::world_to_screen(view.camera, anchor.x, anchor.y);
         let _ = ctx.fill_text(name, at.x, at.y);
     }
