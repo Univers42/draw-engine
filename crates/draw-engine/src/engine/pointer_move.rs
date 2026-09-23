@@ -144,6 +144,15 @@ impl DrawEngine {
                 })
             }
             Interaction::Move { .. } => Some(self.move_selection(it, world, bypass_snap)),
+            Interaction::CornerRadius {
+                ref id,
+                corner,
+                start_radius,
+                grab,
+            } => {
+                self.move_corner_radius(id, corner, start_radius, grab, world);
+                Some(it)
+            }
             Interaction::Resize {
                 ref id,
                 handle,
@@ -196,11 +205,19 @@ impl DrawEngine {
                 self.request_draw();
                 Some(Interaction::Laser)
             }
-            Interaction::Marquee { start, base, .. } => Some(Interaction::Marquee {
-                start,
-                current: world,
-                base,
-            }),
+            Interaction::Marquee { start, base, .. } => {
+                // The rubber band is chrome: nothing in the scene changes as it grows, so
+                // nothing else will mark the frame dirty. Without this the rectangle was
+                // never painted at all — the state followed the pointer perfectly and the
+                // screen showed nothing until release, while the lasso arm above, which
+                // does ask, drew its trail the whole way.
+                self.request_draw();
+                Some(Interaction::Marquee {
+                    start,
+                    current: world,
+                    base,
+                })
+            }
         }
     }
 
@@ -379,6 +396,63 @@ impl DrawEngine {
         self.request_draw();
     }
 
+    /// Detaches each end of a moving arrow whose shape is not moving with it.
+    ///
+    /// Without this a bound arrow could not be moved at all. The move put it somewhere
+    /// new, then `apply_bindings` re-resolved its ends onto the shapes they were bound to
+    /// and put it straight back — every frame — so from the outside it read as blocked.
+    ///
+    /// Excalidraw's rule, `packages/element/src/dragElements.ts:110-167`: an end whose
+    /// shape is also being dragged stays bound and the assembly moves as one; an end whose
+    /// shape stays behind lets go, "otherwise we would have weird situations, like 0
+    /// length arrow when the user moves the arrow outside a filled shape".
+    ///
+    /// One divergence: the oracle applies [`super::DRAGGING_THRESHOLD_PX`] only when the
+    /// arrow is the *single* element dragged, and unbinds a multi-selection on the first
+    /// pixel. Here the threshold always applies. The only observable difference is that a
+    /// sub-ten-pixel wobble of a multi-selection no longer detaches anything — which is
+    /// the outcome nobody who wobbled wanted.
+    ///
+    /// The moving set is `origins`, not the selection, because a frame carries its
+    /// children: an arrow bound to a shape inside a frame being dragged stays bound.
+    fn release_arrows_left_behind(
+        &mut self,
+        origins: &std::collections::HashMap<String, Point>,
+        dx: f64,
+        dy: f64,
+    ) {
+        let travelled = dx.abs().max(dy.abs()) * self.camera.scale;
+        if travelled <= super::DRAGGING_THRESHOLD_PX {
+            return;
+        }
+        let released: Vec<DrawElement> = origins
+            .keys()
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| crate::scene::binding::is_binding_element(el))
+            .filter_map(|el| {
+                let left_behind = |bound: &Option<String>| {
+                    bound.as_ref().is_some_and(|b| !origins.contains_key(b))
+                };
+                let (drop_start, drop_end) =
+                    (left_behind(&el.start_binding), left_behind(&el.end_binding));
+                if !drop_start && !drop_end {
+                    return None;
+                }
+                let mut next = el.clone();
+                if drop_start {
+                    next.start_binding = None;
+                }
+                if drop_end {
+                    next.end_binding = None;
+                }
+                Some(next)
+            })
+            .collect();
+        for element in released {
+            self.scene.put(element);
+        }
+    }
+
     fn move_selection(&mut self, it: Interaction, world: Point, bypass_snap: bool) -> Interaction {
         let Interaction::Move {
             ids,
@@ -415,6 +489,7 @@ impl DrawEngine {
                 self.snap_guides = snap.guides;
             }
         }
+        self.release_arrows_left_behind(&origins, dx, dy);
         for id in &ids {
             if let (Some(mut element), Some(origin)) =
                 (self.scene.get(id).cloned(), origins.get(id))

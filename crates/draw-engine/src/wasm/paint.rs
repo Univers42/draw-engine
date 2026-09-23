@@ -186,6 +186,7 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
         let mut cache = cache.borrow_mut();
 
         if let std::collections::hash_map::Entry::Vacant(slot) = cache.entry(fingerprint) {
+            count_path_lookup(false);
             let built = SHAPES.with(|shapes| {
                 shapes
                     .borrow_mut()
@@ -194,6 +195,8 @@ fn replay(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
                     .unwrap_or_default()
             });
             slot.insert(built);
+        } else {
+            count_path_lookup(true);
         }
 
         let Some(paths) = cache.get(&fingerprint) else {
@@ -495,6 +498,39 @@ thread_local! {
     /// scroll path is working" and "it is quietly never taken" is invisible from the
     /// outside and is exactly the thing a benchmark result hangs on.
     static PLAN_COUNTS: std::cell::Cell<(u32, u32, u32)> = const { std::cell::Cell::new((0, 0, 0)) };
+    /// Path2D lookups: hits, then misses.
+    ///
+    /// **This is the cache that decides per-frame work**, not `SHAPES`. A `Path2D` is
+    /// built once per piece of geometry and stroked with a single canvas call
+    /// thereafter, so a hit here is the difference between one call and thousands.
+    static PATH_COUNTS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+fn count_path_lookup(hit: bool) {
+    PATH_COUNTS.with(|c| {
+        let (hits, misses) = c.get();
+        if hit {
+            c.set((hits + 1, misses));
+        } else {
+            c.set((hits, misses + 1));
+        }
+    });
+}
+
+/// Path2D cache hits and misses, cumulative.
+///
+/// Read this to answer "is geometry being rebuilt". `shape_cache_stats` cannot answer it:
+/// `SHAPES` sits *behind* this cache and is consulted only when this one misses, so its
+/// hit count is normally zero however well everything is working — which reads exactly
+/// backwards. The two are reported side by side and documented so nobody has to
+/// rediscover the layering from a confusing number.
+pub fn path_cache_stats() -> (u64, u64) {
+    PATH_COUNTS.with(|c| c.get())
+}
+
+/// How many Path2D objects are being kept alive.
+pub fn path_cache_len() -> usize {
+    PATHS.with(|cache| cache.borrow().len())
 }
 
 /// Redraws, scrolls and reuses since the last call, then resets.
@@ -502,15 +538,29 @@ pub fn take_plan_counts() -> (u32, u32, u32) {
     PLAN_COUNTS.with(|c| c.replace((0, 0, 0)))
 }
 
-/// Cumulative shape-cache hits and misses.
+/// The same counts, without resetting them.
 ///
-/// The number that says whether rough geometry is being regenerated. Position, zoom and
-/// rotation are applied to the *context*, so none of them should move it — a miss count
-/// climbing during a pan or a drag means the fingerprint covers something it should not,
-/// and that is the difference between a smooth board and a slow one.
+/// **The top-line render number.** There are three caches stacked here, and this is the
+/// outermost: on a `Reuse` frame the static layer's bitmap is kept and no element is
+/// replayed at all, so neither the path cache nor the rough cache is even consulted.
+/// A high `reuses` against `frames` is the renderer working; it also means the two
+/// numbers below it will look frozen, which is correct rather than broken.
+pub fn plan_counts() -> (u32, u32, u32) {
+    PLAN_COUNTS.with(|c| c.get())
+}
+
+/// Cumulative rough-geometry cache hits and misses.
 ///
-/// Read, not taken: it is a running total, so two reads either side of a gesture give
-/// that gesture's cost without disturbing anyone else's measurement.
+/// **Not the headline number.** `SHAPES` sits behind the `Path2D` cache and is consulted
+/// only when *that* one misses, so its hit count stays at zero however well the renderer
+/// is doing, and its miss count settles at the number of distinct pieces of geometry ever
+/// drawn. Reading "0 hits" here as "the cache is broken" is exactly backwards — it means
+/// the cache in front of it is never letting anything through.
+///
+/// Use [`path_cache_stats`] to ask whether geometry is being rebuilt per frame.
+///
+/// Read, not taken: a running total, so two reads either side of a gesture give that
+/// gesture's cost without disturbing anyone else's measurement.
 pub fn shape_cache_stats() -> (u64, u64) {
     SHAPES.with(|shapes| shapes.borrow().stats())
 }
@@ -1222,6 +1272,7 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 
     if view.selected.len() == 1 {
         paint_shape_selection(ctx, view, view.selected[0]);
+        paint_radius_handles(ctx, view);
     } else if view.selected.len() > 1 {
         paint_group_selection(ctx, view);
     }
@@ -1320,6 +1371,34 @@ fn paint_shape_selection(ctx: &CanvasRenderingContext2d, view: &PaintView, eleme
         ctx.stroke();
     }
 }
+
+/// Corner-radius handles: a small circle inside each corner of a selected rectangle.
+///
+/// Circles, where the resize handles are squares, so the two read as different tools at
+/// a glance — one changes the size, the other the shape of the corner. Smaller than the
+/// resize handles because they sit *inside* the shape, over the drawing. The one being
+/// dragged takes the same focus fill as a moving line point.
+fn paint_radius_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.radius_handles.is_empty() {
+        return;
+    }
+    set_dash_cached(ctx, None);
+    for (corner, handle) in view.radius_handles.iter().enumerate() {
+        let s = crate::world_to_screen(view.camera, handle.x, handle.y);
+        ctx.begin_path();
+        let _ = ctx.arc(s.x, s.y, RADIUS_HANDLE_R, 0.0, std::f64::consts::PI * 2.0);
+        if view.active_radius_handle == Some(corner) {
+            set_fill(ctx, POINT_HANDLE_ACTIVE_FILL);
+        } else {
+            set_fill(ctx, &view.theme.background);
+        }
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+/// Radius of a corner-radius handle, in screen pixels.
+const RADIUS_HANDLE_R: f64 = 4.0;
 
 /// A `half`-radius square centred on `(cx, cy)` and turned by `angle`.
 ///

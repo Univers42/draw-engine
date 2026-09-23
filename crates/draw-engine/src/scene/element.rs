@@ -172,6 +172,18 @@ pub struct DrawElement {
     pub roughness: f64,
     pub opacity: f64,
     pub roundness: Option<f64>,
+    /// An explicit corner radius, set by dragging a corner-radius handle.
+    ///
+    /// `None` — every element saved before this existed — means the adaptive rule, exactly
+    /// as before. It is a separate field rather than the number already in `roundness`
+    /// because that number has always been written (`8`) and always ignored: honouring it
+    /// now would sharpen every rounded rectangle on every existing board.
+    ///
+    /// The oracle has the same slot, `roundness.value`, read as a fixed radius by
+    /// `getCornerRadius` and never set by its UI. Only applies while `roundness` is set:
+    /// Sharp wins, and the radius is remembered for when it is Round again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner_radius: Option<f64>,
     pub seed: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<[f64; 2]>>,
@@ -318,6 +330,7 @@ pub fn create_element(
         roughness: style.roughness,
         opacity: style.opacity,
         roundness: style.roundness,
+        corner_radius: None,
         seed: rand_int(),
         points: None,
         start_binding: None,

@@ -27,6 +27,17 @@ export interface HostProbe {
   pointerEvents: number;
   /** Moves actually forwarded to the engine, after per-frame coalescing. */
   engineSteps: number;
+  /**
+   * Calls to the **host's** `hitTest()` wrapper.
+   *
+   * Narrower than it sounds, and worth saying so: selecting by clicking does *not* go
+   * through here. The engine hit-tests internally, in Rust, on the pointer path — this
+   * only counts the times a host asks the question explicitly. So a session of ordinary
+   * clicking reads zero, which is correct and not a broken counter.
+   *
+   * It is still the right place to measure *this* call, because hit testing is a linear
+   * scan with no spatial index and a host that polls it per mousemove pays for that.
+   */
   hitTests: number;
   /** Cumulative, so two reads either side of a gesture give that gesture's cost. */
   hitTestMs: number;
