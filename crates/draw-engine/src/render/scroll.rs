@@ -222,6 +222,47 @@ pub struct MotionBlit {
     pub dy: f64,
 }
 
+impl MotionBlit {
+    /// The parts of a `width` × `height` device canvas the moved picture does not cover,
+    /// in whole device pixels, rounded outward so they overlap the picture's edge.
+    ///
+    /// They are painted for real, over the moved picture. Left bare, a pan showed a strip
+    /// of empty paper along the edge the board was coming in from until the camera
+    /// stopped — at the edge someone is looking at, because it is where they are going.
+    pub fn exposed(&self, width: f64, height: f64) -> Vec<Rect> {
+        let left = self.dx;
+        let right = self.dx + width * self.scale;
+        let top = self.dy;
+        let bottom = self.dy + height * self.scale;
+        let mut rects = Vec::with_capacity(4);
+        let mut strip = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            let (x0, y0) = (x0.floor().max(0.0), y0.floor().max(0.0));
+            let (x1, y1) = (x1.ceil().min(width), y1.ceil().min(height));
+            if x1 > x0 && y1 > y0 {
+                rects.push(Rect {
+                    x: x0,
+                    y: y0,
+                    width: x1 - x0,
+                    height: y1 - y0,
+                });
+            }
+        };
+        if left > 0.0 {
+            strip(0.0, 0.0, left, height);
+        }
+        if right < width {
+            strip(right, 0.0, width, height);
+        }
+        if top > 0.0 {
+            strip(0.0, 0.0, width, top);
+        }
+        if bottom < height {
+            strip(0.0, bottom, width, height);
+        }
+        rects
+    }
+}
+
 /// How much a reused picture may leave uncovered before it is repainted instead.
 const MOTION_MIN_COVERAGE: f64 = 0.85;
 /// How far the zoom may drift from the picture's before it is repainted instead: the
@@ -234,9 +275,10 @@ const MOTION_MAX_DRIFT: f64 = 1.25;
 /// A pan or a zoom used to repaint every visible element on every frame, which at 15% on
 /// a board of 2,000 strokes was the whole board, fourteen milliseconds a frame and more
 /// with every stroke added. While the camera is moving the eye cannot tell a moved or
-/// slightly scaled picture from a repainted one, so the picture is reused until it would
-/// leave more than a sixth of the screen blank or has been scaled by more than a quarter —
-/// then one real repaint, and reuse again from that. The frame after motion stops is
+/// slightly scaled picture from a repainted one, so the picture is reused — with the
+/// edges it no longer covers painted for real, see [`MotionBlit::exposed`] — until those
+/// edges would be more than a sixth of the screen or it has been scaled by more than a
+/// quarter; then one real repaint, and reuse again from that. The frame after motion stops is
 /// always drawn from scratch, so nothing approximate is ever left on screen.
 ///
 /// `None` means repaint.

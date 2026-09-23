@@ -493,3 +493,85 @@ fn zooming_out_leaves_a_border_and_repaints_once_it_is_too_wide() {
     // …but out by 10% leaves a fifth of the screen blank, which is not.
     assert!(plan_motion(cam(0.0, 0.0, 1.0), cam(64.0, 40.0, 0.9), 1.0, 1280.0, 800.0).is_none());
 }
+
+#[test]
+fn a_pan_paints_the_edge_it_uncovers() {
+    // Moved 30 pixels left: the right-hand 30 pixels are what the picture no longer
+    // reaches, and they are painted rather than left as bare paper.
+    let blit = MotionBlit {
+        scale: 1.0,
+        dx: -30.0,
+        dy: 0.0,
+    };
+    assert_eq!(
+        blit.exposed(1280.0, 800.0),
+        vec![Rect {
+            x: 1250.0,
+            y: 0.0,
+            width: 30.0,
+            height: 800.0
+        }]
+    );
+}
+
+#[test]
+fn a_diagonal_pan_paints_both_edges() {
+    let blit = MotionBlit {
+        scale: 1.0,
+        dx: 12.0,
+        dy: -8.0,
+    };
+    let exposed = blit.exposed(1280.0, 800.0);
+    assert_eq!(exposed.len(), 2);
+    assert!(exposed.contains(&Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 12.0,
+        height: 800.0
+    }));
+    assert!(exposed.contains(&Rect {
+        x: 0.0,
+        y: 792.0,
+        width: 1280.0,
+        height: 8.0
+    }));
+}
+
+#[test]
+fn zooming_out_paints_the_border_all_round_in_whole_pixels() {
+    // Out by 5% about the centre: the picture shrinks to a 1216 x 760 box starting at
+    // (32, 20), and the border is rounded outward so it overlaps the picture's soft edge.
+    let blit = plan_motion(
+        cam(0.0, 0.0, 1.0),
+        cam(32.0, 20.0, 0.95),
+        1.0,
+        1280.0,
+        800.0,
+    )
+    .expect("reused");
+    let exposed = blit.exposed(1280.0, 800.0);
+    assert_eq!(exposed.len(), 4);
+    for rect in &exposed {
+        for v in [rect.x, rect.y, rect.width, rect.height] {
+            assert_eq!(v, v.round(), "{rect:?} is not in whole pixels");
+        }
+    }
+    let covers = |x: f64, y: f64| {
+        exposed
+            .iter()
+            .any(|r| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height)
+    };
+    assert!(covers(5.0, 400.0) && covers(1275.0, 400.0));
+    assert!(covers(640.0, 5.0) && covers(640.0, 795.0));
+    assert!(!covers(640.0, 400.0), "the middle is the moved picture");
+}
+
+#[test]
+fn zooming_in_uncovers_nothing() {
+    let blit = MotionBlit {
+        scale: 1.1,
+        dx: -64.0,
+        dy: -40.0,
+    };
+    assert!(blit.exposed(1280.0, 800.0).is_empty());
+}

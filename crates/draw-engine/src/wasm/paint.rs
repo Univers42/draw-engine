@@ -878,8 +878,9 @@ fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[
 ///
 /// `only` limits it to the strips that have just come into view — elements outside them
 /// are skipped rather than clipped, because a clipped draw still builds every path before
-/// the rasteriser discards it. Nothing passes anything but `None` today: see the note on
-/// `LayerPlan::Scroll` in `paint` for why the strip path is not taken yet.
+/// the rasteriser discards it. Only the frames in motion pass strips, over a moved
+/// picture that the frame after the motion replaces: see the note on
+/// `LayerPlan::Scroll` in `paint` for why the persistent layer is never patched this way.
 fn paint_static(
     ctx: &CanvasRenderingContext2d,
     view: &PaintView,
@@ -1005,12 +1006,19 @@ impl Painter for CanvasPainter<'_> {
                         FONT.with(|f| *f.borrow_mut() = None);
                         ctx.set_global_alpha(1.0);
                         let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
-                        // The paper first, for whatever the moved picture leaves bare.
+                        let (w, h) = (f64::from(device.0), f64::from(device.1));
+                        // The paper first: a scaled picture's edge is a fraction of a
+                        // pixel, and what shows through it must be the paper.
                         set_fill(ctx, &view.theme.background);
-                        ctx.fill_rect(0.0, 0.0, f64::from(device.0), f64::from(device.1));
+                        ctx.fill_rect(0.0, 0.0, w, h);
                         let _ =
                             ctx.set_transform(blit.scale, 0.0, 0.0, blit.scale, blit.dx, blit.dy);
                         let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+                        // Then what the picture does not reach, painted for real.
+                        let exposed = blit.exposed(w, h);
+                        if !exposed.is_empty() {
+                            paint_static(ctx, view, Some(&exposed));
+                        }
                         layers.overlay_drawn = true;
                         return Some(false);
                     }
