@@ -10,6 +10,11 @@ impl DrawEngine {
     /// `invert_snap` is the host's Ctrl/Cmd: it flips object snapping for this move, on
     /// when it is off and off when it is on, exactly as Excalidraw's `isSnappingEnabled`.
     pub fn move_pointer(&mut self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
+        self.move_pointer_step(sx, sy, square, invert_snap);
+        self.refresh_live();
+    }
+
+    fn move_pointer_step(&mut self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         let Some(it) = self.interaction.take() else {
             // No gesture in progress — but a path being placed point by point still
             // follows the cursor between its clicks, which is the whole of how it is

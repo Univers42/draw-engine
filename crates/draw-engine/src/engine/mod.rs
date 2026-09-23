@@ -18,6 +18,7 @@ mod eraser;
 mod frame;
 mod hover;
 mod image;
+mod live;
 pub use image::EmbedFrame;
 mod multi_linear;
 mod pointer;
@@ -168,7 +169,7 @@ impl Default for DrawEngine {
 impl DrawEngine {
     pub fn new() -> Self {
         Self {
-            scene: Scene::default(),
+            scene: Scene::new([]),
             theme: light_theme(),
             grid: GridSettings::default(),
             camera: IDENTITY,
@@ -225,6 +226,13 @@ impl DrawEngine {
 
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
+        // Whatever the painter holds is a picture of the scene this replaced.
+        self.scene.start_journal();
+        // Built by adding every element, so every element was pending for the host —
+        // and the first edit after loading a board sent the whole board as its delta:
+        // five megabytes of JSON for one stroke on a board of 2,000, serialised here and
+        // parsed twice more on the other side. The host supplied this scene; it has it.
+        self.scene.forget_pending();
         self.reset_history();
         self.request_draw();
     }
@@ -383,6 +391,11 @@ impl DrawEngine {
     }
 
     pub fn set_tool(&mut self, tool: DrawTool) {
+        self.set_tool_step(tool);
+        self.refresh_live();
+    }
+
+    fn set_tool_step(&mut self, tool: DrawTool) {
         if tool == self.tool {
             return;
         }
@@ -428,6 +441,11 @@ impl DrawEngine {
     /// active, so switching away on a second click would contradict what is on screen —
     /// which is why the two doors are separate.
     pub fn activate_tool(&mut self, tool: DrawTool) {
+        self.activate_tool_step(tool);
+        self.refresh_live();
+    }
+
+    fn activate_tool_step(&mut self, tool: DrawTool) {
         if tool == self.tool && crate::is_toggle_tool(tool) {
             // Toggling back is leaving the tool too, and skips `set_tool`: pressing E
             // again mid-sweep switched to select while the sweep went on marking, and

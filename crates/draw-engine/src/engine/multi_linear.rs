@@ -51,6 +51,11 @@ impl DrawEngine {
     /// points thrown away by a reflexive Escape is six points of work gone. Cancelling is
     /// what undo is for.
     pub fn finish_linear(&mut self) {
+        self.finish_linear_step();
+        self.refresh_live();
+    }
+
+    fn finish_linear_step(&mut self) {
         if self.finish_multi_linear() {
             self.settle_tool();
         }

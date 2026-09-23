@@ -150,6 +150,18 @@ thread_local! {
     /// Fingerprints drawn since the last eviction.
     static PATHS_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// One `Path2D` per freehand stroke per detail level, keyed by its geometry.
+    ///
+    /// See `paint_freedraw`: before this, every stroke's outline was computed and
+    /// replayed call by call on every frame.
+    static FREEHAND: std::cell::RefCell<HashMap<u64, Option<Path2d>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FREEHAND_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// The detail level of the frame being painted. See `PaintView::detail_scale`.
+    static DETAIL_LEVEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
 }
 
 /// The paths built for one piece of geometry.
@@ -259,6 +271,14 @@ fn evict_paths(live: &[&DrawElement]) {
         }
         cache.retain(|fingerprint, _| used.contains(fingerprint));
     });
+    FREEHAND.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let used = FREEHAND_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
+        if cache.len() <= budget {
+            return;
+        }
+        cache.retain(|fingerprint, _| used.contains(fingerprint));
+    });
 }
 
 thread_local! {
@@ -305,14 +325,23 @@ fn with_element_transform(
     let fade = ERASE_FADE.with(std::cell::Cell::get);
     set_alpha_cached(ctx, (element.opacity / 100.0).clamp(0.0, 1.0) * fade);
 
+    let m = mul(view, element_matrix(element));
+    let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+
+    body();
+}
+
+/// An element's own transform — mirror, position, rotation — from its local space to the
+/// world.
+fn element_matrix(element: &DrawElement) -> [f64; 6] {
     // Shapes only: a line or arrow carries its mirror in its points, so the sign of its
     // width means nothing and applying it would reverse the element a second time.
     let (sx, sy) = crate::scene::geometry::mirror_signs(element);
 
     // Element-local: mirror, then translate to the origin, and rotate about the centre
     // if turned.
-    let (a, b, c, d, e, f) = if element.angle == 0.0 {
-        (sx, 0.0, 0.0, sy, element.x, element.y)
+    if element.angle == 0.0 {
+        [sx, 0.0, 0.0, sy, element.x, element.y]
     } else {
         // The pivot in the element's own coordinates, and the same pivot in world space.
         // For a shape this is the middle of its box, as before. For a line or arrow it is
@@ -323,20 +352,15 @@ fn with_element_transform(
         let centre = crate::scene::geometry::rotation_center(element);
         let (sin, cos) = element.angle.sin_cos();
         // T(centre) * R * S(sx, sy) * T(-local centre)
-        (
+        [
             sx * cos,
             sx * sin,
             -sy * sin,
             sy * cos,
             centre.x - sx * cos * lcx + sy * sin * lcy,
             centre.y - sx * sin * lcx - sy * cos * lcy,
-        )
-    };
-
-    let m = mul(view, [a, b, c, d, e, f]);
-    let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-
-    body();
+        ]
+    }
 }
 
 /// Multiplies two 2x3 affine transforms in Canvas2D's `[a, b, c, d, e, f]` order.
@@ -511,6 +535,14 @@ struct Layers {
     /// When it has not, and nothing has changed, the canvas already shows the right
     /// picture and the frame can be skipped entirely.
     overlay_drawn: bool,
+    /// While a gesture runs: what sits above the live elements, cached like `front`,
+    /// which then holds what sits below them. Made the first time it is needed.
+    above: Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)>,
+    above_painted: Option<(crate::render::scroll::LayerKey, crate::camera::Camera)>,
+    /// What `front` holds in terms of the scene, for bringing it up to date by painting
+    /// on top of it — with the chrome digest it was painted under. `None` when it holds
+    /// something that cannot be: what is below a live element with more above it.
+    base: Option<(crate::render::append::PictureBase, u64)>,
 }
 
 thread_local! {
@@ -565,8 +597,63 @@ fn invalidate_layer() {
     LAYERS.with(|cell| {
         if let Some(layers) = cell.borrow_mut().as_mut() {
             layers.painted = None;
+            layers.base = None;
         }
     });
+}
+
+/// A picture of the whole scene as it is.
+fn whole_picture(view: &PaintView) -> crate::render::append::PictureBase {
+    crate::render::append::PictureBase {
+        revision: view.scene_revision,
+        left_out: Vec::new(),
+    }
+}
+
+/// Brings `front` up to the scene as it is by painting what is new on top of it, when
+/// that is all that changed — see [`crate::render::append`]. Returns whether it did.
+///
+/// Only for a picture of the same view: same camera, same size and resolution, same
+/// chrome. And never with frames on the board: their names are painted over everything
+/// in a whole picture and are missing from the one a gesture leaves behind.
+fn paint_on_top(
+    layers: &mut Layers,
+    view: &PaintView,
+    key: crate::render::scroll::LayerKey,
+    digest: u64,
+) -> bool {
+    let Some((painted_key, painted_camera)) = layers.painted else {
+        return false;
+    };
+    let Some((base, base_digest)) = &layers.base else {
+        return false;
+    };
+    let same_view = painted_camera == view.camera
+        && painted_key.scale == key.scale
+        && painted_key.dpr == key.dpr
+        && painted_key.width == key.width
+        && painted_key.height == key.height
+        && *base_digest == digest
+        && view.frame_names.is_empty();
+    if !same_view || (base.revision == view.scene_revision && base.left_out.is_empty()) {
+        return false;
+    }
+    let Some(top) = crate::render::append::plan_append(
+        base,
+        view.scene.changes_since(base.revision),
+        &view.elements,
+    ) else {
+        return false;
+    };
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    layers.front_ctx.save();
+    layers.front_ctx.set_global_alpha(1.0);
+    paint_elements(&layers.front_ctx, view, &top);
+    layers.front_ctx.restore();
+    layers.painted = Some((key, view.camera));
+    layers.base = Some((whole_picture(view), digest));
+    true
 }
 
 /// Redraws, scrolls and reuses since the last call, then resets.
@@ -661,46 +748,196 @@ fn device_bounds(view: &PaintView, element: &DrawElement) -> crate::scene::geome
     }
 }
 
-/// Draws the static scene — background, grid, elements, frame names — into `ctx`.
-///
-/// `only` limits it to the strips that have just come into view — elements outside them
-/// are skipped rather than clipped, because a clipped draw still builds every path before
-/// the rasteriser discards it. Nothing passes anything but `None` today: see the note on
-/// `LayerPlan::Scroll` in `paint` for why the strip path is not taken yet.
-fn paint_static(
-    ctx: &CanvasRenderingContext2d,
-    view: &PaintView,
-    only: Option<&[crate::scene::geometry::Rect]>,
-) {
-    let dpr = view.dpr;
-    // A fresh context has none of the state the cache believes it set.
-    STATE.with(|s| s.borrow_mut().reset());
-    FONT.with(|f| *f.borrow_mut() = None);
+/// Marks a layer key with what it holds, so a picture of one part of the scene can never
+/// be taken for a picture of another that happens to share the numbers.
+const WHOLE_SCENE: u64 = 0x5ce3_e000;
+const BELOW_LIVE: u64 = 0xb3_10e0;
+const ABOVE_LIVE: u64 = 0xab_0e00;
 
-    ctx.save();
-    if let Some(rects) = only {
-        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
-        // Cleared before the clip is set, not after. A clipped clear antialiases against
-        // the clip edge, so the boundary pixel ends up a blend of the shifted old content
-        // and the new — a seam one pixel wide, which then travels with the picture on
-        // every later scroll. Clearing the exact integer rectangle first means those
-        // pixels are fully replaced rather than blended into.
-        for rect in rects {
-            ctx.clear_rect(rect.x, rect.y, rect.width, rect.height);
-        }
-        ctx.begin_path();
-        for rect in rects {
-            ctx.rect(rect.x, rect.y, rect.width, rect.height);
-        }
-        ctx.clip();
+/// Paints a frame while a gesture runs: cached pictures of everything the gesture does
+/// not touch, and only the live elements drawn fresh.
+///
+/// Everything below the first live element in stacking order is one cached layer, and
+/// everything above it another; the live elements are drawn between the two, so stacking
+/// order holds. Both layers are keyed on the scene's `static_revision`, which stays put
+/// while only live elements change — so a frame of a drag or a stroke copies two
+/// pictures and draws what moved, where it used to repaint the whole board. Returns
+/// whether both layers had to be drawn from scratch.
+fn paint_live(
+    ctx: &CanvasRenderingContext2d,
+    layers: &mut Layers,
+    view: &PaintView,
+    key: crate::render::scroll::LayerKey,
+    device: (u32, u32),
+) -> bool {
+    use crate::render::scroll::{plan_layer, LayerKey, LayerPlan};
+
+    let split = view
+        .elements
+        .iter()
+        .position(|element| view.live.contains(&element.id))
+        .unwrap_or(view.elements.len());
+    let below = &view.elements[..split];
+    let (live, above): (Vec<&DrawElement>, Vec<&DrawElement>) = view.elements[split..]
+        .iter()
+        .partition(|element| view.live.contains(&element.id));
+
+    let keyed = |part: u64| LayerKey {
+        content: view.static_revision,
+        chrome: key.chrome ^ part,
+        ..key
+    };
+
+    let below_key = keyed(BELOW_LIVE);
+    let mut drew_below = false;
+    if !matches!(
+        plan_layer(layers.painted, below_key, view.camera),
+        LayerPlan::Reuse
+    ) && !adopt_as_below(layers, view, &live, key, below_key)
+    {
+        paint_layer(&layers.front_ctx, view, below, true);
+        layers.painted = Some((below_key, view.camera));
+        // Everything but the live elements, when they are the top of the stack: then the
+        // whole scene is this picture with them painted over it, which is how the frame
+        // after the gesture gets it.
+        layers.base = above.is_empty().then(|| {
+            (
+                crate::render::append::PictureBase {
+                    revision: view.scene_revision,
+                    left_out: live.iter().map(|element| element.id.clone()).collect(),
+                },
+                chrome_digest(view),
+            )
+        });
+        drew_below = true;
     }
 
-    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
-    ctx.clear_rect(0.0, 0.0, view.width, view.height);
-    set_fill(ctx, &view.theme.background);
-    ctx.fill_rect(0.0, 0.0, view.width, view.height);
-    paint_grid(ctx, view);
+    let mut drew_above = above.is_empty();
+    if !above.is_empty() {
+        if layers.above.is_none() {
+            layers.above = make_layer(device.0, device.1);
+            layers.above_painted = None;
+        }
+        if let Some((_, above_ctx)) = &layers.above {
+            let above_key = keyed(ABOVE_LIVE);
+            if !matches!(
+                plan_layer(layers.above_painted, above_key, view.camera),
+                LayerPlan::Reuse
+            ) {
+                paint_layer(above_ctx, view, &above, false);
+                layers.above_painted = Some((above_key, view.camera));
+                drew_above = true;
+            }
+        }
+    }
+    // A redraw is a layer actually painted. `drew_above` also stands for "there is no
+    // above", which is not one: counted as one, every frame of every gesture on the top
+    // of the stack reported a redraw of the board that never happened.
+    let redrew = drew_below || (drew_above && !above.is_empty());
+    count_plan(u32::from(redrew), 0, u32::from(!redrew));
 
+    // Composed on the target: what is below, what is live, what is above.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    ctx.set_global_alpha(1.0);
+    let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, f64::from(device.0), f64::from(device.1));
+    let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+    paint_elements(ctx, view, &live);
+    if !above.is_empty() {
+        if let Some((above_canvas, _)) = &layers.above {
+            STATE.with(|s| s.borrow_mut().reset());
+            ctx.set_global_alpha(1.0);
+            let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+            let _ = ctx.draw_image_with_html_canvas_element(above_canvas, 0.0, 0.0);
+        }
+    }
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    paint_frame_names(ctx, view);
+    // The chrome is always redrawn over a live frame; nothing here is ever "already on
+    // the canvas".
+    layers.overlay_drawn = true;
+    drew_below && drew_above
+}
+
+/// Takes the picture in `front` as the layer below a gesture when it already is that —
+/// see [`crate::render::append::holds_all_but`]. Returns whether it did.
+fn adopt_as_below(
+    layers: &mut Layers,
+    view: &PaintView,
+    live: &[&DrawElement],
+    key: crate::render::scroll::LayerKey,
+    below_key: crate::render::scroll::LayerKey,
+) -> bool {
+    let Some((painted_key, painted_camera)) = layers.painted else {
+        return false;
+    };
+    let Some((base, digest)) = &layers.base else {
+        return false;
+    };
+    let same_view = painted_camera == view.camera
+        && painted_key.scale == key.scale
+        && painted_key.dpr == key.dpr
+        && painted_key.width == key.width
+        && painted_key.height == key.height
+        && *digest == chrome_digest(view)
+        // A whole picture has the frame names over everything; the layer below a gesture
+        // has none.
+        && view.frame_names.is_empty();
+    if !same_view
+        || !crate::render::append::holds_all_but(
+            base,
+            view.scene.changes_since(base.revision),
+            &view.elements,
+            live,
+        )
+    {
+        return false;
+    }
+    let mut left_out = base.left_out.clone();
+    left_out.extend(live.iter().map(|element| element.id.clone()));
+    layers.base = Some((
+        crate::render::append::PictureBase {
+            revision: base.revision,
+            left_out,
+        },
+        *digest,
+    ));
+    layers.painted = Some((below_key, view.camera));
+    true
+}
+
+/// Draws a cached layer from scratch: the paper and the grid when it is the bottom one,
+/// then `elements`.
+fn paint_layer(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    elements: &[&DrawElement],
+    backdrop: bool,
+) {
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    ctx.save();
+    ctx.set_global_alpha(1.0);
+    let _ = ctx.set_transform(view.dpr, 0.0, 0.0, view.dpr, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, view.width, view.height);
+    if backdrop {
+        set_fill(ctx, &view.theme.background);
+        ctx.fill_rect(0.0, 0.0, view.width, view.height);
+        paint_grid(ctx, view);
+    }
+    paint_elements(ctx, view, elements);
+    ctx.restore();
+}
+
+/// Draws `elements` in order, each with its own transform, frame clip and eraser fade.
+///
+/// The context's transform is left as the last element set it.
+fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[&DrawElement]) {
+    let dpr = view.dpr;
+    DETAIL_LEVEL.with(|level| {
+        level.set(crate::render::path_data::lod_level(view.detail_scale));
+    });
     // Device pixel ratio and camera, folded into one matrix and combined with each
     // element's own transform rather than pushed and popped around every element.
     let s = view.camera.scale;
@@ -713,12 +950,7 @@ fn paint_static(
         dpr * view.camera.y,
     ];
 
-    for element in &view.elements {
-        if let Some(rects) = only {
-            if !crate::render::scroll::intersects_any(device_bounds(view, element), rects) {
-                continue;
-            }
-        }
+    for element in elements {
         // A child that pokes out of its frame is cut off at the frame's edge — that
         // is what makes a frame read as a window onto a region rather than as a
         // rectangle drawn behind things. The engine decides which children need it.
@@ -763,6 +995,61 @@ fn paint_static(
         }
     }
     ERASE_FADE.with(|fade| fade.set(1.0));
+}
+
+/// Draws the static scene — background, grid, elements, frame names — into `ctx`.
+///
+/// `only` limits it to the strips that have just come into view — elements outside them
+/// are skipped rather than clipped, because a clipped draw still builds every path before
+/// the rasteriser discards it. Only the frames in motion pass strips, over a moved
+/// picture that the frame after the motion replaces: see the note on
+/// `LayerPlan::Scroll` in `paint` for why the persistent layer is never patched this way.
+fn paint_static(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    only: Option<&[crate::scene::geometry::Rect]>,
+) {
+    let dpr = view.dpr;
+    // A fresh context has none of the state the cache believes it set.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+
+    ctx.save();
+    if let Some(rects) = only {
+        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+        // Cleared before the clip is set, not after. A clipped clear antialiases against
+        // the clip edge, so the boundary pixel ends up a blend of the shifted old content
+        // and the new — a seam one pixel wide, which then travels with the picture on
+        // every later scroll. Clearing the exact integer rectangle first means those
+        // pixels are fully replaced rather than blended into.
+        for rect in rects {
+            ctx.clear_rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.begin_path();
+        for rect in rects {
+            ctx.rect(rect.x, rect.y, rect.width, rect.height);
+        }
+        ctx.clip();
+    }
+
+    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+    ctx.clear_rect(0.0, 0.0, view.width, view.height);
+    set_fill(ctx, &view.theme.background);
+    ctx.fill_rect(0.0, 0.0, view.width, view.height);
+    paint_grid(ctx, view);
+
+    let elements: Vec<&DrawElement> = match only {
+        Some(rects) => view
+            .elements
+            .iter()
+            .filter(|element| {
+                crate::render::scroll::intersects_any(device_bounds(view, element), rects)
+            })
+            .copied()
+            .collect(),
+        None => view.elements.clone(),
+    };
+    paint_elements(ctx, view, &elements);
     paint_frame_names(ctx, view);
     ctx.restore();
 }
@@ -787,7 +1074,7 @@ impl Painter for CanvasPainter<'_> {
             // layer on every pan — which is precisely the frame the layer exists for.
             // Measured before the change: 120 redraws and zero scrolls across a pan.
             content: view.scene_revision,
-            chrome: chrome_digest(view),
+            chrome: chrome_digest(view) ^ WHOLE_SCENE,
         };
 
         let drew_everything = LAYERS.with(|cell| {
@@ -804,10 +1091,66 @@ impl Painter for CanvasPainter<'_> {
                     painted: None,
                     device,
                     overlay_drawn: true,
+                    above: None,
+                    above_painted: None,
+                    base: None,
                 });
             }
             let layers = slot.as_mut().expect("just built");
 
+            if !view.live.is_empty() {
+                return Some(paint_live(ctx, layers, view, key, device));
+            }
+
+            // While the camera is moving, the last picture moved or scaled to where the
+            // camera is now, instead of the whole board painted again — see
+            // `plan_motion`. Only for the same picture: anything else about the frame
+            // changing means painting it.
+            if view.in_motion {
+                if let Some((painted_key, painted_camera)) = layers.painted {
+                    let same_picture = painted_key.content == key.content
+                        && painted_key.chrome == key.chrome
+                        && painted_key.dpr == key.dpr
+                        && painted_key.width == key.width
+                        && painted_key.height == key.height;
+                    let blit = same_picture
+                        .then(|| {
+                            crate::render::scroll::plan_motion(
+                                painted_camera,
+                                view.camera,
+                                dpr,
+                                f64::from(device.0),
+                                f64::from(device.1),
+                            )
+                        })
+                        .flatten();
+                    if let Some(blit) = blit {
+                        count_plan(0, 1, 0);
+                        STATE.with(|s| s.borrow_mut().reset());
+                        FONT.with(|f| *f.borrow_mut() = None);
+                        ctx.set_global_alpha(1.0);
+                        let _ = ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                        let (w, h) = (f64::from(device.0), f64::from(device.1));
+                        // The paper first: a scaled picture's edge is a fraction of a
+                        // pixel, and what shows through it must be the paper.
+                        set_fill(ctx, &view.theme.background);
+                        ctx.fill_rect(0.0, 0.0, w, h);
+                        let _ =
+                            ctx.set_transform(blit.scale, 0.0, 0.0, blit.scale, blit.dx, blit.dy);
+                        let _ = ctx.draw_image_with_html_canvas_element(&layers.front, 0.0, 0.0);
+                        // Then what the picture does not reach, painted for real.
+                        let exposed = blit.exposed(w, h);
+                        if !exposed.is_empty() {
+                            paint_static(ctx, view, Some(&exposed));
+                        }
+                        layers.overlay_drawn = true;
+                        return Some(false);
+                    }
+                }
+            }
+
+            let digest = chrome_digest(view);
+            let appended = paint_on_top(layers, view, key, digest);
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
                 view.selected.len(),
@@ -825,7 +1168,9 @@ impl Painter for CanvasPainter<'_> {
                     // Nothing changed and nothing is drawn over it: the canvas already
                     // holds this exact frame. Copying it onto itself would be a
                     // full-canvas memcpy to produce the picture that is already there.
-                    if bare && !layers.overlay_drawn {
+                    // Unless the layer was just painted on: then the canvas does not
+                    // have what is new yet.
+                    if bare && !layers.overlay_drawn && !appended {
                         return Some(false);
                     }
                     false
@@ -833,6 +1178,7 @@ impl Painter for CanvasPainter<'_> {
                 LayerPlan::Redraw => {
                     count_plan(1, 0, 0);
                     paint_static(&layers.front_ctx, view, None);
+                    layers.base = Some((whole_picture(view), digest));
                     true
                 }
                 // Not taken yet, deliberately. Redrawing only the strip that has come
@@ -853,6 +1199,7 @@ impl Painter for CanvasPainter<'_> {
                 LayerPlan::Scroll { .. } => {
                     count_plan(1, 0, 0);
                     paint_static(&layers.front_ctx, view, None);
+                    layers.base = Some((whole_picture(view), digest));
                     true
                 }
             };
@@ -1158,35 +1505,51 @@ fn paint_freedraw(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &Draw
     if points.len() < 2 {
         return;
     }
+    let level = DETAIL_LEVEL.with(std::cell::Cell::get);
+    let key = crate::render::path_data::freehand_fingerprint(points, element.stroke_width, level);
+    FREEHAND_USED.with(|used| used.borrow_mut().insert(key));
     with_element_transform(ctx, view, element, || {
         // Filled, not stroked. The width varies along the stroke — faster means thinner,
         // the way a real nib behaves — and `lineWidth` is one number for a whole path,
         // so the only way to draw a varying width is to fill the region between the two
-        // sides of it. `stroke_outline` walks down one side and back up the other.
+        // sides of it.
         set_fill(ctx, &element.stroke_color);
-        let outline = crate::freehand::stroke_outline(
-            points,
-            element.stroke_width,
-            crate::freehand::THINNING,
-        );
-        if outline.len() < 3 {
-            return;
-        }
-        ctx.begin_path();
-        ctx.move_to(outline[0][0], outline[0][1]);
-        // Through the midpoints, with each sample as the control point of a quadratic.
-        // Drawing straight to the samples puts a hard corner at every one of them, which
-        // is the shake this whole path exists to remove — the streamlining softens where
-        // the samples *are*, and this softens the joins between them.
-        for i in 1..outline.len() {
-            let current = outline[i];
-            let next = outline[(i + 1) % outline.len()];
-            let mid = [(current[0] + next[0]) / 2.0, (current[1] + next[1]) / 2.0];
-            ctx.quadratic_curve_to(current[0], current[1], mid[0], mid[1]);
-        }
-        ctx.close_path();
-        ctx.fill();
+        FREEHAND.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let path = cache.entry(key).or_insert_with(|| {
+                count_path_lookup(false);
+                freehand_path(points, element.stroke_width, level)
+            });
+            if let Some(path) = path {
+                ctx.fill_with_path_2d(path);
+            }
+        });
     });
+}
+
+/// The `Path2D` of a freehand stroke at one detail level, or `None` for a stroke with no
+/// outline to fill.
+///
+/// Built once and kept: it depends on the samples and the width, not on where the stroke
+/// is or how it is turned — those are the context's transform — so panning, zooming
+/// within a level and dragging all reuse it. It used to be recomputed and replayed call
+/// by call on every frame, for every stroke on the board.
+fn freehand_path(points: &[[f64; 2]], stroke_width: f64, level: i32) -> Option<Path2d> {
+    let outline = crate::freehand::stroke_outline(points, stroke_width, crate::freehand::THINNING);
+    if outline.len() < 3 {
+        return None;
+    }
+    let simplified = crate::render::path_data::simplify(
+        &outline,
+        crate::render::path_data::lod_tolerance(level),
+    );
+    // A stroke so small it simplifies away entirely still has to show up as something.
+    let shape = if simplified.len() >= 3 {
+        simplified
+    } else {
+        outline
+    };
+    Path2d::new_with_path_string(&crate::render::path_data::smooth_closed_outline(&shape)).ok()
 }
 
 /// Draws a text element.
@@ -1488,6 +1851,106 @@ fn handle_square(ctx: &CanvasRenderingContext2d, cx: f64, cy: f64, half: f64, an
     ctx.close_path();
 }
 
+/// How wide a member's trace is, in CSS pixels.
+const MEMBER_OUTLINE_PX: f64 = 1.5;
+
+/// Traces each member of a multi-selection along its own shape, in the selection colour.
+///
+/// It used to be a padded box around each member — Excalidraw's look — which on a board of
+/// neighbouring shapes was a lattice of rectangles over everything, the same for a circle
+/// as for a scribble, hiding what it was meant to point at. The trace is the shape itself:
+/// the edge of a rectangle, the curve of an ellipse or a line, the ink of a stroke. See
+/// [`crate::render::outline`].
+fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    use crate::render::outline::{element_outline, Outline};
+    use draw_rough::renderer::Segment;
+
+    let dpr = view.dpr;
+    let s = view.camera.scale;
+    let view_transform = [
+        dpr * s,
+        0.0,
+        0.0,
+        dpr * s,
+        dpr * view.camera.x,
+        dpr * view.camera.y,
+    ];
+    let level = crate::render::path_data::lod_level(view.detail_scale);
+    let selected: std::collections::HashSet<&str> =
+        view.selected.iter().map(|e| e.id.as_str()).collect();
+
+    ctx.save();
+    // In the element's own units, where one CSS pixel is `1 / scale`.
+    ctx.set_line_width(MEMBER_OUTLINE_PX / s.max(f64::MIN_POSITIVE));
+    ctx.set_line_join("round");
+    ctx.set_line_cap("round");
+    for element in view.selected.iter().copied() {
+        // A label is traced by its container, which is the shape someone sees.
+        if element
+            .container_id
+            .as_deref()
+            .is_some_and(|id| selected.contains(id))
+        {
+            continue;
+        }
+        let Some(outline) = element_outline(element) else {
+            continue;
+        };
+        let m = mul(view_transform, element_matrix(element));
+        let _ = ctx.set_transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+        match outline {
+            Outline::Path(segments) => {
+                ctx.begin_path();
+                for segment in segments {
+                    match segment {
+                        Segment::MoveTo([x, y]) => ctx.move_to(x, y),
+                        Segment::LineTo([x, y]) => ctx.line_to(x, y),
+                        Segment::CurveTo([x1, y1, x2, y2, x, y]) => {
+                            ctx.bezier_curve_to(x1, y1, x2, y2, x, y)
+                        }
+                        Segment::Close => ctx.close_path(),
+                    }
+                }
+                ctx.stroke();
+            }
+            Outline::Ellipse { w, h } => {
+                ctx.begin_path();
+                let _ = ctx.ellipse(
+                    w / 2.0,
+                    h / 2.0,
+                    w / 2.0,
+                    h / 2.0,
+                    0.0,
+                    0.0,
+                    std::f64::consts::PI * 2.0,
+                );
+                ctx.stroke();
+            }
+            Outline::Freehand => {
+                // The same `Path2D` the ink is filled from, so the trace hugs the stroke
+                // exactly and costs no new geometry.
+                let points = element.points.as_deref().unwrap_or(&[]);
+                let key = crate::render::path_data::freehand_fingerprint(
+                    points,
+                    element.stroke_width,
+                    level,
+                );
+                FREEHAND_USED.with(|used| used.borrow_mut().insert(key));
+                FREEHAND.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    let path = cache
+                        .entry(key)
+                        .or_insert_with(|| freehand_path(points, element.stroke_width, level));
+                    if let Some(path) = path {
+                        ctx.stroke_with_path(path);
+                    }
+                });
+            }
+        }
+    }
+    ctx.restore();
+}
+
 /// The frame, corner handles and rotation handle for a multi-element selection.
 ///
 /// These used to be absent entirely: a multi-selection got a bare rectangle with no
@@ -1498,13 +1961,11 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         return;
     };
 
-    // Every member gets its own outline first. Without them a multi-selection showed only
-    // the box around the whole lot, so you could see *that* a region was held but not
-    // *which* shapes in it were — and an unselected shape sitting inside those bounds was
+    // Every member is traced first. Without it a multi-selection showed only the box
+    // around the whole lot, so you could see *that* a region was held but not *which*
+    // shapes in it were — and an unselected shape sitting inside those bounds was
     // indistinguishable from a selected one.
-    for element in view.selected.iter().copied() {
-        paint_element_outline(ctx, view, element);
-    }
+    paint_member_outlines(ctx, view);
 
     let pad = view.handle_layout.frame_pad;
     let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);

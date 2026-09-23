@@ -10,6 +10,11 @@ use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
     pub fn begin_pointer(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
+        self.begin_pointer_step(sx, sy, additive, duplicate);
+        self.refresh_live();
+    }
+
+    fn begin_pointer_step(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
         let world = self.snap(self.screen_to_world(sx, sy));
