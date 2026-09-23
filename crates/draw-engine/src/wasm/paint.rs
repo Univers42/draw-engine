@@ -753,6 +753,13 @@ fn paint_static(
         );
         if clip.is_some() {
             ctx.restore();
+            // `restore` put the context's alpha, stroke, fill, dash and font back to what
+            // they were before the clip, and the caches still hold what was set inside
+            // it. Left alone, the next element with the same values skipped setting them
+            // and drew with the restored ones — a marked element at full strength, or an
+            // unmarked one faded.
+            STATE.with(|s| s.borrow_mut().reset());
+            FONT.with(|f| *f.borrow_mut() = None);
         }
     }
     ERASE_FADE.with(|fade| fade.set(1.0));
@@ -906,7 +913,15 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         crate::scene::FRAME_NAME_FONT_SIZE,
     ));
     ctx.set_text_baseline("alphabetic");
-    for (anchor, name) in &view.frame_names {
+    for (anchor, name, frame) in &view.frame_names {
+        // Set for each name, not inherited: the last element painted leaves its own
+        // alpha behind, which faded every name whenever the eraser had marked it. A
+        // name fades with its own frame, as Excalidraw's `renderFrameNames` does.
+        ctx.set_global_alpha(if view.erasing.contains(frame) {
+            READY_TO_ERASE_OPACITY
+        } else {
+            1.0
+        });
         let at = crate::world_to_screen(view.camera, anchor.x, anchor.y);
         let _ = ctx.fill_text(name, at.x, at.y);
     }

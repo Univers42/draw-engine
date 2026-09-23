@@ -46,7 +46,9 @@ pub struct PaintView<'a> {
     /// for no visible difference.
     pub frame_clips: std::collections::HashMap<String, WorldBounds>,
     /// Where each frame's name sits, and what it says.
-    pub frame_names: Vec<(crate::camera::Point, String)>,
+    /// `(anchor, name, frame id)` — the id so a name fades with a frame the eraser has
+    /// marked.
+    pub frame_names: Vec<(crate::camera::Point, String, String)>,
     /// Laser strokes to fill, oldest first, in world space.
     ///
     /// Already shaped: each is a closed outline whose width varies along its length, not
@@ -174,7 +176,11 @@ impl DrawEngine {
                 && crate::render::bounds::intersects_viewport(el, &visible)
         }) {
             if let Some(name) = frame.name.clone() {
-                frame_names.push((crate::scene::frame_name_anchor(frame), name));
+                frame_names.push((
+                    crate::scene::frame_name_anchor(frame),
+                    name,
+                    frame.id.clone(),
+                ));
             }
             let clip = crate::scene::frame_clip_bounds(frame);
             for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
