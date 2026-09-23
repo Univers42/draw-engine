@@ -45,6 +45,8 @@ export interface KeyEngine {
   getToolLocked(): boolean;
   setTool(tool: DrawTool): void;
   activateTool(tool: DrawTool): void;
+  linearInProgress(): boolean;
+  finishLinear(): void;
 }
 
 export interface KeySession {
@@ -175,6 +177,13 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
   if (event.key === "Escape") {
     session.engine.cancelPointer();
     return "pass";
+  }
+  // Enter ends a path being placed, the way Excalidraw's does — both keys run their
+  // `actionFinalize`. Guarded on there actually being one, so Enter keeps meaning
+  // nothing here the rest of the time rather than becoming a key that swallows itself.
+  if (event.key === "Enter" && session.engine.linearInProgress()) {
+    session.engine.finishLinear();
+    return "prevent";
   }
   if (mod && handleModChords(session, event, event.key.toLowerCase())) return "prevent";
   if (mod || event.altKey) return "pass";

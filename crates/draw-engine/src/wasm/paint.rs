@@ -1131,6 +1131,15 @@ fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
 /// Radius of a point handle on a line or arrow.
 const POINT_HANDLE_R: f64 = 5.0;
 
+/// Fill for the point being moved right now.
+///
+/// Excalidraw's `POINT_HANDLE_SELECTED_FILL` — `rgba(134, 131, 226, 0.9)`, read off
+/// `interactiveScene.ts` at the pinned SHA. A resting joint is white and a moving one is
+/// violet, which is the whole of what the colour is for: on a path whose points are a few
+/// pixels apart, knowing which one is under the pointer is otherwise guesswork, and
+/// letting go of the wrong one puts a bend somewhere nobody meant.
+const POINT_HANDLE_ACTIVE_FILL: &str = "rgba(134, 131, 226, 0.9)";
+
 /// Draws everything that is not the document itself: the marquee, snap guides, the
 /// selection frame and handles, and the binding hint.
 ///
@@ -1365,6 +1374,9 @@ fn paint_linear_handles(ctx: &CanvasRenderingContext2d, view: &PaintView) {
             ctx.set_global_alpha(0.55);
             ctx.fill();
             ctx.restore();
+        } else if view.active_handle == Some(handle.handle) {
+            set_fill(ctx, POINT_HANDLE_ACTIVE_FILL);
+            ctx.fill();
         } else {
             set_fill(ctx, &view.theme.background);
             ctx.fill();

@@ -431,6 +431,21 @@ export class DrawEngine {
     this.inner.handleDoubleClick(sx, sy);
   }
 
+  /**
+   * Whether a line or arrow is being placed point by point.
+   *
+   * The canvas asks on every pointer move, because a path is the one thing that tracks
+   * the cursor with no button held.
+   */
+  linearInProgress(): boolean {
+    return this.inner.linearInProgress();
+  }
+
+  /** Ends a path being placed, keeping the points already put down. */
+  finishLinear(): void {
+    this.inner.finishLinear();
+  }
+
   setElementText(id: string, text: string): void {
     this.inner.setElementText(id, text);
   }

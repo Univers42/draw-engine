@@ -121,6 +121,12 @@ impl DrawEngine {
     }
 
     fn begin_linear(&mut self, world: Point) {
+        // A path is already being placed: this press extends or ends it rather than
+        // starting a second one on top.
+        if self.multi_linear.is_some() {
+            self.press_multi_linear(world);
+            return;
+        }
         let Some(kind) = crate::interaction::tool_to_element_type(self.tool) else {
             return;
         };
@@ -140,14 +146,18 @@ impl DrawEngine {
         // terms. A zero tolerance here meant the tail only bound when the gesture started
         // strictly inside a shape.
         let tolerance = self.binding_tolerance();
-        let anchor = bindable_among(
-            self.scene.iter_ordered().rev(),
-            world.x,
-            world.y,
-            tolerance,
-            None,
-        )
-        .map(|el| el.id.clone());
+        let anchor = crate::scene::binding::is_binding_element(&element)
+            .then(|| {
+                bindable_among(
+                    self.scene.iter_ordered().rev(),
+                    world.x,
+                    world.y,
+                    tolerance,
+                    None,
+                )
+                .map(|el| el.id.clone())
+            })
+            .flatten();
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
         element.start_binding = anchor;
         element.end_binding = None;

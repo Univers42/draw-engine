@@ -169,6 +169,32 @@ pub(crate) enum Interaction {
         current: Point,
         base: HashSet<String>,
     },
+    /// A press while a path is being placed point by point.
+    ///
+    /// Carries nothing, because the path itself is not part of the gesture: it lives on
+    /// the engine and outlives every click that extends it. The variant exists so the
+    /// *release* has somewhere to land — without it the press would fall through to the
+    /// marquee arm, which would drop the selection and rubber-band across the drawing.
+    MultiLinearPress,
+}
+
+/// A line or arrow being placed point by point, between the clicks that place them.
+///
+/// Held on the engine rather than in [`Interaction`] because it is the one gesture that
+/// spans several of them: press, release, move, press, release, and only then — perhaps
+/// a dozen clicks later — an end.
+#[derive(Clone, Debug)]
+pub(crate) struct MultiLinear {
+    pub id: String,
+    /// How many of the element's points have been placed.
+    ///
+    /// The path also carries at most one *preview* point, which follows the cursor and
+    /// sits at exactly this index. So `points.len() == committed` means the cursor is
+    /// resting inside the last point's commit zone with nothing pending, and
+    /// `points.len() == committed + 1` means a segment is being aimed. Counting rather
+    /// than holding the point itself is what makes "throw the preview away" a truncate,
+    /// with no chance of dropping a point somebody placed.
+    pub committed: usize,
 }
 
 /// The measurement used when no browser is available — host tests, and a server-side
