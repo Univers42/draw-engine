@@ -9,6 +9,19 @@ pub fn is_linear_element(element: &DrawElement) -> bool {
     matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow)
 }
 
+/// Whether this element attaches itself to the shapes its ends meet.
+///
+/// **An arrow, and nothing else.** Excalidraw's `isBindingElementType` is the same single
+/// comparison (`packages/element/src/typeChecks.ts:178-182`), and the distinction is the
+/// whole difference between the two linear kinds: an arrow *means* a relationship between
+/// two things, so following them about is the point of it. A line is a line. Binding one
+/// meant a line drawn across a diagram silently attached itself to whatever its ends
+/// happened to pass over, and then moved on its own whenever those shapes did — which
+/// reads as the drawing coming apart by itself.
+pub fn is_binding_element(element: &DrawElement) -> bool {
+    matches!(element.kind, DrawElementType::Arrow)
+}
+
 pub fn is_bindable_element(element: &DrawElement) -> bool {
     matches!(
         element.kind,
@@ -317,7 +330,9 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
     // elements that genuinely changed are cloned.
     let mut moved: Vec<DrawElement> = Vec::new();
     for element in scene.iter_ordered() {
-        if !is_linear_element(element) {
+        // Arrows only. A line carries no binding to refresh, and asking anyway would
+        // resurrect one saved by an older build that did bind them.
+        if !is_binding_element(element) {
             continue;
         }
         let start_shape = element
@@ -385,7 +400,7 @@ pub fn refresh_bindings(elements: &[DrawElement]) -> Vec<DrawElement> {
         .collect();
     let mut linears_done = Vec::with_capacity(elements.len());
     for element in elements {
-        if element.is_deleted || !is_linear_element(element) {
+        if element.is_deleted || !is_binding_element(element) {
             linears_done.push(element.clone());
             continue;
         }

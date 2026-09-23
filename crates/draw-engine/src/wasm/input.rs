@@ -188,6 +188,30 @@ impl WasmEngine {
         self.with_now(|eng| eng.handle_double_click(sx, sy));
     }
 
+    /// Whether a line or arrow is being placed point by point right now.
+    ///
+    /// The host needs this every pointer move, because a path is the one thing in the
+    /// engine that follows the cursor with **no button held** — so while it is true the
+    /// canvas has to keep forwarding moves it would otherwise drop.
+    ///
+    /// `try_borrow` for the same reason [`Self::hover_cursor`] uses it: this is on the
+    /// pointer-move path, and a panic there aborts the WASM instance for good.
+    #[wasm_bindgen(js_name = linearInProgress)]
+    pub fn linear_in_progress(&self) -> bool {
+        match self.cell.try_borrow() {
+            Ok(state) => state.engine.linear_in_progress().is_some(),
+            Err(_) => false,
+        }
+    }
+
+    /// Ends a path being placed, keeping what has been placed so far.
+    ///
+    /// Enter's binding and Escape's. Not a discard — see [`DrawEngine::finish_linear`].
+    #[wasm_bindgen(js_name = finishLinear)]
+    pub fn finish_linear(&self) {
+        self.with_now(DrawEngine::finish_linear);
+    }
+
     pub fn undo(&self) {
         self.cell.borrow_mut().engine.undo();
         self.flush();

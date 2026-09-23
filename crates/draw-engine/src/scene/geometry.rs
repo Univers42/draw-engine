@@ -421,17 +421,31 @@ pub const LINE_CONFIRM_THRESHOLD: f64 = 8.0;
 
 /// Whether a path's ends are close enough that it reads — and paints — as closed.
 ///
-/// `isPathALoop`, `packages/element/src/utils.ts:511-525`. Excalidraw divides the
-/// threshold by the zoom so that closing a path by hand is equally easy at any
-/// magnification; that only applies while drawing, and every caller here is asking about
-/// a path that already exists, so the static form is the right one.
+/// `isPathALoop`, `packages/element/src/utils.ts:511-525`. Asks about a path that already
+/// exists, where the threshold is a plain world distance.
 pub fn is_path_a_loop(points: &[[f64; 2]]) -> bool {
+    is_path_a_loop_within(points, LINE_CONFIRM_THRESHOLD)
+}
+
+/// [`is_path_a_loop`] against a caller-supplied tolerance.
+///
+/// The tolerance is a parameter for exactly one caller: a path still being placed, where
+/// Excalidraw divides the threshold by the zoom so that closing a loop by hand is equally
+/// easy at any magnification — the question there is how accurately a hand can aim, which
+/// is a fact about the screen. Every other caller is asking about a finished path and
+/// wants the static form above.
+///
+/// The **three-point minimum** is shared and load-bearing. Without it the second point of
+/// every path closes a loop, because the second point is necessarily placed near the first
+/// while the segment between them is still being aimed — so no path could get past two
+/// points.
+pub fn is_path_a_loop_within(points: &[[f64; 2]], tolerance: f64) -> bool {
     if points.len() < 3 {
         return false;
     }
     let first = points[0];
     let last = points[points.len() - 1];
-    (first[0] - last[0]).hypot(first[1] - last[1]) <= LINE_CONFIRM_THRESHOLD
+    (first[0] - last[0]).hypot(first[1] - last[1]) <= tolerance
 }
 
 /// Whether a point-based element encloses a region that belongs to it.

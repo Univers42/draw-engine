@@ -157,6 +157,7 @@ impl DrawEngine {
             Interaction::Draft { .. }
             | Interaction::TextDraft { .. }
             | Interaction::Linear { .. }
+            | Interaction::MultiLinearPress
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
             Interaction::Erase { .. } => HoverCursor::Crosshair,
             Interaction::Marquee { .. } => HoverCursor::Default,

@@ -24,7 +24,10 @@ function session(engine: KeyEngine, extras: Partial<KeySession> = {}): KeySessio
   return { engine, callbacks: {}, spaceHeld: false, ...extras };
 }
 
-function recording(selection: string[] = []): { engine: KeyEngine; calls: string[] } {
+function recording(
+  selection: string[] = [],
+  placingPath = false,
+): { engine: KeyEngine; calls: string[] } {
   const calls: string[] = [];
   let locked = false;
   const engine = {
@@ -65,6 +68,8 @@ function recording(selection: string[] = []): { engine: KeyEngine; calls: string
     getToolLocked: () => locked,
     setTool: (tool: string) => calls.push(`setTool:${tool}`),
     activateTool: (tool: string) => calls.push(`activateTool:${tool}`),
+    linearInProgress: () => placingPath,
+    finishLinear: () => calls.push("finishLinear"),
   } as unknown as KeyEngine;
   return { engine, calls };
 }
@@ -75,6 +80,31 @@ describe("dispatchKeyDown", () => {
     const result = dispatchKeyDown(session(engine), event({ key: "Escape" }));
     assert.equal(result, "pass");
     assert.deepEqual(calls, ["cancelPointer"]);
+  });
+
+  /**
+   * Enter ends a path being placed, as Excalidraw's does — both it and Escape run their
+   * `actionFinalize`. Escape reaches the same place through `cancelPointer`, which the
+   * engine routes to the same finish, so it needs no branch of its own here.
+   */
+  it("finishes a path being placed on Enter", () => {
+    const { engine, calls } = recording([], true);
+    const result = dispatchKeyDown(session(engine), event({ key: "Enter" }));
+    assert.equal(result, "prevent");
+    assert.deepEqual(calls, ["finishLinear"]);
+  });
+
+  /**
+   * The other half, and the reason the branch above is guarded rather than
+   * unconditional: Enter already means "edit the selected text". Claiming the key
+   * outright would take that away, so a path being placed borrows it and nothing else
+   * changes.
+   */
+  it("leaves Enter to the text editor when no path is being placed", () => {
+    const { engine, calls } = recording([], false);
+    const result = dispatchKeyDown(session(engine), event({ key: "Enter" }));
+    assert.equal(result, "pass");
+    assert.deepEqual(calls, ["editSelectedText"]);
   });
 
   it("deletes the selection on Delete and prevents default", () => {

@@ -27,6 +27,10 @@ impl DrawEngine {
             Interaction::Draft { id, .. } => self.end_draft(&id),
             Interaction::TextDraft { id, .. } => self.end_text(&id),
             Interaction::Linear { id, .. } => self.end_linear(&id),
+            // The release is what places a point. Committing on the press instead would
+            // freeze it where the button went down, so it could never be nudged before
+            // being let go of.
+            Interaction::MultiLinearPress => self.commit_multi_point(),
             Interaction::Freedraw { id, .. } => self.end_freedraw(&id),
             Interaction::Lasso { path, base } => {
                 // The engine decides what the loop caught, not the host: this is
@@ -180,7 +184,30 @@ impl DrawEngine {
         self.settle_tool();
     }
 
+    /// The fork between a linear tool's two gestures, decided on release.
+    ///
+    /// Above [`LINEAR_CLICK_PX`] of travel the gesture was a **drag**: one segment, drawn
+    /// and done, which is what this always used to do. Below it, it was a **click**, and a
+    /// click starts a path that keeps taking points — so the element it left behind is
+    /// handed to `begin_multi_linear` rather than thrown away for being too small.
+    ///
+    /// Measured in screen pixels off the last point, which is the drag delta, because the
+    /// threshold is a statement about the hand rather than about the drawing.
     fn end_linear(&mut self, id: &str) {
+        let Some(element) = self.scene.get(id) else {
+            return;
+        };
+        let travelled = element
+            .points
+            .as_deref()
+            .and_then(|points| points.last())
+            .map_or(0.0, |&[dx, dy]| dx.hypot(dy))
+            * self.camera.scale;
+        if travelled < super::LINEAR_CLICK_PX {
+            self.begin_multi_linear(id);
+            return;
+        }
+
         let degenerate = self
             .scene
             .get(id)
@@ -247,6 +274,14 @@ impl DrawEngine {
     }
 
     pub fn cancel_pointer(&mut self) {
+        // Escape ends an open path rather than throwing it away, which is Excalidraw's
+        // binding too: both Escape and Enter run `actionFinalize`. A path of six points
+        // lost to a reflexive Escape is six points of work gone, and undo is the thing
+        // that exists for changing your mind.
+        if self.multi_linear.is_some() {
+            self.finish_linear();
+            return;
+        }
         let it = self.interaction.take();
         self.snap_guides.clear();
         if let Some(

@@ -69,8 +69,10 @@ fn pointer_arrow_creates_and_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b.id.as_str()));
 }
 
+/// Drawn across two shapes without attaching to either — binding is an arrow's business.
+/// `ci_line_multipoint.rs` pins that rule and its arrow-shaped control.
 #[test]
-fn pointer_line_creates_and_binds() {
+fn pointer_line_creates_without_binding() {
     let a = box_at(0.0, 0.0, 100.0, 60.0);
     let b = box_at(300.0, 0.0, 100.0, 60.0);
     let mut engine = engine_with_scene(vec![a.clone(), b.clone()]);
@@ -85,14 +87,32 @@ fn pointer_line_creates_and_binds() {
     assert_eq!(line.kind, DrawElementType::Line);
 }
 
+/// A drag too short to have been meant leaves no *finished* element behind.
+///
+/// It used to leave nothing at all. Now a press and release that travels less than
+/// `LINEAR_CLICK_PX` is read as a **click**, which starts a path taken point by point —
+/// so what this asserts has moved from "the element is gone" to "the element is not
+/// finished, and ending the gesture there throws it away". The thing being guarded
+/// against is unchanged and is the only thing that ever mattered: a hand wobbling by a
+/// pixel must not leave a one-pixel arrow on the board.
 #[test]
-fn pointer_connector_tiny_drag_ignored() {
+fn pointer_connector_tiny_drag_starts_a_path_rather_than_an_element() {
     let mut engine = DrawEngine::new();
     engine.set_tool(DrawTool::Arrow);
     engine.begin_pointer(20.0, 20.0, false, false);
     engine.move_pointer(21.0, 20.0, false, false);
     engine.end_pointer();
-    assert!(engine.get_scene().is_empty());
+
+    assert!(
+        engine.linear_in_progress().is_some(),
+        "the wobble should read as a click, which starts a path"
+    );
+
+    engine.finish_linear();
+    assert!(
+        engine.get_scene().is_empty(),
+        "and a path of one point leaves nothing behind"
+    );
 }
 
 #[test]

@@ -41,7 +41,10 @@ pub use interaction::{
     DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH,
     LASER_SIZE, LASER_STREAMLINE,
 };
-pub use math::{clamp, hash_string, lerp, round_px, smoothstep};
+pub use math::{
+    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp, round_px,
+    smoothstep, Cubic, CURVE_TIGHTNESS,
+};
 pub use render::{
     canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, label_offset_y,
     light_theme, text_anchor_x, DrawTheme, GridSettings, DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP,
@@ -51,12 +54,12 @@ pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,
     create_element_default, default_element_style, element_bounds, element_center,
     element_rotated_bounds, hit_test, hit_test_element, is_auto_resize, is_bindable_element,
-    is_linear_element, is_transparent, layout_label, linear_endpoints, linear_from_endpoints,
-    linear_retarget, local_box, local_center, merge_style, new_element_id, normalize_rect,
-    refresh_bindings, resolved_text_align, resolved_vertical_align, rotation_center, scene_bounds,
-    segment_hits_element, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
-    DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle, TextAlign, VerticalAlign,
-    ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
+    is_binding_element, is_linear_element, is_path_a_loop_within, is_transparent, layout_label,
+    linear_endpoints, linear_from_endpoints, linear_retarget, local_box, local_center, merge_style,
+    new_element_id, normalize_rect, refresh_bindings, resolved_text_align, resolved_vertical_align,
+    rotation_center, scene_bounds, segment_hits_element, Arrowhead, DrawElement, DrawElementStyle,
+    DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle,
+    TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,

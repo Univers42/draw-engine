@@ -63,10 +63,23 @@ export function attachPointerInput(session: HostSession): () => void {
     engine.beginPointer(x, y, event.shiftKey, event.altKey);
   };
 
+  /**
+   * Whether the engine wants this move.
+   *
+   * Normally only while a button is held — every other gesture is a drag, and forwarding
+   * the hundreds of hover moves a minute costs a WASM call each for nothing. The
+   * exception is a line or arrow being placed point by point: it follows the cursor
+   * *between* its clicks, so the segment being aimed only appears if the moves with no
+   * button held get through. It is the one gesture in the engine that works that way.
+   */
+  const wantsMove = (): boolean => session.down || engine.linearInProgress();
+
   const onPointerMove = (event: PointerEvent) => {
-    if (!session.down) return;
+    if (!wantsMove()) return;
     const { x, y } = localPoint(canvas, event);
-    callbacks.onPointerMove?.({ x, y }, event);
+    // Still only while a button is held. Hosts read this callback as "a drag is
+    // happening", and firing it on hover would make every one of them wrong.
+    if (session.down) callbacks.onPointerMove?.({ x, y }, event);
     if (intercepted) return;
     session.pendingMove = event;
     if (session.moveRaf) return;
@@ -74,7 +87,7 @@ export function attachPointerInput(session: HostSession): () => void {
       session.moveRaf = 0;
       const queued = session.pendingMove;
       session.pendingMove = null;
-      if (queued && session.down) processMove(session, queued);
+      if (queued && wantsMove()) processMove(session, queued);
     });
   };
 

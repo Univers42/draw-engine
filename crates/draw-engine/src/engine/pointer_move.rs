@@ -9,6 +9,13 @@ use crate::selection::{resize_element, rotate_element, HandleKind};
 impl DrawEngine {
     pub fn move_pointer(&mut self, sx: f64, sy: f64, square: bool, bypass_snap: bool) {
         let Some(it) = self.interaction.take() else {
+            // No gesture in progress — but a path being placed point by point still
+            // follows the cursor between its clicks, which is the whole of how it is
+            // aimed. It is the only thing in the engine that moves with no button held.
+            if self.multi_linear.is_some() {
+                let world = self.snap(self.screen_to_world(sx, sy));
+                self.track_multi_linear(world, square);
+            }
             return;
         };
         let world = self.snap(self.screen_to_world(sx, sy));
@@ -91,6 +98,13 @@ impl DrawEngine {
             }
             Interaction::Linear { ref id, start } => {
                 self.move_linear(id, start, world, square);
+                Some(it)
+            }
+            // Dragging with the button still down after a press that placed a point: the
+            // preview keeps tracking, so a point can be nudged before the release fixes
+            // it rather than having to be placed and then dragged again.
+            Interaction::MultiLinearPress => {
+                self.track_multi_linear(world, square);
                 Some(it)
             }
             Interaction::Freedraw { ref id, start } => {
@@ -338,14 +352,20 @@ impl DrawEngine {
             return;
         };
         let tolerance = self.binding_tolerance();
-        let over = bindable_among(
-            self.scene.iter_ordered().rev(),
-            world.x,
-            world.y,
-            tolerance,
-            Some(id),
-        )
-        .map(|el| el.id.clone());
+        // Only an arrow looks for something to attach to. A line reaching the edge of a
+        // shape means nothing more than a line reaching that spot.
+        let over = crate::scene::binding::is_binding_element(&element)
+            .then(|| {
+                bindable_among(
+                    self.scene.iter_ordered().rev(),
+                    world.x,
+                    world.y,
+                    tolerance,
+                    Some(id),
+                )
+                .map(|el| el.id.clone())
+            })
+            .flatten();
 
         let drag = linear_from_drag(start.x, start.y, world.x, world.y, square);
         element.x = drag.x;
