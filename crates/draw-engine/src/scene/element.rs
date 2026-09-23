@@ -282,7 +282,7 @@ pub struct Geometry {
     pub height: f64,
 }
 
-fn rand_int() -> u32 {
+pub(crate) fn rand_int() -> u32 {
     #[cfg(target_arch = "wasm32")]
     {
         (js_sys::Math::random() * 2_147_483_647.0) as u32

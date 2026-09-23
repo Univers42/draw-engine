@@ -22,8 +22,18 @@ fn remote_wins(incoming: &DrawElement, existing: &DrawElement) -> bool {
 }
 
 impl DrawEngine {
+    /// Commits the scene: stamps what this step changed, records it, tells the host.
+    ///
+    /// The stamping is what makes a move reach anyone. Gestures change geometry
+    /// without touching `version`, and the version is the only change signal the
+    /// autosave, the server's merge and every peer have — so an unstamped move was
+    /// never saved and lost on reload. See `stamp.rs`.
     pub(super) fn push_history(&mut self) {
-        self.history.push(self.scene.snapshot());
+        let changed = self.stamp_local_edits();
+        self.history.push(super::stamp::HistoryEntry {
+            elements: self.scene.snapshot(),
+            changed: std::rc::Rc::new(changed),
+        });
         self.emit_scene_change();
     }
 
@@ -45,14 +55,16 @@ impl DrawEngine {
     }
 
     pub(super) fn reset_history(&mut self) {
-        self.history.reset(self.scene.snapshot());
+        // A scene loaded wholesale is nobody's local edit.
+        let _ = self.scene.take_touched();
+        self.remote_floor.clear();
+        self.history.reset(super::stamp::HistoryEntry {
+            elements: self.scene.snapshot(),
+            changed: std::rc::Rc::default(),
+        });
     }
 
-    fn apply_snapshot(&mut self, snapshot: Option<Vec<std::rc::Rc<DrawElement>>>) {
-        let Some(snapshot) = snapshot else {
-            return;
-        };
-        self.scene = crate::scene::Scene::from_snapshot(snapshot);
+    fn after_history_step(&mut self) {
         self.selected_ids.clear();
         self.events.selection = Some(Vec::new());
         self.request_draw();
@@ -61,14 +73,23 @@ impl DrawEngine {
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
     }
 
+    /// Undo, as a new edit: see `stamp.rs` for why it is not a rewind.
     pub fn undo(&mut self) {
-        let snap = self.history.undo().cloned();
-        self.apply_snapshot(snap);
+        let leaving = self.history.current().changed.clone();
+        let Some(target) = self.history.undo().cloned() else {
+            return;
+        };
+        self.restore_step(&target, &leaving);
+        self.after_history_step();
     }
 
     pub fn redo(&mut self) {
-        let snap = self.history.redo().cloned();
-        self.apply_snapshot(snap);
+        let Some(target) = self.history.redo().cloned() else {
+            return;
+        };
+        let changed = target.changed.clone();
+        self.restore_step(&target, &changed);
+        self.after_history_step();
     }
 
     pub fn copy_selection(&mut self) -> Option<String> {
@@ -117,8 +138,21 @@ impl DrawEngine {
             return false;
         };
 
+        // Elements this client has changed and not yet committed — a drag in progress,
+        // a path being placed. A peer's copy of one is refused, as Excalidraw refuses
+        // it while the element is being edited (`data/reconcile.ts:31-33`): taking it
+        // would hand the gesture's final state the peer's stamp, and the two copies
+        // would then carry one stamp and different content forever. The commit stamps
+        // above the refused version instead, so the later edit — this one — wins.
+        let pending = self.scene.touched().clone();
+
         let mut changed = false;
         for element in incoming {
+            if pending.contains(&element.id) {
+                let floor = self.remote_floor.entry(element.id.clone()).or_insert(0);
+                *floor = (*floor).max(element.version);
+                continue;
+            }
             let accept = match self.scene.get(&element.id) {
                 None => true,
                 Some(existing) => remote_wins(&element, existing),
@@ -161,8 +195,17 @@ impl DrawEngine {
             // Drop the delta this produced: the host already has these elements, and
             // emitting them would send them straight back to the peer that sent them.
             let _ = self.scene.take_delta();
+            // ...but not the local changes that were pending in it, which the host has
+            // not been told about yet.
+            for id in &pending {
+                self.scene.mark_dirty(id);
+            }
             self.request_draw();
         }
+        // What the peer's edit changed here — its elements, and arrows re-routed to
+        // follow them — is the peer's edit, not ours, and must not be stamped as ours
+        // at the next commit. Ids the local gesture had already changed stay.
+        self.scene.retain_touched(|id| pending.contains(id));
         changed
     }
 

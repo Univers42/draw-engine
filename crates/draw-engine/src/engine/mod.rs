@@ -23,6 +23,7 @@ mod pointer;
 mod pointer_end;
 mod pointer_move;
 mod radius;
+mod stamp;
 mod style;
 mod text;
 mod types;
@@ -139,7 +140,12 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
-    history: SnapshotHistory<Vec<std::rc::Rc<DrawElement>>>,
+    history: SnapshotHistory<stamp::HistoryEntry>,
+    /// For each element with an uncommitted local change, the highest version a peer
+    /// sent for it meanwhile. That peer's copy was refused — a gesture in progress
+    /// wins, as in Excalidraw — so the commit has to stamp *above* it, or the local
+    /// edit would lose everywhere else to the very edit it replaced. See `stamp.rs`.
+    remote_floor: std::collections::HashMap<String, u32>,
     events: EngineEvents,
 }
 
@@ -181,7 +187,12 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
-            history: SnapshotHistory::new(Vec::new(), |els| history_signature(els), 200),
+            history: SnapshotHistory::new(
+                stamp::HistoryEntry::default(),
+                |entry| history_signature(&entry.elements),
+                200,
+            ),
+            remote_floor: std::collections::HashMap::new(),
             events: EngineEvents::default(),
         }
     }

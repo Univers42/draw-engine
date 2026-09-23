@@ -48,6 +48,15 @@ pub struct Scene {
     /// board, so drawing one shape on a large board became slower than drawing the
     /// first one. Measured at 20k elements, that was ~60ms of JSON per shape.
     dirty: std::collections::HashSet<String>,
+    /// Ids changed since the last commit to history.
+    ///
+    /// Not the same record as `dirty`. That one is drained whenever the host is told
+    /// something — including when a peer's patch lands in the middle of a drag — and
+    /// this one must survive that, because it is what the commit stamps: every element
+    /// a gesture changed gets a new version when the gesture ends, and a gesture that
+    /// forgot half its elements because a patch arrived would save half a move. See
+    /// `engine/stamp.rs`.
+    touched: std::collections::HashSet<String>,
     /// Set when a change cannot be expressed as "these elements differ" — a z-order
     /// rearrangement or a hard delete. The host then needs the whole scene.
     structural: bool,
@@ -123,6 +132,33 @@ impl Scene {
         self.index.get(id).map(|&i| self.elements[i].as_ref())
     }
 
+    /// The shared element itself, so a caller can tell "unchanged since that snapshot"
+    /// with a pointer comparison instead of a deep one.
+    pub(crate) fn get_rc(&self, id: &str) -> Option<&Rc<DrawElement>> {
+        self.index.get(id).map(|&i| &self.elements[i])
+    }
+
+    /// Ids changed since the last commit. See the field.
+    pub(crate) fn touched(&self) -> &std::collections::HashSet<String> {
+        &self.touched
+    }
+
+    pub(crate) fn take_touched(&mut self) -> std::collections::HashSet<String> {
+        std::mem::take(&mut self.touched)
+    }
+
+    pub(crate) fn retain_touched(&mut self, keep: impl Fn(&str) -> bool) {
+        self.touched.retain(|id| keep(id));
+    }
+
+    /// Puts an id back into the pending delta, for a change the host has not been told
+    /// about yet even though the delta was drained.
+    pub(crate) fn mark_dirty(&mut self, id: &str) {
+        if self.index.contains_key(id) {
+            self.dirty.insert(id.to_string());
+        }
+    }
+
     /// Mutable access to one element, without disturbing z-order or the index.
     ///
     /// This is how a drag should move an element: no clone, no reinsert, no
@@ -137,6 +173,7 @@ impl Scene {
             Some(&i) => {
                 f(Rc::make_mut(&mut self.elements[i]));
                 self.dirty.insert(id.to_string());
+                self.touched.insert(id.to_string());
                 true
             }
             None => false,
@@ -157,6 +194,7 @@ impl Scene {
     pub fn put(&mut self, element: DrawElement) {
         self.revision = self.revision.wrapping_add(1);
         self.dirty.insert(element.id.clone());
+        self.touched.insert(element.id.clone());
         match self.index.get(&element.id) {
             Some(&i) => self.elements[i] = Rc::new(element),
             None => {
@@ -173,6 +211,11 @@ impl Scene {
         self.update(id, |element| {
             element.is_deleted = true;
             element.version += 1;
+            // A fresh nonce, as every other stamp gets: a tombstone that kept the live
+            // element's nonce ties with a peer's edit of the same version on the nonce
+            // too, and is decided by the clock — the one tie-breaker that means nothing
+            // across machines.
+            element.version_nonce = crate::scene::element::rand_int();
             element.updated = now;
         });
     }

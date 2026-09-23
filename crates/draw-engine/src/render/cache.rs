@@ -230,14 +230,15 @@ mod tests {
         assert_eq!(hits, 1);
     }
 
-    /// ...and resizing must, even mid-gesture when `version` has not been bumped.
+    /// ...and resizing must, even mid-gesture: `version` is bumped once, when the
+    /// gesture commits (`engine/stamp.rs`), not on each move that resizes.
     #[test]
     fn resizing_invalidates_even_without_a_version_bump() {
         let mut cache = ShapeCache::new();
         let mut e = element();
 
         cache.get(&e);
-        e.width = 140.0; // no bump_version, exactly as the drag handlers do
+        e.width = 140.0; // no bump_version, exactly as a drag does before it commits
         cache.get(&e);
 
         let (_, misses) = cache.stats();
