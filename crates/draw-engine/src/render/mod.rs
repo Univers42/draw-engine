@@ -1,3 +1,4 @@
+pub mod append;
 pub mod arrowheads;
 pub mod bounds;
 pub mod cache;

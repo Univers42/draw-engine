@@ -13,6 +13,9 @@ use crate::selection::marquee_rect;
 /// frame's setup cost proportional to the number of *visible* elements rather than to
 /// the size of the document.
 pub struct PaintView<'a> {
+    /// The scene itself, for the painter's one question the rest cannot answer: what
+    /// changed since the picture it holds — see [`crate::scene::Scene::changes_since`].
+    pub scene: &'a crate::scene::Scene,
     pub camera: Camera,
     pub theme: DrawTheme,
     pub grid: GridSettings,
@@ -206,6 +209,7 @@ impl DrawEngine {
         }
 
         PaintView {
+            scene: &self.scene,
             camera: self.camera,
             theme: self.theme.clone(),
             grid: self.grid,

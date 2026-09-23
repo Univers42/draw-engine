@@ -46,6 +46,21 @@ fn next_revision() -> u64 {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// One change to a scene, as the painter needs to know it: see [`Scene::changes_since`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    /// A new element, put on top of everything.
+    Appended(String),
+    /// An existing element, changed where it stands.
+    Touched(String),
+    /// Anything that moves elements in the stack or takes one out of it.
+    Rearranged,
+}
+
+/// How many changes the journal keeps. A painter whose picture is older than that simply
+/// draws it again.
+const JOURNAL_CAP: usize = 1024;
+
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     /// Every element, live and tombstoned, in z-order.
@@ -96,6 +111,18 @@ pub struct Scene {
     /// stays put while only live elements change, and moves the moment anything else
     /// does — a peer's edit arriving mid-drag, say.
     static_revision: u64,
+    /// Every change since `journal_from`, each with the revision it produced.
+    ///
+    /// For the painter: a cached picture of this scene at some revision can be brought up
+    /// to date by painting on top of it when every change since was an element added on
+    /// top — which is what drawing, pasting and duplicating are. Measured on a board of
+    /// 9,000 shapes, redrawing the picture after each Ctrl+D was ten milliseconds of
+    /// rasterising for one new shape.
+    journal: Vec<(u64, Change)>,
+    /// The revision the journal starts from. A picture older than this, or of another
+    /// scene, cannot be brought up to date from it. `None` until the journal is started:
+    /// a scene that never was has no revision a picture could share with it.
+    journal_from: Option<u64>,
 }
 
 /// What changed since the host was last told.
@@ -114,7 +141,41 @@ impl Scene {
         for element in elements {
             scene.add(element);
         }
+        scene.start_journal();
         scene
+    }
+
+    /// Starts the journal afresh, at a revision no picture can already hold.
+    ///
+    /// Called whenever a scene takes the place of another. Without it a picture painted
+    /// for the old scene would find a journal of nothing but additions since — the new
+    /// scene's own elements — and have them painted over the old board.
+    pub(crate) fn start_journal(&mut self) {
+        self.revision = next_revision();
+        self.journal.clear();
+        self.journal_from = Some(self.revision);
+    }
+
+    /// Moves the revision and notes what the change was.
+    fn record(&mut self, change: Change) {
+        self.revision = next_revision();
+        if self.journal.len() >= JOURNAL_CAP {
+            // Nothing older is provable any more; the picture that old is redrawn.
+            self.journal.clear();
+            self.journal_from = Some(self.revision);
+            return;
+        }
+        self.journal.push((self.revision, change));
+    }
+
+    /// Every change since `revision`, in order — or `None` when the journal does not
+    /// reach back that far, or `revision` was never one of this scene's.
+    pub fn changes_since(&self, revision: u64) -> Option<&[(u64, Change)]> {
+        if revision < self.journal_from? || revision > self.revision {
+            return None;
+        }
+        let start = self.journal.partition_point(|(rev, _)| *rev <= revision);
+        Some(&self.journal[start..])
     }
 
     /// Rebuilds the id-to-position map. Only needed after an operation that moves
@@ -216,7 +277,7 @@ impl Scene {
     /// For undoing a reorder: what the step reordered goes back, and an element that
     /// arrived since — a peer's — stays where it is, above.
     pub(crate) fn apply_order(&mut self, order: &[String]) {
-        self.revision = next_revision();
+        self.record(Change::Rearranged);
         self.static_revision = next_revision();
         let mut rest: Vec<Rc<DrawElement>> = Vec::with_capacity(self.elements.len());
         let mut by_id: HashMap<String, Rc<DrawElement>> = HashMap::new();
@@ -253,7 +314,7 @@ impl Scene {
     /// Copy-on-write: `Rc::make_mut` clones the element only if a history snapshot
     /// still holds it, so a drag that touches one shape copies one shape.
     pub fn update<F: FnOnce(&mut DrawElement)>(&mut self, id: &str, f: F) -> bool {
-        self.revision = next_revision();
+        self.record(Change::Touched(id.to_string()));
         self.touch_static(id);
         match self.index.get(id) {
             Some(&i) => {
@@ -275,14 +336,17 @@ impl Scene {
     }
 
     pub fn add(&mut self, element: DrawElement) {
-        self.revision = next_revision();
         self.put(element);
     }
 
     /// Inserts or replaces an element, **keeping its existing z-position** when it is
     /// already present. A style change must not bring a shape to the front.
     pub fn put(&mut self, element: DrawElement) {
-        self.revision = next_revision();
+        self.record(if self.index.contains_key(&element.id) {
+            Change::Touched(element.id.clone())
+        } else {
+            Change::Appended(element.id.clone())
+        });
         self.touch_static(&element.id);
         self.dirty.insert(element.id.clone());
         if !self.baseline.contains_key(&element.id) {
@@ -301,7 +365,6 @@ impl Scene {
     /// Soft delete: the element stays, marked, so a later merge can distinguish a
     /// deletion from an element it has simply never seen.
     pub fn remove(&mut self, id: &str, now: f64) {
-        self.revision = next_revision();
         self.update(id, |element| {
             element.is_deleted = true;
             element.version += 1;
@@ -321,7 +384,7 @@ impl Scene {
     /// Hard delete, leaving no tombstone. Used when discarding an element that was
     /// never committed, such as a drag that ended below the minimum size.
     pub fn discard(&mut self, id: &str) {
-        self.revision = next_revision();
+        self.record(Change::Rearranged);
         self.touch_static(id);
         if let Some(&i) = self.index.get(id) {
             if !self.baseline.contains_key(id) {
@@ -336,7 +399,7 @@ impl Scene {
     }
 
     pub fn bring_to_front(&mut self, id: &str) {
-        self.revision = next_revision();
+        self.record(Change::Rearranged);
         self.static_revision = next_revision();
         if let Some(&i) = self.index.get(id) {
             if i + 1 != self.elements.len() {
@@ -354,7 +417,7 @@ impl Scene {
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
-        self.revision = next_revision();
+        self.record(Change::Rearranged);
         self.static_revision = next_revision();
         self.note_order();
         let mut next: Vec<Rc<DrawElement>> = self
@@ -489,7 +552,7 @@ impl Scene {
         };
         scene.reindex();
         scene.structural = true;
-        scene.revision = next_revision();
+        scene.start_journal();
         scene
     }
 }

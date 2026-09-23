@@ -16,4 +16,4 @@ pub use frame::*;
 pub use geometry::*;
 pub use image::*;
 pub use recognize::*;
-pub use store::Scene;
+pub use store::{Change, Scene};

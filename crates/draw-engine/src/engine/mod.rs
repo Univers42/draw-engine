@@ -169,7 +169,7 @@ impl Default for DrawEngine {
 impl DrawEngine {
     pub fn new() -> Self {
         Self {
-            scene: Scene::default(),
+            scene: Scene::new([]),
             theme: light_theme(),
             grid: GridSettings::default(),
             camera: IDENTITY,
@@ -226,6 +226,8 @@ impl DrawEngine {
 
     pub fn set_scene(&mut self, scene: Scene) {
         self.scene = scene;
+        // Whatever the painter holds is a picture of the scene this replaced.
+        self.scene.start_journal();
         // Built by adding every element, so every element was pending for the host —
         // and the first edit after loading a board sent the whole board as its delta:
         // five megabytes of JSON for one stroke on a board of 2,000, serialised here and

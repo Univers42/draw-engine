@@ -539,6 +539,10 @@ struct Layers {
     /// which then holds what sits below them. Made the first time it is needed.
     above: Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)>,
     above_painted: Option<(crate::render::scroll::LayerKey, crate::camera::Camera)>,
+    /// What `front` holds in terms of the scene, for bringing it up to date by painting
+    /// on top of it — with the chrome digest it was painted under. `None` when it holds
+    /// something that cannot be: what is below a live element with more above it.
+    base: Option<(crate::render::append::PictureBase, u64)>,
 }
 
 thread_local! {
@@ -593,8 +597,63 @@ fn invalidate_layer() {
     LAYERS.with(|cell| {
         if let Some(layers) = cell.borrow_mut().as_mut() {
             layers.painted = None;
+            layers.base = None;
         }
     });
+}
+
+/// A picture of the whole scene as it is.
+fn whole_picture(view: &PaintView) -> crate::render::append::PictureBase {
+    crate::render::append::PictureBase {
+        revision: view.scene_revision,
+        left_out: Vec::new(),
+    }
+}
+
+/// Brings `front` up to the scene as it is by painting what is new on top of it, when
+/// that is all that changed — see [`crate::render::append`]. Returns whether it did.
+///
+/// Only for a picture of the same view: same camera, same size and resolution, same
+/// chrome. And never with frames on the board: their names are painted over everything
+/// in a whole picture and are missing from the one a gesture leaves behind.
+fn paint_on_top(
+    layers: &mut Layers,
+    view: &PaintView,
+    key: crate::render::scroll::LayerKey,
+    digest: u64,
+) -> bool {
+    let Some((painted_key, painted_camera)) = layers.painted else {
+        return false;
+    };
+    let Some((base, base_digest)) = &layers.base else {
+        return false;
+    };
+    let same_view = painted_camera == view.camera
+        && painted_key.scale == key.scale
+        && painted_key.dpr == key.dpr
+        && painted_key.width == key.width
+        && painted_key.height == key.height
+        && *base_digest == digest
+        && view.frame_names.is_empty();
+    if !same_view || (base.revision == view.scene_revision && base.left_out.is_empty()) {
+        return false;
+    }
+    let Some(top) = crate::render::append::plan_append(
+        base,
+        view.scene.changes_since(base.revision),
+        &view.elements,
+    ) else {
+        return false;
+    };
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    layers.front_ctx.save();
+    layers.front_ctx.set_global_alpha(1.0);
+    paint_elements(&layers.front_ctx, view, &top);
+    layers.front_ctx.restore();
+    layers.painted = Some((key, view.camera));
+    layers.base = Some((whole_picture(view), digest));
+    true
 }
 
 /// Redraws, scrolls and reuses since the last call, then resets.
@@ -734,9 +793,22 @@ fn paint_live(
     if !matches!(
         plan_layer(layers.painted, below_key, view.camera),
         LayerPlan::Reuse
-    ) {
+    ) && !adopt_as_below(layers, view, &live, key, below_key)
+    {
         paint_layer(&layers.front_ctx, view, below, true);
         layers.painted = Some((below_key, view.camera));
+        // Everything but the live elements, when they are the top of the stack: then the
+        // whole scene is this picture with them painted over it, which is how the frame
+        // after the gesture gets it.
+        layers.base = above.is_empty().then(|| {
+            (
+                crate::render::append::PictureBase {
+                    revision: view.scene_revision,
+                    left_out: live.iter().map(|element| element.id.clone()).collect(),
+                },
+                chrome_digest(view),
+            )
+        });
         drew_below = true;
     }
 
@@ -758,11 +830,11 @@ fn paint_live(
             }
         }
     }
-    count_plan(
-        u32::from(drew_below || drew_above),
-        0,
-        u32::from(!(drew_below || drew_above)),
-    );
+    // A redraw is a layer actually painted. `drew_above` also stands for "there is no
+    // above", which is not one: counted as one, every frame of every gesture on the top
+    // of the stack reported a redraw of the board that never happened.
+    let redrew = drew_below || (drew_above && !above.is_empty());
+    count_plan(u32::from(redrew), 0, u32::from(!redrew));
 
     // Composed on the target: what is below, what is live, what is above.
     STATE.with(|s| s.borrow_mut().reset());
@@ -786,6 +858,53 @@ fn paint_live(
     // the canvas".
     layers.overlay_drawn = true;
     drew_below && drew_above
+}
+
+/// Takes the picture in `front` as the layer below a gesture when it already is that —
+/// see [`crate::render::append::holds_all_but`]. Returns whether it did.
+fn adopt_as_below(
+    layers: &mut Layers,
+    view: &PaintView,
+    live: &[&DrawElement],
+    key: crate::render::scroll::LayerKey,
+    below_key: crate::render::scroll::LayerKey,
+) -> bool {
+    let Some((painted_key, painted_camera)) = layers.painted else {
+        return false;
+    };
+    let Some((base, digest)) = &layers.base else {
+        return false;
+    };
+    let same_view = painted_camera == view.camera
+        && painted_key.scale == key.scale
+        && painted_key.dpr == key.dpr
+        && painted_key.width == key.width
+        && painted_key.height == key.height
+        && *digest == chrome_digest(view)
+        // A whole picture has the frame names over everything; the layer below a gesture
+        // has none.
+        && view.frame_names.is_empty();
+    if !same_view
+        || !crate::render::append::holds_all_but(
+            base,
+            view.scene.changes_since(base.revision),
+            &view.elements,
+            live,
+        )
+    {
+        return false;
+    }
+    let mut left_out = base.left_out.clone();
+    left_out.extend(live.iter().map(|element| element.id.clone()));
+    layers.base = Some((
+        crate::render::append::PictureBase {
+            revision: base.revision,
+            left_out,
+        },
+        *digest,
+    ));
+    layers.painted = Some((below_key, view.camera));
+    true
 }
 
 /// Draws a cached layer from scratch: the paper and the grid when it is the bottom one,
@@ -974,6 +1093,7 @@ impl Painter for CanvasPainter<'_> {
                     overlay_drawn: true,
                     above: None,
                     above_painted: None,
+                    base: None,
                 });
             }
             let layers = slot.as_mut().expect("just built");
@@ -1029,6 +1149,8 @@ impl Painter for CanvasPainter<'_> {
                 }
             }
 
+            let digest = chrome_digest(view);
+            let appended = paint_on_top(layers, view, key, digest);
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
                 view.selected.len(),
@@ -1046,7 +1168,9 @@ impl Painter for CanvasPainter<'_> {
                     // Nothing changed and nothing is drawn over it: the canvas already
                     // holds this exact frame. Copying it onto itself would be a
                     // full-canvas memcpy to produce the picture that is already there.
-                    if bare && !layers.overlay_drawn {
+                    // Unless the layer was just painted on: then the canvas does not
+                    // have what is new yet.
+                    if bare && !layers.overlay_drawn && !appended {
                         return Some(false);
                     }
                     false
@@ -1054,6 +1178,7 @@ impl Painter for CanvasPainter<'_> {
                 LayerPlan::Redraw => {
                     count_plan(1, 0, 0);
                     paint_static(&layers.front_ctx, view, None);
+                    layers.base = Some((whole_picture(view), digest));
                     true
                 }
                 // Not taken yet, deliberately. Redrawing only the strip that has come
@@ -1074,6 +1199,7 @@ impl Painter for CanvasPainter<'_> {
                 LayerPlan::Scroll { .. } => {
                     count_plan(1, 0, 0);
                     paint_static(&layers.front_ctx, view, None);
+                    layers.base = Some((whole_picture(view), digest));
                     true
                 }
             };
