@@ -327,6 +327,16 @@ impl WasmEngine {
         }
     }
 
+    /// Where a peer's laser pointer is, in world units, and whether they are pressing it:
+    /// their trail is drawn here in their colour, as it is on their screen.
+    #[wasm_bindgen(js_name = peerLaser)]
+    ///
+    /// On the clock read now, not the last frame's: an idle board paints no frames, and a
+    /// point stamped with a stale time would be old enough to have faded on arrival.
+    pub fn peer_laser(&self, id: &str, color: &str, x: f64, y: f64, down: bool) {
+        self.with_now(|engine| engine.peer_laser(id, color, x, y, down));
+    }
+
     /// The id of the peer holding what is under `(sx, sy)`, if someone does — so a click
     /// on something in use can say who is using it.
     #[wasm_bindgen(js_name = peerAt)]

@@ -144,6 +144,9 @@ pub struct DrawEngine {
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
+    /// Each peer's laser trails, by peer id — see `peers.rs`. Session state like the
+    /// local ones: in no scene, no history, no save.
+    peer_lasers: HashMap<String, peers::PeerLaser>,
     /// What the eraser sweep in progress has marked, drawn faded until release deletes
     /// it. Session state, like the selection: nothing in the document changes until the
     /// sweep ends, so Escape can let it all go. See `eraser.rs`.
@@ -204,6 +207,7 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             laser: crate::interaction::LaserTrails::default(),
+            peer_lasers: HashMap::new(),
             erasing: HashSet::new(),
             erasing_revision: 0,
             alt_held: false,
@@ -222,6 +226,7 @@ impl DrawEngine {
         // view can stay borrow-only. Without it a long presentation keeps one dead stroke
         // per flick and walks all of them every frame to draw nothing.
         self.laser.prune(now_ms);
+        self.prune_peer_lasers(now_ms);
     }
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
@@ -320,7 +325,11 @@ impl DrawEngine {
     /// Answering here rather than in each host is the point — otherwise every frontend
     /// has to learn, separately, every reason the engine might still have work to do.
     pub fn needs_frame(&self) -> bool {
-        !self.disposed && (self.dirty || self.in_motion() || self.laser.is_active(self.now_ms))
+        !self.disposed
+            && (self.dirty
+                || self.in_motion()
+                || self.laser.is_active(self.now_ms)
+                || self.peer_laser_active())
     }
 
     pub fn is_disposed(&self) -> bool {
