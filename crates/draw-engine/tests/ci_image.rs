@@ -323,3 +323,63 @@ fn assert_near(actual: f64, expected: f64, tolerance: f64) {
         "expected {actual} within {tolerance} of {expected}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Corners and export
+// ---------------------------------------------------------------------------
+
+/// An inserted image starts sharp, as Excalidraw's does (`App.tsx:10084` inserts with
+/// `roundness: null`). It used to inherit the default style's rounding, so the panel said
+/// Round for a picture whose bitmap is square — a control that described nothing.
+#[test]
+fn an_inserted_image_starts_with_sharp_corners() {
+    let mut engine = engine_with_scene(vec![]);
+    let id = engine
+        .insert_image("data:image/png;base64,AAAA", 400.0, 200.0, 400.0, 300.0)
+        .expect("inserted");
+    let image = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .unwrap();
+    assert_eq!(image.roundness, None);
+}
+
+/// The exported SVG carries the picture. It used to fall through to the shapes' arm and
+/// write a stroked `<rect>`, so exporting a board with a photo on it produced an empty box.
+#[test]
+fn an_svg_export_carries_the_picture() {
+    let mut engine = engine_with_scene(vec![]);
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    engine
+        .insert_image(url, 400.0, 200.0, 400.0, 300.0)
+        .expect("inserted");
+    let scene = engine.get_scene();
+    let bounds = scene_bounds(&scene).unwrap();
+    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+    assert!(svg.contains("<image"), "no <image> element in {svg}");
+    assert!(svg.contains(url), "the data URL is not in the export");
+    assert!(
+        !svg.contains("<rect x=\"0\""),
+        "and no empty box standing in for it"
+    );
+}
+
+/// An image with no picture yet — a board loaded without its file — exports as nothing
+/// rather than as an `<image>` pointing nowhere.
+#[test]
+fn an_image_without_a_picture_exports_no_broken_reference() {
+    let mut element = create_element_default(
+        DrawElementType::Image,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0,
+        },
+    );
+    element.data_url = None;
+    let bounds = element_bounds(&element);
+    let svg = scene_to_svg(&[element], bounds, 10.0, "#ffffff");
+    assert!(!svg.contains("<image"), "{svg}");
+}
