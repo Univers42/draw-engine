@@ -181,6 +181,22 @@ fn element_svg(element: &DrawElement) -> String {
             )
         }
         DrawElementType::Text => text_svg(element, &rect, &transform),
+        // The picture itself. This fell through to the arm below and was written as a
+        // stroked `<rect>`, so a board with a photo on it exported an empty box. An image
+        // with no picture yet — a board loaded without its file — exports as nothing
+        // rather than as a reference to nowhere.
+        DrawElementType::Image => match element.data_url.as_deref() {
+            Some(url) => format!(
+                "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"{}\" preserveAspectRatio=\"none\" opacity=\"{}\"{transform}/>",
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                escape_xml(url),
+                element.opacity / 100.0
+            ),
+            None => String::new(),
+        },
         _ => {
             // The same radius the canvas draws, from the same function. This used to be
             // `roundness.unwrap_or(0.0)` — the `8` every rounded shape carries and the
