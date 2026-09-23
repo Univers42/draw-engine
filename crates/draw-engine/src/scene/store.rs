@@ -425,7 +425,16 @@ impl Scene {
         }
 
         let mut delta = SceneDelta::default();
-        for id in dirty {
+        // In stacking order. The host appends what it has not seen in the order it is
+        // listed, and the set this comes from has none: a paste of several elements
+        // could land on the host — and from there on the server — stacked differently
+        // from the board it came from.
+        let mut dirty: Vec<(usize, String)> = dirty
+            .into_iter()
+            .map(|id| (self.index.get(&id).copied().unwrap_or(usize::MAX), id))
+            .collect();
+        dirty.sort_unstable();
+        for (_, id) in dirty {
             match self.index.get(&id).map(|&i| self.elements[i].as_ref()) {
                 Some(element) if element.is_deleted => delta.removed.push(id),
                 Some(element) => delta.updated.push(element.clone()),

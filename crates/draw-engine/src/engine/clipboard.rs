@@ -337,6 +337,10 @@ impl DrawEngine {
             return false;
         };
         self.set_scene(crate::scene::Scene::new(elements));
+        // Unlike a scene the host set, this one came from a file the host has never
+        // seen: it is told, whole, or its copy of the board — the one it saves — stays
+        // the board that was open before.
+        self.events.scene_json = Some(self.export_json());
         true
     }
 

@@ -157,3 +157,49 @@ fn the_first_edit_after_a_load_sends_only_itself() {
     let delta = engine.drain_events().scene_delta.expect("a delta");
     assert_eq!(delta.updated.len(), 1, "the new shape, not the board");
 }
+
+#[test]
+fn a_scene_loaded_from_a_file_is_handed_to_the_host_whole() {
+    // `set_scene` is quiet because the host supplied the scene. A file opened through
+    // `load_scene` is new to the host, and a quiet load left its copy of the board — the
+    // one it saves — at the board that was open before.
+    let mut engine = engine_with_scene(vec![filled(box_at(0.0, 0.0, 10.0, 10.0))]);
+    let _ = engine.drain_events();
+    let saved = engine_with_scene(vec![
+        filled(box_at(100.0, 0.0, 10.0, 10.0)),
+        filled(box_at(200.0, 0.0, 10.0, 10.0)),
+    ]);
+    let file = saved.export_json();
+    let ids: Vec<String> = saved.get_scene().into_iter().map(|el| el.id).collect();
+
+    assert!(engine.load_scene(&file));
+
+    let events = engine.drain_events();
+    let scene = events.scene_json.expect("the loaded scene, whole");
+    for id in ids {
+        assert!(scene.contains(&id), "{id} missing from {scene}");
+    }
+}
+
+#[test]
+fn a_delta_lists_what_it_adds_in_stacking_order() {
+    // The host appends what it has not seen in the order the delta lists it. Listed in
+    // hash order, a paste of several elements landed on the host — and on the server —
+    // stacked differently from the board it came from.
+    let mut engine = engine_with_scene(vec![]);
+    let _ = engine.drain_events();
+    let shapes: Vec<DrawElement> = (0..40)
+        .map(|i| filled(box_at(f64::from(i) * 12.0, 0.0, 10.0, 10.0)))
+        .collect();
+    let stacked: Vec<String> = shapes.iter().map(|el| el.id.clone()).collect();
+    let json = engine_with_scene(shapes).export_json();
+    let _ = engine.drain_events();
+
+    assert!(engine.paste_json(Some(&json), Some((300.0, 300.0))));
+    let delta = engine.drain_events().scene_delta.expect("a delta");
+    let order: Vec<String> = engine.get_scene().into_iter().map(|el| el.id).collect();
+    let listed: Vec<String> = delta.updated.iter().map(|el| el.id.clone()).collect();
+
+    assert_eq!(listed, order, "listed out of stacking order");
+    assert_eq!(listed.len(), stacked.len());
+}
