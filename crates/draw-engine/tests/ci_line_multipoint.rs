@@ -463,6 +463,97 @@ fn a_multi_click_arrow_still_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
 }
 
+/// Clicking a shape the pending point would bind to finishes the path right there — no
+/// Enter, no Escape, no second click on the point just placed. The suggestion already
+/// promised the attach; asking for a separate confirmation after it would make the
+/// highlight a lie for one more click.
+#[test]
+fn clicking_a_bind_suggestion_finishes_the_path() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+
+    assert!(
+        engine.linear_in_progress().is_none(),
+        "clicking a suggested shape should have finished the path on its own"
+    );
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
+/// The same, with a waypoint first — the click-to-bind-and-finish has to work from any
+/// point in the path, not only the second click overall.
+#[test]
+fn clicking_a_bind_suggestion_finishes_the_path_after_a_waypoint() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    place(&mut engine, &[(200.0, 150.0)]);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+
+    assert!(engine.linear_in_progress().is_none());
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
+/// A click nowhere near a bindable shape must not finish anything — only landing on one
+/// does. Otherwise every ordinary waypoint would end the path.
+#[test]
+fn a_click_in_open_space_does_not_finish_the_path() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 400.0, 400.0);
+    click(&mut engine, 400.0, 400.0);
+
+    assert!(
+        engine.linear_in_progress().is_some(),
+        "a click in open space is an ordinary waypoint, not a finish"
+    );
+}
+
+/// A line never binds, so clicking on a shape while placing one is just an ordinary
+/// waypoint that happens to land there — the path stays open.
+#[test]
+fn clicking_a_shape_does_not_finish_a_line() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Line);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+
+    assert!(
+        engine.linear_in_progress().is_some(),
+        "a line does not bind, so landing on a shape is not a reason to finish"
+    );
+}
+
 /// A line already on the board must not be dragged about by a shape it happens to
 /// overlap either. Binding is refreshed for the whole scene whenever anything moves, so
 /// the rule has to hold there as well as at creation.
