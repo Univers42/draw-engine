@@ -92,6 +92,18 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Whether align would move anything: two units, and no frame selected.
+    #[wasm_bindgen(js_name = canAlign)]
+    pub fn can_align(&self) -> bool {
+        self.cell.borrow().engine.can_align()
+    }
+
+    /// Whether distribute would move anything: three units, and no frame selected.
+    #[wasm_bindgen(js_name = canDistribute)]
+    pub fn can_distribute(&self) -> bool {
+        self.cell.borrow().engine.can_distribute()
+    }
+
     #[wasm_bindgen(js_name = flipSelection)]
     pub fn flip_selection(&self, axis: &str) {
         if let Some(axis) = crate::FlipAxis::parse(axis) {

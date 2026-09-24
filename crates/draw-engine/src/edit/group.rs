@@ -218,6 +218,61 @@ where
     carried
 }
 
+/// Part of the edited group taken out of it: each element of `moved` loses `editing`
+/// and every group around it, keeping the groups inside; and each group it left that is
+/// down to fewer than two live members stops being a group on whoever still carries it.
+/// Returns the elements that change, unstamped.
+///
+/// `updateGroupIdsAfterEditingGroup` (`packages/excalidraw/components/App.tsx:
+/// 11993-12040`), which runs when part of the edited group is dragged into or out of a
+/// frame. Narrowed on purpose: the oracle then clears *every* group id of any element on
+/// the board whose outermost group is down to one member, which rewrites — and here would
+/// restamp and send — elements the drag never touched. Only the dead ids of the groups
+/// that were left go, and only from their survivors.
+pub fn leave_edited_group<'a, I>(
+    elements: I,
+    moved: &HashSet<String>,
+    editing: &str,
+) -> Vec<DrawElement>
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    // The edited group and every group around it: the levels the part leaves.
+    let mut left: HashSet<String> = HashSet::new();
+    let mut out: Vec<DrawElement> = Vec::new();
+    for element in elements.clone().filter(|el| moved.contains(&el.id)) {
+        if let Some(at) = element.group_ids.iter().position(|id| id == editing) {
+            left.extend(element.group_ids[at..].iter().cloned());
+            let mut next = element.clone();
+            next.group_ids.truncate(at);
+            out.push(next);
+        }
+    }
+    let taken_out: HashSet<String> = out.iter().map(|el| el.id.clone()).collect();
+    let stays = |el: &DrawElement| !el.is_deleted && !taken_out.contains(&el.id);
+    // Counted without the part taken out, which carries none of the groups it left.
+    let dead: HashSet<String> = left
+        .into_iter()
+        .filter(|group| {
+            elements
+                .clone()
+                .filter(|el| stays(el) && is_in_group(el, group))
+                .nth(1)
+                .is_none()
+        })
+        .collect();
+    out.extend(
+        elements
+            .filter(|el| stays(el) && el.group_ids.iter().any(|g| dead.contains(g)))
+            .map(|el| {
+                let mut next = el.clone();
+                next.group_ids.retain(|g| !dead.contains(g));
+                next
+            }),
+    );
+    out
+}
+
 pub fn expand_to_groups(
     elements: &[DrawElement],
     ids: impl IntoIterator<Item = String>,

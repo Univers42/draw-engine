@@ -178,9 +178,12 @@ fn bench_drag(c: &mut Criterion) {
 
     for n in [1_000usize, 10_000, 50_000] {
         group.bench_function(format!("in_place/{n}"), |b| {
-            let mut scene = Scene::new(scene_of(n));
+            let elements = scene_of(n);
+            // What a drag touches: the one shape being moved.
+            let touched = std::collections::HashSet::from([elements[0].id.clone()]);
+            let mut scene = Scene::new(elements);
             b.iter(|| {
-                draw_engine::scene::binding::refresh_bindings_in_place(&mut scene);
+                draw_engine::scene::binding::refresh_bindings_in_place(&mut scene, &touched);
                 black_box(scene.size())
             });
         });

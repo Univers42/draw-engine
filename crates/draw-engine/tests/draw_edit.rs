@@ -185,17 +185,19 @@ fn align_on_selection_bounds() {
     let left = align_elements(
         &[a.clone(), b.clone()],
         &ids(&[a.clone(), b.clone()]),
+        None,
         AlignMode::Left,
     );
     assert_eq!(left.iter().map(|e| e.x).collect::<Vec<_>>(), vec![0.0, 0.0]);
     let centred = align_elements(
         &[a.clone(), b.clone()],
         &ids(&[a.clone(), b.clone()]),
+        None,
         AlignMode::CenterY,
     );
     let cy = |e: &DrawElement| e.y + e.height / 2.0;
     assert_eq!(cy(&centred[0]), cy(&centred[1]));
-    assert!(align_elements(&[a.clone(), b], &ids(&[a]), AlignMode::Left).is_empty());
+    assert!(align_elements(&[a.clone(), b], &ids(&[a]), None, AlignMode::Left).is_empty());
 }
 
 #[test]
@@ -206,12 +208,13 @@ fn distribute_centres() {
     let spread = distribute_elements(
         &[a.clone(), b.clone(), c.clone()],
         &ids(&[a.clone(), b.clone(), c.clone()]),
+        None,
         'x',
     );
     let mut centres: Vec<f64> = spread.iter().map(|e| e.x + e.width / 2.0).collect();
     centres.sort_by(|p, q| p.partial_cmp(q).unwrap());
     assert_eq!(centres, vec![10.0, 110.0, 210.0]);
-    assert!(distribute_elements(&[a.clone(), b.clone()], &ids(&[a, b]), 'x').is_empty());
+    assert!(distribute_elements(&[a.clone(), b.clone()], &ids(&[a, b]), None, 'x').is_empty());
 }
 
 #[test]

@@ -65,13 +65,15 @@ fn brings_picture(incoming: &DrawElement, existing: &DrawElement) -> bool {
 }
 
 impl DrawEngine {
-    /// Commits the scene: stamps what this step changed, records it, tells the host.
+    /// Commits the scene: settles which frame what it created belongs to, stamps what
+    /// this step changed, records it, tells the host.
     ///
     /// The stamping is what makes a move reach anyone. Gestures change geometry
     /// without touching `version`, and the version is the only change signal the
     /// autosave, the server's merge and every peer have — so an unstamped move was
     /// never saved and lost on reload. See `stamp.rs`.
     pub(super) fn push_history(&mut self) {
+        self.judge_created_frame_membership();
         // Only a step that changed something is recorded. A click that selected, or a
         // commit after a peer's patch and nothing of ours, used to push an entry anyway —
         // one that undid nothing and threw the redo stack away.
@@ -274,6 +276,10 @@ impl DrawEngine {
         }
 
         if changed {
+            // The arrows of what the peer changed, and of what is pending here, and no
+            // others: a peer's edit elsewhere re-routed an arrow saved before its ends
+            // were anchored, unstamped and unsent, so the server kept the old geometry
+            // under the same version.
             self.apply_bindings();
             // Drop the delta this produced: the host already has these elements, and
             // emitting them would send them straight back to the peer that sent them.

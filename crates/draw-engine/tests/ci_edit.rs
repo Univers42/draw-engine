@@ -82,21 +82,21 @@ fn zorder_empty_selection_is_noop() {
 #[test]
 fn align_left_multiple_elements() {
     let (a, b, c, scene) = make_three_elements();
-    let res = align_elements(&scene, &ids(&[a, b, c]), AlignMode::Left);
+    let res = align_elements(&scene, &ids(&[a, b, c]), None, AlignMode::Left);
     assert!(res.iter().all(|e| (e.x - 0.0).abs() < EPS));
 }
 
 #[test]
 fn align_right_multiple_elements() {
     let (a, b, c, scene) = make_three_elements();
-    let res = align_elements(&scene, &ids(&[a, b, c]), AlignMode::Right);
+    let res = align_elements(&scene, &ids(&[a, b, c]), None, AlignMode::Right);
     assert!(res.iter().all(|e| (e.x + e.width - 80.0).abs() < EPS));
 }
 
 #[test]
 fn align_center_x_multiple_elements() {
     let (a, b, c, scene) = make_three_elements();
-    let res = align_elements(&scene, &ids(&[a, b, c]), AlignMode::CenterX);
+    let res = align_elements(&scene, &ids(&[a, b, c]), None, AlignMode::CenterX);
     assert_close(res[0].x + res[0].width / 2.0, res[1].x + res[1].width / 2.0);
     assert_close(res[1].x + res[1].width / 2.0, res[2].x + res[2].width / 2.0);
 }
@@ -104,7 +104,7 @@ fn align_center_x_multiple_elements() {
 #[test]
 fn align_center_y_multiple_elements() {
     let (a, b, c, scene) = make_three_elements();
-    let res = align_elements(&scene, &ids(&[a, b, c]), AlignMode::CenterY);
+    let res = align_elements(&scene, &ids(&[a, b, c]), None, AlignMode::CenterY);
     assert_close(
         res[0].y + res[0].height / 2.0,
         res[1].y + res[1].height / 2.0,
@@ -114,14 +114,14 @@ fn align_center_y_multiple_elements() {
 #[test]
 fn align_single_element_returns_empty() {
     let (a, _, _, scene) = make_three_elements();
-    let res = align_elements(&scene, &ids(&[a.clone()]), AlignMode::Left);
+    let res = align_elements(&scene, &ids(&[a.clone()]), None, AlignMode::Left);
     assert!(res.is_empty());
 }
 
 #[test]
 fn distribute_equidistant_x_axis() {
     let (a, b, c, scene) = make_three_elements();
-    let res = distribute_elements(&scene, &ids(&[a, b, c]), 'x');
+    let res = distribute_elements(&scene, &ids(&[a, b, c]), None, 'x');
     let mut centers: Vec<_> = res.iter().map(|e| e.x + e.width / 2.0).collect();
     centers.sort_by(|l, r| l.partial_cmp(r).unwrap());
     assert_close(centers[1] - centers[0], centers[2] - centers[1]);
@@ -133,7 +133,7 @@ fn distribute_equidistant_y_axis() {
     let b = box_at(0.0, 40.0, 20.0, 20.0);
     let c = box_at(0.0, 100.0, 20.0, 20.0);
     let scene = vec![a.clone(), b.clone(), c.clone()];
-    let res = distribute_elements(&scene, &ids(&[a, b, c]), 'y');
+    let res = distribute_elements(&scene, &ids(&[a, b, c]), None, 'y');
     let mut centers: Vec<_> = res.iter().map(|e| e.y + e.height / 2.0).collect();
     centers.sort_by(|l, r| l.partial_cmp(r).unwrap());
     assert_close(centers[1] - centers[0], centers[2] - centers[1]);
