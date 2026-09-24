@@ -112,6 +112,9 @@ impl DrawEngine {
         // `packages/element/src/delta.ts:806-818`); cleared behind its back, it named a
         // group nothing carried, and no click anywhere on the board expanded to a group.
         self.set_selection(Vec::new());
+        // A drag carries on over the scene the step left, and what it remembered of the
+        // arrow under it — the far end's binding as it found it — is of the scene before.
+        self.clear_binding_suggestion();
         // An undo replaces the whole scene; there is no delta that describes it.
         self.scene.invalidate_delta();
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));

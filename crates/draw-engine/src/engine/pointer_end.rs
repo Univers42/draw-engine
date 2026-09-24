@@ -1,6 +1,7 @@
+use crate::camera::Point;
 use crate::engine::{DrawEngine, Interaction};
 use crate::freehand::points_bounds;
-use crate::interaction::{is_degenerate_linear, DrawTool};
+use crate::interaction::DrawTool;
 use crate::selection::{elements_in_lasso, elements_in_marquee_among, marquee_rect, LassoMode};
 
 /// World units the pointer must travel before a drag counts as a marquee rather than a
@@ -22,9 +23,7 @@ impl DrawEngine {
 
     fn end_pointer_step(&mut self) {
         // The binding hint belongs to the drag, not to the document.
-        self.binding_highlight = None;
-        self.binding_point = None;
-        self.bind_drag_origin = None;
+        self.clear_binding_suggestion();
         let Some(it) = self.interaction.take() else {
             return;
         };
@@ -32,7 +31,7 @@ impl DrawEngine {
         match it {
             Interaction::Draft { id, .. } => self.end_draft(&id),
             Interaction::TextDraft { id, .. } => self.end_text(&id),
-            Interaction::Linear { id, .. } => self.end_linear(&id),
+            Interaction::Linear { id, start, pointer } => self.end_linear(&id, start, pointer),
             // The release is what places a point. Committing on the press instead would
             // freeze it where the button went down, so it could never be nudged before
             // being let go of.
@@ -207,32 +206,18 @@ impl DrawEngine {
     /// click starts a path that keeps taking points — so the element it left behind is
     /// handed to `begin_multi_linear` rather than thrown away for being too small.
     ///
-    /// Measured in screen pixels off the last point, which is the drag delta, because the
-    /// threshold is a statement about the hand rather than about the drawing.
-    fn end_linear(&mut self, id: &str) {
-        let Some(element) = self.scene.get(id) else {
-            return;
-        };
-        let travelled = element
-            .points
-            .as_deref()
-            .and_then(|points| points.last())
-            .map_or(0.0, |&[dx, dy]| dx.hypot(dy))
-            * self.camera.scale;
-        if travelled < super::LINEAR_CLICK_PX {
-            self.begin_multi_linear(id);
+    /// Measured in screen pixels from the press to the release, because the threshold is a
+    /// statement about the hand rather than about the drawing. Read off the drawing, a
+    /// bound arrow — its ends pulled onto two outlines a few pixels apart, or collapsed
+    /// between overlapping shapes — turned a real drag into a click, and a drag past the
+    /// threshold was thrown away as too small once zoomed in far enough.
+    fn end_linear(&mut self, id: &str, start: Point, pointer: Point) {
+        if self.scene.get(id).is_none() {
             return;
         }
-
-        let degenerate = self
-            .scene
-            .get(id)
-            .map(|el| is_degenerate_linear(el.width, el.height, 4.0))
-            .unwrap_or(true);
-        if degenerate {
-            self.scene.discard(id);
-            self.set_tool(DrawTool::Select);
-            self.request_draw();
+        let travelled = (pointer.x - start.x).hypot(pointer.y - start.y) * self.camera.scale;
+        if travelled < super::LINEAR_CLICK_PX {
+            self.begin_multi_linear(id);
             return;
         }
         self.settle_tool();
@@ -295,6 +280,7 @@ impl DrawEngine {
     }
 
     fn cancel_pointer_step(&mut self) {
+        self.clear_binding_suggestion();
         // A press Escape interrupted is no click, and what it would have narrowed to was
         // worked out at a level Escape may be about to leave.
         self.narrow_on_click = None;

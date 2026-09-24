@@ -19,10 +19,11 @@
 //! An arrow bound before anchors existed has no anchor fields; it reads as the centre in
 //! orbit, which is exactly how every such arrow was always drawn.
 
-use crate::camera::Point;
+use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{BindMode, DrawElement, DrawElementType};
 use crate::scene::geometry::{
-    is_transparent, normalize_rect, rotation_center, to_element_local, within_shape,
+    element_rotated_bounds, is_transparent, normalize_rect, rotation_center, to_element_local,
+    within_shape,
 };
 
 /// Excalidraw's `BASE_BINDING_GAP` (`packages/element/src/binding.ts:115`): the air between
@@ -574,11 +575,18 @@ fn ray_hits_segment(from: Point, toward: Point, p: Point, q: Point) -> Option<(f
 ///   aimed at what the frame holds; and a shape inside a frame does not match where the
 ///   frame clips it from view (`bindingBorderTest`, `collision.ts:275-322`);
 /// - candidates are walked top of the z-order first, and the walk stops at the first
-///   filled one, so nothing hidden under a filled shape can be bound through it;
+///   filled one the point is inside, so nothing hidden under a filled shape can be bound
+///   through it;
 /// - among what matched, the smallest wins (`width² + height²`), so a shape nested inside
 ///   another is reachable however the two are stacked. Equal sizes go to the one on top
 ///   — what the eye picks; Excalidraw's sort happens to leave the lowest
 ///   (`collision.ts:376-384`).
+///
+/// **Deliberate divergence:** once the point is inside a shape, only that shape, or one
+/// nested within it, can win. Excalidraw stops at a filled shape the point is merely
+/// *near*, so a neighbour a few units off — on top, or smaller — took a press made inside
+/// another shape; with a reach set in screen pixels that happened at any zoom. A shape
+/// nested in the one pressed is still reached from just outside its border.
 ///
 /// `candidates` must run top of the z-order first.
 pub fn arrow_target_among<'a>(
@@ -601,25 +609,52 @@ pub fn arrow_target_among<'a>(
                 !(b.min_x..=b.max_x).contains(&x) || !(b.min_y..=b.max_y).contains(&y)
             })
     };
-    let mut best: Option<(&'a DrawElement, f64)> = None;
+    // (element, the point is inside it), top first.
+    let mut matched: Vec<(&'a DrawElement, bool)> = Vec::new();
     for element in candidates {
         if Some(element.id.as_str()) == exclude_id || !is_arrow_target(element) {
             continue;
         }
-        let matched = if element.kind == DrawElementType::Frame {
-            !contains(element, p, 0.0) && contains(element, p, tolerance)
+        let (near, inside) = if element.kind == DrawElementType::Frame {
+            (
+                !contains(element, p, 0.0) && contains(element, p, tolerance),
+                false,
+            )
         } else {
-            contains(element, p, tolerance) && !clipped(element)
+            let inside = contains(element, p, 0.0);
+            (
+                (inside || contains(element, p, tolerance)) && !clipped(element),
+                inside,
+            )
         };
-        if !matched {
+        if !near {
             continue;
         }
-        let size = element.width * element.width + element.height * element.height;
-        if best.is_none_or(|(_, best_size)| size < best_size) {
-            best = Some((element, size));
-        }
-        if occludes(element) {
+        matched.push((element, inside));
+        if inside && occludes(element) {
             break;
+        }
+    }
+    let holders: Vec<WorldBounds> = matched
+        .iter()
+        .filter(|(_, inside)| *inside)
+        .map(|(element, _)| element_rotated_bounds(element))
+        .collect();
+    let within = |b: WorldBounds, outer: &WorldBounds| {
+        b.min_x >= outer.min_x
+            && b.max_x <= outer.max_x
+            && b.min_y >= outer.min_y
+            && b.max_y <= outer.max_y
+    };
+    let mut best: Option<(&'a DrawElement, f64)> = None;
+    for (element, inside) in matched {
+        let eligible = inside || holders.is_empty() || {
+            let b = element_rotated_bounds(element);
+            holders.iter().any(|outer| within(b, outer))
+        };
+        let size = element.width * element.width + element.height * element.height;
+        if eligible && best.is_none_or(|(_, best_size)| size < best_size) {
+            best = Some((element, size));
         }
     }
     best.map(|(element, _)| element)
@@ -685,6 +720,9 @@ pub struct EndDrop {
     pub angle_locked: bool,
     /// The world size of one screen pixel.
     pub pixel: f64,
+    /// Grid snapping is on: the end lands on the grid, and a midpoint snap would pull it
+    /// off it — Excalidraw's grid mode turns the snap off (`binding.ts:876-878`).
+    pub grid: bool,
 }
 
 /// The side midpoint of `shape` a drop at `pointer` snaps to, if any.
@@ -817,7 +855,7 @@ pub fn anchor_for_drop<'a>(
     }
     let reach = DEGENERATE_ARROW_PX * drop.pixel;
     let directed = arrow.width.abs() >= reach || arrow.height.abs() >= reach;
-    let focus = (!drop.angle_locked)
+    let focus = (!drop.angle_locked && !drop.grid)
         .then(|| snapped_midpoint(hit, pointer, drop.snap))
         .flatten()
         .or_else(|| {
@@ -906,7 +944,10 @@ fn aim(points: &[Point], end: End, other: Option<&Bound<'_>>) -> Point {
 /// shape. Here an orbiting end never goes inside its shape, and the one thing those rules
 /// guard against, an arrow turning inside out, is handled by [`resolve_endpoints`].
 ///
-/// Also says whether an orbiting end found its outline.
+/// Also says whether an orbiting end is **trapped**: its anchor inside the shape and no
+/// way out toward its aim. An anchor put outside the shape that the line never leaves
+/// from is not trapped — the end simply stays on it, as Excalidraw keeps one on its focus
+/// (`utils.ts:782-786`, `binding.ts:880`).
 fn resolve_end(
     points: &[Point],
     end: End,
@@ -922,8 +963,8 @@ fn resolve_end(
         outline_crossings(this.shape, focus, aim, binding_gap(this.shape)),
         aim,
     ) {
-        Some(outline) => (outline, true),
-        None => (focus, false),
+        Some(outline) => (outline, false),
+        None => (focus, is_inside(this.shape, focus)),
     }
 }
 
@@ -937,13 +978,21 @@ fn resolve_end(
 /// Measured on excalidraw.com with one rectangle slid onto another, the arrow went 228
 /// long, 128, 48, then 0 and stayed 0 — never entering either shape. So a straight arrow
 /// orbiting at both ends collapses onto its tail when it would run against the line
-/// between its anchors, or when neither end can leave its shape — each anchor inside the
-/// other shape, where no arrow fits at all. One end leaving is a shape nested inside a
-/// larger one, and draws.
+/// between its anchors, or when both ends are trapped — each anchor inside the other
+/// shape, where no arrow fits at all. One end leaving is a shape nested inside a larger
+/// one, and draws; an anchor put outside its shape is not trapped, and draws where it is.
 fn resolve_endpoints<'a>(
     element: &DrawElement,
     lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
 ) -> Option<(Point, Point)> {
+    resolve_endpoints_from(element, lookup).map(|(next, _)| next)
+}
+
+/// [`resolve_endpoints`], with where the ends are now.
+fn resolve_endpoints_from<'a>(
+    element: &DrawElement,
+    lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
+) -> Option<((Point, Point), (Point, Point))> {
     let start = bound(element, End::Start, lookup);
     let end = bound(element, End::End, lookup);
     if start.is_none() && end.is_none() {
@@ -955,11 +1004,11 @@ fn resolve_endpoints<'a>(
     }
     let first = points[0];
     let last = points[points.len() - 1];
-    let (next_start, start_left) = start
+    let (next_start, start_trapped) = start
         .as_ref()
         .map(|b| resolve_end(&points, End::Start, b, end.as_ref()))
         .unwrap_or((first, false));
-    let (next_end, end_left) = end
+    let (next_end, end_trapped) = end
         .as_ref()
         .map(|b| resolve_end(&points, End::End, b, start.as_ref()))
         .unwrap_or((last, false));
@@ -972,12 +1021,12 @@ fn resolve_endpoints<'a>(
             );
             let run = (next_end.x - next_start.x) * (fe.x - fs.x)
                 + (next_end.y - next_start.y) * (fe.y - fs.y);
-            if run < 0.0 || (!start_left && !end_left) {
-                return Some((next_start, next_start));
+            if run < 0.0 || (start_trapped && end_trapped) {
+                return Some(((next_start, next_start), (first, last)));
             }
         }
     }
-    Some((next_start, next_end))
+    Some(((next_start, next_end), (first, last)))
 }
 
 // -------------------------------------------------------------------------- linears
@@ -1092,9 +1141,19 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
             {
                 continue;
             }
-            let Some((next_start, next_end)) = resolve_endpoints(element, &lookup) else {
+            let Some(((next_start, next_end), now)) = resolve_endpoints_from(element, &lookup)
+            else {
                 continue;
             };
+            // Ends where they already are: nothing to rewrite, and nothing cloned to find
+            // that out — this runs for every bound arrow on every move of anything. Not
+            // for a turned two-point arrow, which the rewrite straightens.
+            if (element.angle == 0.0 || element.points.as_ref().is_some_and(|p| p.len() > 2))
+                && same_point(next_start, now.0)
+                && same_point(next_end, now.1)
+            {
+                continue;
+            }
             // `linear_retarget`, not `linear_from_endpoints`: the latter rewrites the
             // point list as a straight pair, so every bend a user had put in an arrow
             // vanished the moment the shape it pointed at was nudged.
@@ -1128,6 +1187,44 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
     }
     for element in relaid {
         scene.put(element);
+    }
+}
+
+/// Equal but for the rounding of a world ↔ local round trip.
+fn same_point(a: Point, b: Point) -> bool {
+    let scale = 1.0 + a.x.abs().max(a.y.abs());
+    (a.x - b.x).abs() <= 1e-12 * scale && (a.y - b.y).abs() <= 1e-12 * scale
+}
+
+/// [`refresh_bindings_in_place`] for one arrow and its label.
+///
+/// For a gesture that changes that arrow and nothing it is bound to — drawing it, or
+/// dragging one of its points — so nothing else on the board has anything to re-resolve.
+/// Refreshing the whole board there made each move cost every bound arrow on it.
+pub fn refresh_binding_of(scene: &mut crate::scene::store::Scene, id: &str) {
+    let next = {
+        let lookup = |id: &str| scene.get(id);
+        scene
+            .get(id)
+            .filter(|element| is_binding_element(element))
+            .and_then(|element| {
+                let (start, end) = resolve_endpoints(element, &lookup)?;
+                let next = linear_retarget(element.clone(), start, end);
+                (&next != element).then_some(next)
+            })
+    };
+    if let Some(next) = next {
+        scene.put(next);
+    }
+    let relaid = scene.get(id).and_then(|container| {
+        let label = scene
+            .get(container.bound_text_id.as_deref()?)
+            .filter(|label| !label.is_deleted)?;
+        let laid = layout_label(label.clone(), container);
+        (&laid != label).then_some(laid)
+    });
+    if let Some(label) = relaid {
+        scene.put(label);
     }
 }
 

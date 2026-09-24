@@ -172,7 +172,11 @@ impl DrawEngine {
         self.bind_drag_origin = None;
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::Linear { id, start: world });
+        self.interaction = Some(Interaction::Linear {
+            id,
+            start: world,
+            pointer: world,
+        });
         self.request_draw();
     }
 

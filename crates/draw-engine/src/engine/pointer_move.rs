@@ -105,9 +105,13 @@ impl DrawEngine {
                     handle: next,
                 })
             }
-            Interaction::Linear { ref id, start } => {
+            Interaction::Linear { ref id, start, .. } => {
                 self.move_linear(id, start, world, square);
-                Some(it)
+                Some(Interaction::Linear {
+                    id: id.clone(),
+                    start,
+                    pointer: world,
+                })
             }
             // Dragging with the button still down after a press that placed a point: the
             // preview keeps tracking, so a point can be nudged before the release fixes
@@ -266,7 +270,7 @@ impl DrawEngine {
         let moved = self.rebind_endpoint(moved, handle, square);
 
         self.scene.put(moved);
-        self.apply_bindings();
+        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.request_draw();
     }
 
@@ -361,6 +365,7 @@ impl DrawEngine {
             exact: self.alt_held,
             angle_locked,
             pixel: 1.0 / self.camera.scale,
+            grid: self.grid.enabled && self.grid.snap,
         };
         let scene = &self.scene;
         anchor_for_drop(
@@ -401,6 +406,7 @@ impl DrawEngine {
         set_anchor(element, end.other(), original_other);
 
         let (this, other) = self.drop_binding(element, end, world, angle_locked);
+        self.binding_snaps = Some(self.drop_snaps(this.as_ref(), world));
         self.binding_highlight = this.as_ref().map(|a| a.element_id.clone());
         self.binding_point = Some(world);
         set_anchor(element, end, this);
@@ -468,7 +474,7 @@ impl DrawEngine {
             self.bind_dropped_end(&mut element, End::End, tip, square);
         }
         self.scene.put(element);
-        self.apply_bindings();
+        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.request_draw();
     }
 

@@ -103,11 +103,22 @@ impl DrawEngine {
         // Repainted only when what is drawn changes — the shape or its midpoint dot —
         // not on every move across it.
         let shown = (self.binding_highlight.clone(), self.binding_midpoint());
+        self.binding_snaps = None;
         self.binding_point = target.as_ref().map(|_| world);
         self.binding_highlight = target;
         if shown != (self.binding_highlight.clone(), self.binding_midpoint()) {
             self.request_draw();
         }
+    }
+
+    /// Puts the binding suggestion out, and forgets what the drag remembered of the far
+    /// end — when a gesture ends, is cancelled or taken over by a peer, when the tool
+    /// changes, and when undo replaces the scene under a drag.
+    pub(crate) fn clear_binding_suggestion(&mut self) {
+        self.binding_highlight = None;
+        self.binding_point = None;
+        self.binding_snaps = None;
+        self.bind_drag_origin = None;
     }
 
     /// The pointer left the canvas: whatever [`Self::hover_pointer`] lit goes out.

@@ -157,6 +157,10 @@ pub struct DrawEngine {
     /// to mark which side midpoint it would snap to. Set together with
     /// `binding_highlight` and cleared with it.
     binding_point: Option<crate::camera::Point>,
+    /// Whether the end being dropped anchors at the side midpoint its dot marks — the
+    /// drop decides, as Shift or the far end sharing the shape turns the snap off.
+    /// `None` between gestures, where a press binds on the dot's own terms.
+    binding_snaps: Option<bool>,
     /// The other end's binding as it was when the drag of one end began, so a drag that
     /// passes over the shape the other end is on and moves on gives that end back.
     /// `(arrow id, the end being dragged, the other end's anchor)`. See `pointer_move.rs`.
@@ -238,6 +242,7 @@ impl DrawEngine {
             objects_snap: false,
             binding_highlight: None,
             binding_point: None,
+            binding_snaps: None,
             bind_drag_origin: None,
             laser: crate::interaction::LaserTrails::default(),
             peer_lasers: HashMap::new(),
@@ -473,8 +478,7 @@ impl DrawEngine {
         self.tool = tool;
         self.events.tool = Some(tool);
         // The arrow tool's hover suggestion goes with it.
-        self.binding_highlight = None;
-        self.binding_point = None;
+        self.clear_binding_suggestion();
         // Picking any tool but select puts down whatever was being held.
         // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
         // style panel: it offers the union of what the active tool can style and what the

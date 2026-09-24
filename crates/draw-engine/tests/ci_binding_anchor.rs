@@ -665,3 +665,214 @@ fn a_shape_is_not_bound_where_its_frame_clips_it() {
         "where B is shown, it binds"
     );
 }
+
+// ------------------------------------------------------------------- found in review
+
+fn length(arrow: &DrawElement) -> f64 {
+    let (a, b) = ends(arrow);
+    (b.x - a.x).hypot(b.y - a.y)
+}
+
+/// Pressed and let go beside two shapes, off their midpoints, each anchor is where the
+/// end was put — outside its shape. Read as trapped inside, the two collapsed the arrow
+/// to nothing, the release took it for a click, and Escape then lost it.
+#[test]
+fn an_arrow_drawn_beside_two_shapes_keeps_its_length() {
+    let a = shape("a", filled(box_at(0.0, 0.0, 100.0, 80.0)));
+    let b = shape(B, filled(box_at(0.0, 300.0, 100.0, 80.0)));
+    let mut engine = engine_with_scene(vec![a, b]);
+
+    let arrow = draw_arrow(&mut engine, (-20.0, 20.0), (-20.0, 320.0));
+
+    assert_eq!(engine.linear_in_progress(), None, "a drag, not a click");
+    assert_eq!(arrow.start_binding.as_deref(), Some("a"), "setup");
+    assert_eq!(arrow.end_binding.as_deref(), Some(B), "setup");
+    assert!((length(&arrow) - 300.0).abs() < 1e-6, "{}", length(&arrow));
+}
+
+/// Click or drag is the hand's travel, not the arrow's: bound between two shapes a few
+/// pixels apart, a 240px drag left a 16px arrow and was taken for a click.
+#[test]
+fn a_drag_between_close_shapes_is_a_drag() {
+    let a = shape("a", filled(box_at(0.0, 0.0, 100.0, 80.0)));
+    let b = shape(B, filled(box_at(120.0, 0.0, 100.0, 80.0)));
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_camera(Camera {
+        x: 0.0,
+        y: 0.0,
+        scale: 2.0,
+    });
+
+    let arrow = draw_arrow(&mut engine, (204.0, 80.0), (444.0, 80.0));
+
+    assert_eq!(engine.linear_in_progress(), None);
+    assert_eq!(arrow.start_binding.as_deref(), Some("a"));
+    assert_eq!(arrow.end_binding.as_deref(), Some(B));
+}
+
+/// Deep in a zoomed presentation a real drag is a fraction of a unit long, and was thrown
+/// away as too small.
+#[test]
+fn a_short_drag_deep_in_a_zoom_is_kept() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_camera(Camera {
+        x: 0.0,
+        y: 0.0,
+        scale: 50.0,
+    });
+
+    let arrow = draw_arrow(&mut engine, (100.0, 100.0), (160.0, 100.0));
+
+    assert_eq!(engine.linear_in_progress(), None);
+    assert!((length(&arrow) - 1.2).abs() < 1e-9, "{}", length(&arrow));
+}
+
+/// A press inside a shape is aimed at that shape. With the walk stopping at any filled
+/// shape merely near the point, a neighbour on top — or a smaller one below — took it.
+#[test]
+fn a_press_inside_a_shape_binds_to_it_not_its_neighbour() {
+    for (a, b, press) in [
+        // Equal sizes, the neighbour on top.
+        (
+            box_at(0.0, 0.0, 100.0, 80.0),
+            box_at(120.0, 0.0, 100.0, 80.0),
+            (95.0, 40.0),
+        ),
+        // The pressed shape smaller and underneath.
+        (
+            box_at(0.0, 0.0, 60.0, 50.0),
+            box_at(80.0, 0.0, 100.0, 80.0),
+            (55.0, 25.0),
+        ),
+    ] {
+        let mut engine = engine_with_scene(vec![shape("a", filled(a)), shape(B, filled(b))]);
+        let arrow = draw_arrow(&mut engine, press, (press.0, 400.0));
+        let start = anchor(&arrow, End::Start).expect("bound");
+        assert_eq!(start.element_id, "a");
+        assert_eq!(start.mode, BindMode::Inside);
+    }
+}
+
+/// And a shape nested in the one pressed is still reached from just outside its border.
+#[test]
+fn a_nested_shape_is_still_reached_from_inside_its_container() {
+    let outer = shape("outer", filled(box_at(0.0, 0.0, 400.0, 300.0)));
+    let inner = shape(B, filled(box_at(100.0, 100.0, 100.0, 80.0)));
+    let mut engine = engine_with_scene(vec![outer, inner]);
+
+    let arrow = draw_arrow(&mut engine, (20.0, 20.0), (95.0, 140.0));
+
+    let end = anchor(&arrow, End::End).expect("bound");
+    assert_eq!(end.element_id, B);
+    assert_eq!(end.mode, BindMode::Orbit);
+}
+
+/// Undo in the middle of an end drag: the drag carries on over the undone scene, and what
+/// it remembered of the far end — from before the undo — must not be written back.
+#[test]
+fn undo_during_an_end_drag_is_not_written_back() {
+    let a = shape("a", filled(box_at(0.0, 0.0, 100.0, 80.0)));
+    let c = shape("c", filled(box_at(0.0, 300.0, 100.0, 80.0)));
+    let mut engine = engine_with_scene(vec![a, target(), c]);
+    let arrow = draw_arrow(&mut engine, (105.0, 40.0), (295.0, 340.0));
+    assert_eq!(arrow.start_binding.as_deref(), Some("a"), "setup");
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![arrow.id.clone()]);
+    let (start, _) = ends(&arrow);
+    engine.begin_pointer(start.x, start.y, false, false);
+    engine.move_pointer(50.0, 340.0, false, false);
+    engine.end_pointer();
+    assert_eq!(
+        get(&engine, &arrow.id).start_binding.as_deref(),
+        Some("c"),
+        "setup"
+    );
+
+    let (_, tip) = ends(&get(&engine, &arrow.id));
+    engine.begin_pointer(tip.x, tip.y, false, false);
+    engine.move_pointer(tip.x + 5.0, tip.y + 60.0, false, false);
+    engine.undo();
+    assert_eq!(
+        get(&engine, &arrow.id).start_binding.as_deref(),
+        Some("a"),
+        "setup"
+    );
+    engine.move_pointer(tip.x + 10.0, tip.y + 70.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(get(&engine, &arrow.id).start_binding.as_deref(), Some("a"));
+}
+
+/// The dot is filled in only where a drop would snap to it. Held to an angle, the end
+/// does not snap, and a dot claiming it would is a promise the drop breaks.
+#[test]
+fn the_midpoint_dot_promises_only_the_snap_a_drop_makes() {
+    let mut engine = engine_with_scene(vec![target()]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(200.0, 230.0, false, false);
+    engine.move_pointer(250.0, 280.0, true, false);
+    engine.move_pointer(297.0, 327.0, true, false);
+
+    let (_, snaps) = engine.paint_view().binding_midpoint.expect("a dot");
+    assert!(!snaps, "angle-locked: no snap");
+    engine.end_pointer();
+}
+
+/// Grid snapping holds the end to the grid, so the midpoint snap is off
+/// (`binding.ts:876-878`): pulled onto B's midpoint, the arrow bent off its row.
+#[test]
+fn on_the_grid_an_end_is_not_pulled_onto_a_midpoint() {
+    let b = shape(B, filled(box_at(300.0, 300.0, 100.0, 90.0)));
+    let mut engine = engine_with_scene(vec![b]);
+    engine.set_grid(GridSettings {
+        enabled: true,
+        size: 10.0,
+        step: 5,
+        snap: true,
+    });
+
+    let arrow = draw_arrow(&mut engine, (100.0, 340.0), (291.0, 341.0));
+
+    assert_eq!(arrow.end_binding.as_deref(), Some(B), "setup");
+    let (start, tip) = ends(&arrow);
+    assert_close(start.y, 340.0);
+    assert_close(tip.y, 340.0);
+}
+
+/// Escape ends an end drag, and the suggestion it showed goes with it.
+#[test]
+fn escape_puts_the_suggestion_out() {
+    let mut engine = engine_with_scene(vec![target()]);
+    let arrow = draw_arrow(&mut engine, (100.0, 340.0), (200.0, 340.0));
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![arrow.id.clone()]);
+    engine.begin_pointer(200.0, 340.0, false, false);
+    engine.move_pointer(250.0, 340.0, false, false);
+    engine.move_pointer(296.0, 340.0, false, false);
+    assert!(engine.paint_view().binding_highlight.is_some(), "setup");
+
+    engine.cancel_pointer();
+
+    let view = engine.paint_view();
+    assert!(view.binding_highlight.is_none());
+    assert!(view.binding_midpoint.is_none());
+}
+
+/// A shape undone from under the hovering pointer takes its suggestion with it.
+#[test]
+fn a_deleted_shape_is_not_suggested() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(300.0, 300.0, false, false);
+    engine.move_pointer(400.0, 380.0, false, false);
+    engine.end_pointer();
+    engine.set_tool(DrawTool::Arrow);
+    engine.hover_pointer(296.0, 340.0);
+    assert!(engine.paint_view().binding_highlight.is_some(), "setup");
+
+    engine.undo();
+
+    let view = engine.paint_view();
+    assert!(view.binding_highlight.is_none());
+    assert!(view.binding_midpoint.is_none());
+}

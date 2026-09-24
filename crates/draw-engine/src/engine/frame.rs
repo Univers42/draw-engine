@@ -141,13 +141,43 @@ impl DrawEngine {
     /// The side midpoint of the suggested shape to mark, and whether a drop would snap
     /// to it. Alt binds exactly where the end is, so there is no snap to promise.
     pub(crate) fn binding_midpoint(&self) -> Option<(crate::camera::Point, bool)> {
-        let shape = self.scene.get(self.binding_highlight.as_deref()?)?;
+        let shape = self.binding_shape()?;
         let pointer = self.binding_point.filter(|_| !self.alt_held)?;
-        crate::scene::binding::midpoint_mark(
+        let (mark, snaps) = crate::scene::binding::midpoint_mark(
             shape,
             pointer,
             super::MIDPOINT_SNAP_PX / self.camera.scale,
-        )
+        )?;
+        // Only the snap a drop would really make: none on the grid (`binding.ts:876-878`),
+        // and in a drag, the anchor it chose.
+        let grid = self.grid.enabled && self.grid.snap;
+        Some((mark, snaps && !grid && self.binding_snaps.unwrap_or(true)))
+    }
+
+    /// The shape the suggestion lights, while it is still there: an undo can delete it
+    /// under the pointer.
+    fn binding_shape(&self) -> Option<&DrawElement> {
+        self.scene
+            .get(self.binding_highlight.as_deref()?)
+            .filter(|shape| !shape.is_deleted)
+    }
+
+    /// Whether `anchor`, dropped at `pointer`, is the side midpoint snap.
+    pub(crate) fn drop_snaps(
+        &self,
+        anchor: Option<&crate::scene::binding::Anchor>,
+        pointer: crate::camera::Point,
+    ) -> bool {
+        use crate::scene::binding::{focus_point, snapped_midpoint};
+        let Some(anchor) = anchor.filter(|a| a.mode == crate::scene::BindMode::Orbit) else {
+            return false;
+        };
+        let Some(shape) = self.scene.get(&anchor.element_id) else {
+            return false;
+        };
+        let focus = focus_point(shape, anchor.fixed_point);
+        snapped_midpoint(shape, pointer, super::MIDPOINT_SNAP_PX / self.camera.scale)
+            .is_some_and(|m| (m.x - focus.x).hypot(m.y - focus.y) < 0.01 / self.camera.scale)
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
@@ -326,10 +356,7 @@ impl DrawEngine {
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
             handle_layout: self.handle_layout(),
-            binding_highlight: self
-                .binding_highlight
-                .as_deref()
-                .and_then(|id| self.scene.get(id)),
+            binding_highlight: self.binding_shape(),
             binding_midpoint: self.binding_midpoint(),
             linear_handles,
             active_handle,

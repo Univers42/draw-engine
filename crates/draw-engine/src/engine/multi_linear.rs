@@ -219,7 +219,9 @@ impl DrawEngine {
         // endpoint (`move_linear`). Visual only: nothing here touches the element,
         // since the pending point is not necessarily the path's actual end until a
         // click on it (`press_multi_linear`) or `finish_multi_linear` says so.
-        self.binding_highlight = self.end_binding_at(&element, world).0.map(|a| a.element_id);
+        let end = self.end_binding_at(&element, world).0;
+        self.binding_snaps = Some(self.drop_snaps(end.as_ref(), world));
+        self.binding_highlight = end.map(|a| a.element_id);
         self.binding_point = self.binding_highlight.as_ref().map(|_| world);
 
         let Some(mut points) = element.points.clone() else {
@@ -319,8 +321,7 @@ impl DrawEngine {
                 set_anchor(&mut element, End::Start, Some(start));
             }
         }
-        self.binding_highlight = None;
-        self.binding_point = None;
+        self.clear_binding_suggestion();
 
         self.scene.put(bump_version(element, self.now_ms));
         self.apply_bindings();
