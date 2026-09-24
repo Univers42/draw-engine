@@ -530,42 +530,20 @@ impl<'a> Stack<'a> {
 /// A group is one run of the stack. Left apart, whatever lay between the members would be
 /// painted through the group, and stepping the group forward could only move its members
 /// past their own neighbours.
+///
+/// Only the span from the lowest member to the topmost is rearranged: the members go to
+/// its top, what lay between them under them, each side keeping its own order.
 pub fn gather(live: &[DrawElement], members: &HashSet<String>) -> Vec<DrawElement> {
-    match span(live, |el| members.contains(&el.id)) {
-        Some(range) => to_end(live, members, range, true),
-        None => live.to_vec(),
-    }
-}
-
-/// The first and last index of what `wanted` picks out, or `None` if nothing is.
-fn span(
-    live: &[DrawElement],
-    wanted: impl Fn(&DrawElement) -> bool,
-) -> Option<RangeInclusive<usize>> {
-    let first = live.iter().position(&wanted)?;
-    let last = live.iter().rposition(&wanted)?;
-    Some(first..=last)
-}
-
-/// What of `moved` lies within `range`, stacked at its top (or bottom), each side keeping
-/// its own order; nothing outside the range is touched.
-fn to_end(
-    live: &[DrawElement],
-    moved: &HashSet<String>,
-    range: RangeInclusive<usize>,
-    top: bool,
-) -> Vec<DrawElement> {
-    let (lo, hi) = (*range.start(), *range.end());
-    let (inside, displaced): (Vec<&DrawElement>, Vec<&DrawElement>) =
-        live[range].iter().partition(|el| moved.contains(&el.id));
-    let middle = if top {
-        displaced.into_iter().chain(inside)
-    } else {
-        inside.into_iter().chain(displaced)
+    let member = |el: &DrawElement| members.contains(&el.id);
+    let (Some(lo), Some(hi)) = (live.iter().position(member), live.iter().rposition(member)) else {
+        return live.to_vec();
     };
+    let (inside, displaced): (Vec<&DrawElement>, Vec<&DrawElement>) =
+        live[lo..=hi].iter().partition(|el| member(el));
     live[..lo]
         .iter()
-        .chain(middle)
+        .chain(displaced)
+        .chain(inside)
         .chain(&live[hi + 1..])
         .cloned()
         .collect()
