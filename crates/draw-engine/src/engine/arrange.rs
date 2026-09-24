@@ -62,10 +62,12 @@ impl DrawEngine {
         ));
     }
 
+    /// Flips what a drag would move: a frame's children and a locked group member come
+    /// along, as the oracle's flip takes them (`actionFlip.ts:87-94`, `groups.ts:94-132`).
     pub fn flip_selection(&mut self, axis: FlipAxis) {
         self.apply_patches(flip_elements(
             &self.scene.ordered_cloned(),
-            &self.selected_ids,
+            &self.moving_selection(),
             axis,
         ));
     }
