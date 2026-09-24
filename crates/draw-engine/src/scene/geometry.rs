@@ -215,6 +215,59 @@ pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
     }
 }
 
+/// The axis-aligned box around what a turned element draws — Excalidraw's
+/// `getElementBounds` (`packages/element/src/bounds.ts:147-240` at 1118751f): an ellipse
+/// by its own curve, a diamond by its four corners, a line, arrow or freehand stroke by its
+/// turned points, anything else by its turned box.
+///
+/// [`element_rotated_bounds`] turns the whole box for every kind, which reaches past all of
+/// these: the cheap superset a hit test rejects with. This is the one to measure with where
+/// the answer has to be excalidraw.com's. A line is measured by its points, where the
+/// oracle walks its rendered rough path, a pixel or so either way.
+pub fn element_outline_bounds(element: &DrawElement) -> WorldBounds {
+    if element.angle == 0.0 {
+        return element_bounds(element);
+    }
+    if is_point_based(element) {
+        let points = crate::selection::linear::world_points(element);
+        if !points.is_empty() {
+            return points.iter().fold(
+                WorldBounds {
+                    min_x: f64::INFINITY,
+                    min_y: f64::INFINITY,
+                    max_x: f64::NEG_INFINITY,
+                    max_y: f64::NEG_INFINITY,
+                },
+                |b, p| WorldBounds {
+                    min_x: b.min_x.min(p.x),
+                    min_y: b.min_y.min(p.y),
+                    max_x: b.max_x.max(p.x),
+                    max_y: b.max_y.max(p.y),
+                },
+            );
+        }
+    }
+    let plain = element_bounds(element);
+    let hw = (plain.max_x - plain.min_x) / 2.0;
+    let hh = (plain.max_y - plain.min_y) / 2.0;
+    let (sin, cos) = element.angle.sin_cos();
+    let (ex, ey) = match element.kind {
+        DrawElementType::Ellipse => ((hw * cos).hypot(hh * sin), (hh * cos).hypot(hw * sin)),
+        DrawElementType::Diamond => (
+            (hw * cos).abs().max((hh * sin).abs()),
+            (hw * sin).abs().max((hh * cos).abs()),
+        ),
+        _ => return element_rotated_bounds(element),
+    };
+    let c = rotation_center(element);
+    WorldBounds {
+        min_x: c.x - ex,
+        min_y: c.y - ey,
+        max_x: c.x + ex,
+        max_y: c.y + ey,
+    }
+}
+
 /// How many points a curve is sampled at when it has to be described as a polygon.
 ///
 /// Four box corners would let a loop drawn snugly around a circle miss it, and would let

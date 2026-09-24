@@ -223,14 +223,15 @@ fn flip_horizontal() {
     let b = box_at(300.0, 0.0, 100.0, 60.0);
     let flipped = flip_elements(&[a.clone(), b.clone()], &ids(&[a, b]), FlipAxis::Horizontal);
 
-    // The two swap places. Asserted through the bounds rather than through `x`, because
-    // a mirrored element's `x` is its *right* edge: the sign of the extent is what the
-    // painter reads as the mirror, so a flip has to change it.
-    assert_eq!(element_bounds(&flipped[0]).min_x, 300.0);
-    assert_eq!(element_bounds(&flipped[0]).max_x, 400.0);
-    assert_eq!(element_bounds(&flipped[1]).min_x, 0.0);
-    assert!(flipped[0].width < 0.0, "mirrored on the horizontal axis");
-    assert_eq!(flipped[0].height, 60.0, "and untouched on the vertical one");
+    // The two swap places, and each keeps a positive extent: a box is reflected, not
+    // drawn backwards, so its hand-drawn stroke and hatching stay the ones it had — the
+    // oracle keeps width and height positive (`resizeElements.ts:1409-1444`).
+    assert_eq!((flipped[0].x, flipped[0].width), (300.0, 100.0));
+    assert_eq!((flipped[1].x, flipped[1].width), (0.0, 100.0));
+    assert_eq!(
+        flipped[0].height, 60.0,
+        "and untouched on the vertical axis"
+    );
 
     let link = arrow(0.0, 0.0, 400.0, 100.0);
     let flipped = flip_elements(&[link.clone()], &ids(&[link]), FlipAxis::Horizontal);
@@ -241,12 +242,14 @@ fn flip_horizontal() {
 }
 
 /// A reflection is its own inverse, so flipping twice has to land on the original
-/// numbers exactly — not merely in the same place. Repositioning without changing the
-/// extent looked like an involution while doing nothing at all.
+/// numbers exactly — not merely in the same place. Flipped alone, a turned shape stays
+/// where it is and turns the other way; an unturned rectangle is its own mirror image and
+/// does not change at all, as on excalidraw.com.
 #[test]
 fn flipping_twice_restores_the_original() {
     for axis in [FlipAxis::Horizontal, FlipAxis::Vertical] {
-        let shape = box_at(120.0, 40.0, 200.0, 90.0);
+        let mut shape = box_at(120.0, 40.0, 200.0, 90.0);
+        shape.angle = 0.5;
         let once = flip_elements(&[shape.clone()], &ids(&[shape.clone()]), axis);
         let twice = flip_elements(&once, &ids(&once), axis);
 
@@ -254,14 +257,14 @@ fn flipping_twice_restores_the_original() {
         assert_eq!(twice[0].y, shape.y, "{axis:?}");
         assert_eq!(twice[0].width, shape.width, "{axis:?}");
         assert_eq!(twice[0].height, shape.height, "{axis:?}");
+        assert_eq!(twice[0].angle, shape.angle, "{axis:?}");
 
-        // And one flip genuinely reverses the shape rather than leaving it be.
-        let mirrored = if axis == FlipAxis::Horizontal {
-            once[0].width
-        } else {
-            once[0].height
-        };
-        assert!(mirrored < 0.0, "{axis:?} must actually mirror the shape");
+        // And one flip genuinely turns the shape rather than leaving it be.
+        assert_eq!(
+            once[0].angle, -0.5,
+            "{axis:?} must actually mirror the shape"
+        );
+        assert_eq!((once[0].x, once[0].y), (shape.x, shape.y), "{axis:?}");
     }
 }
 

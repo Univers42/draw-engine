@@ -88,15 +88,29 @@ impl DrawEngine {
         self.arrange_units() > 2
     }
 
+    /// Flips what a drag would move: a frame's children and a locked group member come
+    /// along, as the oracle's flip takes them (`actionFlip.ts:87-94`, `groups.ts:94-132`).
     pub fn flip_selection(&mut self, axis: FlipAxis) {
         self.apply_patches(flip_elements(
             &self.scene.ordered_cloned(),
-            &self.selected_ids,
+            &self.moving_selection(),
             axis,
         ));
     }
 
     pub(super) fn apply_patches(&mut self, patches: Vec<DrawElement>) {
+        // A patch that changes nothing is not an edit: stamped, it would be saved, sent to
+        // every peer and take a step of undo that puts nothing back — a lone unturned box
+        // flipped, shapes aligned already. The oracle's `mutateElement` keeps the version
+        // when no value changed (`packages/element/src/mutateElement.ts:129-131`).
+        let patches: Vec<DrawElement> = patches
+            .into_iter()
+            .filter(|patch| {
+                self.scene
+                    .get(&patch.id)
+                    .is_none_or(|live| !super::stamp::same_content(patch, live))
+            })
+            .collect();
         if patches.is_empty() {
             return;
         }
