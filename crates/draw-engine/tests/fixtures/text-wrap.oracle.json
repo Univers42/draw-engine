@@ -1,7 +1,7 @@
 {
  "generator": "engine/tools/text-oracle/generate.mjs",
  "oracle": {
-  "excalidraw": "97c68dd371e13c017a8dcca49f8b3995ba7890a8",
+  "excalidraw": "1118751f3e4958a0dc3d71934c093584fdb7c6f5",
   "files": [
    "packages/element/src/textWrapping.ts",
    "packages/element/src/textMeasurements.ts"
