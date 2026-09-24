@@ -1,6 +1,6 @@
 [submodule "claude-deal-with-the-devil"]
 	path = claude-deal-with-the-devil
-	url = git@github.com:Univers42/claude-deal-with-the-devil
+	url = https://github.com/Univers42/claude-deal-with-the-devil.git
 [submodule "realtime"]
 	path = realtime
-	url = git@github.com:Univers42/realtime-agnostic.git
+	url = https://github.com/Univers42/realtime-agnostic.git
