@@ -41,6 +41,8 @@ run_quality() {
   # and the input plumbing all escaped the gate entirely, and dead code there surfaced
   # only as a warning during `make wasm`, which nothing was checking.
   cargo clippy --target wasm32-unknown-unknown -p draw-engine --all-features -- -D warnings
+  # The tracer's binding (`crates/draw-trace/src/wasm.rs`) is wasm-only too.
+  cargo clippy --target wasm32-unknown-unknown -p draw-trace --all-features -- -D warnings
   run_cargo_test "$@"
   run_host_tests "$@"
 }
@@ -49,11 +51,18 @@ run_wasm() {
   local target_dir="${CARGO_TARGET_DIR:-target}"
   # Warnings are errors here too, so a warning cannot reach a shipped artifact even when
   # someone builds the bundle without running `quality` first.
-  RUSTFLAGS="${RUSTFLAGS:-} -D warnings" \
-    cargo build --release --target wasm32-unknown-unknown -p draw-engine
+  #
+  # Two modules: the engine, and the tracer a Web Worker loads only when someone
+  # vectorizes an image. Built apart — one cargo invocation each, so neither's features
+  # are unified into the other — and the engine's own WASM does not carry the tracer.
   mkdir -p pkg
-  wasm-bindgen --target web --out-dir pkg \
-    "${target_dir}/wasm32-unknown-unknown/release/draw_engine.wasm"
+  local crate
+  for crate in draw-engine draw-trace; do
+    RUSTFLAGS="${RUSTFLAGS:-} -D warnings" \
+      cargo build --release --target wasm32-unknown-unknown -p "${crate}"
+    wasm-bindgen --target web --out-dir pkg \
+      "${target_dir}/wasm32-unknown-unknown/release/${crate//-/_}.wasm"
+  done
 }
 
 run_inside_container() {
