@@ -1,4 +1,3 @@
-use crate::edit::expand_within;
 use crate::engine::{DrawEngine, Interaction};
 use crate::freehand::points_bounds;
 use crate::interaction::{is_degenerate_linear, DrawTool};
@@ -48,9 +47,7 @@ impl DrawEngine {
                     &path,
                     LassoMode::Contain,
                 ));
-                let editing = self.editing_group_id.clone();
-                let expanded = expand_within(self.scene.iter_ordered(), ids, editing.as_deref());
-                self.set_selection(expanded);
+                self.select_caught(ids);
                 self.settle_tool();
             }
             Interaction::Laser => {
@@ -87,9 +84,20 @@ impl DrawEngine {
                         rect,
                     ));
                 }
-                let editing = self.editing_group_id.clone();
-                let expanded = expand_within(self.scene.iter_ordered(), ids, editing.as_deref());
-                self.set_selection(expanded);
+                self.select_caught(ids);
+            }
+            Interaction::Move { origins, .. } => {
+                // A click is a move that moved nothing — read off the elements, which is
+                // the one record of the drag that outlives it.
+                let moved = origins.iter().any(|(id, from)| {
+                    self.scene
+                        .get(id)
+                        .is_some_and(|el| el.x != from.x || el.y != from.y)
+                });
+                self.settle_gesture();
+                if let Some(ids) = self.narrow_on_click.take().filter(|_| !moved) {
+                    self.set_selection(ids);
+                }
             }
             _ => self.settle_gesture(),
         }
@@ -290,6 +298,9 @@ impl DrawEngine {
     }
 
     fn cancel_pointer_step(&mut self) {
+        // A press Escape interrupted is no click, and what it would have narrowed to was
+        // worked out at a level Escape may be about to leave.
+        self.narrow_on_click = None;
         // Escape ends an open path rather than throwing it away, which is Excalidraw's
         // binding too: both Escape and Enter run `actionFinalize`. A path of six points
         // lost to a reflexive Escape is six points of work gone, and undo is the thing

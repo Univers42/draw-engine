@@ -123,6 +123,13 @@ impl DrawEngine {
             // already reachable, so there is nowhere further to go.
             return false;
         };
+        // A group of one — its other members deleted — has nothing inside to show. The
+        // oracle only steps into a group the click selected (`App.tsx:7310-7330`), which
+        // a group of one never is (`groups.ts:134-141`), so the double click does what it
+        // does on any lone shape.
+        if !crate::edit::is_live_group(self.scene.iter_ordered(), group) {
+            return false;
+        }
         let group = group.clone();
         self.editing_group_id = Some(group);
         let ids = crate::edit::expand_within(

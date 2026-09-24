@@ -113,7 +113,17 @@ pub struct DrawEngine {
     /// Session state, not document state: which level you are looking at is a property of
     /// your view, so it is never serialized. Every click and every group operation is
     /// resolved relative to it by `selected_group_for`.
+    ///
+    /// A claim about the selection — "what is held is inside this" — so `set_selection`
+    /// drops it the moment that stops being true.
     editing_group_id: Option<String>,
+    /// What the press in progress selects if it turns out to be a click.
+    ///
+    /// A press on something already selected might start a drag of the whole selection,
+    /// so it leaves the selection alone; released without moving anything, it was a click,
+    /// and a click selects what it hit — `App.tsx:12183-12190`, `:12322-12345`. Without
+    /// it, a click on one member of a multi-selection could never narrow it.
+    narrow_on_click: Option<HashSet<String>>,
     /// The path being placed point by point, if one is.
     ///
     /// Distinct from [`Self::interaction`] because this is the one gesture that spans
@@ -200,6 +210,7 @@ impl DrawEngine {
             interaction: None,
             editing_linear: None,
             editing_group_id: None,
+            narrow_on_click: None,
             multi_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
@@ -520,8 +531,39 @@ impl DrawEngine {
                 self.editing_linear = None;
             }
         }
+        // The same for the group being edited, which holds only while everything held is
+        // inside it and it is still a group. Enforced here rather than at each way out —
+        // an empty click, select-all, an undo — because it used to be cleared at two of
+        // them, and every one it missed left clicks and marquees board-wide resolving
+        // inside a group they had nothing to do with.
+        if let Some(editing) = self.editing_group_id.as_deref() {
+            if !crate::edit::keeps_editing(self.scene.iter_ordered(), &self.selected_ids, editing) {
+                self.editing_group_id = None;
+            }
+        }
         self.events.selection = Some(self.get_selection());
         self.request_draw();
+    }
+
+    /// Selects what a marquee or lasso caught, grown to whole groups.
+    ///
+    /// At the level being edited when all of it lies inside that group; otherwise the
+    /// group is left first and it grows at the top level. Growing inside and then leaving
+    /// held whatever was caught outside without its group, beside *part* of the one being
+    /// edited — the state Ctrl+G turns into groups that overlap instead of nesting.
+    ///
+    /// A deliberate divergence for a shift-drag that reaches outside the group: the oracle
+    /// keeps the group there and grows each side differently (`App.tsx:11331-11345`),
+    /// which is that same state.
+    fn select_caught(&mut self, ids: HashSet<String>) {
+        if let Some(editing) = self.editing_group_id.as_deref() {
+            if !crate::edit::keeps_editing(self.scene.iter_ordered(), &ids, editing) {
+                self.editing_group_id = None;
+            }
+        }
+        let editing = self.editing_group_id.as_deref();
+        let grown = crate::edit::expand_within(self.scene.iter_ordered(), ids, editing);
+        self.set_selection(grown);
     }
 
     /// Whether this element offers its individual points rather than a bounding box.
@@ -577,7 +619,11 @@ impl DrawEngine {
         self.set_selection(ids);
     }
 
+    /// A top-level selection even when everything is inside the group being edited
+    /// (`actionSelectAll.ts:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
+    /// the top rather than nesting a new level inside that group.
     pub fn select_all(&mut self) {
+        self.editing_group_id = None;
         let ids = self.scene.ordered_cloned().into_iter().map(|el| el.id);
         self.set_selection(ids);
     }
@@ -613,28 +659,36 @@ impl DrawEngine {
         self.editing_group_id.clone()
     }
 
-    /// Steps back out to the top level.
+    /// Steps back out of the group being edited, **one** level: into the group directly
+    /// around it, or to the top from the outermost — `actionDeselect.ts:36-62`, `:72-111`.
+    /// Leaving every level at once made three double clicks down a one-key trip back to
+    /// nothing.
     ///
     /// Not a selection change on its own: leaving a group keeps what is held, so the
     /// next click behaves normally rather than the selection vanishing under you.
     pub(crate) fn leave_group(&mut self) -> bool {
-        if self.editing_group_id.take().is_none() {
+        let Some(editing) = self.editing_group_id.take() else {
             return false;
-        }
+        };
+        // Everything held is inside `editing` (`set_selection` sees to it), so whatever
+        // is around it is around all of them: the first one that has a next id out says.
+        self.editing_group_id = self
+            .scene
+            .iter_ordered()
+            .filter(|el| self.selected_ids.contains(&el.id))
+            .find_map(|el| crate::edit::parent_group(el, &editing))
+            .cloned();
         // The selection is re-derived at the new level, so stepping out leaves you
         // holding the group you stepped out of rather than the pieces you were looking
         // at inside it. Without this the old inner selection survives, and the next
         // click on one of its members reads as "grab what is already selected" and never
         // re-expands — so the group could be entered but never properly left.
-        if !self.selected_ids.is_empty() {
-            let ids = crate::edit::expand_within(
-                self.scene.iter_ordered(),
-                self.selected_ids.iter().cloned(),
-                None,
-            );
-            self.set_selection(ids);
-        }
-        self.request_draw();
+        let ids = crate::edit::expand_within(
+            self.scene.iter_ordered(),
+            self.selected_ids.iter().cloned(),
+            self.editing_group_id.as_deref(),
+        );
+        self.set_selection(ids);
         true
     }
 

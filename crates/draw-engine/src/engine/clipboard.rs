@@ -105,9 +105,11 @@ impl DrawEngine {
     }
 
     fn after_history_step(&mut self) {
-        self.selected_ids.clear();
-        self.events.selection = Some(Vec::new());
-        self.request_draw();
+        // Through `set_selection`, so the group being edited goes with what was held.
+        // The step may have taken that group away (the oracle then drops it,
+        // `packages/element/src/delta.ts:806-818`); cleared behind its back, it named a
+        // group nothing carried, and no click anywhere on the board expanded to a group.
+        self.set_selection(Vec::new());
         // An undo replaces the whole scene; there is no delta that describes it.
         self.scene.invalidate_delta();
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
@@ -374,7 +376,15 @@ impl DrawEngine {
         for id in doomed {
             self.scene.remove(&id, now);
         }
-        self.set_selection(Vec::new());
+        // Inside a group, deleting keeps you inside what is left of it, holding its next
+        // member — or a level up once it is down to one. Emptied instead, the selection
+        // took the group being edited with it, and the next Delete had nothing to act on.
+        let (editing, held) = match self.editing_group_id.take() {
+            Some(editing) => crate::edit::after_delete_within(self.scene.iter_ordered(), &editing),
+            None => (None, Default::default()),
+        };
+        self.editing_group_id = editing;
+        self.set_selection(held);
         self.push_history();
     }
 
