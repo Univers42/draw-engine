@@ -150,7 +150,7 @@ pub fn source_text(element: &DrawElement) -> &str {
 }
 
 /// The font families the engine knows, by Excalidraw's ids
-/// (`packages/common/src/constants.ts:131-141`), each with its line height
+/// (`packages/common/src/constants.ts:133-144`), each with its line height
 /// (`packages/common/src/font-metadata.ts:35-104`). The oracle's `4` is retired and its
 /// `10` (Assistant) is private to its own UI, so neither is here.
 const FONT_FAMILIES: [(u8, f64); 8] = [
