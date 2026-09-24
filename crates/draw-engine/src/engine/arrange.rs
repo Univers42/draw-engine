@@ -35,8 +35,9 @@ impl DrawEngine {
     ///
     /// What the carried set holds moves, as a drag's: a locked group member comes with its
     /// group, and a loose locked element — which only this engine's Select All can hold —
-    /// stays. The labels of what moves and the children of a moving frame come too, even
-    /// one a peer holds: the stack is not stamped, so it takes nothing from their edit.
+    /// stays, as does a label whose shape stays. The labels of what moves and the children
+    /// of a moving frame come too, even one a peer holds: the stack is not stamped, so it
+    /// takes nothing from their edit.
     pub fn reorder_selection(&mut self, mode: ZOrderMode) {
         let carried = self.carried_selection();
         if carried.is_empty() {

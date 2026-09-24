@@ -9,7 +9,8 @@
 //!   the live stack (tombstones stay at the bottom, `Scene::set_order`). Not ported: the
 //!   duplication cases (`:919-1160`), which test Ctrl+D, not a z-order command.
 //! - **Through the engine.** Frames with children, a group inside a frame, a label on a
-//!   frame child, a locked element in the selection, and a reorder that moves nothing.
+//!   frame child, a locked element in the selection, a label whose shape stays (locked,
+//!   held by a peer, or not selected), and a reorder that moves nothing.
 
 mod common;
 use common::*;
@@ -608,6 +609,96 @@ fn a_locked_group_member_goes_with_its_group() {
     engine.reorder_selection(Front);
 
     assert_eq!(stack(&engine, &cast), vec!["L", "X", "M1", "M2"]);
+}
+
+/// R, filled, with its label T, then X: bottom first. What `hold` does to R — locks it,
+/// or has a peer hold it — is done before Select All, which here takes locked elements
+/// and labels (`DrawEngine::select_all`) where the oracle's takes neither
+/// (`actionSelectAll.ts:32-38`).
+fn labelled_under_select_all(hold: fn(&mut DrawEngine, &Cast)) -> (DrawEngine, Cast) {
+    let (mut engine, mut cast) = framed(&[("R", &[], false), ("X", &[], false)]);
+    let mut scene = engine.get_scene();
+    let mut label = text_at(30.0, 420.0, 40.0, 20.0);
+    label.text = Some("hi".into());
+    label.container_id = Some(id(&cast, "R"));
+    scene[0].bound_text_id = Some(label.id.clone());
+    cast.push(("T", label.id.clone()));
+    scene.insert(1, label);
+    engine.set_scene(Scene::new(scene));
+    hold(&mut engine, &cast);
+    engine.select_all();
+    (engine, cast)
+}
+
+fn lock_r(engine: &mut DrawEngine, cast: &Cast) {
+    let mut scene = engine.get_scene();
+    let r = id(cast, "R");
+    for element in scene.iter_mut().filter(|el| el.id == r) {
+        element.locked = Some(true);
+    }
+    engine.set_scene(Scene::new(scene));
+}
+
+fn peer_holds_r(engine: &mut DrawEngine, cast: &Cast) {
+    engine.set_peers(vec![Peer {
+        id: "ana".into(),
+        name: "Ana".into(),
+        color: "#e03131".into(),
+        holds: [id(cast, "R")].into_iter().collect(),
+        preview: Vec::new(),
+    }]);
+}
+
+/// A label goes only with its shape. Left in the moving set on its own while its locked
+/// shape stayed, it went to the back alone — under its own filled shape, out of sight.
+/// The result is the oracle's, whose Select All holds X alone.
+#[test]
+fn select_all_leaves_a_locked_shapes_label_on_it() {
+    for mode in [Back, Backward] {
+        let (mut engine, cast) = labelled_under_select_all(lock_r);
+        assert_eq!(engine.get_selection().len(), 3, "setup");
+
+        engine.reorder_selection(mode);
+
+        assert_eq!(stack(&engine, &cast), vec!["X", "R", "T"], "{mode:?}");
+    }
+}
+
+/// The same for a shape a peer holds: the selection cannot take it, but took its label.
+#[test]
+fn select_all_leaves_a_held_shapes_label_on_it() {
+    for mode in [Back, Backward] {
+        let (mut engine, cast) = labelled_under_select_all(peer_holds_r);
+        assert_eq!(engine.get_selection().len(), 2, "setup: T and X");
+
+        engine.reorder_selection(mode);
+
+        assert_eq!(stack(&engine, &cast), vec!["X", "R", "T"], "{mode:?}");
+    }
+}
+
+/// A click on a label selects the label alone here (`begin_select`), where the oracle's
+/// selects its shape. Whatever the command, the label stays directly above its shape.
+#[test]
+fn a_label_selected_alone_stays_on_its_shape() {
+    for mode in [Back, Backward, Front, Forward] {
+        let (mut engine, mut cast) = framed(&[("X", &[], false), ("R", &[], false)]);
+        let mut scene = engine.get_scene();
+        let mut label = text_at(30.0, 420.0, 40.0, 20.0);
+        label.text = Some("hi".into());
+        label.container_id = Some(id(&cast, "R"));
+        scene[1].bound_text_id = Some(label.id.clone());
+        cast.push(("T", label.id.clone()));
+        scene.push(label);
+        engine.set_scene(Scene::new(scene));
+        engine.select(vec![id(&cast, "T")]);
+
+        engine.reorder_selection(mode);
+
+        let order = stack(&engine, &cast);
+        let r = order.iter().position(|name| *name == "R").unwrap();
+        assert_eq!(order.get(r + 1), Some(&"T"), "{mode:?}: {order:?}");
+    }
 }
 
 /// Bringing the topmost element to the front changes nothing, so it is no edit: no step

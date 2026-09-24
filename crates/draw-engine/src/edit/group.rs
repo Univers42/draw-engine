@@ -201,6 +201,12 @@ where
 /// in the selection here without a group to carry it: Select All takes locked elements
 /// so they can be unlocked from the menu, where the oracle's skips them
 /// (`actionSelectAll.ts:32-38`). Such an element, or a group locked throughout, stays.
+///
+/// Nor is a label picked up on its own: it goes where its shape goes, as a marquee never
+/// takes one alone (`selection/marquee.rs`). This Select All takes labels too, where the
+/// oracle's skips them (`actionSelectAll.ts:32-38`); grown from one whose shape stays —
+/// locked, or held by a peer — the label went without it, to the back of the stack
+/// under its own shape.
 pub fn carried_by<'a, I>(
     elements: I,
     selected: &HashSet<String>,
@@ -211,7 +217,7 @@ where
 {
     let unlocked = elements
         .clone()
-        .filter(|el| selected.contains(&el.id) && !el.locked())
+        .filter(|el| selected.contains(&el.id) && !el.locked() && el.container_id.is_none())
         .map(|el| el.id.clone());
     let mut carried = expand_within(elements, unlocked, editing);
     carried.retain(|id| selected.contains(id));
