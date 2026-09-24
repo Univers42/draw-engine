@@ -84,7 +84,7 @@ impl DrawEngine {
     }
 
     /// A press while a path is open: either it ends the path, or it places a point.
-    pub(crate) fn press_multi_linear(&mut self, world: Point) {
+    pub(crate) fn press_multi_linear(&mut self, world: Point, screen: Point) {
         let Some(state) = self.multi_linear.clone() else {
             return;
         };
@@ -106,7 +106,7 @@ impl DrawEngine {
             // trim. Excalidraw does this explicitly for the same reason
             // (`App.tsx:10120-10134`).
             self.commit_multi_point();
-            self.finish_linear();
+            self.finish_by_press(&state.id, screen);
             return;
         }
 
@@ -124,7 +124,7 @@ impl DrawEngine {
         if state.committed >= 1 {
             if let Some(&last) = points.get(state.committed - 1) {
                 if distance(local, last) < tolerance {
-                    self.finish_linear();
+                    self.finish_by_press(&state.id, screen);
                     return;
                 }
             }
@@ -135,9 +135,18 @@ impl DrawEngine {
         // "done" as a close is. Checked after the click-back case, not before, so
         // re-clicking the same spot still ends the path through that simpler path.
         //
-        // Only *beside* one, as in Excalidraw (`App.tsx:10178-10205`): a click inside a
+        // Only *beside* one, as in Excalidraw (`boundOutsideFromElsewhere` and
+        // `endOutsideSameElement`, `App.tsx@1118751f:10189-10215`): a click inside a
         // shape places a waypoint there, so a path can be routed across shapes — and
         // beside the shape the path started from only when it came back from outside.
+        //
+        // **Deliberate divergence:** the press is judged where it is, the point the hover
+        // just judged for its outline. Excalidraw judges it at its preview point instead
+        // (`multiElement.points[last]`, `App.tsx@1118751f:10170`), which its hover has
+        // already moved onto the outline gap of the shape it shows; re-tested there, the
+        // point often falls inside another shape, and a press made under an orbit outline
+        // placed a waypoint — 13 of 48 probes in a Ctrl+D pack on excalidraw.com. Here
+        // what the outline shows is what the press does.
         if self.ends_path_at(&element, world) {
             // Same as landing back on the point just placed (above): whatever a hover
             // would have put there, this press puts there too, so the commit below has a
@@ -147,12 +156,21 @@ impl DrawEngine {
             // matter to either.
             self.track_multi_linear(world, false);
             self.commit_multi_point();
-            self.finish_linear();
+            self.finish_by_press(&state.id, screen);
             return;
         }
 
         // Otherwise the press is placing a point, and the release is what places it.
         self.interaction = Some(Interaction::MultiLinearPress);
+    }
+
+    /// Ends the path because a press at `screen` said so, remembering which path it was:
+    /// the press may be either half of a double click, whose `dblclick` arrives next and
+    /// is about this path, not about whatever lies under the pointer. Remembered after
+    /// the finish, which settles the tool — and a tool change forgets it.
+    fn finish_by_press(&mut self, id: &str, screen: Point) {
+        self.finish_linear();
+        self.finished_by_press = Some((id.to_string(), screen));
     }
 
     /// What the path's pending point would bind to at `world`: its own anchor and, when
@@ -344,6 +362,12 @@ impl DrawEngine {
     fn confirm_tolerance(&self) -> f64 {
         LINE_CONFIRM_THRESHOLD / self.camera.scale
     }
+}
+
+/// Whether a click at `(sx, sy)` on screen lands near enough to one at `at` to be the
+/// other half of its double click.
+pub(crate) fn is_double_tap(at: Point, sx: f64, sy: f64) -> bool {
+    (at.x - sx).hypot(at.y - sy) <= super::DOUBLE_TAP_PX
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {

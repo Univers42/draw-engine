@@ -60,10 +60,6 @@ const DRAGGING_THRESHOLD_PX: f64 = 10.0;
 /// How long a segment must be on screen before it gets its own midpoint handle.
 /// Two handles a few pixels apart cannot be aimed at deliberately.
 const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
-/// How close, in screen pixels, an endpoint must come to a shape to bind to it.
-/// Derived from pixels rather than world units so it does not shrink to nothing when
-/// zoomed out.
-const BINDING_HOVER_PX: f64 = 32.0;
 /// How close, in screen pixels, a dropped arrow end must come to a side midpoint to snap
 /// onto it. Excalidraw's reach is its binding distance, 15 scene units at ordinary zoom
 /// (`packages/element/src/utils.ts:634-695`); kept in pixels here so it feels the same at
@@ -72,6 +68,10 @@ const MIDPOINT_SNAP_PX: f64 = 16.0;
 const ROTATE_GAP_PX: f64 = 26.0;
 /// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`: how near a click must be to an element.
 const COLLISION_PX: f64 = 10.0;
+/// Excalidraw's `DOUBLE_TAP_POSITION_THRESHOLD` (`packages/common/src/constants.ts@1118751f:609`):
+/// how far apart, in screen pixels, the two clicks of a double click may land and still
+/// be one (`shouldHandleBrowserCanvasDoubleClick`, `App.tsx@1118751f:7154-7176`).
+const DOUBLE_TAP_PX: f64 = 35.0;
 const DEFAULT_FONT_SIZE: f64 = 20.0;
 const SNAP_PX: f64 = 6.0;
 const PASTE_OFFSET: f64 = 12.0;
@@ -138,6 +138,11 @@ pub struct DrawEngine {
     /// dozen clicks later — an end. Putting it in `Interaction` would have it thrown away
     /// by the release that places its second point.
     multi_linear: Option<types::MultiLinear>,
+    /// The path a press finished, and where on screen that press landed: the double click
+    /// it may be the first or second half of is about that path (see
+    /// `handle_double_click`). Kept across the one press that lands on the same spot and
+    /// forgotten by any other press, a pan, or another tool.
+    finished_by_press: Option<(String, Point)>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -239,6 +244,7 @@ impl DrawEngine {
             editing_group_id: None,
             narrow_on_click: None,
             multi_linear: None,
+            finished_by_press: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
@@ -463,6 +469,7 @@ impl DrawEngine {
         if tool == self.tool {
             return;
         }
+        self.finished_by_press = None;
         // Reaching for another tool is an answer to "is this path finished?" too, and
         // leaving it open would strand it: nothing else would ever end it, and the next
         // click of the line tool would carry on from wherever it was abandoned. Not

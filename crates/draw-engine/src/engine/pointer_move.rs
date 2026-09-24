@@ -333,14 +333,12 @@ impl DrawEngine {
         element
     }
 
-    /// How far from a shape an endpoint may be dropped and still attach.
-    ///
-    /// A fixed world tolerance would shrink to nothing when zoomed out, so it is
-    /// derived from screen pixels. Excalidraw does the same — you do not have to land
-    /// *inside* a shape to bind to it, only near it, which is the difference between
-    /// binding feeling helpful and feeling fiddly.
+    /// How far from a shape an endpoint may be dropped and still attach, in world units:
+    /// Excalidraw's reach at this zoom ([`crate::scene::binding::max_binding_distance`]).
+    /// The same number for the hover outline, the press that starts an arrow and the drop
+    /// that ends it, so the three agree on what counts as near.
     pub(crate) fn binding_tolerance(&self) -> f64 {
-        super::BINDING_HOVER_PX / self.camera.scale
+        crate::scene::binding::max_binding_distance(self.camera.scale)
     }
 
     /// What dropping one end of `element` at `world` binds it to, with the modifiers
