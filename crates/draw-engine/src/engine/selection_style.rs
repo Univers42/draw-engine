@@ -484,22 +484,34 @@ impl DrawEngine {
             element.fill_style = from.fill_style;
             element.opacity = from.opacity;
             element.roughness = from.roughness;
-            element.roundness = from.roundness.filter(|_| takes_roundness(element.kind));
             let is_text = element.kind == DrawElementType::Text;
             if is_text {
+                // A text keeps its corners, which it does not paint: the engine makes one
+                // with the default style's, where the oracle's has none
+                // (`packages/element/src/newElement.ts@1118751f:105`). Cleared, and with
+                // the size and alignment written down whenever they were unset, every
+                // paste onto a text was an edit — the paste of its own style included.
+                // So those two are written only when they differ as read.
                 let from_text = from.kind == DrawElementType::Text;
-                element.font_size = Some(
-                    from.font_size
-                        .filter(|_| from_text)
-                        .unwrap_or(super::DEFAULT_FONT_SIZE),
-                );
+                let size = from
+                    .font_size
+                    .filter(|_| from_text)
+                    .unwrap_or(super::DEFAULT_FONT_SIZE);
+                if element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE) != size {
+                    element.font_size = Some(size);
+                }
                 element.font_family = from.font_family.filter(|_| from_text);
-                element.text_align = Some(if from_text {
+                let align = if from_text {
                     resolved_text_align(from)
                 } else {
                     TextAlign::Left
-                });
+                };
+                if resolved_text_align(&element) != align {
+                    element.text_align = Some(align);
+                }
                 element.line_height = from.line_height.filter(|_| from_text);
+            } else {
+                element.roundness = from.roundness.filter(|_| takes_roundness(element.kind));
             }
             if element.kind == DrawElementType::Arrow && from.kind == DrawElementType::Arrow {
                 element.start_arrowhead = from.start_arrowhead;

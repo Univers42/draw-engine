@@ -594,6 +594,70 @@ mod copy_paste {
         assert_eq!(pasted.text_align, Some(TextAlign::Left));
     }
 
+    /// The engine makes a text with the default style's corners and no alignment written
+    /// down. A paste that compared those as set stamped the twin, sent it and cost a step
+    /// of undo that put nothing back. The oracle's text carries `roundness: null` and a
+    /// written alignment (`packages/element/src/newElement.ts@1118751f:105`), so its
+    /// `newElementWith` finds nothing to change (`mutateElement.ts@1118751f:170-172`).
+    #[test]
+    fn a_texts_style_pasted_onto_its_twin_is_not_an_edit() {
+        let twin = |id: &str, y: f64| {
+            let mut text = with_id(text_at(0.0, y, 80.0, 20.0), id);
+            text.text = Some("abc".into());
+            text
+        };
+        let (a, b) = (twin("a", 0.0), twin("b", 100.0));
+        assert_eq!((b.roundness, b.text_align), (Some(8.0), None), "setup");
+        let mut engine = engine_with_measure(vec![a, b]);
+        engine.select(vec!["a".into()]);
+        engine.copy_styles();
+        engine.select(vec!["b".into()]);
+        let before = element(&engine, "b");
+        let _ = engine.drain_events();
+
+        engine.paste_styles();
+
+        assert_eq!(element(&engine, "b"), before);
+        let events = engine.drain_events();
+        assert!(events.scene_json.is_none());
+        assert!(
+            events
+                .scene_delta
+                .is_none_or(|delta| delta.updated.is_empty() && delta.removed.is_empty()),
+            "nothing changed, so nothing is sent"
+        );
+    }
+
+    /// From a shape, a text takes the family new text is written in: the oracle's
+    /// `sourceText.fontFamily || DEFAULT_FONT_FAMILY` (`actions/actionStyles.ts@1118751f:143`).
+    /// Asked of the engine rather than written down, so this follows the default when new
+    /// text gets another one.
+    #[test]
+    fn from_a_shape_a_text_takes_the_family_new_text_gets() {
+        let mut engine = engine_with_measure(vec![]);
+        engine.set_tool(DrawTool::Text);
+        engine.begin_pointer(100.0, 100.0, false, false);
+        engine.end_pointer();
+        let fresh = engine
+            .get_scene()
+            .into_iter()
+            .find(|element| element.kind == DrawElementType::Text)
+            .expect("the text tool made a text")
+            .font_family;
+
+        let mut target = with_id(text_at(0.0, 100.0, 80.0, 20.0), "dst");
+        target.text = Some("hello".into());
+        target.font_family = Some(8);
+        let shape = with_id(box_at(0.0, 200.0, 50.0, 50.0), "shape");
+        engine.set_scene(Scene::new(vec![shape, target]));
+        engine.select(vec!["shape".into()]);
+        engine.copy_styles();
+        engine.select(vec!["dst".into()]);
+        engine.paste_styles();
+
+        assert_eq!(element(&engine, "dst").font_family, fresh);
+    }
+
     #[test]
     fn arrowheads_transfer_between_arrows_only() {
         let mut source = with_id(
