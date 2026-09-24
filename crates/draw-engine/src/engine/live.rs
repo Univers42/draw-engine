@@ -24,10 +24,23 @@ impl DrawEngine {
     }
 
     /// This engine's live elements and the ones peers are previewing: the painter draws
-    /// both fresh each frame over its cached picture of everything else.
+    /// both fresh each frame over its cached picture of everything else. With a line's
+    /// label a peer is typing, the line too: its stroke is cut under the label as the
+    /// label grows.
     fn live_ids(&self) -> HashSet<String> {
         let mut ids = self.local_live_ids();
-        ids.extend(self.previewed_ids().cloned());
+        for id in self.previewed_ids() {
+            ids.insert(id.clone());
+            let line = self
+                .scene
+                .get(id)
+                .and_then(|label| label.container_id.as_deref())
+                .and_then(|container| self.scene.get(container))
+                .filter(|container| crate::scene::is_linear_element(container));
+            if let Some(line) = line {
+                ids.insert(line.id.clone());
+            }
+        }
         ids
     }
 

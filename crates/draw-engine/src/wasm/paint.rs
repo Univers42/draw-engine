@@ -988,7 +988,7 @@ fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[
                 .as_ref()
                 .is_some_and(|frame| view.erasing.contains(frame));
         ERASE_FADE.with(|fade| fade.set(if marked { READY_TO_ERASE_OPACITY } else { 1.0 }));
-        paint_element(ctx, view_transform, element, view.scene);
+        paint_element(ctx, view_transform, element, view);
         if clip.is_some() {
             ctx.restore();
             // `restore` put the context's alpha, stroke, fill, dash and font back to what
@@ -1404,15 +1404,13 @@ fn paint_element(
     ctx: &CanvasRenderingContext2d,
     view: [f64; 6],
     element: &DrawElement,
-    scene: &crate::scene::Scene,
+    frame: &PaintView,
 ) {
     match element.kind {
-        DrawElementType::Line | DrawElementType::Arrow => {
-            match crate::render::linear_label(element, |id| scene.get(id)) {
-                Some(label) => paint_linear_around(ctx, view, element, label),
-                None => paint_linear(ctx, view, element),
-            }
-        }
+        DrawElementType::Line | DrawElementType::Arrow => match frame.linear_label(element) {
+            Some(label) => paint_linear_around(ctx, view, element, label),
+            None => paint_linear(ctx, view, element),
+        },
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
         DrawElementType::Text => paint_text(ctx, view, element),

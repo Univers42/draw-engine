@@ -707,6 +707,45 @@ mod holds_and_no_ops {
     }
 }
 
+/// The cut in a line's stroke under its label follows the label as it is painted.
+mod painting {
+    use super::*;
+
+    /// A peer typing into an arrow's label streams the label alone. Its growing box is
+    /// what the arrow's stroke is cut under, and the arrow is painted fresh with it, not
+    /// from a cached picture holding the old cut.
+    #[test]
+    fn the_cut_under_an_arrows_label_follows_a_peers_preview() {
+        let mut arrow = connector(0.0, 0.0, 400.0, 0.0, DrawElementType::Arrow);
+        arrow.roundness = None;
+        let arrow_id = arrow.id.clone();
+        let mut engine = engine_with_measure(vec![arrow]);
+        engine.select(vec![arrow_id.clone()]);
+        assert!(engine.edit_selected_text());
+        let label_id = engine.drain_events().text_edit.unwrap().id;
+        engine.set_element_text(&label_id, "hi");
+        let preview = engine
+            .text_preview(&label_id, "hi there, a longer label")
+            .unwrap();
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![label_id.clone()],
+            preview: vec![preview.clone()],
+        }]);
+        assert!(
+            engine.debug_live().contains(&arrow_id),
+            "the arrow is painted fresh"
+        );
+        let arrow = element(&engine, &arrow_id);
+        let view = engine.paint_view();
+        let painted = view.linear_label(&arrow).expect("the arrow has a label");
+        assert_close(painted.width, preview.width);
+        assert_close(painted.x, preview.x);
+    }
+}
+
 /// A font arriving is not an edit.
 mod fonts_loaded {
     use super::*;
