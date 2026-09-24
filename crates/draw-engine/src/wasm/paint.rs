@@ -1272,6 +1272,9 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         crate::scene::FRAME_NAME_FONT_SIZE,
     ));
     ctx.set_text_baseline("alphabetic");
+    // Set, not inherited: text painting leaves its own alignment on the context, so after a
+    // centred label every name sat centred on its frame's left edge, half outside it.
+    ctx.set_text_align("left");
     for (anchor, name, frame) in &view.frame_names {
         // Set for each name, not inherited: the last element painted leaves its own
         // alpha behind, which faded every name whenever the eraser had marked it. A
