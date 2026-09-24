@@ -2236,6 +2236,21 @@ fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     }
 
     ctx.stroke();
+
+    // The side midpoint an end would snap to, filled in the highlight's colour, or a
+    // quieter dot for one it is only near.
+    if let Some((m, snaps)) = view.binding_midpoint {
+        let at = crate::world_to_screen(view.camera, m.x, m.y);
+        let colour = if snaps {
+            view.theme.binding_highlight.as_str()
+        } else {
+            view.theme.binding_midpoint.as_str()
+        };
+        set_fill(ctx, colour);
+        ctx.begin_path();
+        let _ = ctx.arc(at.x, at.y, 4.0, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
     ctx.restore();
     let _ = scale;
 }

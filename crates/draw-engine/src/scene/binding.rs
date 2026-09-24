@@ -57,10 +57,11 @@ const DIAGONAL_INSET_SHARE: f64 = 0.1;
 const MIDPOINT_SNAP_SHARE_OF_SIDE: f64 = 0.25;
 
 /// An arrow narrower and shorter than this, in screen pixels, has no direction yet — it is
-/// the press that starts one. Its end anchors exactly where it is: no midpoint snap and no
-/// projection, both of which need a direction to mean anything. Excalidraw's is 3 scene
-/// units (`packages/element/src/utils.ts:706-708`); in pixels here so it means the same
-/// thing at every zoom.
+/// the press that starts one — so there is no line to project its end along. Excalidraw's
+/// is 3 scene units (`packages/element/src/utils.ts:706-708`); in pixels here so it means
+/// the same thing at every zoom. Excalidraw's check also turns the midpoint snap off for
+/// the press, while its hover still shows the midpoint dot — a promise the press then
+/// breaks. Here the snap does not need a direction, and the dot is kept.
 const DEGENERATE_ARROW_PX: f64 = 3.0;
 
 pub fn is_linear_element(element: &DrawElement) -> bool {
@@ -215,7 +216,11 @@ pub fn anchor(arrow: &DrawElement, end: End) -> Option<Anchor> {
             arrow.start_fixed_point,
             arrow.start_bind_mode,
         ),
-        End::End => (&arrow.end_binding, arrow.end_fixed_point, arrow.end_bind_mode),
+        End::End => (
+            &arrow.end_binding,
+            arrow.end_fixed_point,
+            arrow.end_bind_mode,
+        ),
     };
     Some(Anchor {
         element_id: id.clone()?,
@@ -547,15 +552,13 @@ fn ray_hits_segment(from: Point, toward: Point, p: Point, q: Point) -> Option<(f
     let (wx, wy) = (p.x - from.x, p.y - from.y);
     let t = (wx * ey - wy * ex) / denom;
     let u = (wx * dy - wy * dx) / denom;
-    (t >= 0.0 && (0.0..=1.0).contains(&u)).then(|| {
-        (
-            t,
-            Point {
-                x: from.x + dx * t,
-                y: from.y + dy * t,
-            },
-        )
-    })
+    (t >= 0.0 && (0.0..=1.0).contains(&u)).then_some((
+        t,
+        Point {
+            x: from.x + dx * t,
+            y: from.y + dy * t,
+        },
+    ))
 }
 
 // ------------------------------------------------------------------------- choosing
@@ -674,6 +677,29 @@ pub fn snapped_midpoint(shape: &DrawElement, pointer: Point, reach: f64) -> Opti
         .map(|(m, _)| m)
 }
 
+/// The side midpoint to mark for a pointer at `pointer` near `shape`, and whether a drop
+/// there would snap onto it (`true`) or it is only close (`false`, within twice the snap).
+/// `renderBindingHighlightForBindableElement_simple`
+/// (`packages/excalidraw/renderer/interactiveScene.ts:284-322`). Nothing inside the shape:
+/// a drop there binds exactly where it is.
+pub fn midpoint_mark(shape: &DrawElement, pointer: Point, reach: f64) -> Option<(Point, bool)> {
+    if is_inside(shape, pointer) {
+        return None;
+    }
+    let radius = midpoint_snap_radius(shape, reach);
+    let (m, d) = side_midpoints(shape)
+        .into_iter()
+        .map(|m| (m, distance(m, pointer)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))?;
+    if d <= radius {
+        Some((m, true))
+    } else if d <= radius * 2.0 {
+        Some((m, false))
+    } else {
+        None
+    }
+}
+
 /// Where an orbit anchor goes for a drop beside `shape`: where the arrow's own line,
 /// continued through the drop, first crosses the shape's projection lines.
 ///
@@ -726,8 +752,8 @@ fn projected_anchor<'a>(
 ///   since orbiting a shape from inside it has no side to arrive on;
 /// - inside the shape, or anywhere near it with Alt: exactly at the drop;
 /// - beside it: in orbit, anchored at the side midpoint it is near, or else where the
-///   arrow's line through the drop meets the shape's projection lines, or else the drop —
-///   the drop itself, always, for an arrow with no length yet;
+///   arrow's line through the drop meets the shape's projection lines (once the arrow has
+///   a direction), or else the drop;
 /// - with Shift held, the far end's orbit anchor also moves onto the held angle.
 pub fn anchor_for_drop<'a>(
     candidates: impl Iterator<Item = &'a DrawElement>,
@@ -766,14 +792,14 @@ pub fn anchor_for_drop<'a>(
     }
     let reach = DEGENERATE_ARROW_PX * drop.pixel;
     let directed = arrow.width.abs() >= reach || arrow.height.abs() >= reach;
-    let focus = directed
-        .then(|| {
-            (!drop.angle_locked)
-                .then(|| snapped_midpoint(hit, pointer, drop.snap))
-                .flatten()
-                .or_else(|| projected_anchor(arrow, end, hit, pointer, lookup))
-        })
+    let focus = (!drop.angle_locked)
+        .then(|| snapped_midpoint(hit, pointer, drop.snap))
         .flatten()
+        .or_else(|| {
+            directed
+                .then(|| projected_anchor(arrow, end, hit, pointer, lookup))
+                .flatten()
+        })
         .unwrap_or(pointer);
     let other = drop
         .angle_locked
@@ -979,42 +1005,15 @@ pub fn linear_from_endpoints(mut element: DrawElement, start: Point, end: Point)
 /// extent is recomputed from the points, which is what
 /// [`crate::scene::geometry::element_bounds`] measures.
 pub fn linear_retarget(element: DrawElement, start: Point, end: Point) -> DrawElement {
-    let world = crate::selection::linear::world_points(&element);
+    let mut world = crate::selection::linear::world_points(&element);
     if world.len() < 3 {
         // Two points are entirely defined by their ends; nothing to preserve.
         return linear_from_endpoints(element, start, end);
     }
-
     let last = world.len() - 1;
-    let next: Vec<[f64; 2]> = world
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let p = match i {
-                0 => start,
-                i if i == last => end,
-                _ => *p,
-            };
-            [p.x - start.x, p.y - start.y]
-        })
-        .collect();
-
-    let mut element = element;
-    element.x = start.x;
-    element.y = start.y;
-    element.angle = 0.0;
-    let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
-    let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for p in &next {
-        min_x = min_x.min(p[0]);
-        min_y = min_y.min(p[1]);
-        max_x = max_x.max(p[0]);
-        max_y = max_y.max(p[1]);
-    }
-    element.width = max_x - min_x;
-    element.height = max_y - min_y;
-    element.points = Some(next);
-    element
+    world[0] = start;
+    world[last] = end;
+    crate::selection::linear::from_world_points(&element, &world)
 }
 
 pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElement {
@@ -1132,10 +1131,8 @@ pub fn refresh_bindings(elements: &[DrawElement]) -> Vec<DrawElement> {
         })
         .collect();
     // Labels follow their container as it is *now*: an arrow's label its new ends.
-    let containers: std::collections::HashMap<&str, &DrawElement> = linears_done
-        .iter()
-        .map(|el| (el.id.as_str(), el))
-        .collect();
+    let containers: std::collections::HashMap<&str, &DrawElement> =
+        linears_done.iter().map(|el| (el.id.as_str(), el)).collect();
     linears_done
         .iter()
         .map(|element| {

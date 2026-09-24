@@ -23,6 +23,9 @@ impl DrawEngine {
             return;
         }
         if is_linear_tool(self.tool) {
+            // Alt at the press, not as of the last move: with no button held, moves are
+            // not reported, so that one can be long stale.
+            self.alt_held = duplicate;
             self.begin_linear(world);
             return;
         }

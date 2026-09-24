@@ -248,6 +248,27 @@ impl WasmEngine {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));
     }
 
+    /// A pointer move with no button held. See `DrawEngine::hover_pointer`.
+    #[wasm_bindgen(js_name = hoverPointer)]
+    pub fn hover_pointer(&self, sx: f64, sy: f64) {
+        self.cell.borrow_mut().engine.hover_pointer(sx, sy);
+        self.flush();
+    }
+
+    /// The pointer left the canvas. See `DrawEngine::end_hover`.
+    #[wasm_bindgen(js_name = endHover)]
+    pub fn end_hover(&self) {
+        self.cell.borrow_mut().engine.end_hover();
+        self.flush();
+    }
+
+    /// Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to
+    /// nothing while it is down. See `DrawEngine::set_ctrl_held`.
+    #[wasm_bindgen(js_name = setCtrlHeld)]
+    pub fn set_ctrl_held(&self, held: bool) {
+        self.cell.borrow_mut().engine.set_ctrl_held(held);
+    }
+
     #[wasm_bindgen(js_name = endPointer)]
     pub fn end_pointer(&self) {
         self.with_now(DrawEngine::end_pointer);

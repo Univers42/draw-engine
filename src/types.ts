@@ -113,6 +113,16 @@ export interface DrawElement extends DrawElementStyle {
   points?: Array<[number, number]>;
   startBinding?: string | null;
   endBinding?: string | null;
+  /**
+   * Where on its shape each bound end is anchored, as a ratio of the shape's unrotated
+   * width and height, and whether the end sits there (`inside`) or stops a gap clear of
+   * the outline (`orbit`). Absent on an arrow bound before anchors existed: the centre,
+   * in orbit.
+   */
+  startFixedPoint?: [number, number];
+  endFixedPoint?: [number, number];
+  startBindMode?: "inside" | "orbit";
+  endBindMode?: "inside" | "orbit";
   startArrowhead?: Arrowhead;
   endArrowhead?: Arrowhead;
   text?: string;
@@ -183,6 +193,8 @@ export interface DrawTheme {
    * substitutes the light value.
    */
   bindingHighlight?: string;
+  /** A side midpoint an arrow end is near but would not snap to yet. Optional as above. */
+  bindingMidpoint?: string;
 }
 
 // The accent is Excalidraw's primary, and the same one the chrome uses. The engine
@@ -193,12 +205,14 @@ export const LIGHT_THEME: DrawTheme = {
   grid: "rgba(17, 17, 17, 0.06)",
   accent: "#6965db",
   bindingHighlight: "rgb(106, 189, 252)",
+  bindingMidpoint: "rgba(65, 65, 65, 0.5)",
 };
 export const DARK_THEME: DrawTheme = {
   background: "#191919",
   grid: "rgba(255, 255, 255, 0.06)",
   accent: "#a8a5ff",
   bindingHighlight: "rgb(104, 182, 240)",
+  bindingMidpoint: "rgba(237, 237, 237, 0.8)",
 };
 
 export interface TextEditRequest {

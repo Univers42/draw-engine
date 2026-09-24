@@ -159,7 +159,11 @@ impl DrawEngine {
     /// it changes, the start's. Shared by the live highlight, the click-to-bind-and-finish
     /// check, and the end committed at finish, so the three cannot drift apart on what
     /// counts as "close enough".
-    fn end_binding_at(&self, element: &DrawElement, world: Point) -> (Option<Anchor>, Option<Anchor>) {
+    fn end_binding_at(
+        &self,
+        element: &DrawElement,
+        world: Point,
+    ) -> (Option<Anchor>, Option<Anchor>) {
         self.drop_binding(element, End::End, world, false)
     }
 
@@ -172,7 +176,8 @@ impl DrawEngine {
         let Some(shape) = self.scene.get(&end.element_id) else {
             return false;
         };
-        let from_start = anchor(element, End::Start).is_some_and(|a| a.element_id == end.element_id);
+        let from_start =
+            anchor(element, End::Start).is_some_and(|a| a.element_id == end.element_id);
         !is_inside(shape, world) && (end.mode == crate::scene::BindMode::Orbit || from_start)
     }
 

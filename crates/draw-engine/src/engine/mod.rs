@@ -150,7 +150,11 @@ pub struct DrawEngine {
     /// The other end's binding as it was when the drag of one end began, so a drag that
     /// passes over the shape the other end is on and moves on gives that end back.
     /// `(arrow id, the end being dragged, the other end's anchor)`. See `pointer_move.rs`.
-    bind_drag_origin: Option<(String, crate::scene::binding::End, Option<crate::scene::binding::Anchor>)>,
+    bind_drag_origin: Option<(
+        String,
+        crate::scene::binding::End,
+        Option<crate::scene::binding::Anchor>,
+    )>,
     /// Laser strokes on screen, drawn and fading.
     ///
     /// Not part of the scene and never serialized: a laser mark is a gesture, like a

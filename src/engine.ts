@@ -516,6 +516,21 @@ export class DrawEngine {
     this.inner.setAltHeld(held);
   }
 
+  /** Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to nothing while it is down. */
+  setCtrlHeld(held: boolean): void {
+    this.inner.setCtrlHeld(held);
+  }
+
+  /** A move with no button held: the arrow tool lights the shape it would attach to. */
+  hoverPointer(sx: number, sy: number): void {
+    this.inner.hoverPointer(sx, sy);
+  }
+
+  /** The pointer left the canvas; whatever a hover lit goes out. */
+  endHover(): void {
+    this.inner.endHover();
+  }
+
   /** `invertSnap` flips object snapping for this move — the host's Ctrl/Cmd. */
   movePointer(sx: number, sy: number, square = false, invertSnap = false): void {
     this.inner.movePointer(sx, sy, square, invertSnap);

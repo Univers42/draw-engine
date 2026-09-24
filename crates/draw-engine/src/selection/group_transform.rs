@@ -15,6 +15,8 @@
 
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::DrawElement;
+use crate::scene::geometry::{is_point_based, rotation_center};
+use crate::selection::linear::{from_world_points, world_points};
 use crate::selection::HandleKind;
 
 /// The frame a group is transformed within, captured when the gesture starts.
@@ -51,6 +53,31 @@ pub struct GroupOrigin {
     ///
     /// `None` for a shape, which is generated into its box and has no ring to keep up.
     pub points: Option<Vec<[f64; 2]>>,
+}
+
+impl GroupOrigin {
+    /// `element` as it was when the drag began.
+    fn restore(&self, element: &DrawElement) -> DrawElement {
+        let mut at = element.clone();
+        at.x = self.x;
+        at.y = self.y;
+        at.width = self.width;
+        at.height = self.height;
+        at.angle = self.angle;
+        at.points.clone_from(&self.points);
+        at
+    }
+}
+
+/// A line, an arrow or a stroke with every point put through `map`, in the world.
+///
+/// Such an element *is* its points: its `x` and `y` are its first point and the sign of
+/// its extent means nothing (`scene::geometry::mirror_signs`). Treating it as a box
+/// moved a leftward line a whole width on a flip, and pivoted it about a point outside
+/// it — so it is transformed through its points instead, which is exact.
+fn map_points(from: &DrawElement, map: impl Fn(Point) -> Point) -> DrawElement {
+    let world: Vec<Point> = world_points(from).into_iter().map(map).collect();
+    from_world_points(from, &world)
 }
 
 impl GroupFrame {
@@ -183,39 +210,34 @@ pub fn resize_group(
                 .find(|(id, _)| id == &element.id)
                 .map(|(_, o)| o)?;
 
-            let mut next = element.clone();
-            next.x = ax + (origin.x - ax) * sx;
-            next.y = ay + (origin.y - ay) * sy;
-            next.width = origin.width * sx;
-            next.height = origin.height * sy;
-
-            // A negative scale flips the element through the anchor. Normalising keeps
-            // width and height positive, which everything downstream assumes.
-            if next.width < 0.0 {
-                next.x += next.width;
-                next.width = -next.width;
-            }
-            if next.height < 0.0 {
-                next.y += next.height;
-                next.height = -next.height;
-            }
-
-            // The ring rides the same scale as the box, or a drawing inside a group
-            // keeps its old shape while its box changes.
-            //
-            // Scaled from `origin.points` — the ring as it was when the drag began — and
-            // never from `element.points`, which every earlier move of this gesture has
-            // already scaled. Reading the live ring compounds: the box ends up right and
-            // the drawing `sx²` too big, bursting out of its own bounds. Exactly the
-            // reason `scale_ring` on the single-element path captures its ring too.
-            if let Some(points) = origin.points.as_ref() {
-                next.points = Some(
-                    points
-                        .iter()
-                        .map(|p| [p[0] * sx.abs(), p[1] * sy.abs()])
-                        .collect(),
-                );
-            }
+            // Scaled from `origin` — the geometry as it was when the drag began — and
+            // never from the live element, which every earlier move of this gesture has
+            // already scaled. Reading the live ring compounded: the box ended up right
+            // and the drawing `sx²` too big, bursting out of its own bounds.
+            let from = origin.restore(element);
+            let mut next = if from.points.is_some() && is_point_based(&from) {
+                map_points(&from, |p| Point {
+                    x: ax + (p.x - ax) * sx,
+                    y: ay + (p.y - ay) * sy,
+                })
+            } else {
+                let mut next = from.clone();
+                next.x = ax + (origin.x - ax) * sx;
+                next.y = ay + (origin.y - ay) * sy;
+                next.width = origin.width * sx;
+                next.height = origin.height * sy;
+                // A negative scale flips the shape through the anchor. Normalising keeps
+                // width and height positive, which everything downstream assumes.
+                if next.width < 0.0 {
+                    next.x += next.width;
+                    next.width = -next.width;
+                }
+                if next.height < 0.0 {
+                    next.y += next.height;
+                    next.height = -next.height;
+                }
+                next
+            };
 
             // Text has to grow with its box or it stops fitting. Stroke width
             // deliberately does not: scaling a selection up should not thicken every
@@ -233,7 +255,9 @@ pub fn resize_group(
 ///
 /// Each element's own angle advances by the same delta *and* its centre orbits the
 /// group centre — rotating only the angles would spin each element in place and leave
-/// the arrangement untouched.
+/// the arrangement untouched. A line, an arrow or a stroke turns through its points
+/// instead (see [`map_points`]), so it keeps no angle of its own: an arrow's ends are
+/// then exactly where its bindings will look for them.
 pub fn rotate_group(
     elements: &[DrawElement],
     frame: &GroupFrame,
@@ -255,16 +279,23 @@ pub fn rotate_group(
                 .find(|(id, _)| id == &element.id)
                 .map(|(_, o)| o)?;
 
-            let ox = origin.x + origin.width / 2.0;
-            let oy = origin.y + origin.height / 2.0;
             let (sin, cos) = target.sin_cos();
-            let dx = ox - cx;
-            let dy = oy - cy;
+            let turn = |p: Point| Point {
+                x: cx + (p.x - cx) * cos - (p.y - cy) * sin,
+                y: cy + (p.x - cx) * sin + (p.y - cy) * cos,
+            };
 
-            let mut next = element.clone();
+            let from = origin.restore(element);
+            if from.points.is_some() && is_point_based(&from) {
+                return Some(map_points(&from, turn));
+            }
+            // The pivot the element itself turns about, carried round the group's.
+            let pivot = rotation_center(&from);
+            let moved = turn(pivot);
+            let mut next = from;
             next.angle = origin.angle + target;
-            next.x = cx + dx * cos - dy * sin - origin.width / 2.0;
-            next.y = cy + dx * sin + dy * cos - origin.height / 2.0;
+            next.x += moved.x - pivot.x;
+            next.y += moved.y - pivot.y;
             Some(next)
         })
         .collect()

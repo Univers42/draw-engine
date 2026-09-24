@@ -84,6 +84,9 @@ pub struct PaintView<'a> {
     /// The shape a dragged arrow endpoint would bind to. Painted as a halo on its
     /// outline, so the attachment is visible before it is committed.
     pub binding_highlight: Option<&'a DrawElement>,
+    /// The side midpoint of `binding_highlight` the pointer is near, and whether an end
+    /// let go there would snap onto it. See [`crate::scene::binding::midpoint_mark`].
+    pub binding_midpoint: Option<(crate::camera::Point, bool)>,
     /// Point handles for a selected line or arrow, **or** for one being placed.
     ///
     /// Non-empty when exactly one linear element is selected, and while a path is being
@@ -306,6 +309,19 @@ impl DrawEngine {
                 .binding_highlight
                 .as_deref()
                 .and_then(|id| self.scene.get(id)),
+            // Alt binds exactly where the end is, so there is no snap to promise.
+            binding_midpoint: self
+                .binding_highlight
+                .as_deref()
+                .and_then(|id| self.scene.get(id))
+                .zip(self.binding_point.filter(|_| !self.alt_held))
+                .and_then(|(shape, p)| {
+                    crate::scene::binding::midpoint_mark(
+                        shape,
+                        p,
+                        super::MIDPOINT_SNAP_PX / self.camera.scale,
+                    )
+                }),
             linear_handles,
             active_handle,
             radius_handles,
