@@ -187,6 +187,15 @@ impl WasmEngine {
         id
     }
 
+    /// Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+    /// Returns whether it changed.
+    #[wasm_bindgen(js_name = setEmbedUrl)]
+    pub fn set_embed_url(&self, id: &str, raw_url: &str) -> bool {
+        let changed = self.cell.borrow_mut().engine.set_embed_url(id, raw_url);
+        self.flush();
+        changed
+    }
+
     /// Whether a pasted link can be embedded, and what it resolves to, as JSON.
     ///
     /// Lets a host tell someone their link will not work *before* it puts an empty box

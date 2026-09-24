@@ -282,6 +282,14 @@ export class DrawEngine {
   }
 
   /**
+   * Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+   * Returns whether it changed: `false` for a refused link, or a locked or held embed.
+   */
+  setEmbedUrl(id: string, rawUrl: string): boolean {
+    return this.inner.setEmbedUrl(id, rawUrl);
+  }
+
+  /**
    * What a pasted link resolves to, or `null` if it cannot be embedded.
    *
    * Lets a caller say so *before* putting an empty box on the board.
@@ -299,7 +307,7 @@ export class DrawEngine {
     return json ? JSON.parse(json) : null;
   }
 
-  /** The embeds on screen and where their frames go, in screen pixels. */
+  /** Every live embed, where its frame goes in screen pixels, and whether it is on screen. */
   embedFramesJson(): string {
     return this.inner.embedFrames();
   }

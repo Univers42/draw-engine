@@ -484,7 +484,14 @@ fn resolve(provider: &str, parts: Parts<'_>) -> Option<EmbedLink> {
 
 fn youtube(parts: Parts<'_>) -> Option<EmbedLink> {
     let segments = parts.segments();
-    let id = |id: &str| is_id(id).then(|| format!("embed/{id}"));
+    // A video shared from inside a playlist keeps the playlist, so the player can step
+    // through the rest of it instead of showing one video with nothing after it.
+    let playlist = parts
+        .query("list")
+        .filter(|list| is_id(list))
+        .map(|list| format!("?list={list}"))
+        .unwrap_or_default();
+    let id = |id: &str| is_id(id).then(|| format!("embed/{id}{playlist}"));
     let list = |list: &str| is_id(list).then(|| format!("embed/videoseries?list={list}"));
 
     let (target, portrait) = if parts.host == "youtu.be" {
