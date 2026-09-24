@@ -387,8 +387,10 @@ fn an_edit_keeps_the_source_in_step() {
     let mut engine = engine_with_measure(vec![column.clone()]);
     engine.set_element_text(&column.id, "goodbye");
     let edited = element(&engine, &column.id);
-    // Drawn wrapped to the column, kept as typed.
-    assert_eq!(edited.text.as_deref(), Some("goodb\nye"));
+    // Drawn wrapped to the column, kept as typed. The break is the ported `wrapWord`'s
+    // (`crate::text`): it sums each char measured alone, 14 under this hook (10 + its 4),
+    // so four fit in 60.
+    assert_eq!(edited.text.as_deref(), Some("good\nbye"));
     assert_eq!(edited.original_text.as_deref(), Some("goodbye"));
     assert_eq!(source_text(&edited), "goodbye");
 
