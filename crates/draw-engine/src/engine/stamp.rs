@@ -49,11 +49,12 @@
 //! (`history.ts:24-34`, `delta.ts:1732-1781`), and so does this.
 //!
 //! And each step records the elements it changed, before and after, so undo puts back
-//! those and nothing else. Whole-scene snapshots carried every peer edit that had
-//! arrived before the commit, and restoring one reverted them — with fresh stamps, now,
-//! that revert would have been sent to everyone.
+//! those and nothing else — beyond the arrows bound to them, which follow them as they
+//! follow any edit. Whole-scene snapshots carried every peer edit that had arrived before
+//! the commit, and restoring one reverted them — with fresh stamps, now, that revert
+//! would have been sent to everyone.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::engine::DrawEngine;
@@ -80,7 +81,7 @@ pub(crate) struct HistoryEntry {
 }
 
 /// Equal in everything but the stamp.
-fn same_content(a: &DrawElement, b: &DrawElement) -> bool {
+pub(super) fn same_content(a: &DrawElement, b: &DrawElement) -> bool {
     let mut a = a.clone();
     a.version = b.version;
     a.version_nonce = b.version_nonce;
@@ -175,6 +176,7 @@ impl DrawEngine {
         // replay itself does is not a new edit.
         let pending = self.scene.pending_ids();
         let pending_order = self.scene.order_baseline();
+        let mut replayed: HashSet<String> = HashSet::new();
 
         for (id, change) in step.changes.iter() {
             // What someone else holds is theirs right now. Undoing an old edit of it
@@ -193,11 +195,13 @@ impl DrawEngine {
                     if !same_content(want, &now) {
                         let version = now.version.max(want.version) + 1;
                         self.scene.put(stamped((**want).clone(), version, clock));
+                        replayed.insert(id.clone());
                     }
                 }
                 (Some(want), None) => {
                     self.scene
                         .put(stamped((**want).clone(), want.version + 1, clock));
+                    replayed.insert(id.clone());
                 }
                 (None, Some(now)) if !now.is_deleted => {
                     // Created by the step being undone. Tombstoned rather than dropped:
@@ -207,6 +211,7 @@ impl DrawEngine {
                     tombstone.is_deleted = true;
                     tombstone.data_url = None;
                     self.scene.put(tombstone);
+                    replayed.insert(id.clone());
                 }
                 _ => {}
             }
@@ -214,6 +219,24 @@ impl DrawEngine {
         if let Some(order) = &step.order {
             self.scene
                 .apply_order(if forward { &order.1 } else { &order.0 });
+        }
+
+        // What the replay put back takes the arrows bound to it along, and their labels,
+        // as the oracle redraws the bound arrows of what a step changed
+        // (`ElementsDelta.applyTo`, `packages/element/src/delta.ts:2044-2047,2107-2114`).
+        // An arrow outside the step — one a peer drew since — kept the end the undone
+        // edit had given it: nothing else re-routes it, since a commit re-routes only
+        // what it touches. Stamped as the replay is, or it would hold other geometry
+        // than the same version on a peer that re-routed it on receiving the shape.
+        crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &replayed);
+        for id in self.scene.pending_ids() {
+            if !pending.contains(&id) && !replayed.contains(&id) {
+                self.scene.update(&id, |element| {
+                    element.version += 1;
+                    element.version_nonce = rand_int();
+                    element.updated = clock;
+                });
+            }
         }
 
         self.scene.retain_baseline(|id| pending.contains(id));

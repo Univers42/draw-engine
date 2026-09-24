@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 
-use crate::scene::binding::is_linear_element;
-use crate::scene::element::DrawElement;
-use crate::scene::geometry::{normalize_rect, scene_bounds};
+use crate::render::default_arrowhead;
+use crate::scene::binding::{anchor, is_binding_element, is_linear_element, set_anchor, End};
+use crate::scene::element::{DrawElement, DrawElementType};
+use crate::scene::geometry::{element_outline_bounds, normalize_rect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlipAxis {
@@ -27,69 +28,66 @@ impl FlipAxis {
     }
 }
 
-/// Mirrors one element about the line `(lo + hi) / 2` on the chosen axis.
+/// Mirrors one element about the line `(lo + hi) / 2` on the chosen axis, and turns it
+/// the other way — Excalidraw's `resizeMultipleElements` with `flipByX | flipByY` at a
+/// scale of 1 (`packages/element/src/resizeElements.ts:1409-1497`).
 ///
-/// Three kinds of element, mirrored three ways, but all landing in the same place:
+/// - **Boxes** — rectangles, ellipses, diamonds, frames, embeds, text — land on their
+///   mirror image with the same width and height. What is drawn inside them is not
+///   mirrored, as in the oracle: a flipped rectangle keeps its hand-drawn stroke and its
+///   hatching, a text still reads forwards, and an embedded page is never shown backwards
+///   (Excalidraw only turns its iframe, `App.tsx:2046-2051`).
+/// - **Pictures** negate their extent on that axis. The sign is the mirror, which the
+///   painter and the SVG export apply as a scale of -1: the job the oracle's `scale`
+///   field does (`resizeElements.ts:1484-1489`, painted by `renderElement.ts:824-841`).
+/// - **Lines, arrows and freehand strokes** mirror their points, where their shape lives.
 ///
-/// - **Rough-drawn shapes** negate their extent on that axis and move their anchor. The
-///   sign *is* the mirror: the painter reads it as a negative scale, so the cached rough
-///   geometry and the cached `Path2D` both stay valid and a flip costs one subtraction
-///   and one sign change. This is what makes the shape visibly reverse at all — a
-///   rectangle is symmetric, so repositioning it alone was a no-op and flipping one
-///   appeared to do nothing.
-/// - **Freehand strokes** mirror their points, because their shape lives in the point
-///   list rather than in a width and height.
-/// - **Text** only moves. Mirrored glyphs are not a drawing operation, they are a
-///   rendering bug.
-///
-/// Reflection is an involution, and so is this: `x -> lo + hi - x` and `w -> -w` applied
-/// twice returns exactly the original numbers.
+/// Reflection is an involution, and so is each of these. Applied twice, the box's
+/// `x -> lo + hi - (x + w)`, the picture's `x -> lo + hi - x` with `w -> -w`, and the
+/// points' `p -> span - p` all return the original numbers.
 fn flip_one(element: &DrawElement, axis: FlipAxis, lo: f64, hi: f64) -> DrawElement {
     let horizontal = axis == FlipAxis::Horizontal;
     let mut next = element.clone();
-    // A mirror reverses the direction of rotation with it.
+    // A mirror reverses the direction of rotation with it — text included
+    // (`resizeElements.ts:1417-1419`).
     next.angle = if element.angle != 0.0 {
         -element.angle
     } else {
         0.0
     };
 
-    if is_linear_element(element) {
-        next.points = Some(mirror_points(element, horizontal, 0.0, 0.0));
-        mirror_extent(&mut next, element, horizontal, lo, hi);
-        return next;
-    }
-
-    if element.kind == crate::scene::DrawElementType::Freedraw {
-        // The points carry the shape, so they mirror within the element's own box and
-        // the box itself keeps a positive extent.
-        let rect = normalize_rect(element.x, element.y, element.width, element.height);
-        next.points = Some(mirror_points(element, horizontal, rect.width, rect.height));
-        next.x = rect.x;
-        next.y = rect.y;
-        next.width = rect.width;
-        next.height = rect.height;
-        if horizontal {
-            next.x = lo + hi - (rect.x + rect.width);
-        } else {
-            next.y = lo + hi - (rect.y + rect.height);
+    match element.kind {
+        DrawElementType::Line | DrawElementType::Arrow => {
+            next.points = Some(mirror_points(element, horizontal, 0.0, 0.0));
+            mirror_extent(&mut next, element, horizontal, lo, hi);
         }
-        return next;
-    }
-
-    if element.kind == crate::scene::DrawElementType::Text {
-        // Moved, never mirrored: text read backwards is not a flip, it is broken text.
-        let rect = normalize_rect(element.x, element.y, element.width, element.height);
-        if horizontal {
-            next.x = lo + hi - (rect.x + rect.width);
-        } else {
-            next.y = lo + hi - (rect.y + rect.height);
+        DrawElementType::Freedraw => {
+            // The points carry the shape, so they mirror within the element's own box and
+            // the box itself keeps a positive extent.
+            let rect = normalize_rect(element.x, element.y, element.width, element.height);
+            next.points = Some(mirror_points(element, horizontal, rect.width, rect.height));
+            next.x = rect.x;
+            next.y = rect.y;
+            next.width = rect.width;
+            next.height = rect.height;
+            if horizontal {
+                next.x = lo + hi - (rect.x + rect.width);
+            } else {
+                next.y = lo + hi - (rect.y + rect.height);
+            }
         }
-        next.angle = element.angle;
-        return next;
+        DrawElementType::Image => mirror_extent(&mut next, element, horizontal, lo, hi),
+        _ => {
+            // `x + width` is the edge across from `x` whichever sign the extent has — a
+            // negative one is a box resized past its own corner, anchored on its far
+            // edge — so this reflects the box and keeps the sign it had.
+            if horizontal {
+                next.x = lo + hi - (element.x + element.width);
+            } else {
+                next.y = lo + hi - (element.y + element.height);
+            }
+        }
     }
-
-    mirror_extent(&mut next, element, horizontal, lo, hi);
     next
 }
 
@@ -132,6 +130,53 @@ fn mirror_points(
         .collect()
 }
 
+/// An arrow's anchors, carried through the mirror: an end bound to a shape flipped with
+/// it is mirrored in that shape's own frame, and an end bound to a shape that stayed lets
+/// go (`resizeElements.ts:1558-1569`).
+///
+/// Excalidraw mirrors the anchors of elbow arrows only (`resizeElements.ts:1446-1474`).
+/// A straight or curved one keeps its old anchors, so its mirrored points are right only
+/// until something re-resolves them — on excalidraw.com it jumps back to the old sides
+/// the moment a bound shape is nudged. Here every bound arrow is re-resolved straight
+/// after the flip, so the anchors have to be right at once.
+fn reanchor(arrow: &mut DrawElement, horizontal: bool, flipped: &HashSet<&str>) {
+    for end in [End::Start, End::End] {
+        let Some(mut bound) = anchor(arrow, end) else {
+            continue;
+        };
+        if flipped.contains(bound.element_id.as_str()) {
+            let [fx, fy] = bound.fixed_point;
+            bound.fixed_point = if horizontal {
+                [1.0 - fx, fy]
+            } else {
+                [fx, 1.0 - fy]
+            };
+            set_anchor(arrow, end, Some(bound));
+        } else {
+            set_anchor(arrow, end, None);
+        }
+    }
+}
+
+/// An arrow turned round without moving: its resolved heads trade ends, so one drawn with
+/// the implicit end head visibly points the other way.
+fn swap_heads(arrow: &DrawElement) -> DrawElement {
+    let mut next = arrow.clone();
+    next.start_arrowhead = Some(default_arrowhead(arrow, "end"));
+    next.end_arrowhead = Some(default_arrowhead(arrow, "start"));
+    next
+}
+
+/// The patches that flip `ids` about the middle of their box.
+///
+/// `ids` is the set a drag would move — a frame's children and a group's locked members
+/// included, as Excalidraw flips them (`actionFlip.ts:87-94`, `groups.ts:94-132`). Labels
+/// are left out and follow their container when the bindings are refreshed.
+///
+/// Excalidraw moves the selection back onto its old middle afterwards
+/// (`actionFlip.ts:158-192`), because it measures a curved arrow by its rendered curve,
+/// which can bump the box by a pixel. Here the box is measured from points, which mirror
+/// exactly, so there is no drift to take back.
 pub fn flip_elements(
     elements: &[DrawElement],
     ids: &HashSet<String>,
@@ -139,24 +184,57 @@ pub fn flip_elements(
 ) -> Vec<DrawElement> {
     let targets: Vec<&DrawElement> = elements
         .iter()
-        .filter(|el| {
-            ids.contains(&el.id) && !el.is_deleted && !el.locked() && el.container_id.is_none()
-        })
+        .filter(|el| ids.contains(&el.id) && !el.is_deleted && el.container_id.is_none())
         .collect();
     if targets.is_empty() {
         return Vec::new();
     }
-    let owned: Vec<DrawElement> = targets.into_iter().cloned().collect();
-    let Some(bounds) = scene_bounds(&owned) else {
-        return Vec::new();
-    };
-    let (lo, hi) = if axis == FlipAxis::Horizontal {
-        (bounds.min_x, bounds.max_x)
-    } else {
-        (bounds.min_y, bounds.max_y)
-    };
-    owned
+    // Only bound arrows: they turn round and nothing moves (`actionFlip.ts:116-129`).
+    // Labels are not counted — an arrow with words on it is still only an arrow — where
+    // Excalidraw counts them, and mirrors a labelled arrow off its shapes instead.
+    if targets.iter().all(|el| {
+        is_binding_element(el) && (el.start_binding.is_some() || el.end_binding.is_some())
+    }) {
+        return targets.into_iter().map(swap_heads).collect();
+    }
+
+    let horizontal = axis == FlipAxis::Horizontal;
+    // The middle of what the selection draws, turned — the oracle's `getCommonBoundingBox`
+    // (`actionFlip.ts:131`) — with the words on an arrow, which can reach past its ends
+    // (`resizeElements.ts:1280-1310`). Not the frame drawn round the selection here,
+    // which is unturned (`group_box`): with a turned element in the selection, that frame
+    // shifts on a flip where the oracle's stays put (`docs/reference/resize.md` › Flip).
+    let words: HashSet<&str> = targets
         .iter()
-        .map(|element| flip_one(element, axis, lo, hi))
+        .filter(|el| is_linear_element(el))
+        .filter_map(|el| el.bound_text_id.as_deref())
+        .collect();
+    let (lo, hi) = targets
+        .iter()
+        .copied()
+        .chain(
+            elements
+                .iter()
+                .filter(|el| !el.is_deleted && words.contains(el.id.as_str())),
+        )
+        .map(element_outline_bounds)
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), b| {
+            if horizontal {
+                (lo.min(b.min_x), hi.max(b.max_x))
+            } else {
+                (lo.min(b.min_y), hi.max(b.max_y))
+            }
+        });
+
+    let flipped: HashSet<&str> = targets.iter().map(|el| el.id.as_str()).collect();
+    targets
+        .iter()
+        .map(|element| {
+            let mut next = flip_one(element, axis, lo, hi);
+            if is_binding_element(element) {
+                reanchor(&mut next, horizontal, &flipped);
+            }
+            next
+        })
         .collect()
 }

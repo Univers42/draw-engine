@@ -1,5 +1,6 @@
 use crate::camera::Point;
 use crate::edit::{expand_within, is_in_group};
+use crate::engine::multi_linear::is_double_tap;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
@@ -15,6 +16,15 @@ impl DrawEngine {
     }
 
     fn begin_pointer_step(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
+        // The press that lands where the finishing one did is the other half of its
+        // double click; any other forgets the finished path.
+        if !self
+            .finished_by_press
+            .as_ref()
+            .is_some_and(|(_, at)| is_double_tap(*at, sx, sy))
+        {
+            self.finished_by_press = None;
+        }
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
         let world = self.snap(self.screen_to_world(sx, sy));
@@ -26,7 +36,7 @@ impl DrawEngine {
             // Alt at the press, not as of the last move: with no button held, moves are
             // not reported, so that one can be long stale.
             self.alt_held = duplicate;
-            self.begin_linear(world);
+            self.begin_linear(world, Point { x: sx, y: sy });
             return;
         }
         match self.tool {
@@ -140,11 +150,11 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    fn begin_linear(&mut self, world: Point) {
+    fn begin_linear(&mut self, world: Point, screen: Point) {
         // A path is already being placed: this press extends or ends it rather than
         // starting a second one on top.
         if self.multi_linear.is_some() {
-            self.press_multi_linear(world);
+            self.press_multi_linear(world, screen);
             return;
         }
         let Some(kind) = crate::interaction::tool_to_element_type(self.tool) else {
@@ -230,6 +240,7 @@ impl DrawEngine {
     }
 
     pub fn begin_pan(&mut self, sx: f64, sy: f64) {
+        self.finished_by_press = None;
         self.interaction = Some(Interaction::Pan {
             last_x: sx,
             last_y: sy,
@@ -430,14 +441,23 @@ impl DrawEngine {
             );
             if additive {
                 let mut next = self.selected_ids.clone();
-                if next.contains(&hit.id) {
+                let held = next.contains(&hit.id);
+                if held {
                     next.retain(|id| !hit_ids.contains(id));
                 } else {
                     next.extend(hit_ids);
                 }
-                // Through the one door, so a shift-click that lets go of the last thing
-                // held lets go of the group being edited with it.
-                self.set_selection(next);
+                if held && !duplicate {
+                    // Taken out on the release, and only by a click: the oracle changes
+                    // nothing on a shift-press over what is held (`App.tsx:9656-9660`)
+                    // and removes it on a release with no drag (`:12183-12260`). Taken
+                    // out here, a shift-drag moved the rest and left this one behind.
+                    self.narrow_on_click = Some(next);
+                } else {
+                    // Through the one door, so a shift-click that lets go of the last
+                    // thing held lets go of the group being edited with it.
+                    self.set_selection(next);
+                }
             } else if !self.selected_ids.contains(&hit.id) {
                 self.set_selection(hit_ids);
             } else if !duplicate && hit_ids != self.selected_ids {
@@ -449,17 +469,21 @@ impl DrawEngine {
             self.begin_move(world);
             return;
         }
-        // Nothing was hit — but the click may still be *inside what is selected*, and a
-        // click there can only sensibly mean "move this".
+        // Nothing was hit — but the press may still be *inside what is selected*, which
+        // the oracle hits as a whole: a selected element by its box, several by their
+        // common box (`App.tsx:6782-6806`, `:9783-9806`). A drag from there moves the
+        // selection; a release without one was a click on nothing, and lets go of it
+        // (`App.tsx:12344-12387`).
         //
         // It matters because a shape with no fill is hit on its outline only, so the
-        // middle of a selected empty rectangle is a hole. Falling through to a marquee
-        // there drops the selection that was just made and leaves the shape movable only
-        // by aiming at a two-pixel line. Checked *after* `selectable_hit` so a shape
-        // lying over the selection can still be clicked and selected in the normal way.
+        // middle of a selected empty rectangle is a hole, movable otherwise only by
+        // aiming at a two-pixel line. Checked *after* `selectable_hit` so a shape lying
+        // over the selection can still be clicked and selected in the normal way.
         if !additive && self.pointer_is_inside_selection(world) {
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
+            } else {
+                self.narrow_on_click = Some(std::collections::HashSet::new());
             }
             self.begin_move(world);
             return;
@@ -482,16 +506,32 @@ impl DrawEngine {
     /// collision tolerance is added on top for the same reason it is added everywhere
     /// else: the frame is a line, and a line is not something anyone can aim at exactly.
     ///
-    /// A deliberate divergence from Excalidraw, which answers this only for two or more
-    /// elements (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx:9783`, returns
-    /// false below that). One element and two behaving differently is an asymmetry
-    /// nobody asks for.
-    fn pointer_is_inside_selection(&self, world: Point) -> bool {
-        let selected = self.get_selected_elements();
-        if selected.is_empty() || selected.iter().all(|el| el.locked()) {
+    /// For one element as for several: the oracle hits a selected element anywhere in
+    /// its box (`hitElement`, `App.tsx:6782-6806`) and several in their common box
+    /// (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx:9783-9806`). Except a
+    /// line or arrow edited by its points, which has no box drawn round it and so none to
+    /// grab (`hasBoundingBox`, `packages/element/src/transformHandles.ts:328-353`).
+    ///
+    /// By reference: the hover cursor asks this on every move, and cloning the selection
+    /// there cost the size of a select-all per move.
+    pub(crate) fn pointer_is_inside_selection(&self, world: Point) -> bool {
+        let selected = || {
+            self.selected_ids
+                .iter()
+                .filter_map(|id| self.scene.get(id))
+                .filter(|el| !el.is_deleted)
+        };
+        // Also true of an empty selection.
+        if selected().all(|el| el.locked()) {
             return false;
         }
-        let Some(bounds) = crate::scene_bounds(selected.iter()) else {
+        let mut live = selected();
+        if let (Some(single), None) = (live.next(), live.next()) {
+            if self.shows_point_handles(single) {
+                return false;
+            }
+        }
+        let Some(bounds) = crate::scene_bounds(selected()) else {
             return false;
         };
         let pad = self.handle_layout().frame_pad + self.collision_tolerance();

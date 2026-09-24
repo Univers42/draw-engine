@@ -1,5 +1,7 @@
+use crate::engine::multi_linear::is_double_tap;
 use crate::engine::{DrawEngine, TextEditRequest};
 use crate::interaction::DrawTool;
+use crate::scene::binding::linear_endpoints;
 use crate::scene::{
     bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
     is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
@@ -21,17 +23,7 @@ impl DrawEngine {
         if !is_bindable_element(&single) && !is_linear_element(&single) {
             return false;
         }
-        let bound = single
-            .bound_text_id
-            .as_ref()
-            .and_then(|id| self.scene.get(id).cloned());
-        let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
-            bound
-        } else {
-            self.create_label(&single)
-        };
-        self.set_selection(vec![label.id.clone()]);
-        self.request_text_edit(&label);
+        self.edit_label(&single);
         true
     }
 
@@ -40,24 +32,29 @@ impl DrawEngine {
     }
 
     pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
-        let screen = crate::world_to_screen(self.camera, element.x, element.y);
-        // A width is sent whenever the element has one to impose: a label takes its
-        // container's, a dragged-out column keeps its own. Only auto-sizing text leaves
-        // it to the overlay, because only auto-sizing text has no width of its own yet.
-        let width = if element.container_id.is_some() || !crate::scene::is_auto_resize(element) {
-            Some(element.width * self.camera.scale)
-        } else {
-            None
-        };
+        let text_align = crate::scene::resolved_text_align(element);
+        // The editor is sent the box the lines are wrapped in, so it wraps where the
+        // canvas does. It sits around the anchor the painter puts the lines on, which for
+        // a shape's label or a column is the element itself. An arrow's label is not: it
+        // is an 8-unit placeholder on the arrow's middle, and its lines wrap far wider.
+        let wrap = self.wrap_width(element);
+        let x = wrap.map_or(element.x, |wrap| {
+            element.x + crate::render::text_anchor_x(text_align, element.width)
+                - crate::render::text_anchor_x(text_align, wrap)
+        });
+        let screen = crate::world_to_screen(self.camera, x, element.y);
         self.events.text_edit = Some(TextEditRequest {
             id: element.id.clone(),
             x: screen.x,
             y: screen.y,
             font_size: element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE),
             color: element.stroke_color.clone(),
-            text: element.text.clone().unwrap_or_default(),
-            width,
-            text_align: crate::scene::resolved_text_align(element),
+            // What was typed, as the oracle's editor opens on `originalText`
+            // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`): opened on the drawn
+            // text, every soft break would come back from the edit a hard one.
+            text: crate::scene::source_text(element).to_owned(),
+            width: wrap.map(|wrap| wrap * self.camera.scale),
+            text_align,
             container_id: element.container_id.clone(),
         });
     }
@@ -149,7 +146,39 @@ impl DrawEngine {
         true
     }
 
+    /// Whether a double click at `world` types into `arrow`, the one container on offer:
+    /// when it is on the arrow, or within `TEXT_TO_CENTER_SNAP_THRESHOLD` (30 scene
+    /// units, `packages/common/src/constants.ts@1118751f:30`) of where its label sits —
+    /// `handleCanvasDoubleClick` and `getTextWysiwygSnappedToCenterPosition`
+    /// (`App.tsx@1118751f:7356-7392`, `:13800-13832`).
+    fn takes_double_click_text(&self, arrow: &DrawElement, world: crate::camera::Point) -> bool {
+        let (start, end) = linear_endpoints(arrow);
+        let middle = ((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+        crate::hit_test_element(arrow, world.x, world.y, self.collision_tolerance())
+            || (world.x - middle.0).hypot(world.y - middle.1) < 30.0
+    }
+
+    /// Opens `container`'s label for editing, making it first if it has none.
+    fn edit_label(&mut self, container: &DrawElement) {
+        let bound = container
+            .bound_text_id
+            .as_ref()
+            .and_then(|id| self.scene.get(id).cloned());
+        let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
+            bound
+        } else {
+            self.create_label(container)
+        };
+        self.set_selection(vec![label.id.clone()]);
+        self.request_text_edit(&label);
+    }
+
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
+        // Any double click ends what the press that finished a path could be half of.
+        let finished = self
+            .finished_by_press
+            .take()
+            .filter(|(_, at)| is_double_tap(*at, sx, sy));
         // Only with the selection tools, as Excalidraw's `handleCanvasDoubleClick` has it
         // (`App.tsx:7200-7209`): a double click with the eraser, say, put an empty text
         // box on the board and opened an editor on it.
@@ -160,11 +189,43 @@ impl DrawEngine {
             return;
         }
         let world = self.screen_to_world(sx, sy);
+        // The double click one of whose presses ended a path. Excalidraw's finished path
+        // is then its one selected element (checked on excalidraw.com), so it is the only
+        // container the double click can type into
+        // (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`) — never the
+        // shape under the pointer. A line opens its line editor instead
+        // (`App.tsx@1118751f:7222-7234`). An arrow takes a label when the double click
+        // is on it or near its middle (`:7356-7392`); otherwise the text is a free one at
+        // the pointer — which is where the second press of a double click that ended the
+        // arrow lands, but not always the first's: a click that binds in orbit moves the
+        // end onto the shape's outline, toward its centre. A path too short to keep was
+        // thrown away, and Excalidraw's double click does nothing while a path is open
+        // (`App.tsx@1118751f:7199-7201`), so neither does this one.
+        let finished = match finished {
+            Some((id, _)) => match self.scene.get(&id).filter(|el| !el.is_deleted).cloned() {
+                Some(path) => Some(path),
+                None => return,
+            },
+            None => None,
+        };
+        if let Some(path) = &finished {
+            if path.kind != DrawElementType::Arrow {
+                self.open_linear_points(path);
+                return;
+            }
+            if self.takes_double_click_text(path, world) {
+                self.edit_label(path);
+                return;
+            }
+            // Past it, nothing under the pointer is on offer but a text to edit
+            // (`startTextEditing`, `App.tsx@1118751f:6960-6965`): no group, no line's
+            // points, no container — hence the `finished.is_none()` below.
+        }
         // Stepping into a group comes first. A double click inside one means "show me
         // what is in here", and letting the text branch run first would put a label on
         // the shape instead — which is what happened, and why a group could not be
         // opened at all.
-        if self.step_into_group(sx, sy) {
+        if finished.is_none() && self.step_into_group(sx, sy) {
             return;
         }
         if let Some(hit) = crate::hit_test(
@@ -183,23 +244,15 @@ impl DrawEngine {
             // A path of more than two points selects to a box, because it is a shape.
             // Its corners are still there, behind this gesture — the same door
             // Excalidraw puts its line editor behind.
-            if self.open_linear_points(&hit) {
+            if finished.is_none() && self.open_linear_points(&hit) {
                 return;
             }
         }
-        if let Some(container) = self.label_target_at(world.x, world.y) {
-            let bound = container
-                .bound_text_id
-                .as_ref()
-                .and_then(|id| self.scene.get(id).cloned());
-            let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
-                bound
-            } else {
-                self.create_label(&container)
-            };
-            self.set_selection(vec![label.id.clone()]);
-            self.request_text_edit(&label);
-            return;
+        if finished.is_none() {
+            if let Some(container) = self.label_target_at(world.x, world.y) {
+                self.edit_label(&container);
+                return;
+            }
         }
         let style = merge_style(&default_element_style(), &self.next_style);
         let mut element = create_element(
@@ -241,7 +294,8 @@ impl DrawEngine {
         {
             return;
         }
-        let text = element.text.clone().unwrap_or_default();
+        // What was typed, not what was drawn at the old width.
+        let text = crate::scene::source_text(&element).to_owned();
         let mut next = element;
         next.width = width.abs().max(8.0);
         self.scene.put(next);
@@ -297,28 +351,41 @@ impl DrawEngine {
         Some(self.with_text(element.clone(), text))
     }
 
-    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
-    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
-        let font_size = self.font_size_of(&element);
-        // Three ways a text element gets its width, and only the last lets the glyphs
-        // decide. A label takes its container's; a dragged-out column keeps the one it
-        // was given; auto-sizing text grows to fit.
-        let wrap_to = if let Some(container_id) = &element.container_id {
+    /// The width a text's lines wrap at, or `None` when the glyphs decide.
+    ///
+    /// Three ways a text element gets its width, and only the last lets the glyphs
+    /// decide. A label takes its container's; a dragged-out column keeps the one it was
+    /// given; auto-sizing text grows to fit.
+    fn wrap_width(&self, element: &DrawElement) -> Option<f64> {
+        if let Some(container_id) = &element.container_id {
             self.scene
                 .get(container_id)
                 .map(|container| (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0))
-        } else if !crate::scene::is_auto_resize(&element) {
+        } else if !crate::scene::is_auto_resize(element) {
             Some(element.width.abs().max(8.0))
         } else {
             None
-        };
+        }
+    }
+
+    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
+    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
+        let font_size = self.font_size_of(&element);
+        let wrap_to = self.wrap_width(&element);
         let final_text = match wrap_to {
-            Some(max_width) => wrap_text_to_width(text, max_width, font_size, &self.measure_text),
+            Some(max_width) => self.wrap_text_to_width(text, max_width, font_size),
             None => text.to_string(),
         };
         let (width, height) = (self.measure_text)(&final_text, font_size);
         let mut next = element;
         next.text = Some(final_text.clone());
+        // What was typed is the source now. Left alone it would still read what the text
+        // said before the edit, and a client laying text out from it would put the old
+        // words back. A text with none keeps none: its `text` is its source, and an old
+        // board edited here saves exactly the fields it always did.
+        if next.original_text.is_some() {
+            next.original_text = Some(text.to_owned());
+        }
         // A column keeps the width it was given: it is the thing the person set, and
         // shrinking it to the longest wrapped line would make the box creep inwards a
         // little on every edit.
@@ -330,54 +397,21 @@ impl DrawEngine {
         );
         next
     }
-}
 
-fn wrap_text_to_width<F>(text: &str, max_width: f64, font_size: f64, measure: &F) -> String
-where
-    F: Fn(&str, f64) -> (f64, f64),
-{
-    let mut wrapped_lines = Vec::new();
-    for hard_line in text.split('\n') {
-        if hard_line.is_empty() || measure(hard_line, font_size).0 <= max_width {
-            wrapped_lines.push(hard_line.to_string());
-            continue;
-        }
-        let words: Vec<&str> = hard_line.split(' ').collect();
-        let mut current_line = String::new();
-        for word in words {
-            if current_line.is_empty() {
-                if measure(word, font_size).0 > max_width {
-                    // Break long words character by character
-                    let mut chunk = String::new();
-                    for ch in word.chars() {
-                        let mut test = chunk.clone();
-                        test.push(ch);
-                        if measure(&test, font_size).0 > max_width && !chunk.is_empty() {
-                            wrapped_lines.push(chunk);
-                            chunk = ch.to_string();
-                        } else {
-                            chunk = test;
-                        }
-                    }
-                    if !chunk.is_empty() {
-                        current_line = chunk;
-                    }
-                } else {
-                    current_line = word.to_string();
-                }
-            } else {
-                let candidate = format!("{current_line} {word}");
-                if measure(&candidate, font_size).0 <= max_width {
-                    current_line = candidate;
-                } else {
-                    wrapped_lines.push(current_line);
-                    current_line = word.to_string();
-                }
-            }
-        }
-        if !current_line.is_empty() {
-            wrapped_lines.push(current_line);
-        }
+    /// Soft-wraps `text` to `max_width` as Excalidraw's `wrapText` does (`crate::text`),
+    /// measured with the engine's measure hook and memoised per hard line.
+    ///
+    /// ponytail: the hook measures whole texts and floors them at 4px (`measure_via_ctx`),
+    /// so a char measured alone and narrower than that — a zero-width char, a space at a
+    /// small size — wraps as 4px wide. A per-line, per-font measure replaces the hook when
+    /// fonts land.
+    fn wrap_text_to_width(&self, text: &str, max_width: f64, font_size: f64) -> String {
+        let measure = self.measure_text;
+        self.text_cache.wrap_text(
+            text,
+            max_width,
+            crate::text::FontKey::legacy(font_size),
+            &|line| measure(line, font_size).0,
+        )
     }
-    wrapped_lines.join("\n")
 }

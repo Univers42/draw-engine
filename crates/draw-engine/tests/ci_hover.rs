@@ -223,16 +223,20 @@ fn the_codes_are_stable() {
     assert_eq!(HoverCursor::Text.code(), 10);
 }
 
-/// A transparent shape is an outline, so only its outline offers to move. Saying "move"
-/// over its hollow middle would promise a drag that does not happen — and would hide the
-/// fact that the click belongs to whatever is drawn inside it.
+/// A transparent shape nobody has selected is an outline, so only its outline offers to
+/// move: saying "move" over its hollow middle would promise a drag that does not happen,
+/// and hide that the click belongs to whatever is drawn inside it. Once it is selected a
+/// press anywhere in its box does pick it up (`ci_grab_selected.rs`), and the cursor says
+/// so, as the oracle's does (`App.tsx:8280-8286`).
 #[test]
-fn a_hollow_shape_only_offers_a_move_on_its_outline() {
+fn a_hollow_shape_offers_a_move_on_its_outline_until_it_is_selected() {
     let mut element = box_at(400.0, 300.0, 300.0, 200.0);
     element.id = "r1".into();
     let mut engine = engine_with(vec![element]);
-    engine.select(vec!["r1".to_string()]);
 
     assert_eq!(engine.hover_cursor(550.0, 400.0), HoverCursor::Default);
     assert_eq!(engine.hover_cursor(550.0, 300.0), HoverCursor::Move);
+
+    engine.select(vec!["r1".to_string()]);
+    assert_eq!(engine.hover_cursor(550.0, 400.0), HoverCursor::Move);
 }

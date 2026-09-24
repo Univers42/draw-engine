@@ -7,16 +7,15 @@
 //! every click in the area it covers.
 //!
 //! But it is only right for a shape you have *not* selected. Once a shape is selected it
-//! is the thing you are working on, its frame and handles are drawn around it, and a
-//! click inside that frame can only sensibly mean "move this". Falling through to a
-//! marquee there loses the selection you just made, and on a transparent rectangle there
-//! is no way to move it at all except by aiming at a two-pixel line.
+//! is hit anywhere in its box — the oracle's `hitElement` tests a selected element
+//! against its bounding box (`packages/excalidraw/components/App.tsx:6782-6806`), and two
+//! or more selected share one common box (`isHittingCommonBoundingBoxOfSelectedElements`,
+//! `App.tsx:9783-9806`). So a press there keeps the selection and a drag moves it.
 //!
-//! This diverges from the oracle deliberately.
-//! `isHittingCommonBoundingBoxOfSelectedElements` (`App.tsx:9783`) bails out at
-//! `selectedElements.length < 2`, so Excalidraw offers this for a multi-selection and not
-//! for a single element. The asymmetry is not something anyone asks for; a selected shape
-//! behaves one way alone and another way with a friend.
+//! A press there that is let go without moving is a click on nothing, and lets go of the
+//! selection (`App.tsx:12344-12387`, `hitElementBoundingBoxOnly`). A selected line or
+//! arrow of two points has no box at all (`hasBoundingBox`,
+//! `packages/element/src/transformHandles.ts:328-353`), so nothing but the line grabs it.
 
 mod common;
 use common::*;
@@ -139,19 +138,40 @@ mod already_selected {
         assert_close(y, 115.0);
     }
 
-    /// A click with no drag must not move it, and must not lose the selection either.
+    /// A click with no drag moves nothing and lets go, as a click on empty canvas does:
+    /// the oracle deselects when the release hit only the selected element's box
+    /// (`App.tsx:12344-12387`). This used to keep the selection, on a misreading of the
+    /// oracle as offering the box to two or more elements only.
     #[test]
-    fn a_click_without_a_drag_keeps_the_selection_and_the_position() {
+    fn a_click_in_the_hole_lets_go() {
         let rect = shape(false);
         let id = rect.id.clone();
         let mut engine = engine_with_scene(vec![rect]);
         engine.select(vec![id.clone()]);
 
         engine.begin_pointer(INSIDE.0, INSIDE.1, false, false);
+        assert_eq!(engine.get_selection(), vec![id.clone()], "not on the press");
         engine.end_pointer();
 
-        assert_eq!(engine.get_selection(), vec![id.clone()]);
+        assert!(engine.get_selection().is_empty());
         assert_eq!(position_of(&engine, &id), (100.0, 100.0));
+    }
+
+    /// The box is where the pointer offers a move, so the cursor says so.
+    #[test]
+    fn the_hole_shows_the_move_cursor() {
+        let rect = shape(false);
+        let id = rect.id.clone();
+        let mut engine = engine_with_scene(vec![rect]);
+        engine.set_tool(DrawTool::Select);
+        assert_eq!(
+            engine.hover_cursor(INSIDE.0, INSIDE.1),
+            HoverCursor::Default,
+            "setup: an unselected hole offers nothing"
+        );
+        engine.select(vec![id]);
+
+        assert_eq!(engine.hover_cursor(INSIDE.0, INSIDE.1), HoverCursor::Move);
     }
 
     /// Outside the selection there is no shape and nothing selected, so the click means
@@ -212,5 +232,43 @@ mod several_selected {
         assert_eq!(engine.get_selection().len(), 2);
         assert_close(position_of(&engine, &left_id).0, 120.0);
         assert_close(position_of(&engine, &right_id).0, 420.0);
+    }
+
+    /// And a click in the gap lets go of both.
+    #[test]
+    fn a_click_in_the_gap_lets_go() {
+        let left = box_at(100.0, 100.0, 120.0, 200.0);
+        let right = box_at(400.0, 100.0, 120.0, 200.0);
+        let (left_id, right_id) = (left.id.clone(), right.id.clone());
+        let mut engine = engine_with_scene(vec![left, right]);
+        engine.select(vec![left_id, right_id]);
+
+        engine.begin_pointer(300.0, 200.0, false, false);
+        engine.end_pointer();
+
+        assert!(engine.get_selection().is_empty());
+    }
+}
+
+mod two_point_linear {
+    use super::*;
+
+    /// A selected arrow of two points is edited by its ends and has no box drawn round
+    /// it, so there is no box to grab: a press in the empty corner of its bounds starts a
+    /// marquee, as it would with nothing selected. It used to pick the arrow up from
+    /// anywhere inside that invisible box.
+    #[test]
+    fn a_selected_two_point_arrow_has_no_grab_box() {
+        let arrow = connector(100.0, 100.0, 400.0, 300.0, DrawElementType::Arrow);
+        let id = arrow.id.clone();
+        let mut engine = engine_with_scene(vec![arrow]);
+        engine.set_tool(DrawTool::Select);
+        engine.select(vec![id.clone()]);
+        assert_eq!(engine.hover_cursor(350.0, 130.0), HoverCursor::Default);
+
+        drag(&mut engine, (350.0, 130.0), (40.0, 20.0));
+
+        assert_eq!(position_of(&engine, &id), (100.0, 100.0));
+        assert!(engine.get_selection().is_empty());
     }
 }

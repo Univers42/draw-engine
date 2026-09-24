@@ -154,12 +154,13 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
   if (event.key === "Enter") {
     return engine.editSelectedText();
   }
-  if (event.shiftKey && engine.getSelection().length > 0) {
-    const flip = event.key.toLowerCase();
-    if (flip === "h" || flip === "v") {
-      engine.flipSelection(flip === "h" ? "horizontal" : "vertical");
-      return true;
-    }
+  // By the physical key, as Excalidraw matches them (`actionFlip.ts:51`, `:76-77`), so
+  // the chord is where it is on every layout. Ctrl+Shift+V never gets here: a modifier
+  // chord is handled or passed on before the plain keys.
+  const flip = event.code === "KeyH" ? "horizontal" : event.code === "KeyV" ? "vertical" : null;
+  if (flip && event.shiftKey && engine.getSelection().length > 0) {
+    engine.flipSelection(flip);
+    return true;
   }
   if (event.key.toLowerCase() === "q") {
     engine.setToolLocked(!engine.getToolLocked());
