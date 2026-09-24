@@ -232,6 +232,63 @@ fn an_arrow_bound_to_a_moved_shape_follows_it_though_not_selected() {
     assert!(sent(&mut engine).contains(&arrow.id));
 }
 
+/// Where an arrow's tail is, in world units.
+fn tail_y(arrow: &DrawElement) -> f64 {
+    arrow.y + arrow.points.as_ref().expect("an arrow has points")[0][1]
+}
+
+/// Undo and redo re-route the arrows of what they put back, stamped with them, as the
+/// oracle redraws the bound arrows of what a history step changed (`ElementsDelta.
+/// applyTo`, `packages/element/src/delta.ts:2044-2047,2107-2114`). An arrow outside the
+/// step — here one a peer drew after the move — kept the end the undone move had given
+/// it, and no later commit re-routed it: this engine drew it detached, and a peer that
+/// re-routed it on receiving R1 held other geometry under the same stamp.
+#[test]
+fn undo_and_redo_reroute_an_arrow_bound_to_what_they_put_back() {
+    let r1 = filled(box_at(0.0, 0.0, 100.0, 100.0));
+    let r2 = filled(box_at(300.0, 0.0, 100.0, 100.0));
+    let (r1_id, r2_id) = (r1.id.clone(), r2.id.clone());
+    let mut engine = engine_with_scene(vec![r1, r2]);
+    engine.select(vec![r1_id.clone()]);
+    engine.nudge_selection(0.0, 300.0);
+    // A peer draws an arrow from R1, where it now is, to R2.
+    let mut arrow = connector(100.0, 350.0, 300.0, 50.0, DrawElementType::Arrow);
+    arrow.start_binding = Some(r1_id.clone());
+    arrow.end_binding = Some(r2_id);
+    arrow.version = 3;
+    assert!(engine.apply_remote_patch(&scene_to_json(&[arrow.clone()])));
+    let drawn = get(&engine, &arrow.id);
+    assert!(tail_y(&drawn) > 300.0, "setup: the tail is on R1 below");
+
+    engine.undo();
+
+    assert_close(get(&engine, &r1_id).y, 0.0);
+    let undone = get(&engine, &arrow.id);
+    assert!(
+        tail_y(&undone) < 100.0,
+        "left behind at {}",
+        tail_y(&undone)
+    );
+    assert!(undone.version > drawn.version, "re-routed without a stamp");
+    let mut peer = engine_with_scene(Vec::new());
+    sync(&engine, &mut peer);
+    assert_eq!(
+        get(&peer, &arrow.id),
+        undone,
+        "the peer holds another arrow"
+    );
+
+    engine.redo();
+
+    let redone = get(&engine, &arrow.id);
+    assert!(
+        tail_y(&redone) > 300.0,
+        "left behind at {}",
+        tail_y(&redone)
+    );
+    assert!(redone.version > undone.version, "re-routed without a stamp");
+}
+
 /// One edit, one bump — a path that stamps its own change is not stamped again.
 #[test]
 fn a_style_change_is_bumped_once() {
