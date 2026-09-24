@@ -394,13 +394,20 @@ fn an_edit_keeps_the_source_in_step() {
     assert_eq!(edited.original_text.as_deref(), Some("goodbye"));
     assert_eq!(source_text(&edited), "goodbye");
 
-    // A text with no source of its own gains none: its `text` is still the source, and
-    // an old board edited here saves exactly the fields it always did.
+    // A text saved before sources existed gains one when it is edited: every writer
+    // keeps the two in step, as the oracle's `originalText` always is
+    // (`newElement.ts@1118751f` `updateTextElement`). Left without, the next layout — a
+    // font change, a resize of its shape — would re-wrap the drawn lines instead.
+    // Loaded and not edited, it keeps exactly the fields it came with.
     let mut legacy = text_at(0.0, 200.0, 60.0, 25.0);
     legacy.text = Some("hello".into());
     let mut engine = engine_with_measure(vec![legacy.clone()]);
-    engine.set_element_text(&legacy.id, "goodbye");
     assert_eq!(element(&engine, &legacy.id).original_text, None);
+    engine.set_element_text(&legacy.id, "goodbye");
+    assert_eq!(
+        element(&engine, &legacy.id).original_text.as_deref(),
+        Some("goodbye")
+    );
 }
 
 /// The editor opens on what was typed, as the oracle's does
@@ -430,9 +437,10 @@ fn a_resized_column_rewraps_its_source() {
 
 /// The editor is sent the box the canvas lays the label out in, so the text wraps at the
 /// same width on both and does not jump when the edit is committed. An arrow's label is
-/// only a placeholder 8 units wide, centred on the arrow's middle, while its lines wrap
-/// at the arrow's width less the padding: sent the placeholder, the editor wrapped every
-/// word onto a line of its own and the canvas drew them on one.
+/// as wide as its text, centred on the arrow's middle, while its lines wrap at the
+/// oracle's arrow width — `max(0.7 × width, 11 × fontSize)` (`getBoundTextMaxWidth`,
+/// `textElement.ts@1118751f:515-520`): sent the label's own box, the editor wrapped
+/// every word onto a line of its own and the canvas drew them on one.
 #[test]
 fn an_arrow_labels_editor_is_the_box_its_lines_wrap_in() {
     let arrow = connector(0.0, 0.0, 400.0, 0.0, DrawElementType::Arrow);
@@ -444,23 +452,25 @@ fn an_arrow_labels_editor_is_the_box_its_lines_wrap_in() {
         .text_edit
         .expect("the label editor opens");
 
-    let wrap = 400.0 - 2.0 * LABEL_PADDING;
+    let wrap = (0.7_f64 * 400.0).max(11.0 * 20.0);
     assert_close(request.width.expect("a label has a width"), wrap);
     // Centred where the canvas centres the label's lines: the arrow's middle.
     let middle = world_to_screen(engine.camera, 200.0, 0.0);
     assert_close(request.x + wrap / 2.0, middle.x);
 
     // And what is committed wraps at exactly that width: a line that fits it stays one.
-    let line = "the quick brown fox jumps over";
+    let line = "the quick brown fox jumps";
     assert!(measure_text(line, 20.0).0 <= wrap);
     engine.set_element_text(&request.id, line);
     let label = element(&engine, &request.id);
     assert_eq!(label.text.as_deref(), Some(line));
 }
 
-/// A shape's label is already the box its lines wrap in, and is sent as it is.
+/// A shape's label is edited in the box its lines wrap in: the shape less its padding
+/// (`getContainerCoords` / `getBoundTextMaxWidth`, `textElement.ts@1118751f:396-417`,
+/// `:511-540`), whatever the width of the label's own text.
 #[test]
-fn a_shapes_label_editor_is_the_label() {
+fn a_shapes_label_editor_is_its_padded_box() {
     let rect = box_at(0.0, 0.0, 40.0, 120.0);
     let mut engine = engine_with_measure(vec![rect.clone()]);
     engine.select(vec![rect.id.clone()]);
@@ -471,9 +481,8 @@ fn a_shapes_label_editor_is_the_label() {
         .expect("the label editor opens");
     let label = element(&engine, &request.id);
     assert_close(request.width.unwrap(), 40.0 - 2.0 * LABEL_PADDING);
-    assert_close(request.width.unwrap(), label.width);
     assert_close(
         request.x,
-        world_to_screen(engine.camera, label.x, label.y).x,
+        world_to_screen(engine.camera, LABEL_PADDING, label.y).x,
     );
 }

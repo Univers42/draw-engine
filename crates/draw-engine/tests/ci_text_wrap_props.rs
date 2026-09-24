@@ -477,8 +477,9 @@ fn counted_measure(text: &str, font_size: f64) -> (f64, f64) {
     measure_text(text, font_size)
 }
 
-/// The same bounds through the engine's shared wrap, and its memo: typing the same text
-/// into a column again measures only the final size.
+/// The same bounds through the engine's shared wrap, and its memos: typing the same text
+/// into a column again measures nothing — the wrap is remembered per hard line, and the
+/// width of each line laid out per font (`MeasureCache::line_width`).
 #[test]
 fn the_engine_measures_linearly_and_remembers() {
     let word = "abcdefghij".repeat(500);
@@ -498,7 +499,7 @@ fn the_engine_measures_linearly_and_remembers() {
     engine.set_element_text(&id, &word);
     let (calls, _) = HOOK.with(|hook| hook.replace((0, 0)));
     assert_eq!(
-        calls, 1,
-        "the wrap is remembered; only the final size is measured"
+        calls, 0,
+        "the wrap and the laid-out lines' widths are remembered"
     );
 }

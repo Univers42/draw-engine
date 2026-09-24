@@ -149,23 +149,8 @@ pub fn source_text(element: &DrawElement) -> &str {
         .unwrap_or_default()
 }
 
-/// The font families the engine knows, by Excalidraw's ids
-/// (`packages/common/src/constants.ts:133-144`), each with its line height
-/// (`packages/common/src/font-metadata.ts:35-104`). The oracle's `4` is retired and its
-/// `10` (Assistant) is private to its own UI, so neither is here.
-const FONT_FAMILIES: [(u8, f64); 8] = [
-    (1, 1.25), // Virgil
-    (2, 1.15), // Helvetica
-    (3, 1.2),  // Cascadia
-    (5, 1.25), // Excalifont
-    (6, 1.25), // Nunito
-    (7, 1.15), // Lilita One
-    (8, 1.25), // Comic Shanns
-    (9, 1.15), // Liberation Sans
-];
-
 /// The family ids a text may carry, the contract's (`MAX_FONT_FAMILY` in
-/// `packages/contract/src/limits.ts`). Wider than [`FONT_FAMILIES`], so a newer client's
+/// `packages/contract/src/limits.ts`). Wider than [`crate::text::font::FAMILIES`], so a newer client's
 /// font survives a trip through this one.
 const FONT_FAMILY_IDS: std::ops::RangeInclusive<f64> = 1.0..=64.0;
 
@@ -207,7 +192,7 @@ where
 pub fn resolved_font_family(element: &DrawElement) -> Option<u8> {
     element
         .font_family
-        .filter(|id| FONT_FAMILIES.iter().any(|(known, _)| known == id))
+        .filter(|id| crate::text::font::family(*id).is_some())
 }
 
 /// The unitless line height to lay out with.
@@ -223,13 +208,9 @@ pub fn resolved_line_height(element: &DrawElement) -> f64 {
         .line_height
         .filter(|value| LINE_HEIGHTS.contains(value))
         .unwrap_or_else(|| {
-            let family = resolved_font_family(element);
-            FONT_FAMILIES
-                .iter()
-                .find(|(id, _)| Some(*id) == family)
-                .map_or(crate::render::TEXT_LINE_HEIGHT, |(_, line_height)| {
-                    *line_height
-                })
+            resolved_font_family(element)
+                .and_then(crate::text::font::family)
+                .map_or(crate::render::TEXT_LINE_HEIGHT, |family| family.line_height)
         })
 }
 

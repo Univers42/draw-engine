@@ -47,9 +47,9 @@ pub use math::{
     smoothstep, Cubic, CURVE_TIGHTNESS,
 };
 pub use render::{
-    canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, label_offset_y,
-    light_theme, text_anchor_x, DrawTheme, GridSettings, DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP,
-    FONT_FAMILY, TEXT_LINE_HEIGHT,
+    canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, light_theme,
+    text_anchor_x, DrawTheme, GridSettings, DEFAULT_GRID_SIZE, DEFAULT_GRID_STEP, FONT_FAMILY,
+    TEXT_LINE_HEIGHT,
 };
 pub use scene::{
     apply_style_patch, attach_point, bindable_at, bump_version, create_element,

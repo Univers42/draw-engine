@@ -1,5 +1,7 @@
 use crate::engine::DrawEngine;
-use crate::scene::{apply_style_patch, bump_version, is_linear_element, DrawElementStylePatch};
+use crate::scene::{
+    apply_style_patch, bump_version, is_linear_element, DrawElement, DrawElementStylePatch,
+};
 
 impl DrawEngine {
     pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
@@ -9,9 +11,38 @@ impl DrawEngine {
             return;
         }
         let now = self.now_ms;
+        // A shape's label is drawn in the shape's stroke colour and fades with it: the
+        // oracle applies both to the bound text of what is selected
+        // (`changeProperty(…, includeBoundText = true)` in `actionChangeStrokeColor` and
+        // `actionChangeOpacity`, `actions/actionProperties.tsx@1118751f`). Nothing else in
+        // a style patch means anything to a text.
+        let label_patch = DrawElementStylePatch {
+            stroke_color: patch.stroke_color.clone(),
+            opacity: patch.opacity,
+            ..DrawElementStylePatch::default()
+        };
+        let reaches_labels = label_patch.stroke_color.is_some() || label_patch.opacity.is_some();
+        let selected_ids: std::collections::HashSet<String> =
+            selected.iter().map(|el| el.id.clone()).collect();
+        let mut labels = Vec::new();
         for mut element in selected {
+            if reaches_labels {
+                labels.extend(
+                    element
+                        .bound_text_id
+                        .as_deref()
+                        .filter(|id| !selected_ids.contains(*id))
+                        .and_then(|id| self.scene.get(id))
+                        .filter(|label| !label.is_deleted)
+                        .cloned(),
+                );
+            }
             apply_style_patch(&mut element, &patch);
             self.scene.put(bump_version(element, now));
+        }
+        for mut label in labels {
+            apply_style_patch(&mut label, &label_patch);
+            self.scene.put(bump_version(label, now));
         }
         self.push_history();
         self.request_draw();
@@ -49,22 +80,125 @@ impl DrawEngine {
         // Through `selected_texts` rather than the raw selection, so resizing works with
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
+        self.relayout_selected_texts(|text| text.font_size = Some(size), true);
+    }
+
+    /// Writes `change` into every selected text, lays each out again from its source
+    /// (`redrawTextBoundingBox`), grows the shapes that no longer hold their labels, and
+    /// commits. With `anchor_font_resize`, a free auto-sizing text keeps its aligned edge
+    /// and its vertical middle (`offsetElementAfterFontResize`); otherwise a free text
+    /// stays where it is, as the oracle's family and alignment changes leave it.
+    fn relayout_selected_texts(
+        &mut self,
+        change: impl Fn(&mut DrawElement),
+        anchor_font_resize: bool,
+    ) {
         let texts = self.selected_texts();
         if texts.is_empty() {
             return;
         }
         let now = self.now_ms;
-        let measure = self.measure_text;
-        for mut element in texts {
-            let (width, height) = measure(element.text.as_deref().unwrap_or(""), size);
-            element.font_size = Some(size);
-            element.width = width;
-            element.height = height;
-            self.scene.put(bump_version(element, now));
+        for prev in texts {
+            let mut next = prev.clone();
+            change(&mut next);
+            let mut laid = self.laid_out(&next);
+            if anchor_font_resize {
+                if let Some(at) = crate::text::layout::font_resize_anchor(&prev, &laid.text) {
+                    laid.text.x = at.x;
+                    laid.text.y = at.y;
+                }
+            }
+            if let Some(container) = laid.container {
+                self.scene.put(container);
+            }
+            self.scene.put(bump_version(laid.text, now));
         }
         self.apply_bindings();
         self.push_history();
         self.request_draw();
+    }
+
+    /// The family for the selected text, or for the next text written when nothing is
+    /// selected. The family's own line height comes with it (`changeFontFamily`,
+    /// `actionProperties.tsx@1118751f:1285-1290`), and the text is laid out again where
+    /// it stands. An id the engine does not draw with is ignored.
+    pub fn set_font_family(&mut self, family: u8) {
+        let Some(line_height) = crate::text::font::family(family).map(|f| f.line_height) else {
+            return;
+        };
+        self.next_font_family = family;
+        self.relayout_selected_texts(
+            |text| {
+                text.font_family = Some(family);
+                text.line_height = Some(line_height);
+            },
+            false,
+        );
+    }
+
+    /// The family of the first selected text — `0` for the system stack a text with none
+    /// is drawn in — or the next text's when nothing is selected.
+    pub fn get_font_family(&self) -> u8 {
+        self.selected_texts()
+            .first()
+            .map_or(self.next_font_family, |text| {
+                crate::scene::resolved_font_family(text).unwrap_or(crate::text::FontKey::LEGACY)
+            })
+    }
+
+    /// Whether the selected free texts size to their text (`true`) or keep a fixed width
+    /// their lines wrap in (`false`). Back to auto-sizing, a text takes its typed lines
+    /// and its measured size, and the point its alignment pins stays put
+    /// (`actionTextAutoResize`, `actions/actionTextAutoResize.ts@1118751f`). To fixed, it
+    /// keeps the width it has. Labels are left alone: their shape decides.
+    pub fn set_text_auto_resize(&mut self, auto_resize: bool) {
+        let texts: Vec<DrawElement> = self
+            .selected_texts()
+            .into_iter()
+            .filter(|text| text.container_id.is_none())
+            .filter(|text| crate::scene::is_auto_resize(text) != auto_resize)
+            .collect();
+        if texts.is_empty() {
+            return;
+        }
+        let now = self.now_ms;
+        for prev in texts {
+            let mut next = prev.clone();
+            next.auto_resize = Some(auto_resize);
+            let mut laid = self.laid_out(&next);
+            if auto_resize {
+                let at = crate::text::layout::auto_resize_anchor(
+                    &prev,
+                    laid.text.width,
+                    laid.text.height,
+                );
+                laid.text.x = at.x;
+                laid.text.y = at.y;
+            }
+            self.scene.put(bump_version(laid.text, now));
+        }
+        self.push_history();
+        self.request_draw();
+    }
+
+    /// Whether the selected labels wrap inside their shapes (`true`, the oracle's only
+    /// way) or keep their typed lines and widen the shape to hold them (`false`).
+    pub fn set_label_wrap(&mut self, wrap: bool) {
+        let any_label = self
+            .selected_texts()
+            .iter()
+            .any(|text| text.container_id.is_some());
+        if !any_label {
+            return;
+        }
+        self.relayout_selected_texts(
+            |text| {
+                if text.container_id.is_some() {
+                    text.wrap = Some(wrap);
+                }
+            },
+            false,
+        );
     }
 
     pub fn get_font_size(&self) -> f64 {
@@ -114,13 +248,7 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
-        let now = self.now_ms;
-        for mut element in texts {
-            element.text_align = Some(align);
-            self.scene.put(bump_version(element, now));
-        }
-        self.push_history();
-        self.request_draw();
+        self.relayout_selected_texts(|text| text.text_align = Some(align), false);
     }
 
     pub fn get_text_align(&self) -> crate::scene::TextAlign {
@@ -140,14 +268,7 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
-        let now = self.now_ms;
-        for mut element in texts {
-            element.vertical_align = Some(align);
-            self.scene.put(bump_version(element, now));
-        }
-        self.apply_bindings();
-        self.push_history();
-        self.request_draw();
+        self.relayout_selected_texts(|text| text.vertical_align = Some(align), false);
     }
 
     pub fn get_vertical_align(&self) -> crate::scene::VerticalAlign {

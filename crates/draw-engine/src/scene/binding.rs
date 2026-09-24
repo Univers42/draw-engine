@@ -32,7 +32,8 @@ use crate::scene::outline_distance::signed_outline_distance;
 pub const BASE_BINDING_GAP: f64 = 5.0;
 /// The gap in front of a shape with the default 2px stroke. See [`binding_gap`].
 pub const BINDING_GAP: f64 = 6.0;
-pub const LABEL_PADDING: f64 = 8.0;
+/// The air between a label and its shape's outline: Excalidraw's `BOUND_TEXT_PADDING`.
+pub const LABEL_PADDING: f64 = crate::text::layout::BOUND_TEXT_PADDING;
 
 /// How much of a shape's shorter side the gap may take.
 ///
@@ -1144,28 +1145,22 @@ pub fn linear_retarget(element: DrawElement, start: Point, end: Point) -> DrawEl
     crate::selection::linear::from_world_points(&element, &world)
 }
 
+/// Puts a label where it goes in its container at the size it already has
+/// (`computeBoundTextPosition`, [`crate::text::layout::bound_text_position`]), turned with
+/// it — an arrow's label never turns.
+///
+/// Position only: its lines and its size are [`crate::text::layout_text`]'s, laid out when
+/// its text, font or container's width changes. This runs on every move of a container
+/// and on a peer's patch, where the label arrives laid out by whoever wrote it.
 pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElement {
-    if is_linear_element(container) {
-        let (start, end) = linear_endpoints(container);
-        label.x = (start.x + end.x) / 2.0 - label.width / 2.0;
-        label.y = (start.y + end.y) / 2.0 - label.height / 2.0;
-        label.angle = 0.0;
-        return label;
-    }
-    let rect = normalize_rect(container.x, container.y, container.width, container.height);
-    let width = (rect.width - LABEL_PADDING * 2.0).max(8.0);
-    // Horizontal alignment is the painter's job — the label keeps the container's full
-    // inner width and the glyphs move inside it. Vertical alignment is this function's,
-    // because the label is a real element with its own `y` and nothing else would move it.
-    label.x = rect.x + LABEL_PADDING;
-    label.y = rect.y
-        + crate::render::label_offset_y(
-            crate::scene::resolved_vertical_align(&label),
-            rect.height,
-            label.height,
-        );
-    label.width = width;
-    label.angle = container.angle;
+    let at = crate::text::layout::bound_text_position(container, &label);
+    label.x = at.x;
+    label.y = at.y;
+    label.angle = if is_linear_element(container) {
+        0.0
+    } else {
+        container.angle
+    };
     label
 }
 

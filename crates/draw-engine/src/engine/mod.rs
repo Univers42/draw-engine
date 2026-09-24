@@ -90,7 +90,10 @@ pub struct DrawEngine {
     disposed: bool,
     now_ms: f64,
     measure_text: fn(&str, f64) -> (f64, f64),
-    /// Char widths and wrapped lines measured with `measure_text` (`crate::text`).
+    /// The width of one line in a font — what layout measures with when the host gives
+    /// one ([`Self::set_measure_line`]); otherwise `measure_text` stands in, per size.
+    measure_line: Option<fn(&str, crate::text::FontKey) -> f64>,
+    /// Char widths, wrapped lines and line widths measured with the above (`crate::text`).
     text_cache: crate::text::MeasureCache,
     tool: DrawTool,
     /// Where a toggle tool goes back to. Never a toggle tool itself, so pressing the
@@ -99,6 +102,9 @@ pub struct DrawEngine {
     tool_locked: bool,
     next_style: DrawElementStylePatch,
     next_font_size: f64,
+    /// The family the next text is written in — Excalifont unless another was chosen
+    /// with nothing selected.
+    next_font_family: u8,
     /// The alignments the next text will be created with, when one was chosen with
     /// nothing selected. `None` means nothing was chosen, so the new element is left
     /// unset too and keeps resolving through its role — picking an alignment must not be
@@ -231,12 +237,14 @@ impl DrawEngine {
             disposed: false,
             now_ms: 0.0,
             measure_text: default_measure,
+            measure_line: None,
             text_cache: crate::text::MeasureCache::new(),
             tool: DrawTool::Select,
             tool_before_toggle: DrawTool::Select,
             tool_locked: false,
             next_style: DrawElementStylePatch::default(),
             next_font_size: DEFAULT_FONT_SIZE,
+            next_font_family: crate::text::font::DEFAULT_FONT_FAMILY,
             next_text_align: None,
             next_vertical_align: None,
             interaction: None,
@@ -277,9 +285,20 @@ impl DrawEngine {
         self.prune_peer_lasers(now_ms);
     }
 
+    /// Measures by size alone: every family is measured as one. Kept for hosts that
+    /// have no fonts to tell apart; [`Self::set_measure_line`] replaces it.
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
         self.measure_text = measure;
+        self.measure_line = None;
         // Everything cached was measured by the hook this replaces.
+        self.text_cache.clear();
+    }
+
+    /// Measures one line in a font: its advance width, kerning included — what the
+    /// browser's `measureText` answers with `ctx.font` set to
+    /// [`crate::text::font::font_string`].
+    pub fn set_measure_line(&mut self, measure: fn(&str, crate::text::FontKey) -> f64) {
+        self.measure_line = Some(measure);
         self.text_cache.clear();
     }
 

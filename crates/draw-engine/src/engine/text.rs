@@ -6,7 +6,8 @@ use crate::scene::{
     bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
     is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
 };
-use crate::TEXT_LINE_HEIGHT;
+use crate::text::layout::{self, Laid, Measure};
+use crate::text::FontKey;
 
 impl DrawEngine {
     pub fn edit_selected_text(&mut self) -> bool {
@@ -34,15 +35,16 @@ impl DrawEngine {
     pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
         let text_align = crate::scene::resolved_text_align(element);
         // The editor is sent the box the lines are wrapped in, so it wraps where the
-        // canvas does. It sits around the anchor the painter puts the lines on, which for
-        // a shape's label or a column is the element itself. An arrow's label is not: it
-        // is an 8-unit placeholder on the arrow's middle, and its lines wrap far wider.
+        // canvas does. It sits around the anchor the painter puts the lines on: a
+        // label's box is as wide as its shape allows and the label sits in it by its
+        // alignment, so the box's left edge is the label's anchor less the box's.
         let wrap = self.wrap_width(element);
         let x = wrap.map_or(element.x, |wrap| {
             element.x + crate::render::text_anchor_x(text_align, element.width)
                 - crate::render::text_anchor_x(text_align, wrap)
         });
         let screen = crate::world_to_screen(self.camera, x, element.y);
+        let family = crate::scene::resolved_font_family(element);
         self.events.text_edit = Some(TextEditRequest {
             id: element.id.clone(),
             x: screen.x,
@@ -56,38 +58,52 @@ impl DrawEngine {
             width: wrap.map(|wrap| wrap * self.camera.scale),
             text_align,
             container_id: element.container_id.clone(),
+            font_family: crate::text::font::css_stack(family).to_owned(),
+            line_height: crate::scene::resolved_line_height(element),
         });
     }
 
-    fn create_label(&mut self, container: &DrawElement) -> DrawElement {
-        let width = if is_linear_element(container) {
-            8.0
-        } else {
-            (container.width.abs() - 16.0).max(8.0)
-        };
+    /// A new, empty text in the next style: the family chosen last, Excalifont until one
+    /// is, with that family's line height (`newTextElement`,
+    /// `packages/element/src/newElement.ts@1118751f:330-390`).
+    pub(crate) fn new_text_element(&self, geometry: Geometry) -> DrawElement {
         let style = merge_style(&default_element_style(), &self.next_style);
-        let mut label = create_element(
-            DrawElementType::Text,
-            Geometry {
-                x: container.x,
-                y: container.y,
-                width,
-                height: self.next_font_size,
-            },
-            style,
-            self.now_ms,
-        );
-        label.text = Some(String::new());
-        label.font_size = Some(self.next_font_size);
-        label.text_align = self.next_text_align;
-        label.vertical_align = self.next_vertical_align;
+        let mut element = create_element(DrawElementType::Text, geometry, style, self.now_ms);
+        element.text = Some(String::new());
+        element.original_text = Some(String::new());
+        element.font_size = Some(self.next_font_size);
+        element.font_family = Some(self.next_font_family);
+        element.line_height =
+            crate::text::font::family(self.next_font_family).map(|family| family.line_height);
+        element.text_align = self.next_text_align;
+        element.vertical_align = self.next_vertical_align;
+        element
+    }
+
+    fn create_label(&mut self, container: &DrawElement) -> DrawElement {
+        let mut label = self.new_text_element(Geometry {
+            x: container.x,
+            y: container.y,
+            width: 0.0,
+            height: 0.0,
+        });
+        // As big as an empty line, and placed by `apply_bindings` below. Not laid out:
+        // that could grow the shape for a label that is then abandoned untyped.
+        let (width, height) = self.with_measure(|measure| {
+            measure.size(
+                "",
+                layout::font_of(&label),
+                crate::scene::resolved_line_height(&label),
+            )
+        });
+        label.width = width;
+        label.height = height;
         label.container_id = Some(container.id.clone());
         // In its shape's groups and directly above it, as the oracle makes one
         // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
         // board instead, it was drawn over whatever covers its shape, and split the
         // shape's group in the stack.
         label.group_ids = container.group_ids.clone();
-        label.stroke_color = self.get_next_style().stroke_color;
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
         self.scene.add(label.clone());
@@ -254,22 +270,13 @@ impl DrawEngine {
                 return;
             }
         }
-        let style = merge_style(&default_element_style(), &self.next_style);
-        let mut element = create_element(
-            DrawElementType::Text,
-            Geometry {
-                x: world.x,
-                y: world.y,
-                width: 4.0,
-                height: self.next_font_size,
-            },
-            style,
-            self.now_ms,
-        );
-        element.text = Some(String::new());
-        element.font_size = Some(self.next_font_size);
-        element.text_align = self.next_text_align;
-        element.vertical_align = self.next_vertical_align;
+        let font_size = self.next_font_size;
+        let element = self.new_text_element(Geometry {
+            x: world.x,
+            y: world.y,
+            width: 4.0,
+            height: font_size,
+        });
         let id = element.id.clone();
         self.scene.add(element.clone());
         self.set_selection(vec![id]);
@@ -332,8 +339,14 @@ impl DrawEngine {
             self.request_draw();
             return;
         }
-        let next = self.with_text(element, text);
+        let Laid {
+            text: next,
+            container,
+        } = self.with_text(&element, text);
         self.scene.put(bump_version(next, self.now_ms));
+        if let Some(container) = container {
+            self.scene.put(container);
+        }
         self.apply_bindings();
         self.push_history();
         self.request_draw();
@@ -343,75 +356,150 @@ impl DrawEngine {
     /// shown while it is being typed, so a word appears on their screens as it is
     /// written rather than all at once when the editor closes. `None` for an id that is
     /// not a text in the scene.
+    ///
+    /// ponytail: the label only — a shape the text would grow is sent grown on commit;
+    /// streaming it too means a preview of two elements.
     pub fn text_preview(&self, id: &str, text: &str) -> Option<DrawElement> {
         let element = self.scene.get(id)?;
         if element.kind != DrawElementType::Text {
             return None;
         }
-        Some(self.with_text(element.clone(), text))
+        Some(self.with_text(element, text).text)
     }
 
-    /// The width a text's lines wrap at, or `None` when the glyphs decide.
-    ///
-    /// Three ways a text element gets its width, and only the last lets the glyphs
-    /// decide. A label takes its container's; a dragged-out column keeps the one it was
-    /// given; auto-sizing text grows to fit.
+    /// The width a text's lines wrap at, or `None` when the glyphs decide — see
+    /// [`layout::wrap_width`].
     fn wrap_width(&self, element: &DrawElement) -> Option<f64> {
-        if let Some(container_id) = &element.container_id {
-            self.scene
-                .get(container_id)
-                .map(|container| (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0))
-        } else if !crate::scene::is_auto_resize(element) {
-            Some(element.width.abs().max(8.0))
-        } else {
-            None
-        }
+        layout::wrap_width(element, self.container_of(element))
     }
 
-    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
-    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
-        let font_size = self.font_size_of(&element);
-        let wrap_to = self.wrap_width(&element);
-        let final_text = match wrap_to {
-            Some(max_width) => self.wrap_text_to_width(text, max_width, font_size),
-            None => text.to_string(),
+    /// The live container of a label, if it is one.
+    pub(crate) fn container_of(&self, text: &DrawElement) -> Option<&DrawElement> {
+        text.container_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|container| !container.is_deleted)
+    }
+
+    /// Runs `body` with the measurer layout uses: the host's per-font line measure, or
+    /// the per-size hook standing in for it.
+    pub(crate) fn with_measure<T>(&self, body: impl FnOnce(&Measure) -> T) -> T {
+        let (line, text) = (self.measure_line, self.measure_text);
+        let line_width = move |line_text: &str, font: FontKey| match line {
+            Some(measure) => measure(line_text, font),
+            None => text(line_text, font.size()).0,
         };
-        let (width, height) = (self.measure_text)(&final_text, font_size);
-        let mut next = element;
-        next.text = Some(final_text.clone());
-        // What was typed is the source now. Left alone it would still read what the text
-        // said before the edit, and a client laying text out from it would put the old
-        // words back. A text with none keeps none: its `text` is its source, and an old
-        // board edited here saves exactly the fields it always did.
-        if next.original_text.is_some() {
-            next.original_text = Some(text.to_owned());
-        }
-        // A column keeps the width it was given: it is the thing the person set, and
-        // shrinking it to the longest wrapped line would make the box creep inwards a
-        // little on every edit.
-        if crate::scene::is_auto_resize(&next) && next.container_id.is_none() {
-            next.width = width;
-        }
-        next.height = height.max(
-            font_size.max(final_text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT),
-        );
-        next
+        body(&Measure {
+            cache: &self.text_cache,
+            line_width: &line_width,
+        })
     }
 
-    /// Soft-wraps `text` to `max_width` as Excalidraw's `wrapText` does (`crate::text`),
-    /// measured with the engine's measure hook and memoised per hard line.
+    /// `text` laid out where it stands ([`layout::layout_text`]): its own lines from its
+    /// source, and its container grown if it is a label that no longer fits.
+    pub(crate) fn laid_out(&self, text: &DrawElement) -> Laid {
+        self.with_measure(|measure| layout::layout_text(text, self.container_of(text), measure))
+    }
+
+    /// `element` with `text` typed into it: laid out, and — a free text — kept on the
+    /// edge its alignment anchors (`getAdjustedDimensions`).
+    fn with_text(&self, element: &DrawElement, text: &str) -> Laid {
+        let mut typed = element.clone();
+        typed.original_text = Some(text.to_owned());
+        let mut laid = self.laid_out(&typed);
+        if element.container_id.is_none() {
+            let prev = self.with_measure(|measure| {
+                measure.size(
+                    element.text.as_deref().unwrap_or_default(),
+                    layout::font_of(element),
+                    crate::scene::resolved_line_height(element),
+                )
+            });
+            let at = layout::edit_anchor(element, prev, laid.text.width, laid.text.height);
+            laid.text.x = at.x;
+            laid.text.y = at.y;
+        }
+        laid
+    }
+
+    /// Lays a text out again from what was typed, where it stands — `id` a text, or a
+    /// shape with a label — and writes it with its shape grown to hold it. Uncommitted,
+    /// like any step of a gesture: the caller commits (`push_history`).
     ///
-    /// ponytail: the hook measures whole texts and floors them at 4px (`measure_via_ctx`),
-    /// so a char measured alone and narrower than that — a zero-width char, a space at a
-    /// small size — wraps as 4px wide. A per-line, per-font measure replaces the hook when
-    /// fonts land.
-    fn wrap_text_to_width(&self, text: &str, max_width: f64, font_size: f64) -> String {
-        let measure = self.measure_text;
-        self.text_cache.wrap_text(
-            text,
-            max_width,
-            crate::text::FontKey::legacy(font_size),
-            &|line| measure(line, font_size).0,
-        )
+    /// The one door for what changes a label's room or a text's metrics without
+    /// changing what it says: a shape resized, the editor's live box, a font arriving.
+    /// Returns whether anything moved.
+    pub fn relayout_text(&mut self, id: &str) -> bool {
+        let Some(element) = self.scene.get(id) else {
+            return false;
+        };
+        let text = if element.kind == DrawElementType::Text {
+            Some(element)
+        } else {
+            element
+                .bound_text_id
+                .as_deref()
+                .and_then(|label| self.scene.get(label))
+        };
+        let Some(text) = text.filter(|text| !text.is_deleted) else {
+            return false;
+        };
+        let laid = self.laid_out(text);
+        if &laid.text == text && laid.container.is_none() {
+            return false;
+        }
+        self.scene.put(laid.text);
+        if let Some(container) = laid.container {
+            self.scene.put(container);
+        }
+        self.apply_bindings();
+        self.request_draw();
+        true
+    }
+
+    /// A font has finished loading: every text drawn in a family is measured again and
+    /// laid out anew, so the boxes fit the glyphs now on screen rather than a fallback's.
+    ///
+    /// Not an edit. Nothing is stamped, pending, sent or undoable: the words are the
+    /// same, every client lays them out for itself, and a board opened only to read
+    /// must not save itself. Texts with no family use the system stack, which was
+    /// never loading, and are left alone.
+    ///
+    /// ponytail: an arrow bound to a shape that grew here is re-routed at the next edit
+    /// of either — re-routing now would be an unstamped change to the arrow.
+    pub fn fonts_loaded(&mut self) {
+        self.text_cache.clear();
+        let texts: Vec<DrawElement> = self
+            .scene
+            .iter_ordered()
+            .filter(|el| {
+                el.kind == DrawElementType::Text && crate::scene::resolved_font_family(el).is_some()
+            })
+            .cloned()
+            .collect();
+        let mut changed = false;
+        for text in texts {
+            let mut laid = self.laid_out(&text);
+            if text.container_id.is_none() {
+                // A centred text stays centred, a right-aligned one keeps its right edge.
+                let at = layout::edit_anchor(
+                    &text,
+                    (text.width, text.height),
+                    laid.text.width,
+                    laid.text.height,
+                );
+                laid.text.x = at.x;
+                laid.text.y = at.y;
+            }
+            if let Some(container) = laid.container {
+                changed |= self.scene.replace_unrecorded(container);
+            }
+            if laid.text != text {
+                changed |= self.scene.replace_unrecorded(laid.text);
+            }
+        }
+        if changed {
+            self.request_draw();
+        }
     }
 }

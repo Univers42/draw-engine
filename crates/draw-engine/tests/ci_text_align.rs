@@ -172,17 +172,20 @@ mod vertical {
         assert_close(laid.y, 40.0 + 200.0 / 2.0 - 20.0 / 2.0);
     }
 
-    /// A label taller than the space it has cannot honour top *and* bottom at once.
-    /// Clamping to the top is the readable answer: text that overflows downward is still
-    /// read from its first line, text pushed up off the shape is not.
+    /// A label taller than the space it has is placed by the oracle's rule all the same
+    /// — bottom-aligned, its bottom on the padded bottom edge
+    /// (`computeBoundTextPosition`, `textElement.ts@1118751f:267-268`) — rather than
+    /// clamped to the top. It is a moment, not a state: laying the text out grows the
+    /// shape to hold it (`ci_text_model.rs`), and positioning alone runs only between
+    /// layouts, where a clamp made a label jump the moment its shape caught up.
     #[test]
-    fn a_label_taller_than_its_container_starts_at_the_top() {
+    fn a_label_taller_than_its_container_is_placed_by_the_oracles_rule() {
         let container = box_at(0.0, 0.0, 120.0, 30.0);
         let mut label = text_at(0.0, 0.0, 60.0, 90.0);
         label.container_id = Some(container.id.clone());
         label.vertical_align = Some(VerticalAlign::Bottom);
         let laid = layout_label(label, &container);
-        assert_close(laid.y, 0.0);
+        assert_close(laid.y, LABEL_PADDING + (30.0 - 2.0 * LABEL_PADDING - 90.0));
     }
 }
 

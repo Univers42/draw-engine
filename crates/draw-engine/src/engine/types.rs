@@ -21,8 +21,9 @@ pub struct TextEditRequest {
     pub color: String,
     /// What was typed ([`source_text`](crate::scene::source_text)), not what is drawn.
     pub text: String,
-    /// In screen px, the width the canvas wraps the lines at, with `x` its left edge.
-    /// `None` for auto-sizing text, whose glyphs decide.
+    /// In screen px, the width the canvas wraps the lines at, with `x` its left edge:
+    /// a label's [`bound_text_max_width`](crate::text::layout::bound_text_max_width), a
+    /// fixed-width text's own. `None` for auto-sizing text, whose glyphs decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
     /// **Resolved**, not the raw field: the overlay has to draw the text where the
@@ -33,6 +34,12 @@ pub struct TextEditRequest {
     pub text_align: crate::scene::TextAlign,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    /// The CSS `font-family` the text is drawn in ([`crate::text::font::css_stack`]), so
+    /// the editor types in the face the canvas will draw.
+    pub font_family: String,
+    /// Unitless, [`resolved_line_height`](crate::scene::resolved_line_height): the
+    /// editor's lines are as far apart as the canvas's.
+    pub line_height: f64,
 }
 
 /// Something the person should be told, as a code rather than a sentence.
