@@ -379,18 +379,19 @@ pub fn ungroup_patches(
 /// The predicate the Ctrl+G toggle turns on, and the guard against re-wrapping. "Exactly"
 /// is doing work: two members of a three-element group are *in* a group but are not that
 /// group, and wrapping them is a real new level rather than a no-op.
-pub fn is_single_group(
-    elements: &[DrawElement],
-    ids: &HashSet<String>,
-    editing: Option<&str>,
-) -> bool {
+pub fn is_single_group<'a, I>(elements: I, ids: &HashSet<String>, editing: Option<&str>) -> bool
+where
+    I: IntoIterator<Item = &'a DrawElement>,
+    I::IntoIter: Clone,
+{
+    let elements = elements.into_iter();
     // A label is carried by its shape and settles nothing here. It may or may not be in
     // the selection — a click on a group holds it, a click on its shape alone does not —
     // and on a board saved before labels joined groups it is in none.
     let shape = |el: &DrawElement| !el.is_deleted && el.container_id.is_none();
     let mut group: Option<&String> = None;
     let mut count = 0;
-    for element in elements {
+    for element in elements.clone() {
         if !ids.contains(&element.id) || !shape(element) {
             continue;
         }
@@ -410,14 +411,13 @@ pub fn is_single_group(
     // shape and nothing else is still a group, as it is to the oracle's
     // `allElementsInSameGroup` (`actionGroup.tsx:73-83`). Counted as two, it wrapped
     // itself in a new level on every Ctrl+G.
-    let Some(group) = group.filter(|group| count > 0 && is_live_group(elements.iter(), group))
+    let Some(group) = group.filter(|group| count > 0 && is_live_group(elements.clone(), group))
     else {
         return false;
     };
     // Every member of that group has to be selected, or this is a part of a group rather
     // than the group itself.
     elements
-        .iter()
         .filter(|el| shape(el) && is_in_group(el, group))
         .all(|el| ids.contains(&el.id))
 }

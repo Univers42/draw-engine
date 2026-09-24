@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::WorldBounds;
 use crate::edit::group::selected_group_for;
@@ -57,14 +57,19 @@ pub fn units<'a>(
     }
     let cut = |editing: Option<&str>| {
         let mut keyed: Vec<(Option<&'a String>, Vec<&'a DrawElement>)> = Vec::new();
+        // Where each group's unit is: a lookup rather than a walk of the units found so
+        // far, which made a large grouped selection quadratic.
+        let mut at: HashMap<&'a String, usize> = HashMap::new();
         for &element in &members {
             let group = selected_group_for(element, editing);
-            match keyed
-                .iter_mut()
-                .find(|(key, _)| group.is_some() && *key == group)
-            {
-                Some((_, unit)) => unit.push(element),
-                None => keyed.push((group, vec![element])),
+            match group.and_then(|group| at.get(group)) {
+                Some(&index) => keyed[index].1.push(element),
+                None => {
+                    if let Some(group) = group {
+                        at.insert(group, keyed.len());
+                    }
+                    keyed.push((group, vec![element]));
+                }
             }
         }
         keyed
