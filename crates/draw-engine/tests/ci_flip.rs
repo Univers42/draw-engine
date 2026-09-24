@@ -395,6 +395,28 @@ fn the_axis_is_the_turned_selection_box() {
     assert!((o.x - 90.0).abs() < 1e-9, "x {}", o.x);
 }
 
+/// The words on an arrow count toward the box, as the oracle adds an arrow's label to it
+/// (`resizeElements.ts:1280-1310`): a label wider than its arrow widens the selection.
+#[test]
+fn an_arrows_words_count_toward_the_axis() {
+    let mut arrow = named(
+        "arr",
+        connector(0.0, 100.0, 100.0, 100.0, DrawElementType::Arrow),
+    );
+    arrow.bound_text_id = Some("words".into());
+    let mut words = named("words", text_at(0.0, 0.0, 200.0, 25.0));
+    words.text = Some("a long label".into());
+    words.container_id = Some("arr".into());
+    let words = layout_label(words, &arrow);
+    assert_eq!(words.x, -50.0, "setup: the label reaches past the arrow");
+    let other = named("o", filled(box_at(300.0, 0.0, 50.0, 50.0)));
+    let mut engine = engine_with_scene(vec![arrow, words, other]);
+
+    flip(&mut engine, &["arr", "o"], FlipAxis::Horizontal);
+    // The line is the middle of -50..350, not of 0..350.
+    assert_eq!(get(&engine, "o").x, -50.0);
+}
+
 fn frame_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
     create_element_default(
         DrawElementType::Frame,
