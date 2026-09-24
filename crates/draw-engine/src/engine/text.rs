@@ -40,15 +40,17 @@ impl DrawEngine {
     }
 
     pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
-        let screen = crate::world_to_screen(self.camera, element.x, element.y);
-        // A width is sent whenever the element has one to impose: a label takes its
-        // container's, a dragged-out column keeps its own. Only auto-sizing text leaves
-        // it to the overlay, because only auto-sizing text has no width of its own yet.
-        let width = if element.container_id.is_some() || !crate::scene::is_auto_resize(element) {
-            Some(element.width * self.camera.scale)
-        } else {
-            None
-        };
+        let text_align = crate::scene::resolved_text_align(element);
+        // The editor is sent the box the lines are wrapped in, so it wraps where the
+        // canvas does. It sits around the anchor the painter puts the lines on, which for
+        // a shape's label or a column is the element itself. An arrow's label is not: it
+        // is an 8-unit placeholder on the arrow's middle, and its lines wrap far wider.
+        let wrap = self.wrap_width(element);
+        let x = wrap.map_or(element.x, |wrap| {
+            element.x + crate::render::text_anchor_x(text_align, element.width)
+                - crate::render::text_anchor_x(text_align, wrap)
+        });
+        let screen = crate::world_to_screen(self.camera, x, element.y);
         self.events.text_edit = Some(TextEditRequest {
             id: element.id.clone(),
             x: screen.x,
@@ -59,8 +61,8 @@ impl DrawEngine {
             // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`): opened on the drawn
             // text, every soft break would come back from the edit a hard one.
             text: crate::scene::source_text(element).to_owned(),
-            width,
-            text_align: crate::scene::resolved_text_align(element),
+            width: wrap.map(|wrap| wrap * self.camera.scale),
+            text_align,
             container_id: element.container_id.clone(),
         });
     }
@@ -301,21 +303,27 @@ impl DrawEngine {
         Some(self.with_text(element.clone(), text))
     }
 
-    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
-    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
-        let font_size = self.font_size_of(&element);
-        // Three ways a text element gets its width, and only the last lets the glyphs
-        // decide. A label takes its container's; a dragged-out column keeps the one it
-        // was given; auto-sizing text grows to fit.
-        let wrap_to = if let Some(container_id) = &element.container_id {
+    /// The width a text's lines wrap at, or `None` when the glyphs decide.
+    ///
+    /// Three ways a text element gets its width, and only the last lets the glyphs
+    /// decide. A label takes its container's; a dragged-out column keeps the one it was
+    /// given; auto-sizing text grows to fit.
+    fn wrap_width(&self, element: &DrawElement) -> Option<f64> {
+        if let Some(container_id) = &element.container_id {
             self.scene
                 .get(container_id)
                 .map(|container| (container.width.abs() - crate::LABEL_PADDING * 2.0).max(8.0))
-        } else if !crate::scene::is_auto_resize(&element) {
+        } else if !crate::scene::is_auto_resize(element) {
             Some(element.width.abs().max(8.0))
         } else {
             None
-        };
+        }
+    }
+
+    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
+    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
+        let font_size = self.font_size_of(&element);
+        let wrap_to = self.wrap_width(&element);
         let final_text = match wrap_to {
             Some(max_width) => wrap_text_to_width(text, max_width, font_size, &self.measure_text),
             None => text.to_string(),

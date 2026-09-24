@@ -244,6 +244,10 @@ export interface TextEditRequest {
   color: string;
   /** What was typed (the element's `originalText`, else its `text`), not what is drawn. */
   text: string;
+  /**
+   * The width the canvas wraps the lines at, with `x` its left edge. Absent for
+   * auto-sizing text, whose glyphs decide.
+   */
   width?: number;
   /**
    * Already resolved, so the overlay never has to work out what an unset element means.

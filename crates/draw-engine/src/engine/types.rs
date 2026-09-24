@@ -21,6 +21,8 @@ pub struct TextEditRequest {
     pub color: String,
     /// What was typed ([`source_text`](crate::scene::source_text)), not what is drawn.
     pub text: String,
+    /// In screen px, the width the canvas wraps the lines at, with `x` its left edge.
+    /// `None` for auto-sizing text, whose glyphs decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
     /// **Resolved**, not the raw field: the overlay has to draw the text where the
