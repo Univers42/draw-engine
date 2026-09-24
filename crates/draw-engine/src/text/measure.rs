@@ -156,31 +156,6 @@ impl MeasureCache {
         }
     }
 
-    /// [`wrap::wrap_lines`], each hard line looked up before it is wrapped.
-    pub fn wrap_lines(
-        &self,
-        text: &str,
-        max_width: f64,
-        font: FontKey,
-        line_width: &dyn Fn(&str) -> f64,
-    ) -> Vec<WrappedLine> {
-        let metrics = self.metrics(font, line_width);
-        let key = (font, max_width.to_bits());
-        wrap::wrap_lines_with(text, max_width, |line| {
-            let hit = self
-                .lines
-                .borrow()
-                .get(&key)
-                .and_then(|lines| lines.get(line))
-                .cloned();
-            hit.unwrap_or_else(|| {
-                let wrapped = wrap::wrap_hard_line(line, max_width, &metrics);
-                self.remember(key, line, &wrapped);
-                wrapped
-            })
-        })
-    }
-
     /// [`wrap::wrap_text`] through the memo. A hard line found there is joined straight
     /// out of it, not copied line by line first: laying out a board of labels is mostly
     /// hits.
@@ -191,7 +166,7 @@ impl MeasureCache {
         font: FontKey,
         line_width: &dyn Fn(&str) -> f64,
     ) -> String {
-        // An invalid width keeps the hard lines (`wrap::wrap_lines_with`): the text as is.
+        // An invalid width keeps the hard lines (`wrap::wrap_lines`): the text as is.
         if !(max_width.is_finite() && max_width >= 0.0) {
             return text.to_owned();
         }
@@ -207,12 +182,12 @@ impl MeasureCache {
                 .borrow()
                 .get(&key)
                 .and_then(|lines| lines.get(line))
-                .map(|wrapped| push_joined(&mut out, wrapped))
+                .map(|wrapped| wrap::push_joined(&mut out, wrapped))
                 .is_some();
             if !hit {
                 let wrapped = wrap::wrap_hard_line(line, max_width, &metrics);
                 self.remember(key, line, &wrapped);
-                push_joined(&mut out, &wrapped);
+                wrap::push_joined(&mut out, &wrapped);
             }
         }
         out
@@ -236,16 +211,6 @@ impl MeasureCache {
             .insert(line.to_string(), wrapped.to_vec());
         self.memo_len.set(self.memo_len.get() + 1);
         self.memo_bytes.set(self.memo_bytes.get() + bytes);
-    }
-}
-
-/// Appends `lines` joined by `\n`.
-fn push_joined(out: &mut String, lines: &[WrappedLine]) {
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        out.push_str(&line.text);
     }
 }
 

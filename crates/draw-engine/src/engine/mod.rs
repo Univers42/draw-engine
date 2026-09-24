@@ -8,6 +8,7 @@ use crate::scene::{
     default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene, TextAlign,
     VerticalAlign,
 };
+use crate::text::layout::DEFAULT_FONT_SIZE;
 
 mod arrange;
 mod autoshape;
@@ -72,7 +73,6 @@ const COLLISION_PX: f64 = 10.0;
 /// how far apart, in screen pixels, the two clicks of a double click may land and still
 /// be one (`shouldHandleBrowserCanvasDoubleClick`, `App.tsx@1118751f:7154-7176`).
 const DOUBLE_TAP_PX: f64 = 35.0;
-const DEFAULT_FONT_SIZE: f64 = 20.0;
 const SNAP_PX: f64 = 6.0;
 const PASTE_OFFSET: f64 = 12.0;
 const MOTION_MS: f64 = 140.0;

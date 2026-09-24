@@ -301,12 +301,12 @@ impl DrawEngine {
             element.width = element.width.abs();
             // One line to start with. The height follows the text from here on, because
             // a column's height is a consequence of its width, never a thing you set.
-            element.height =
-                self.font_size_of(&element) * crate::scene::resolved_line_height(&element);
+            element.height = crate::text::layout::font_size_of(&element)
+                * crate::scene::resolved_line_height(&element);
         } else {
             // Put back the click-sized box `begin_text` could not commit to.
             element.width = 4.0;
-            element.height = self.font_size_of(&element);
+            element.height = crate::text::layout::font_size_of(&element);
         }
         self.scene.put(element.clone());
         self.set_selection(vec![id.to_string()]);

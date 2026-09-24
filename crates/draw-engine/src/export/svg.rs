@@ -113,15 +113,12 @@ fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
     // (`staticSvgScene.ts@1118751f:404-470`). In user space, or an axis-aligned arrow's
     // zero-height bounding box would mask it away entirely (#11439 there).
     let hole = crate::render::label_hole(label);
-    let bounds = crate::scene::element_bounds(element);
-    let reach = (bounds.max_x - bounds.min_x).max(bounds.max_y - bounds.min_y)
-        + 100.0
-        + element.stroke_width * 10.0;
-    let (x, y) = (bounds.min_x - reach, bounds.min_y - reach);
-    let (width, height) = (
-        bounds.max_x - bounds.min_x + reach * 2.0,
-        bounds.max_y - bounds.min_y + reach * 2.0,
-    );
+    let crate::scene::geometry::Rect {
+        x,
+        y,
+        width,
+        height,
+    } = crate::render::label_cut_reach(element);
     let id = escape_xml(&format!("mask-{}", element.id));
     format!(
         "<mask id=\"{id}\" maskUnits=\"userSpaceOnUse\" x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" fill=\"#fff\"/><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#000\"/></mask><g mask=\"url(#{id})\">{body}</g>",
@@ -275,7 +272,7 @@ fn element_svg<'a>(
 /// ponytail: no `direction` — the canvas does not lay out right-to-left text either.
 fn text_svg(element: &DrawElement) -> String {
     let text = element.text.as_deref().unwrap_or("");
-    let font_size = element.font_size.unwrap_or(20.0);
+    let font_size = crate::text::layout::font_size_of(element);
     let family = crate::scene::resolved_font_family(element);
     let (first, line_height) = crate::render::text_line_placement(element);
     let first = if family.is_some() {

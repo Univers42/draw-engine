@@ -333,8 +333,9 @@ mod labels {
         assert!((label.y + label.height / 2.0 - 50.0).abs() < 1e-9);
     }
 
-    /// Re-wrapping is from what was typed, however often it happens: a label narrowed
-    /// and widened again comes back to one line.
+    /// Re-wrapping is from what was typed, however often it happens: a label laid out
+    /// again in a narrowed shape wraps, and laid out again once the shape is wide again
+    /// comes back to one line. Laid out through a writer, the alignment.
     #[test]
     fn relayout_wraps_the_source_not_the_drawn_lines() {
         let rect = box_at(0.0, 0.0, 400.0, 60.0);
@@ -347,14 +348,15 @@ mod labels {
         let mut scene = engine.get_scene();
         scene.iter_mut().find(|el| el.id == rect_id).unwrap().width = 100.0;
         engine.set_scene(Scene::new(scene));
-        assert!(engine.relayout_text(&rect_id), "narrowed, it re-wraps");
+        engine.select(vec![rect_id.clone()]);
+        engine.set_text_align(TextAlign::Left);
         assert!(element(&engine, &label_id).text.unwrap().contains('\n'));
-        assert!(!engine.relayout_text(&rect_id), "laid out already");
 
         let mut scene = engine.get_scene();
         scene.iter_mut().find(|el| el.id == rect_id).unwrap().width = 400.0;
         engine.set_scene(Scene::new(scene));
-        assert!(engine.relayout_text(&label_id));
+        engine.select(vec![rect_id.clone()]);
+        engine.set_text_align(TextAlign::Center);
         assert_eq!(
             element(&engine, &label_id).text.as_deref(),
             Some("the quick brown fox")

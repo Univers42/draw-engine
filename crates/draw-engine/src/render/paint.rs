@@ -182,9 +182,7 @@ pub fn text_anchor_x(align: TextAlign, width: f64) -> f64 {
 /// always had — the top of the line on the top of the box — so a board saved before
 /// families existed draws exactly as it did.
 pub fn text_line_placement(element: &DrawElement) -> (f64, f64) {
-    let font_size = element
-        .font_size
-        .unwrap_or(crate::text::layout::DEFAULT_FONT_SIZE);
+    let font_size = crate::text::layout::font_size_of(element);
     let line_height = font_size * crate::scene::resolved_line_height(element);
     let first = crate::scene::resolved_font_family(element).map_or(0.0, |family| {
         crate::text::font::vertical_offset(family, font_size, line_height)
@@ -224,6 +222,22 @@ pub fn label_hole(label: &DrawElement) -> crate::scene::geometry::Rect {
         y: label.y - pad,
         width: label.width + pad * 2.0,
         height: label.height + pad * 2.0,
+    }
+}
+
+/// The region [`label_hole`] is cut out of: a box that generously covers the line and its
+/// heads at any size — its largest extent, plus 100, plus ten stroke widths, on every side
+/// — as the oracle's clip and mask do (`renderElement.ts@1118751f:784-812`,
+/// `staticSvgScene.ts@1118751f:404-470`).
+pub fn label_cut_reach(linear: &DrawElement) -> crate::scene::geometry::Rect {
+    let bounds = crate::scene::element_bounds(linear);
+    let (width, height) = (bounds.max_x - bounds.min_x, bounds.max_y - bounds.min_y);
+    let reach = width.max(height) + 100.0 + linear.stroke_width * 10.0;
+    crate::scene::geometry::Rect {
+        x: bounds.min_x - reach,
+        y: bounds.min_y - reach,
+        width: width + reach * 2.0,
+        height: height + reach * 2.0,
     }
 }
 

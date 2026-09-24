@@ -1433,20 +1433,11 @@ fn paint_linear_around(
     label: &DrawElement,
 ) {
     let hole = crate::render::label_hole(label);
-    let bounds = crate::scene::element_bounds(element);
-    // Generously covers the arrow and its heads at any size, as the oracle's does.
-    let reach = (bounds.max_x - bounds.min_x).max(bounds.max_y - bounds.min_y)
-        + 100.0
-        + element.stroke_width * 10.0;
+    let reach = crate::render::label_cut_reach(element);
     ctx.save();
     let _ = ctx.set_transform(view[0], view[1], view[2], view[3], view[4], view[5]);
     ctx.begin_path();
-    ctx.rect(
-        bounds.min_x - reach,
-        bounds.min_y - reach,
-        bounds.max_x - bounds.min_x + reach * 2.0,
-        bounds.max_y - bounds.min_y + reach * 2.0,
-    );
+    ctx.rect(reach.x, reach.y, reach.width, reach.height);
     ctx.move_to(hole.x, hole.y);
     ctx.line_to(hole.x, hole.y + hole.height);
     ctx.line_to(hole.x + hole.width, hole.y + hole.height);

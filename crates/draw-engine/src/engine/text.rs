@@ -28,10 +28,6 @@ impl DrawEngine {
         true
     }
 
-    pub(crate) fn font_size_of(&self, element: &DrawElement) -> f64 {
-        element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE)
-    }
-
     pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
         let text_align = crate::scene::resolved_text_align(element);
         // The editor is sent the box the lines are wrapped in, so it wraps where the
@@ -49,7 +45,7 @@ impl DrawEngine {
             id: element.id.clone(),
             x: screen.x,
             y: screen.y,
-            font_size: element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE),
+            font_size: layout::font_size_of(element),
             color: element.stroke_color.clone(),
             // What was typed, as the oracle's editor opens on `originalText`
             // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`): opened on the drawn
@@ -420,41 +416,6 @@ impl DrawEngine {
             laid.text.y = at.y;
         }
         laid
-    }
-
-    /// Lays a text out again from what was typed, where it stands — `id` a text, or a
-    /// shape with a label — and writes it with its shape grown to hold it. Uncommitted,
-    /// like any step of a gesture: the caller commits (`push_history`).
-    ///
-    /// The one door for what changes a label's room or a text's metrics without
-    /// changing what it says: a shape resized, the editor's live box, a font arriving.
-    /// Returns whether anything moved.
-    pub fn relayout_text(&mut self, id: &str) -> bool {
-        let Some(element) = self.scene.get(id) else {
-            return false;
-        };
-        let text = if element.kind == DrawElementType::Text {
-            Some(element)
-        } else {
-            element
-                .bound_text_id
-                .as_deref()
-                .and_then(|label| self.scene.get(label))
-        };
-        let Some(text) = text.filter(|text| !text.is_deleted) else {
-            return false;
-        };
-        let laid = self.laid_out(text);
-        if &laid.text == text && laid.container.is_none() {
-            return false;
-        }
-        self.scene.put(laid.text);
-        if let Some(container) = laid.container {
-            self.scene.put(container);
-        }
-        self.apply_bindings();
-        self.request_draw();
-        true
     }
 
     /// A font has finished loading: every text drawn in a family is measured again and

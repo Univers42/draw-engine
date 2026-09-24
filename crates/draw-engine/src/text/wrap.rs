@@ -32,9 +32,32 @@ pub fn wrap_text(text: &str, max_width: f64, metrics: &dyn TextMetrics) -> Strin
 
 /// `getWrappedTextLines` (:446-478), with byte offsets into `text`.
 pub fn wrap_lines(text: &str, max_width: f64, metrics: &dyn TextMetrics) -> Vec<WrappedLine> {
-    wrap_lines_with(text, max_width, |line| {
-        wrap_hard_line(line, max_width, metrics)
-    })
+    // "if maxWidth is not finite or NaN [...] we'll end up in an infinite loop" (:451-456):
+    // hard lines only (`getHardLineBreaks`, :423-438).
+    let valid = max_width.is_finite() && max_width >= 0.0;
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for line in text.split('\n') {
+        if valid {
+            out.extend(
+                wrap_hard_line(line, max_width, metrics)
+                    .into_iter()
+                    .map(|mut wrapped| {
+                        wrapped.start += offset;
+                        wrapped.end += offset;
+                        wrapped
+                    }),
+            );
+        } else {
+            out.push(WrappedLine {
+                text: line.to_string(),
+                start: offset,
+                end: offset + line.len(),
+            });
+        }
+        offset += line.len() + 1;
+    }
+    out
 }
 
 /// `parseTokens` (:382-389): the hard line in NFC, split at every break opportunity.
@@ -48,45 +71,18 @@ pub fn parse_tokens(line: &str) -> Vec<String> {
 
 pub(crate) fn join(lines: &[WrappedLine]) -> String {
     let mut out = String::new();
+    push_joined(&mut out, lines);
+    out
+}
+
+/// Appends `lines` to `out`, joined by `\n`.
+pub(crate) fn push_joined(out: &mut String, lines: &[WrappedLine]) {
     for (i, line) in lines.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
         out.push_str(&line.text);
     }
-    out
-}
-
-/// The hard-line loop of `getWrappedTextLines` (:446-478), with the wrapping of one hard
-/// line left to `wrap_hard` — `wrap_hard_line`, or `MeasureCache`'s memo in front of it.
-/// `wrap_hard` returns offsets relative to its line.
-pub(crate) fn wrap_lines_with(
-    text: &str,
-    max_width: f64,
-    mut wrap_hard: impl FnMut(&str) -> Vec<WrappedLine>,
-) -> Vec<WrappedLine> {
-    // "if maxWidth is not finite or NaN [...] we'll end up in an infinite loop" (:451-456):
-    // hard lines only (`getHardLineBreaks`, :423-438).
-    let valid = max_width.is_finite() && max_width >= 0.0;
-    let mut out = Vec::new();
-    let mut offset = 0;
-    for line in text.split('\n') {
-        if valid {
-            out.extend(wrap_hard(line).into_iter().map(|mut wrapped| {
-                wrapped.start += offset;
-                wrapped.end += offset;
-                wrapped
-            }));
-        } else {
-            out.push(WrappedLine {
-                text: line.to_string(),
-                start: offset,
-                end: offset + line.len(),
-            });
-        }
-        offset += line.len() + 1;
-    }
-    out
 }
 
 /// One hard line: verbatim when it fits (:462-469, not normalised), otherwise `wrapLine`.
