@@ -159,8 +159,9 @@ impl DrawEngine {
     /// Whether the selected free texts size to their text (`true`) or keep a fixed width
     /// their lines wrap in (`false`). Back to auto-sizing, a text takes its typed lines
     /// and its measured size, and the point its alignment pins stays put
-    /// (`actionTextAutoResize`, `actions/actionTextAutoResize.ts@1118751f`). To fixed, it
-    /// keeps the width it has. Labels are left alone: their shape decides.
+    /// (`actionTextAutoResize`, `actions/actionTextAutoResize.ts@1118751f`), and the
+    /// arrows bound to it are re-routed to its new box (`updateBoundElements` there). To
+    /// fixed, it keeps the width it has. Labels are left alone: their shape decides.
     pub fn set_text_auto_resize(&mut self, auto_resize: bool) {
         let texts: Vec<DrawElement> = self
             .selected_texts()
@@ -186,6 +187,7 @@ impl DrawEngine {
             }
             self.scene.put(laid.text);
         }
+        self.apply_bindings();
         self.push_history();
         self.request_draw();
     }

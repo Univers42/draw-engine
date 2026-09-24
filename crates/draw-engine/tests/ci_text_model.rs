@@ -451,6 +451,34 @@ mod free_text {
         assert_close(auto.x + auto.width, fixed.x + fixed.width);
         assert_close(auto.y, fixed.y);
     }
+
+    /// Sizing itself again moves and resizes a text, and an arrow bound to it follows —
+    /// "any other arrow bound to this text still has to be re-routed"
+    /// (`actionTextAutoResize.ts@1118751f`, `updateBoundElements`).
+    #[test]
+    fn a_text_sizing_itself_again_takes_its_arrows_with_it() {
+        let mut text = text_at(100.0, 100.0, 300.0, 25.0);
+        text.auto_resize = Some(false);
+        let mut arrow = connector(700.0, 112.0, 406.0, 112.0, DrawElementType::Arrow);
+        arrow.end_binding = Some(text.id.clone());
+        let (id, arrow_id) = (text.id.clone(), arrow.id.clone());
+        let mut engine = engine_with_measure(vec![text, arrow]);
+        engine.set_element_text(&id, "hi");
+        let fixed = element(&engine, &id);
+        assert_close(fixed.x + fixed.width, 400.0);
+
+        engine.select(vec![id.clone()]);
+        engine.set_text_auto_resize(true);
+        let auto = element(&engine, &id);
+        let right = auto.x + auto.width;
+        assert_close(right, 100.0 + measure_text("hi", 20.0).0);
+        let (_, end) = linear_endpoints(&element(&engine, &arrow_id));
+        assert!(
+            end.x > right && end.x < right + 15.0,
+            "the arrow ends at {} with the text's right edge at {right}",
+            end.x
+        );
+    }
 }
 
 /// Families: new text is written in Excalifont; a family change brings its line height
