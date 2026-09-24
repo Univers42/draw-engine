@@ -11,6 +11,7 @@ pub mod math;
 pub mod render;
 pub mod scene;
 pub mod selection;
+pub mod text;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
