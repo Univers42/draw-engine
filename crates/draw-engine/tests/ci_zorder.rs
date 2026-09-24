@@ -231,17 +231,17 @@ const CASES: &[Case] = &[
         (Back, "F1_2 F1_1 F1 F2_1 F2_2 F2"), (Front, "F1_1 F1 F1_2 F2_1 F2_2 F2"),
     ]),
     // describe("z-index reordering with broken contiguity") — :1573
-    fresh(1603, "F1_1@F1* F2_1@F2 F1_2@F1 F1# F2#", None, &[
+    fresh(1610, "F1_1@F1* F2_1@F2 F1_2@F1 F1# F2#", None, &[
         (Forward, "F2_1 F1_2 F1_1 F1 F2"), (Backward, "F1_1 F2_1 F1_2 F1 F2"),
         (Front, "F2_1 F1_2 F1 F1_1 F2"), (Back, "F1_1 F2_1 F1_2 F1 F2"),
     ]),
-    fresh(1620, "A/g1* B C/g1* D", None, &[
+    fresh(1626, "A/g1* B C/g1* D", None, &[
         (Forward, "B A D C"), (Backward, "A C B D"), (Front, "B D A C"), (Back, "A C B D"),
     ]),
-    fresh(1637, "A/g1 B C/g1* D", Some("g1"), &[
+    fresh(1643, "A/g1 B C/g1* D", Some("g1"), &[
         (Forward, "A B C D"), (Backward, "C A B D"), (Front, "A B C D"), (Back, "C A B D"),
     ]),
-    fresh(1652, "A/g1* X/g2* C/g1* Y/g2* Z", None, &[
+    fresh(1659, "A/g1* X/g2* C/g1* Y/g2* Z", None, &[
         (Forward, "Z A X C Y"), (Backward, "A X C Y Z"), (Front, "Z A X C Y"),
         (Back, "A X C Y Z"),
     ]),
@@ -529,11 +529,14 @@ fn a_selected_frame_takes_its_children_one_step_back() {
     assert_eq!(stack(&engine, &cast), vec!["C1", "C2", "F", "X"]);
 }
 
-/// Inside a frame a group is still one block to step over (`zindex.ts:269-296`).
+/// A child steps to the next element of its own frame, over what else lies in the frame's
+/// range (`indexFilter`, `zindex.ts:211-213`), and a group there is still one block to
+/// step over (`:269-296`): Y, not in the frame, is passed, the group taken whole.
 #[test]
 fn inside_a_frame_a_group_is_stepped_over_whole() {
     let (mut engine, cast) = framed(&[
         ("C", &[], true),
+        ("Y", &[], false),
         ("G1", &["g"], true),
         ("G2", &["g"], true),
         ("F", &[], false),
@@ -543,7 +546,7 @@ fn inside_a_frame_a_group_is_stepped_over_whole() {
 
     engine.reorder_selection(Forward);
 
-    assert_eq!(stack(&engine, &cast), vec!["G1", "G2", "C", "F", "X"]);
+    assert_eq!(stack(&engine, &cast), vec!["Y", "G1", "G2", "C", "F", "X"]);
 }
 
 /// A label carries no `frameId` here — its shape holds the membership for both
@@ -586,22 +589,25 @@ fn a_locked_element_in_the_selection_stays_where_it_is() {
 }
 
 /// A group is one thing, locked member and all (`groups.ts:94-132` selects it with no lock
-/// filter), so the member goes where its group goes.
+/// filter), so the member goes where its group goes — beside a loose locked element in
+/// the same selection, which stays.
 #[test]
 fn a_locked_group_member_goes_with_its_group() {
     let (mut engine, cast) = framed(&[
         ("M1", &["g"], false),
         ("M2", &["g"], false),
+        ("L", &[], false),
         ("X", &[], false),
     ]);
     let mut scene = engine.get_scene();
     scene[0].locked = Some(true);
+    scene[2].locked = Some(true);
     engine.set_scene(Scene::new(scene));
-    engine.select(vec![id(&cast, "M1"), id(&cast, "M2")]);
+    engine.select(vec![id(&cast, "M1"), id(&cast, "M2"), id(&cast, "L")]);
 
     engine.reorder_selection(Front);
 
-    assert_eq!(stack(&engine, &cast), vec!["X", "M1", "M2"]);
+    assert_eq!(stack(&engine, &cast), vec!["L", "X", "M1", "M2"]);
 }
 
 /// Bringing the topmost element to the front changes nothing, so it is no edit: no step
