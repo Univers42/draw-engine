@@ -514,6 +514,65 @@ fn upstream_occlusion_cases() {
     );
 }
 
+/// A frame is measured as the sharp box it is to the oracle, whose frames have no
+/// roundness (`roundness: null`, so `distanceToRectanguloidElement` and
+/// `isPointInElement` see square corners) however rounded ours are painted. Just outside
+/// a corner is near its border and binds; just inside is inside, which never binds a
+/// frame.
+#[test]
+fn a_frame_is_measured_by_its_square_corners() {
+    let mut frame = create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 300.0,
+        },
+    );
+    frame.id = "frame".into();
+    frame.roundness = frame_style().roundness;
+    assert!(frame.roundness.is_some());
+    assert!(is_inside(&frame, Point { x: 3.0, y: 3.0 }));
+    // 5.7 from the corner, outside.
+    assert_eq!(
+        target(vec![frame.clone()], -4.0, -4.0, REACH).as_deref(),
+        Some("frame")
+    );
+    // Inside, 3 from both edges.
+    assert_eq!(target(vec![frame], 3.0, 3.0, REACH), None);
+}
+
+/// The nested-shape takeover sizes a turned diamond or ellipse by its own box — the
+/// turned corners, the turned curve — as `getElementBounds` does
+/// (`bounds.ts@1118751f:176-209`), not by the box around its turned box, which is up to
+/// twice the area and would let a shape nearly its size take over.
+#[test]
+fn a_turned_diamond_or_ellipse_is_sized_by_its_own_box() {
+    // On screen a square spanning 29.3 to 170.7; (165, 65) is 5.7 inside its right edge
+    // and 65 inside the square's. The square is 0.845 of the diamond's area.
+    let mut diamond = diamond_at(0.0, 0.0, 200.0, 200.0);
+    diamond.id = "diamond".into();
+    diamond.roundness = None;
+    diamond.angle = std::f64::consts::FRAC_PI_4;
+    let mut inner = rect("inner", 100.0, 0.0, 130.0, 130.0);
+    inner.roundness = None;
+    let by_diamond = target(vec![diamond, inner], 165.0, 65.0, REACH);
+
+    // A turned circle is still 200 across; (160, 40) is 15.2 inside it and 30 inside the
+    // square, which is 0.81 of the circle's area.
+    let mut circle = ellipse_at(0.0, 0.0, 200.0, 200.0);
+    circle.id = "circle".into();
+    circle.angle = std::f64::consts::FRAC_PI_4;
+    let mut inner = rect("inner", 10.0, 10.0, 180.0, 180.0);
+    inner.roundness = None;
+    let by_circle = target(vec![circle, inner], 160.0, 40.0, REACH);
+    assert_eq!(
+        [by_diamond.as_deref(), by_circle.as_deref()],
+        [Some("diamond"), Some("circle")]
+    );
+}
+
 /// `collision.test.tsx@1118751f:672-691`: the reach is 15 world units at zoom 1 and grows
 /// as the view zooms out (25 at 0.4), whatever tool asks — the hover outline here.
 #[test]

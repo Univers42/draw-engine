@@ -45,9 +45,11 @@ pub fn signed_outline_distance(shape: &DrawElement, p: Point) -> f64 {
 }
 
 /// The painted corner radius, capped so opposite corners cannot overlap. A line of text
-/// paints no outline and its box is square — Excalidraw's text has no roundness.
+/// paints no outline and its box is square — Excalidraw's text has no roundness. Nor do
+/// its frames (`FRAME_STYLE.roundness: null`, `constants.ts@1118751f:209`), painted with
+/// rounded corners but measured square; ours carry a roundness for the painting alone.
 fn corner_radius(shape: &DrawElement, side: f64) -> f64 {
-    if shape.kind == DrawElementType::Text {
+    if matches!(shape.kind, DrawElementType::Text | DrawElementType::Frame) {
         return 0.0;
     }
     crate::render::shape::corner_radius(side, shape).clamp(0.0, side / 2.0)

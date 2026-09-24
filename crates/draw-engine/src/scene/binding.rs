@@ -657,13 +657,13 @@ pub fn arrow_target_among<'a>(
     let &(nearest, distance) = found.first()?;
     if distance >= 0.0 {
         let area = |b: &WorldBounds| ((b.max_x - b.min_x) * (b.max_y - b.min_y)).max(1e-5);
-        let outer = element_rotated_bounds(nearest);
+        let outer = own_bounds(nearest);
         let outer_area = area(&outer);
         let nested = found[1..].iter().find(|(element, d)| {
             if *d < 0.0 {
                 return false;
             }
-            let b = element_rotated_bounds(element);
+            let b = own_bounds(element);
             let w = (b.max_x.min(outer.max_x) - b.min_x.max(outer.min_x)).max(0.0);
             let h = (b.max_y.min(outer.max_y) - b.min_y.max(outer.min_y)).max(0.0);
             let own = area(&b);
@@ -674,6 +674,41 @@ pub fn arrow_target_among<'a>(
         }
     }
     Some(nearest)
+}
+
+/// The box `getElementBounds` gives a shape (`bounds.ts@1118751f:176-209`), which sizes
+/// the nested-shape takeover: tight to a turned diamond's corners and a turned ellipse's
+/// curve, where [`element_rotated_bounds`] boxes the turned box — up to twice the area.
+fn own_bounds(element: &DrawElement) -> WorldBounds {
+    let turned_curve = matches!(
+        element.kind,
+        DrawElementType::Diamond | DrawElementType::Ellipse
+    );
+    if !turned_curve || element.angle == 0.0 {
+        return element_rotated_bounds(element);
+    }
+    let plain = crate::scene::geometry::element_bounds(element);
+    let c = rotation_center(element);
+    let (hw, hh) = (
+        (plain.max_x - plain.min_x) / 2.0,
+        (plain.max_y - plain.min_y) / 2.0,
+    );
+    let (sin, cos) = element.angle.sin_cos();
+    let (ex, ey) = if element.kind == DrawElementType::Diamond {
+        // The four corners are the side midpoints of the box, turned.
+        (
+            (hw * cos).abs().max((hh * sin).abs()),
+            (hw * sin).abs().max((hh * cos).abs()),
+        )
+    } else {
+        ((hw * cos).hypot(hh * sin), (hw * sin).hypot(hh * cos))
+    };
+    WorldBounds {
+        min_x: c.x - ex,
+        min_y: c.y - ey,
+        max_x: c.x + ex,
+        max_y: c.y + ey,
+    }
 }
 
 /// The shape a label placed at `(x, y)` would go into.
