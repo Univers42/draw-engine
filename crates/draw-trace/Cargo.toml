@@ -1,0 +1,27 @@
+[package]
+name = "draw-trace"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Raster-to-vector tracing for the board, in its own lazily loaded WASM"
+publish = false
+
+# A cdylib of its own, never linked into draw-engine: tracing a photograph is seconds of
+# clustering and belongs in a Web Worker, and the main engine WASM must not carry the
+# tracer for the boards — nearly all of them — that never vectorize anything.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The tracing core of the Univers42 fork of vtracer, taken rather than copied: the crate
+# does no I/O and builds for wasm32. Pinned to a commit so a push to the fork cannot
+# change what a board traces. Cargo finds the package inside the fork's workspace.
+vtracer = { git = "https://github.com/Univers42/vtracer", rev = "b79628fa0ff3c735638e4fe949783479a9f2f97a" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Pinned exactly, like draw-engine's: the CLI that generates the glue must match, and
+# scripts/wasm-build.sh refuses to build when either crate drifts from it.
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3"

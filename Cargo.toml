@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/draw-engine", "crates/draw-rough"]
+members = ["crates/draw-engine", "crates/draw-rough", "crates/draw-trace"]
 resolver = "2"
 
 # opt-level "s" costs roughly 1.5-2x on the geometry loops this engine is made of, and
