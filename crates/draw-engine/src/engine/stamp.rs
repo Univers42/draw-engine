@@ -80,7 +80,7 @@ pub(crate) struct HistoryEntry {
 }
 
 /// Equal in everything but the stamp.
-fn same_content(a: &DrawElement, b: &DrawElement) -> bool {
+pub(super) fn same_content(a: &DrawElement, b: &DrawElement) -> bool {
     let mut a = a.clone();
     a.version = b.version;
     a.version_nonce = b.version_nonce;

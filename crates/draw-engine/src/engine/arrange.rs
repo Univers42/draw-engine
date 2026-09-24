@@ -73,6 +73,18 @@ impl DrawEngine {
     }
 
     pub(super) fn apply_patches(&mut self, patches: Vec<DrawElement>) {
+        // A patch that changes nothing is not an edit: stamped, it would be saved, sent to
+        // every peer and take a step of undo that puts nothing back — a lone unturned box
+        // flipped, shapes aligned already. The oracle's `mutateElement` keeps the version
+        // when no value changed (`packages/element/src/mutateElement.ts:129-131`).
+        let patches: Vec<DrawElement> = patches
+            .into_iter()
+            .filter(|patch| {
+                self.scene
+                    .get(&patch.id)
+                    .is_none_or(|live| !super::stamp::same_content(patch, live))
+            })
+            .collect();
         if patches.is_empty() {
             return;
         }

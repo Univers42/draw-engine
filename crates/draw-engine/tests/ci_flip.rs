@@ -551,6 +551,49 @@ fn box_kinds_keep_a_positive_extent() {
     }
 }
 
+/// A flip that moves nothing is not an edit. A lone unturned box is its own mirror image,
+/// so it keeps its stamp — nothing to save or send — and leaves nothing to undo, as the
+/// oracle's `mutateElement` returns the element untouched when no value changed
+/// (`packages/element/src/mutateElement.ts:129-131` at 1118751f). Before, it was stamped
+/// all the same, and the next Ctrl+Z went to it: it undid nothing, and the edit before it
+/// stayed.
+#[test]
+fn a_flip_that_changes_nothing_is_not_an_edit() {
+    type Make = fn(f64, f64, f64, f64) -> DrawElement;
+    let kinds: [(&str, Make); 6] = [
+        ("rectangle", box_at),
+        ("ellipse", ellipse_at),
+        ("diamond", diamond_at),
+        ("text", text_at),
+        ("frame", frame_at),
+        ("embed", embed_at),
+    ];
+    for (kind, make) in kinds {
+        for axis in [FlipAxis::Horizontal, FlipAxis::Vertical] {
+            let mut shape = named("s", make(0.0, 0.0, 100.0, 60.0));
+            if shape.kind == DrawElementType::Text {
+                shape.text = Some("hello".into());
+            }
+            let other = named("o", filled(box_at(300.0, 0.0, 50.0, 50.0)));
+            let mut engine = engine_with_scene(vec![shape, other]);
+            engine.select(vec!["o".into()]);
+            engine.nudge_selection(10.0, 0.0);
+            let before = get(&engine, "s");
+
+            flip(&mut engine, &["s"], axis);
+            let after = get(&engine, "s");
+            assert_eq!(after, before, "{kind} {axis:?}: stamped or changed");
+
+            engine.undo();
+            assert_eq!(
+                get(&engine, "o").x,
+                300.0,
+                "{kind} {axis:?}: the undo went to the flip, not to the nudge before it"
+            );
+        }
+    }
+}
+
 /// A picture is the one box whose content mirrors: a negative extent does the job of the
 /// oracle's `scale` (`resizeElements.ts:1484-1489`, painted by `renderElement.ts:824-841`)
 /// on the canvas and in the export. An embed's page never mirrors — Excalidraw turns its
