@@ -103,6 +103,26 @@ pub fn expand_to_groups(
     expand_to_groups_among(elements.iter(), ids)
 }
 
+/// `ids` and the label of every shape among them.
+///
+/// A label is never selected on its own — a click on the words selects the shape — so
+/// whatever acts on a selection reads the labels in, or a shape leaves its words behind:
+/// `getSelectedElements` with `includeBoundTextElement: true`,
+/// `packages/element/src/selection.ts:184-193`.
+pub fn with_labels<'a>(
+    elements: impl IntoIterator<Item = &'a DrawElement>,
+    ids: &HashSet<String>,
+) -> HashSet<String> {
+    let mut out = ids.clone();
+    out.extend(
+        elements
+            .into_iter()
+            .filter(|el| ids.contains(&el.id))
+            .filter_map(|el| el.bound_text_id.clone()),
+    );
+    out
+}
+
 /// Adds `group_id` as a new level around `ids`.
 ///
 /// Inserted **before** `editing` when a group is being edited, and appended otherwise —
@@ -122,6 +142,11 @@ pub fn group_patches(
     if is_single_group(elements, ids, editing) {
         return Vec::new();
     }
+    // A label joins the group with its shape, as the oracle groups the selection read
+    // with `includeBoundTextElement: true`, `packages/excalidraw/actions/actionGroup.tsx:
+    // 96-101`. Left out, the words were outside the group their shape is in, and every
+    // operation on the group after that treated the two apart.
+    let ids = with_labels(elements, ids);
     elements
         .iter()
         .filter(|el| ids.contains(&el.id) && !el.is_deleted)
@@ -176,10 +201,14 @@ pub fn is_single_group(
     ids: &HashSet<String>,
     editing: Option<&str>,
 ) -> bool {
+    // A label is carried by its shape and settles nothing here. It may or may not be in
+    // the selection — a click on a group holds it, a click on its shape alone does not —
+    // and on a board saved before labels joined groups it is in none.
+    let shape = |el: &DrawElement| !el.is_deleted && el.container_id.is_none();
     let mut group: Option<&String> = None;
     let mut count = 0;
     for element in elements {
-        if !ids.contains(&element.id) || element.is_deleted {
+        if !ids.contains(&element.id) || !shape(element) {
             continue;
         }
         count += 1;
@@ -202,6 +231,6 @@ pub fn is_single_group(
     // than the group itself.
     elements
         .iter()
-        .filter(|el| !el.is_deleted && is_in_group(el, group))
+        .filter(|el| shape(el) && is_in_group(el, group))
         .all(|el| ids.contains(&el.id))
 }

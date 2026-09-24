@@ -324,7 +324,14 @@ impl DrawEngine {
         // is how a board full of one shape gets made) was quadratic in its own output.
         let copied =
             crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
-        let Some(copies) = crate::edit::materialize(copied, offset_x, offset_y, self.now_ms) else {
+        // Ctrl+D and Alt-drag both come through here, and both copy inside the group being
+        // edited: `duplicateElements` is handed the app state's `editingGroupId`, by
+        // `packages/excalidraw/actions/actionDuplicateSelection.tsx:63-72` and by
+        // `packages/excalidraw/components/App.duplicate.ts:195-199`.
+        let editing = self.editing_group_id.as_deref();
+        let Some(copies) =
+            crate::edit::materialize(copied, offset_x, offset_y, self.now_ms, editing)
+        else {
             return;
         };
         let ids: Vec<String> = copies.iter().map(|el| el.id.clone()).collect();
