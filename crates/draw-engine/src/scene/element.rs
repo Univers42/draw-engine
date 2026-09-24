@@ -134,6 +134,69 @@ pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
         })
 }
 
+/// The text as it was typed, before any wrapping — Excalidraw's `originalText`.
+///
+/// `text` is what is drawn: the source with its soft line breaks baked in. Every text
+/// saved before `original_text` existed has only that, so it stands in as the source.
+pub fn source_text(element: &DrawElement) -> &str {
+    element
+        .original_text
+        .as_deref()
+        .or(element.text.as_deref())
+        .unwrap_or_default()
+}
+
+/// The font families the engine knows, by Excalidraw's ids
+/// (`packages/common/src/constants.ts:131-141`), each with its line height
+/// (`packages/common/src/font-metadata.ts:35-104`). The oracle's `4` is retired and its
+/// `10` (Assistant) is private to its own UI, so neither is here.
+const FONT_FAMILIES: [(u8, f64); 8] = [
+    (1, 1.25), // Virgil
+    (2, 1.15), // Helvetica
+    (3, 1.2),  // Cascadia
+    (5, 1.25), // Excalifont
+    (6, 1.25), // Nunito
+    (7, 1.15), // Lilita One
+    (8, 1.25), // Comic Shanns
+    (9, 1.15), // Liberation Sans
+];
+
+/// The range a stored line height is honoured in, the contract's (`element.ts`).
+const LINE_HEIGHTS: std::ops::RangeInclusive<f64> = 0.5..=4.0;
+
+/// The family to draw with, or `None` for the system stack every text used before
+/// families existed.
+///
+/// An id the engine does not know is ignored rather than trusted: it may be a newer
+/// client's font, so the field keeps it as it came, but it is drawn with the stack.
+pub fn resolved_font_family(element: &DrawElement) -> Option<u8> {
+    element
+        .font_family
+        .filter(|id| FONT_FAMILIES.iter().any(|(known, _)| known == id))
+}
+
+/// The unitless line height to lay out with.
+///
+/// The element's own when it is in range; otherwise its family's, and for the system
+/// stack the [`TEXT_LINE_HEIGHT`](crate::render::TEXT_LINE_HEIGHT) every text has always
+/// had. Out of range — which the contract refuses, so only a file or a peer can carry it
+/// — is ignored rather than clamped. The oracle has no range to enforce: its restore
+/// replaces only a missing or zero value (`packages/excalidraw/data/restore.ts:557-564`).
+pub fn resolved_line_height(element: &DrawElement) -> f64 {
+    element
+        .line_height
+        .filter(|value| LINE_HEIGHTS.contains(value))
+        .unwrap_or_else(|| {
+            let family = resolved_font_family(element);
+            FONT_FAMILIES
+                .iter()
+                .find(|(id, _)| Some(*id) == family)
+                .map_or(crate::render::TEXT_LINE_HEIGHT, |(_, line_height)| {
+                    *line_height
+                })
+        })
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrawElementStyle {
@@ -220,10 +283,25 @@ pub struct DrawElement {
     pub start_arrowhead: Option<Arrowhead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_arrowhead: Option<Arrowhead>,
+    /// What is drawn: the source with its soft line breaks baked in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// The text as it was typed, before wrapping — Excalidraw's `originalText`. Read it
+    /// through [`source_text`]: `None`, as on every text saved before it existed, means
+    /// `text` is the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
+    /// Excalidraw's numeric font family id. Read it through [`resolved_font_family`]:
+    /// `None` is the system stack every text saved before families existed was drawn
+    /// with, and an id the engine does not know is kept but not drawn with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<u8>,
+    /// Unitless, a multiple of the font size. Read it through [`resolved_line_height`]:
+    /// `None` is the family's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
     /// Read it through [`resolved_text_align`], never directly: `None` is "nobody has
     /// said", which is not the same as any of the three values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -235,6 +313,11 @@ pub struct DrawElement {
     /// saved before this field existed did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_resize: Option<bool>,
+    /// Only a label's: whether it wraps inside its shape (`None` or `true`, the oracle's
+    /// only behaviour) or keeps its hard lines and the shape grows wide enough for them
+    /// (`false`). Free text says the same with [`auto_resize`](Self::auto_resize).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -367,10 +450,14 @@ pub fn create_element(
         start_arrowhead: None,
         end_arrowhead: None,
         text: None,
+        original_text: None,
         font_size: None,
+        font_family: None,
+        line_height: None,
         text_align: None,
         vertical_align: None,
         auto_resize: None,
+        wrap: None,
         container_id: None,
         bound_text_id: None,
         group_ids: Vec::new(),

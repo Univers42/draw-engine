@@ -141,3 +141,158 @@ fn a_legacy_scene_round_trips_byte_identical() {
     assert!(engine.load_scene(LEGACY_SCENE));
     assert_eq!(engine.export_json(), LEGACY_SCENE);
 }
+
+#[test]
+fn a_legacy_text_resolves_exactly_as_before() {
+    let elements = elements_from_json(LEGACY_SCENE).expect("the legacy scene parses");
+    for text in elements
+        .iter()
+        .filter(|el| el.kind == DrawElementType::Text)
+    {
+        assert_eq!(text.original_text, None);
+        assert_eq!(text.font_family, None);
+        assert_eq!(text.line_height, None);
+        assert_eq!(text.wrap, None);
+        // No source of its own: the source is what is drawn.
+        assert_eq!(source_text(text), text.text.as_deref().unwrap());
+        // No family: today's system stack, at today's line height.
+        assert_eq!(resolved_font_family(text), None);
+        assert_eq!(resolved_line_height(text), TEXT_LINE_HEIGHT);
+    }
+}
+
+/// A label wrapped inside its shape, carrying every new field.
+fn modern_label() -> DrawElement {
+    let mut label = text_at(8.0, 8.0, 60.0, 50.0);
+    label.text = Some("hello\nworld".into());
+    label.original_text = Some("hello world".into());
+    label.font_family = Some(5);
+    label.line_height = Some(1.15);
+    label.wrap = Some(false);
+    label.container_id = Some("el-box".into());
+    label
+}
+
+#[test]
+fn the_new_text_fields_round_trip_under_their_wire_names() {
+    let label = modern_label();
+    let json = scene_to_json(std::slice::from_ref(&label));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let wire = &value["elements"][0];
+    assert_eq!(wire["originalText"], "hello world");
+    assert_eq!(wire["fontFamily"], 5);
+    assert_eq!(wire["lineHeight"], 1.15);
+    assert_eq!(wire["wrap"], false);
+
+    let mut engine = DrawEngine::new();
+    assert!(engine.load_scene(&json));
+    assert_eq!(engine.get_scene(), vec![label]);
+    assert_eq!(engine.export_json(), json, "a second trip changes nothing");
+}
+
+#[test]
+fn source_text_prefers_the_text_as_typed() {
+    let label = modern_label();
+    assert_eq!(source_text(&label), "hello world");
+
+    let mut blank = text_at(0.0, 0.0, 10.0, 10.0);
+    blank.text = None;
+    assert_eq!(source_text(&blank), "");
+}
+
+#[test]
+fn each_known_family_resolves_with_the_oracles_line_height() {
+    // `packages/common/src/constants.ts:131-141` for the ids,
+    // `packages/common/src/font-metadata.ts:35-104` for the line heights.
+    let families = [
+        (1, 1.25), // Virgil
+        (2, 1.15), // Helvetica
+        (3, 1.2),  // Cascadia
+        (5, 1.25), // Excalifont
+        (6, 1.25), // Nunito
+        (7, 1.15), // Lilita One
+        (8, 1.25), // Comic Shanns
+        (9, 1.15), // Liberation Sans
+    ];
+    for (id, line_height) in families {
+        let mut text = text_at(0.0, 0.0, 10.0, 10.0);
+        text.font_family = Some(id);
+        assert_eq!(resolved_font_family(&text), Some(id), "family {id}");
+        assert_eq!(resolved_line_height(&text), line_height, "family {id}");
+    }
+}
+
+#[test]
+fn an_explicit_line_height_wins_over_the_familys() {
+    let mut text = text_at(0.0, 0.0, 10.0, 10.0);
+    text.font_family = Some(3);
+    text.line_height = Some(2.0);
+    assert_eq!(resolved_line_height(&text), 2.0);
+    text.font_family = None;
+    assert_eq!(resolved_line_height(&text), 2.0);
+}
+
+/// Values the contract refuses can still reach the engine from a file or a peer. They
+/// are ignored, never clamped: an unknown family is drawn with the system stack, an
+/// out-of-range line height is the family's own. The raw value is kept as it came, so a
+/// newer client's font survives a trip through this one.
+#[test]
+fn odd_values_are_ignored_not_trusted() {
+    for id in [0, 4, 10, 64, 99, 255] {
+        let mut text = text_at(0.0, 0.0, 10.0, 10.0);
+        text.font_family = Some(id);
+        assert_eq!(resolved_font_family(&text), None, "family {id}");
+        assert_eq!(resolved_line_height(&text), TEXT_LINE_HEIGHT, "family {id}");
+    }
+    for line_height in [
+        0.0,
+        -1.0,
+        0.49,
+        4.01,
+        1e308,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ] {
+        let mut text = text_at(0.0, 0.0, 10.0, 10.0);
+        text.font_family = Some(7);
+        text.line_height = Some(line_height);
+        assert_eq!(
+            resolved_line_height(&text),
+            1.15,
+            "line height {line_height}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_family_loads_edits_and_exports_without_panicking() {
+    let mut label = modern_label();
+    label.font_family = Some(99);
+    label.line_height = Some(0.01);
+    let json = scene_to_json(std::slice::from_ref(&label));
+
+    let mut engine = engine_with_measure(vec![]);
+    assert!(engine.load_scene(&json));
+    assert_eq!(engine.export_json(), json, "kept as it came");
+    assert!(engine.export_svg(10.0).is_some());
+    engine.select(vec![label.id.clone()]);
+    assert!(engine.edit_selected_text());
+    engine.set_element_text(&label.id, "still editable");
+    engine.set_font_size(28.0);
+}
+
+/// A family id the field cannot hold is a malformed document, refused whole like any
+/// other ill-typed field — never a panic. The contract never lets one be stored.
+#[test]
+fn a_family_the_field_cannot_hold_refuses_the_document() {
+    for bad in ["300", "-1", "1.5", "\"virgil\""] {
+        let json = LEGACY_SCENE.replacen(
+            "\"fontSize\": 20.0,",
+            &format!("\"fontSize\": 20.0, \"fontFamily\": {bad},"),
+            1,
+        );
+        assert!(elements_from_json(&json).is_none(), "fontFamily {bad}");
+        assert!(!DrawEngine::new().load_scene(&json), "fontFamily {bad}");
+    }
+}
