@@ -1,22 +1,7 @@
 use crate::engine::DrawEngine;
-use crate::scene::{apply_style_patch, bump_version, is_linear_element, DrawElementStylePatch};
+use crate::scene::{bump_version, is_linear_element};
 
 impl DrawEngine {
-    pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
-        let selected = self.get_selected_elements();
-        if selected.is_empty() {
-            self.set_next_style(patch);
-            return;
-        }
-        let now = self.now_ms;
-        for mut element in selected {
-            apply_style_patch(&mut element, &patch);
-            self.scene.put(bump_version(element, now));
-        }
-        self.push_history();
-        self.request_draw();
-    }
-
     pub fn set_arrowheads(
         &mut self,
         start: Option<crate::scene::Arrowhead>,
@@ -46,6 +31,7 @@ impl DrawEngine {
 
     pub fn set_font_size(&mut self, size: f64) {
         self.next_font_size = size;
+        self.touch_style();
         // Through `selected_texts` rather than the raw selection, so resizing works with
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
@@ -110,6 +96,7 @@ impl DrawEngine {
     /// button.
     pub fn set_text_align(&mut self, align: crate::scene::TextAlign) {
         self.next_text_align = Some(align);
+        self.touch_style();
         let texts = self.selected_texts();
         if texts.is_empty() {
             return;
@@ -136,6 +123,7 @@ impl DrawEngine {
     /// the label stays where it was until something unrelated moves it.
     pub fn set_vertical_align(&mut self, align: crate::scene::VerticalAlign) {
         self.next_vertical_align = Some(align);
+        self.touch_style();
         let texts = self.selected_texts();
         if texts.is_empty() {
             return;

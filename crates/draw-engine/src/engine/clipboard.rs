@@ -80,6 +80,7 @@ impl DrawEngine {
         if let Some(step) = self.take_local_step() {
             self.history.push(step);
         }
+        self.touch_style();
         self.emit_scene_change();
     }
 
@@ -243,6 +244,16 @@ impl DrawEngine {
                 }
             };
             if accept {
+                // The panel shows the selection and the labels it carries; a peer's edit
+                // to either is one it has to show.
+                if self.selected_ids.contains(&element.id)
+                    || element
+                        .container_id
+                        .as_ref()
+                        .is_some_and(|container| self.selected_ids.contains(container))
+                {
+                    self.touch_style();
+                }
                 self.scene.put(element);
                 changed = true;
             }

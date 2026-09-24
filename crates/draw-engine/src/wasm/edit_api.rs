@@ -208,4 +208,44 @@ impl WasmEngine {
         self.cell.borrow_mut().engine.select_all();
         self.flush();
     }
+
+    /// Everything the properties panel shows, in one call. Ask once per `styleRevision`.
+    #[wasm_bindgen(js_name = selectionStyleJson)]
+    pub fn selection_style_json(&self) -> String {
+        serde_json::to_string(&self.cell.borrow().engine.selection_style())
+            .unwrap_or_else(|_| "null".into())
+    }
+
+    /// Moves whenever `selectionStyleJson` may have.
+    #[wasm_bindgen(js_name = styleRevision)]
+    pub fn style_revision(&self) -> u32 {
+        self.cell.borrow().engine.style_revision()
+    }
+
+    /// Shows a style without committing it — a slider in motion. `applyStyleJson` commits.
+    #[wasm_bindgen(js_name = previewStyleJson)]
+    pub fn preview_style_json(&self, json: &str) {
+        if let Ok(patch) = serde_json::from_str::<DrawElementStylePatch>(json) {
+            self.cell.borrow_mut().engine.preview_style(patch);
+            self.flush();
+        }
+    }
+
+    #[wasm_bindgen(js_name = copyStyles)]
+    pub fn copy_styles(&self) -> bool {
+        self.cell.borrow_mut().engine.copy_styles()
+    }
+
+    #[wasm_bindgen(js_name = pasteStyles)]
+    pub fn paste_styles(&self) {
+        self.cell.borrow_mut().engine.paste_styles();
+        self.flush();
+    }
+
+    /// `[[colour, count], …]` over the live board, for the picker's most-used colours.
+    #[wasm_bindgen(js_name = colorCountsJson)]
+    pub fn color_counts_json(&self, background: bool) -> String {
+        serde_json::to_string(&self.cell.borrow().engine.color_counts(background))
+            .unwrap_or_else(|_| "[]".into())
+    }
 }

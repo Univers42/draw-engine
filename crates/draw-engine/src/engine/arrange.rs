@@ -68,7 +68,7 @@ impl DrawEngine {
     }
 
     /// How many units align and distribute would move — none with a frame selected.
-    fn arrange_units(&self) -> usize {
+    pub(super) fn arrange_units(&self) -> usize {
         crate::edit::units(
             self.scene.iter_ordered(),
             &self.carried_selection(),

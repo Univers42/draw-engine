@@ -1,6 +1,6 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
 import { readProbe, resetProbe, timeHitTest } from "./host/probe";
-import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, Scene } from "./types";
+import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, EMPTY_SELECTION_STYLE, Scene } from "./types";
 import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
@@ -15,6 +15,7 @@ import type {
   DrawTool,
   FlipAxis,
   GridSettings,
+  SelectionStyle,
   TextAlign,
   VerticalAlign,
   ZOrderMode,
@@ -628,5 +629,37 @@ export class DrawEngine {
 
   destroy(): void {
     this.inner.destroy();
+  }
+
+  /** Everything the properties panel shows. Ask again when `styleRevision()` moves. */
+  selectionStyle(): SelectionStyle {
+    return parseJson<SelectionStyle>(this.inner.selectionStyleJson(), EMPTY_SELECTION_STYLE);
+  }
+
+  /** Moves whenever `selectionStyle()` may have: selection, style, undo, a peer's edit. */
+  styleRevision(): number {
+    return this.inner.styleRevision();
+  }
+
+  /** Shows a style on the canvas without committing it; `applyStyle` commits. */
+  previewStyle(patch: Partial<DrawElementStyle>): void {
+    this.inner.previewStyleJson(JSON.stringify(patch));
+  }
+
+  /** Remembers the first selected element's style. False when nothing is selected. */
+  copyStyles(): boolean {
+    return this.inner.copyStyles();
+  }
+
+  pasteStyles(): void {
+    this.inner.pasteStyles();
+  }
+
+  /** How many live elements use each stroke or background colour. */
+  colorCounts(key: "strokeColor" | "backgroundColor"): [string, number][] {
+    return parseJson<[string, number][]>(
+      this.inner.colorCountsJson(key === "backgroundColor"),
+      [],
+    );
   }
 }
