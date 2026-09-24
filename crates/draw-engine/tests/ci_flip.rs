@@ -561,6 +561,9 @@ fn every_kind() -> DrawEngine {
     let mut label = named("label", text_at(0.0, 0.0, 60.0, 25.0));
     label.text = Some("hi".into());
     label.container_id = Some("labelled".into());
+    // Laid out here rather than by whichever commit next refreshes the board, so the
+    // original is where the label belongs however much of the board a commit refreshes.
+    let label = layout_label(label, &labelled);
 
     let mut line = named(
         "line",
