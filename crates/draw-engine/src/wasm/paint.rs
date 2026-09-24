@@ -2058,15 +2058,17 @@ fn trace_outlines(
 /// handles, so dragging its corner fell through to the hit test and started a marquee.
 /// A group could only ever be moved, never scaled or turned.
 fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) else {
-        return;
-    };
-
     // Every member is traced first. Without it a multi-selection showed only the box
     // around the whole lot, so you could see *that* a region was held but not *which*
     // shapes in it were — and an unselected shape sitting inside those bounds was
     // indistinguishable from a selected one.
     paint_member_outlines(ctx, view);
+
+    // The box the handles are hit on, so they are drawn where a press finds them: a loose
+    // locked element is outlined as held, but nothing transforms it.
+    let Some(bounds) = view.group_box else {
+        return;
+    };
 
     let pad = view.handle_layout.frame_pad;
     let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);

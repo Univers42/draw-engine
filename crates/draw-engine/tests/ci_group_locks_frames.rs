@@ -476,3 +476,103 @@ fn undo_brings_the_frame_back_with_its_children_in_it() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Found in review
+// ---------------------------------------------------------------------------
+
+/// Outside a drag the oracle's align, distribute and flip leave `frameId` alone —
+/// `isElementInFrame` is true unless the selection is being dragged
+/// (`packages/element/src/frame.ts:845-855`).
+#[test]
+fn aligning_a_child_out_of_its_frame_keeps_it_in_the_frame() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let far = filled(box_at(600.0, 60.0, 80.0, 80.0));
+    let (child_id, far_id) = (child.id.clone(), far.id.clone());
+    let mut engine = engine_with_scene(vec![child, far]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    assert_eq!(
+        frame_of(&engine, &child_id).as_deref(),
+        Some(frame.as_str()),
+        "setup"
+    );
+
+    engine.select(vec![child_id.clone(), far_id]);
+    engine.align_selection(AlignMode::Right);
+
+    assert!(element(&engine, &child_id).x > 300.0, "setup: aligned out");
+    assert_eq!(
+        frame_of(&engine, &child_id).as_deref(),
+        Some(frame.as_str())
+    );
+}
+
+/// A lock touches what is locked and nothing else: a pass over the whole board rewrote
+/// and re-stamped an element straddling a frame's edge, as a board from Excalidraw can
+/// hold one, and sent it to every peer.
+#[test]
+fn locking_one_element_touches_no_other() {
+    let straddler = filled(box_at(250.0, 60.0, 100.0, 80.0));
+    let bystander = filled(box_at(600.0, 60.0, 80.0, 80.0));
+    let (straddler_id, bystander_id) = (straddler.id.clone(), bystander.id.clone());
+    let mut drawn = engine_with_scene(vec![straddler, bystander]);
+    let frame = draw_frame(&mut drawn, (20.0, 20.0), (300.0, 300.0));
+    let mut scene = drawn.get_scene();
+    for el in &mut scene {
+        if el.id == straddler_id {
+            el.frame_id = Some(frame.clone());
+        }
+    }
+    let mut engine = engine_with_scene(scene);
+    let before = element(&engine, &straddler_id);
+
+    lock(&mut engine, &[&bystander_id]);
+
+    let after = element(&engine, &straddler_id);
+    assert_eq!(after.frame_id, before.frame_id);
+    assert_eq!(after.version, before.version, "re-stamped");
+}
+
+/// What a peer holds is untouchable, frame or no frame: moved anyway, both sides stamped
+/// the same version and the nonce decided whose move survived.
+#[test]
+fn moving_a_frame_leaves_a_child_a_peer_holds() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    engine.set_peers(vec![Peer {
+        id: "ana".into(),
+        name: "Ana".into(),
+        color: "#e03131".into(),
+        holds: [child_id.clone()].into_iter().collect(),
+        preview: Vec::new(),
+    }]);
+    engine.select(vec![frame.clone()]);
+
+    engine.nudge_selection(10.0, 0.0);
+    drag(&mut engine, (150.0, 20.0), (150.0, 120.0));
+
+    assert_close(element(&engine, &frame).x, 30.0);
+    assert_close(element(&engine, &frame).y, 120.0);
+    assert_close(element(&engine, &child_id).x, 60.0);
+    assert_close(element(&engine, &child_id).y, 60.0);
+}
+
+/// Select All holds a loose locked element so it can be unlocked, but nothing transforms
+/// it — so the box and its handles are drawn around what does, where a press finds them.
+#[test]
+fn the_selection_box_is_drawn_where_its_handles_are_hit() {
+    let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
+    let b = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let mut locked = filled(box_at(600.0, 0.0, 80.0, 80.0));
+    locked.locked = Some(true);
+    let mut engine = engine_with_scene(vec![a, b, locked]);
+    engine.select_all();
+    assert_eq!(engine.get_selection().len(), 3, "setup");
+
+    let drawn = engine.paint_view().group_box.expect("a box around A and B");
+
+    assert_close(drawn.min_x, 0.0);
+    assert_close(drawn.max_x, 230.0);
+}

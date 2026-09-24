@@ -98,28 +98,42 @@ where
 /// - one left: that level is no group now, so it steps up to the group around it, if
 ///   that one still is;
 /// - otherwise the group is left, holding the survivor at the top level.
-pub fn after_delete_within<'a, I>(elements: I, editing: &str) -> (Option<String>, HashSet<String>)
+///
+/// Only what `touchable` accepts is held — the oracle takes the first sibling whatever it
+/// is, but here a locked or peer-held element is never picked up, and holding one handed
+/// it to the next Delete. With none left to hold, nothing is.
+pub fn after_delete_within<'a, I>(
+    elements: I,
+    editing: &str,
+    touchable: impl Fn(&DrawElement) -> bool,
+) -> (Option<String>, HashSet<String>)
 where
     I: Iterator<Item = &'a DrawElement> + Clone,
 {
-    let first_in = |group: &str| {
-        elements
-            .clone()
-            .find(|el| !el.is_deleted && is_in_group(el, group))
-    };
-    let Some(first) = first_in(editing) else {
+    let Some(any) = elements
+        .clone()
+        .find(|el| !el.is_deleted && is_in_group(el, editing))
+    else {
         return (None, HashSet::new());
     };
     let level = if is_live_group(elements.clone(), editing) {
         Some(editing)
     } else {
-        parent_group(first, editing)
+        parent_group(any, editing)
             .map(String::as_str)
             .filter(|parent| is_live_group(elements.clone(), parent))
     };
+    let first_in = |group: &str| {
+        elements
+            .clone()
+            .find(|el| !el.is_deleted && is_in_group(el, group) && touchable(el))
+    };
     match level.and_then(|level| Some((level, first_in(level)?))) {
         Some((level, held)) => (Some(level.to_string()), HashSet::from([held.id.clone()])),
-        None => (None, expand_within(elements, [first.id.clone()], None)),
+        None => match first_in(editing) {
+            Some(survivor) => (None, expand_within(elements, [survivor.id.clone()], None)),
+            None => (None, HashSet::new()),
+        },
     }
 }
 
@@ -284,12 +298,13 @@ pub fn ungroup_patches(
     ids: &HashSet<String>,
     editing: Option<&str>,
 ) -> Vec<DrawElement> {
-    let doomed: HashSet<String> = elements
+    let mut doomed: HashSet<String> = elements
         .iter()
         .filter(|el| ids.contains(&el.id) && !el.is_deleted)
         .filter_map(|el| selected_group_for(el, editing).cloned())
-        .filter(|group| is_live_group(elements.iter(), group))
         .collect();
+    // Once per group, not per selected element: a scan of the board each.
+    doomed.retain(|group| is_live_group(elements.iter(), group));
     if doomed.is_empty() {
         return Vec::new();
     }
@@ -336,10 +351,14 @@ pub fn is_single_group(
             _ => {}
         }
     }
-    if count < 2 || group.is_none() {
+    // One shape is enough once its label shares the group: a group holding a labelled
+    // shape and nothing else is still a group, as it is to the oracle's
+    // `allElementsInSameGroup` (`actionGroup.tsx:73-83`). Counted as two, it wrapped
+    // itself in a new level on every Ctrl+G.
+    let Some(group) = group.filter(|group| count > 0 && is_live_group(elements.iter(), group))
+    else {
         return false;
-    }
-    let group = group.expect("checked just above");
+    };
     // Every member of that group has to be selected, or this is a part of a group rather
     // than the group itself.
     elements

@@ -172,6 +172,10 @@ impl DrawEngine {
         let changed = self.apply_remote_patch_step(json);
         // A peer's element can bind to one being dragged here, and then moves with it.
         self.refresh_live();
+        if changed {
+            // A peer may have ungrouped or deleted the group being edited here.
+            self.revalidate_editing();
+        }
         changed
     }
 
@@ -334,13 +338,33 @@ impl DrawEngine {
         // `packages/excalidraw/components/App.duplicate.ts:195-199`.
         let editing = self.editing_group_id.as_deref();
         let Some(copies) =
-            crate::edit::materialize(copied, offset_x, offset_y, self.now_ms, editing)
+            crate::edit::materialize_within(copied, offset_x, offset_y, self.now_ms, editing)
         else {
             return;
         };
         let ids: Vec<String> = copies.iter().map(|el| el.id.clone()).collect();
         for element in copies {
             self.scene.add(element);
+        }
+        // A copy that stays in the group being edited goes directly above that group's
+        // top member, not on top of the board, which split the group in the stack with
+        // whatever lay between. The oracle puts each copy directly above its source
+        // (`packages/element/src/duplicate.ts:322-348`); above the group is the same run.
+        // Any other copy is in groups of its own and stays on top, where the host hears
+        // of it as a delta rather than as the whole reordered scene.
+        if let Some(editing) = self.editing_group_id.clone() {
+            let copied: HashSet<&str> = ids.iter().map(String::as_str).collect();
+            let top = self
+                .scene
+                .iter_ordered()
+                .rev()
+                .find(|el| {
+                    !copied.contains(el.id.as_str()) && crate::edit::is_in_group(el, &editing)
+                })
+                .map(|el| el.id.clone());
+            if let Some(top) = top {
+                self.scene.place_above(&ids, &top);
+            }
         }
         self.set_selection(ids);
         self.apply_bindings();
@@ -416,7 +440,9 @@ impl DrawEngine {
             // took the group being edited with it, and the next Delete had nothing to act on.
             let (editing, held) = match self.editing_group_id.take() {
                 Some(editing) => {
-                    crate::edit::after_delete_within(self.scene.iter_ordered(), &editing)
+                    crate::edit::after_delete_within(self.scene.iter_ordered(), &editing, |el| {
+                        !self.untouchable(el)
+                    })
                 }
                 None => (None, Default::default()),
             };

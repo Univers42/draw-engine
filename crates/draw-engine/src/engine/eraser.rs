@@ -177,6 +177,7 @@ impl DrawEngine {
             }
         }
         if selection_changed {
+            self.revalidate_editing();
             self.events.selection = Some(self.get_selection());
         }
         self.push_history();

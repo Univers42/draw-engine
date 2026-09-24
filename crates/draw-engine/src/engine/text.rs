@@ -85,10 +85,17 @@ impl DrawEngine {
         label.text_align = self.next_text_align;
         label.vertical_align = self.next_vertical_align;
         label.container_id = Some(container.id.clone());
+        // In its shape's groups and directly above it, as the oracle makes one
+        // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
+        // board instead, it was drawn over whatever covers its shape, and split the
+        // shape's group in the stack.
+        label.group_ids = container.group_ids.clone();
         label.stroke_color = self.get_next_style().stroke_color;
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
         self.scene.add(label.clone());
+        self.scene
+            .place_above(std::slice::from_ref(&label.id), &container.id);
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)

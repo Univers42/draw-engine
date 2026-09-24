@@ -88,16 +88,10 @@ impl DrawEngine {
                 }
                 self.select_caught(ids);
             }
-            Interaction::Move { origins, .. } => {
-                // A click is a move that moved nothing — read off the elements, which is
-                // the one record of the drag that outlives it.
-                let moved = origins.iter().any(|(id, from)| {
-                    self.scene
-                        .get(id)
-                        .is_some_and(|el| el.x != from.x || el.y != from.y)
-                });
+            Interaction::Move { .. } => {
+                // Still pending only if the pointer never moved: a click.
                 self.settle_gesture();
-                if let Some(ids) = self.narrow_on_click.take().filter(|_| !moved) {
+                if let Some(ids) = self.narrow_on_click.take() {
                     self.set_selection(ids);
                 }
             }

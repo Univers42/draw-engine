@@ -53,7 +53,13 @@ impl DrawEngine {
                     },
                 });
                 if !additive {
+                    // The level being edited outlives the empty selection a loop starts
+                    // from, and the release resolves the loop at it (`select_caught`), as
+                    // the oracle's does (`lasso/index.ts:72-89`, `:119-127`). Cleared with
+                    // the selection, a lasso inside a group took whole top-level groups.
+                    let editing = self.editing_group_id.take();
                     self.clear_selection();
+                    self.editing_group_id = editing;
                 }
                 self.request_draw();
             }
@@ -227,12 +233,26 @@ impl DrawEngine {
     }
 
     /// What a transform of the selection carries: see [`crate::edit::carried_by`].
+    ///
+    /// Read from the selected elements alone — what is carried is always part of the
+    /// selection — because this runs on every hover move over a multi-selection, and a
+    /// walk of the whole board there cost the size of the board per move.
     pub(crate) fn carried_selection(&self) -> std::collections::HashSet<String> {
         crate::edit::carried_by(
-            self.scene.iter_ordered(),
+            self.selected_ids.iter().filter_map(|id| self.scene.get(id)),
             &self.selected_ids,
             self.editing_group_id.as_deref(),
         )
+    }
+
+    /// The box a multi-selection's handles sit on: around what it carries, so a loose
+    /// locked element is neither framed nor grabbed. `None` below two carried elements.
+    pub(crate) fn group_box(&self) -> Option<crate::camera::WorldBounds> {
+        let ids = self.carried_selection();
+        if ids.len() < 2 {
+            return None;
+        }
+        crate::scene_bounds(ids.iter().filter_map(|id| self.scene.get(id)))
     }
 
     /// What the current multi-selection carries, with its shared frame.
@@ -251,8 +271,7 @@ impl DrawEngine {
     /// Shared with the hover cursor, so what the pointer reports and what a press
     /// actually starts are decided by one piece of code.
     pub(crate) fn group_handle_at(&self, world: Point) -> Option<HandleKind> {
-        let (_, frame) = self.group_frame()?;
-        let b = frame.bounds;
+        let b = self.group_box()?;
         let layout = self.handle_layout();
         // Offset exactly as the painter offsets them, and exactly as a single shape's
         // are, so the inside of a group stays a move target.
@@ -488,13 +507,15 @@ impl DrawEngine {
     /// Locked children included, as a group's locked members are: the oracle adds every
     /// child of a dragged frame with no lock filter (`packages/element/src/
     /// dragElements.ts:75-84`), and one left behind would sit outside the frame that
-    /// still claims it.
+    /// still claims it. A child a peer holds stays where they have it: what a peer holds
+    /// is untouchable, and moving it anyway left the two sides stamping the same version.
     pub(crate) fn moving_selection(&self) -> std::collections::HashSet<String> {
         let mut moving = self.carried_selection();
         let children: Vec<String> = moving
             .iter()
             .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
             .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .filter(|child| !self.held.contains_key(child))
             .collect();
         moving.extend(children);
         moving

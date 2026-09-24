@@ -50,7 +50,7 @@ pub fn materialize_elements(
     offset_y: f64,
     now: f64,
 ) -> Option<Vec<DrawElement>> {
-    materialize(elements_from_json(json)?, offset_x, offset_y, now, None)
+    materialize(elements_from_json(json)?, offset_x, offset_y, now)
 }
 
 /// Fresh copies of `source`: new ids, remapped references, offset, version reset.
@@ -59,12 +59,21 @@ pub fn materialize_elements(
 /// JSON. The clipboard needs the text because the text is what crosses the process
 /// boundary; Ctrl+D does not, and serialising a selection only to parse it straight back
 /// was most of what that keystroke cost.
-///
-/// `editing` is the group being edited, which a copy made inside it stays in. A paste
-/// passes `None`, as the oracle pastes through `duplicateElements` with
-/// `type: "everything"` and no group, `packages/excalidraw/components/App.duplicate.ts:
-/// 101-111` — a paste is new content, not a copy of something inside the group.
 pub fn materialize(
+    source: Vec<DrawElement>,
+    offset_x: f64,
+    offset_y: f64,
+    now: f64,
+) -> Option<Vec<DrawElement>> {
+    materialize_within(source, offset_x, offset_y, now, None)
+}
+
+/// [`materialize`] for a copy made inside `editing`, the group being edited, which the
+/// copy stays in. A paste uses [`materialize`], as the oracle pastes through
+/// `duplicateElements` with `type: "everything"` and no group,
+/// `packages/excalidraw/components/App.duplicate.ts:101-111` — a paste is new content,
+/// not a copy of something inside the group.
+pub fn materialize_within(
     source: Vec<DrawElement>,
     offset_x: f64,
     offset_y: f64,

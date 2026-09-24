@@ -540,3 +540,136 @@ fn ungroup_leaves_a_group_of_one_alone() {
 
     assert_eq!(group_ids_of(&engine, &a), before);
 }
+
+// ---------------------------------------------------------------------------
+// Found in review
+// ---------------------------------------------------------------------------
+
+/// A loop drawn with the lasso already in hand is resolved at the level being edited, as
+/// the oracle's (`lasso/index.ts:72-89`, `:119-127`): its press empties the selection
+/// but keeps the group, where emptying it here used to drop the group too.
+#[test]
+fn a_lasso_inside_the_edited_group_stays_at_that_level() {
+    let mut board = board();
+    board.engine.set_tool_locked(true);
+    board.engine.set_tool(DrawTool::Lasso);
+    let around = |engine: &mut DrawEngine, x0: f64, x1: f64| {
+        engine.begin_pointer(x0, -30.0, false, false);
+        for (x, y) in [(x1, -30.0), (x1, 110.0), (x0, 110.0)] {
+            engine.move_pointer(x, y, false, false);
+        }
+        engine.end_pointer();
+    };
+    around(&mut board.engine, -30.0, 410.0);
+    board.engine.handle_double_click(40.0, 40.0);
+    let editing = board.engine.editing_group_id();
+    assert!(editing.is_some(), "setup");
+
+    around(&mut board.engine, 270.0, 410.0);
+
+    assert_eq!(board.engine.editing_group_id(), editing);
+    assert!(
+        holds(&board.engine, &[&board.c]),
+        "{:?}",
+        selection(&board.engine)
+    );
+}
+
+/// A locked member is never picked up, so a delete inside the group does not hand it to
+/// the next Delete — two presses of the key used to take the locked one as well.
+#[test]
+fn deleting_inside_a_group_never_hands_on_a_locked_member() {
+    let mut engine = engine_with_scene(vec![square(0.0), square(150.0), square(300.0)]);
+    let ids: Vec<String> = engine.get_scene().into_iter().map(|el| el.id).collect();
+    engine.set_tool(DrawTool::Select);
+    engine.select(ids.clone());
+    engine.group_selection();
+    engine.select(vec![ids[0].clone()]);
+    engine.toggle_lock_selection();
+    click(&mut engine, middle(150.0), false);
+    engine.handle_double_click(190.0, 40.0);
+    assert!(holds(&engine, &[&ids[1]]), "setup");
+
+    engine.delete_selection();
+    assert!(
+        holds(&engine, &[&ids[2]]),
+        "the free sibling, not the locked one"
+    );
+    engine.delete_selection();
+
+    assert!(selection(&engine).is_empty());
+    engine.delete_selection();
+    let survivor = engine.get_scene().into_iter().find(|el| el.id == ids[0]);
+    assert!(
+        survivor.is_some_and(|el| !el.is_deleted),
+        "the locked member survives"
+    );
+}
+
+/// Nor one a peer holds: skipped, the next free member is held and the group stays open.
+#[test]
+fn deleting_inside_a_group_skips_a_member_a_peer_holds() {
+    let mut engine = engine_with_scene((0..4).map(|i| square(150.0 * f64::from(i))).collect());
+    let ids: Vec<String> = engine.get_scene().into_iter().map(|el| el.id).collect();
+    engine.set_tool(DrawTool::Select);
+    engine.select(ids.clone());
+    engine.group_selection();
+    engine.clear_selection();
+    engine.set_peers(vec![Peer {
+        id: "ana".into(),
+        name: "Ana".into(),
+        color: "#e03131".into(),
+        holds: [ids[0].clone()].into_iter().collect(),
+        preview: Vec::new(),
+    }]);
+    click(&mut engine, middle(450.0), false);
+    engine.handle_double_click(490.0, 40.0);
+    assert!(holds(&engine, &[&ids[3]]), "setup");
+
+    engine.delete_selection();
+
+    assert!(engine.editing_group_id().is_some());
+    assert!(holds(&engine, &[&ids[1]]), "{:?}", selection(&engine));
+}
+
+/// Any move makes the press a drag (`drag.hasOccurred`, `App.tsx:10918-10921`), even one
+/// that comes back to where it started — it is not a click, and does not narrow.
+#[test]
+fn a_drag_that_comes_back_home_does_not_narrow() {
+    let mut board = board();
+    board.engine.select_all();
+    let (x, y) = middle(0.0);
+
+    board.engine.begin_pointer(x, y, false, false);
+    board
+        .engine
+        .move_pointer(x + 100.0, y + 100.0, false, false);
+    board.engine.move_pointer(x, y, false, false);
+    board.engine.end_pointer();
+
+    assert_eq!(selection(&board.engine).len(), 5);
+}
+
+/// A peer ungrouping the group being edited here leaves it here too: kept, it named a
+/// group nothing carries, and the host was told so.
+#[test]
+fn a_peer_ungrouping_the_edited_group_leaves_it() {
+    let mut board = board();
+    enter_outer(&mut board);
+    let editing = board.engine.editing_group_id().expect("setup");
+    let theirs: Vec<DrawElement> = board
+        .engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| el.group_ids.contains(&editing))
+        .map(|mut el| {
+            el.group_ids.retain(|g| *g != editing);
+            el.version += 1;
+            el
+        })
+        .collect();
+
+    assert!(board.engine.apply_remote_patch(&scene_to_json(&theirs)));
+
+    assert_eq!(board.engine.editing_group_id(), None);
+}

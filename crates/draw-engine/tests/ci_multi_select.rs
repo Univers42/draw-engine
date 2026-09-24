@@ -211,7 +211,7 @@ fn dragging_one_member_carries_the_others() {
 /// the release kept everything too, which is not the oracle's click: it left no way to
 /// narrow a multi-selection short of clicking off it first.
 #[test]
-fn grabbing_a_member_does_not_drop_the_rest() {
+fn pressing_a_member_keeps_the_rest_until_a_click_narrows() {
     let (mut engine, a, b, _c) = three_boxes();
     marquee(&mut engine, (20.0, 20.0), (300.0, 140.0), false);
 

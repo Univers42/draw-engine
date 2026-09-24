@@ -614,3 +614,144 @@ fn a_labelled_shape_copied_inside_its_group_stays_there_with_its_label() {
         assert_eq!(copy.group_ids, group);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Found in review
+// ---------------------------------------------------------------------------
+
+/// Select All leaves the group (`actionSelectAll.ts:49`), so a copy of the board made
+/// from inside it is a copy of the board, not new members of the group.
+#[test]
+fn a_copy_of_everything_made_from_inside_a_group_does_not_join_it() {
+    let (mut engine, cast) = board(&[("A", &["g"]), ("B", &["g"]), ("X", &[])]);
+    click(&mut engine, &cast, "A");
+    step_in(&mut engine, &cast, "A");
+
+    engine.select_all();
+    engine.duplicate_selection(0.0, 200.0);
+
+    for copy in copies(&engine, &cast) {
+        assert!(
+            !copy.group_ids.iter().any(|g| g == "g"),
+            "{:?}",
+            copy.group_ids
+        );
+    }
+}
+
+/// The copy keeps the edited group, so it goes where the group is — added on top of the
+/// board, the group was split in the stack with X painted between its members.
+#[test]
+fn a_copy_made_inside_a_group_lands_in_its_run_of_the_stack() {
+    let (mut engine, cast) = board(&[("A", &["g"]), ("B", &["g"]), ("X", &[])]);
+    click(&mut engine, &cast, "A");
+    step_in(&mut engine, &cast, "A");
+
+    engine.duplicate_selection(0.0, 200.0);
+
+    assert_eq!(stack(&engine, &cast), vec!["A", "B", "copy", "X"]);
+}
+
+/// Delete S from a group of R and S, and R with its label is what is left: still a group
+/// to the oracle (`allElementsInSameGroup`, `actionGroup.tsx:73-83`). Counted as one
+/// shape, each Ctrl+G wrapped it in another level.
+#[test]
+fn a_labelled_shape_left_alone_in_its_group_is_still_that_group() {
+    let (mut engine, cast) = labelled();
+    engine.select(vec![id(&cast, "R"), id(&cast, "S")]);
+    engine.group_selection();
+    engine.select(vec![id(&cast, "S")]);
+    engine.delete_selection();
+    click(&mut engine, &cast, "R");
+    assert_eq!(engine.get_selection().len(), 2, "setup: R and its label");
+
+    engine.group_selection();
+    engine.group_selection();
+    assert_eq!(groups_of(&engine, &id(&cast, "R")).len(), 1);
+
+    engine.toggle_group_selection();
+    assert!(groups_of(&engine, &id(&cast, "R")).is_empty());
+    assert!(groups_of(&engine, &id(&cast, "T")).is_empty());
+}
+
+/// A shape and its own words are one thing, not two to group (`enableActionGroup` reads
+/// the selection without labels, `actionGroup.tsx:73-83`).
+#[test]
+fn a_shape_and_its_label_alone_are_not_grouped() {
+    let (mut engine, cast) = labelled();
+    engine.select(vec![id(&cast, "R"), id(&cast, "T")]);
+
+    engine.group_selection();
+
+    assert!(groups_of(&engine, &id(&cast, "R")).is_empty());
+}
+
+/// A new label is made in its shape's groups and directly above it, as the oracle makes
+/// one (`App.tsx:7081`, `:7103-7108`).
+#[test]
+fn a_new_label_joins_its_shape_in_its_group_and_in_the_stack() {
+    let (mut engine, cast) = board(&[("R", &["g"]), ("S", &["g"]), ("X", &[])]);
+    click(&mut engine, &cast, "R");
+    step_in(&mut engine, &cast, "R");
+    assert_eq!(engine.get_selection(), vec![id(&cast, "R")], "setup");
+
+    assert!(engine.edit_selected_text());
+
+    let label = copies(&engine, &cast)
+        .into_iter()
+        .find(|el| el.container_id.as_deref() == Some(id(&cast, "R").as_str()))
+        .expect("a label");
+    assert_eq!(label.group_ids, vec!["g"]);
+    assert_eq!(stack(&engine, &cast), vec!["R", "copy", "S", "X"]);
+}
+
+/// Someone may be typing into the label: grouping its shape leaves it to them, where
+/// their next commit would have stamped above it and taken it back out anyway.
+#[test]
+fn grouping_leaves_a_label_a_peer_holds() {
+    let (mut engine, cast) = labelled();
+    engine.set_peers(vec![Peer {
+        id: "ana".into(),
+        name: "Ana".into(),
+        color: "#e03131".into(),
+        holds: [id(&cast, "T")].into_iter().collect(),
+        preview: Vec::new(),
+    }]);
+    engine.select(vec![id(&cast, "R"), id(&cast, "S")]);
+
+    engine.group_selection();
+
+    assert_eq!(groups_of(&engine, &id(&cast, "R")).len(), 1, "grouped");
+    assert!(groups_of(&engine, &id(&cast, "T")).is_empty());
+}
+
+/// A label saved before labels joined groups lies outside its shape's group. Front
+/// inside the group stopped at the group's top, between that shape and its words.
+#[test]
+fn front_inside_a_group_does_not_come_between_a_shape_and_its_label() {
+    let mut s = filled(box_at(0.0, 0.0, 80.0, 80.0));
+    let mut r = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let mut t = text_at(160.0, 30.0, 60.0, 20.0);
+    let x = filled(box_at(300.0, 0.0, 80.0, 80.0));
+    t.text = Some("hi".into());
+    t.container_id = Some(r.id.clone());
+    r.bound_text_id = Some(t.id.clone());
+    s.group_ids = vec!["g".into()];
+    r.group_ids = vec!["g".into()];
+    let cast: Cast = vec![
+        ("S", s.id.clone()),
+        ("R", r.id.clone()),
+        ("T", t.id.clone()),
+        ("X", x.id.clone()),
+    ];
+    let mut engine = engine_with_measure(vec![s, r, t, x]);
+    engine.set_tool(DrawTool::Select);
+    engine.begin_pointer(40.0, 40.0, false, false);
+    engine.end_pointer();
+    engine.handle_double_click(40.0, 40.0);
+    assert_eq!(engine.get_selection(), vec![id(&cast, "S")], "setup");
+
+    engine.reorder_selection(ZOrderMode::Front);
+
+    assert_eq!(stack(&engine, &cast), vec!["R", "T", "S", "X"]);
+}

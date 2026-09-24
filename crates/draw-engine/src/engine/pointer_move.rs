@@ -539,6 +539,10 @@ impl DrawEngine {
         else {
             return it;
         };
+        // Any move makes the press a drag, even one that comes back to where it started:
+        // the oracle's `drag.hasOccurred` (`App.tsx:10918-10921`). Judged by where the
+        // elements ended, a drag home — or one shorter than a grid cell — read as a click.
+        self.narrow_on_click = None;
         let mut dx = world.x - start.x;
         let mut dy = world.y - start.y;
         self.snap_guides.clear();

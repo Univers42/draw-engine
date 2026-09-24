@@ -81,6 +81,11 @@ pub fn reorder_within(
     let ends = editing
         .and_then(|group| span(live, |el| is_in_group(el, group)))
         .unwrap_or(0..=live.len() - 1);
+    // Through the label of the shape at either end: one saved before labels joined
+    // groups lies outside the group, and stopping short of it put the moved shape
+    // between that shape and its words.
+    let ends = with_label(live, &live[*ends.start()], *ends.start(), false)
+        ..=with_label(live, &live[*ends.end()], *ends.end(), true);
     match mode {
         ZOrderMode::Front => to_end(live, &moved, *selected.start()..=*ends.end(), true),
         ZOrderMode::Back => to_end(live, &moved, *ends.start()..=*selected.end(), false),

@@ -52,6 +52,9 @@ pub struct PaintView<'a> {
     /// Changes whenever `erasing` does. The painter keys its cached layer on it.
     pub erasing_revision: u64,
     pub selected: Vec<&'a DrawElement>,
+    /// Where a multi-selection's box and handles go: around what a transform carries,
+    /// the same box the handles are hit on. `None` when fewer than two are carried.
+    pub group_box: Option<WorldBounds>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
     pub lasso: Vec<crate::camera::Point>,
@@ -173,6 +176,11 @@ impl DrawEngine {
         let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
+        let group_box = if selected.len() > 1 {
+            self.group_box()
+        } else {
+            None
+        };
         let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
         let linear_handles = match self.multi_linear.as_ref() {
             // A path being placed shows a joint on every point it has taken, so the
@@ -306,6 +314,7 @@ impl DrawEngine {
             erasing: &self.erasing,
             erasing_revision: self.erasing_revision,
             selected,
+            group_box,
             marquee,
             lasso,
             frame_clips,

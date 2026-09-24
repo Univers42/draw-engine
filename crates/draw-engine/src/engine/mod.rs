@@ -281,6 +281,7 @@ impl DrawEngine {
         // parsed twice more on the other side. The host supplied this scene; it has it.
         self.scene.forget_pending();
         self.reset_history();
+        self.revalidate_editing();
         self.request_draw();
     }
 
@@ -557,18 +558,23 @@ impl DrawEngine {
                 self.editing_linear = None;
             }
         }
-        // The same for the group being edited, which holds only while everything held is
-        // inside it and it is still a group. Enforced here rather than at each way out —
-        // an empty click, select-all, an undo — because it used to be cleared at two of
-        // them, and every one it missed left clicks and marquees board-wide resolving
-        // inside a group they had nothing to do with.
+        self.revalidate_editing();
+        self.events.selection = Some(self.get_selection());
+        self.request_draw();
+    }
+
+    /// Drops the group being edited unless it is still true: everything held is inside
+    /// it and it is still a group. Checked on every selection change rather than at each
+    /// way out — an empty click, select-all, an undo — because it used to be cleared at
+    /// two of them, and every one it missed left clicks and marquees board-wide resolving
+    /// inside a group they had nothing to do with. The scene changing under a selection —
+    /// a peer's patch, a board loaded, the eraser — checks it too.
+    pub(crate) fn revalidate_editing(&mut self) {
         if let Some(editing) = self.editing_group_id.as_deref() {
             if !crate::edit::keeps_editing(self.scene.iter_ordered(), &self.selected_ids, editing) {
                 self.editing_group_id = None;
             }
         }
-        self.events.selection = Some(self.get_selection());
-        self.request_draw();
     }
 
     /// Selects what a marquee or lasso caught, grown to whole groups.
@@ -690,8 +696,8 @@ impl DrawEngine {
     /// Leaving every level at once made three double clicks down a one-key trip back to
     /// nothing.
     ///
-    /// Not a selection change on its own: leaving a group keeps what is held, so the
-    /// next click behaves normally rather than the selection vanishing under you.
+    /// What is held is kept, grown to the level stepped out to, so the next click behaves
+    /// normally rather than the selection vanishing under you.
     pub(crate) fn leave_group(&mut self) -> bool {
         let Some(editing) = self.editing_group_id.take() else {
             return false;
