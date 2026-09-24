@@ -5,8 +5,8 @@
 mod common;
 use common::*;
 use draw_engine::text::{
-    normalize_text, parse_tokens, wrap_lines, wrap_text, FontKey, MeasureCache, TextMetrics,
-    WrappedLine, MEMO_BYTES, MEMO_LIMIT,
+    parse_tokens, wrap_lines, wrap_text, FontKey, MeasureCache, TextMetrics, WrappedLine,
+    MEMO_BYTES, MEMO_LIMIT,
 };
 use std::cell::Cell;
 use unicode_normalization::UnicodeNormalization;
@@ -132,21 +132,6 @@ const WIDTHS: &[f64] = &[0.0, 5.0, 10.0, 25.0, 40.0, 60.0, 100.0, 150.0, 1e9];
 
 fn nfc(text: &str) -> String {
     text.nfc().collect()
-}
-
-#[test]
-fn normalize_text_is_the_oracles() {
-    // normalizeEOL (`/\r?\n|\r/g`), then a tab is eight spaces (textMeasurements.ts:64-70).
-    assert_eq!(normalize_text("a\r\nb\rc\nd"), "a\nb\nc\nd");
-    assert_eq!(normalize_text("\r\r\n"), "\n\n");
-    assert_eq!(normalize_text("\tx\t"), "        x        ");
-    let once = normalize_text("one\r\n\ttwo\rthree\t\r\n");
-    assert_eq!(once, "one\n        two\nthree        \n");
-    assert_eq!(
-        normalize_text(&once),
-        once,
-        "normalising twice changes nothing"
-    );
 }
 
 /// textWrapping.test.ts:22-27, and the offsets of `getHardLineBreaks`.

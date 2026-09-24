@@ -51,14 +51,6 @@ impl FontKey {
     pub fn legacy(size: f64) -> Self {
         Self::new(Self::LEGACY, size)
     }
-
-    pub fn family(self) -> u8 {
-        self.family
-    }
-
-    pub fn size(self) -> f64 {
-        f64::from_bits(self.size_bits)
-    }
 }
 
 /// How many wrapped hard lines the memo holds before it starts over.

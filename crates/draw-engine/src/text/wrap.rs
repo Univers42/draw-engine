@@ -25,14 +25,6 @@ pub struct WrappedLine {
     pub end: usize,
 }
 
-/// `normalizeText` (`textMeasurements.ts:64-70`): `normalizeEOL` (`common/src/utils.ts:1038`,
-/// `/\r?\n|\r/g` → `\n`), then every tab becomes eight spaces.
-pub fn normalize_text(text: &str) -> String {
-    text.replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .replace('\t', "        ")
-}
-
 /// `wrapText` (:397-405): the rendered lines joined by `\n`.
 pub fn wrap_text(text: &str, max_width: f64, metrics: &dyn TextMetrics) -> String {
     join(&wrap_lines(text, max_width, metrics))

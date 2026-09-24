@@ -9,9 +9,6 @@
 //!   sequences whole, and trim whitespace exactly where the oracle does. [`wrap_lines`] also
 //!   says which bytes of the source each rendered line came from, for caret mapping.
 //! - [`parse_tokens`] — the tokenizer underneath (`parseTokens`): break opportunities.
-//! - [`normalize_text`] — the oracle's `normalizeText`: CRLF and CR become LF, a tab
-//!   becomes eight spaces. For input on its way into a text element; wrapping does not
-//!   apply it.
 //! - [`TextMetrics`] — what wrapping needs from a font: the advance width of a line
 //!   (kerning included) and of a single char measured alone.
 //! - [`MeasureCache`] — one per measurer: per-font char widths, as the oracle's
@@ -28,4 +25,4 @@ mod unicode;
 pub mod wrap;
 
 pub use measure::{CachedMetrics, FontKey, MeasureCache, TextMetrics, MEMO_BYTES, MEMO_LIMIT};
-pub use wrap::{normalize_text, parse_tokens, wrap_lines, wrap_text, WrappedLine};
+pub use wrap::{parse_tokens, wrap_lines, wrap_text, WrappedLine};
