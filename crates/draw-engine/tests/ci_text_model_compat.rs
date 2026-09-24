@@ -232,10 +232,11 @@ fn an_explicit_line_height_wins_over_the_familys() {
     assert_eq!(resolved_line_height(&text), 2.0);
 }
 
-/// Values the contract refuses can still reach the engine from a file or a peer. They
-/// are ignored, never clamped: an unknown family is drawn with the system stack, an
-/// out-of-range line height is the family's own. The raw value is kept as it came, so a
-/// newer client's font survives a trip through this one.
+/// Values the engine cannot draw with are ignored, never clamped: an unknown family is
+/// drawn with the system stack, an out-of-range line height is the family's own. An id
+/// the contract allows but the engine does not know (4, 10, 64) is kept as it came, so a
+/// newer client's font survives a trip through this one; what the contract refuses never
+/// gets in (`a_value_the_contract_refuses_is_dropped_where_it_comes_in`).
 #[test]
 fn odd_values_are_ignored_not_trusted() {
     for id in [0, 4, 10, 64, 99, 255] {
@@ -268,8 +269,8 @@ fn odd_values_are_ignored_not_trusted() {
 #[test]
 fn an_unknown_family_loads_edits_and_exports_without_panicking() {
     let mut label = modern_label();
-    label.font_family = Some(99);
-    label.line_height = Some(0.01);
+    label.font_family = Some(10);
+    label.line_height = Some(4.0);
     let json = scene_to_json(std::slice::from_ref(&label));
 
     let mut engine = engine_with_measure(vec![]);
@@ -282,17 +283,70 @@ fn an_unknown_family_loads_edits_and_exports_without_panicking() {
     engine.set_font_size(28.0);
 }
 
-/// A family id the field cannot hold is a malformed document, refused whole like any
-/// other ill-typed field — never a panic. The contract never lets one be stored.
+/// The label of [`LEGACY_SCENE`] carrying `key: raw`, as a file or a peer could send it.
+fn legacy_scene_with(key: &str, raw: &str) -> String {
+    LEGACY_SCENE.replacen(
+        "\"fontSize\": 20.0,",
+        &format!("\"fontSize\": 20.0, \"{key}\": {raw},"),
+        1,
+    )
+}
+
+/// What a text may carry is the contract's rule (`packages/contract/src/element.ts`:
+/// `fontFamily` an integer in 1..=64, `lineHeight` a number in 0.5..=4). A value outside
+/// it can still come from a file or a peer, and the server refuses every patch that
+/// carries one, so a board holding it would never save again. It is dropped where it
+/// comes in, as these keys were dropped before the engine knew them, and never refuses
+/// the rest of the document.
 #[test]
-fn a_family_the_field_cannot_hold_refuses_the_document() {
-    for bad in ["300", "-1", "1.5", "\"virgil\""] {
-        let json = LEGACY_SCENE.replacen(
-            "\"fontSize\": 20.0,",
-            &format!("\"fontSize\": 20.0, \"fontFamily\": {bad},"),
-            1,
-        );
-        assert!(elements_from_json(&json).is_none(), "fontFamily {bad}");
-        assert!(!DrawEngine::new().load_scene(&json), "fontFamily {bad}");
+fn a_value_the_contract_refuses_is_dropped_where_it_comes_in() {
+    let label_id = "el-566577900-1316748153";
+    let cases: [(&str, &str, Option<serde_json::Value>); 20] = [
+        ("fontFamily", "99", None),
+        ("fontFamily", "1", Some(serde_json::json!(1))),
+        ("fontFamily", "64", Some(serde_json::json!(64))),
+        ("fontFamily", "5.0", Some(serde_json::json!(5))),
+        ("fontFamily", "0", None),
+        ("fontFamily", "65", None),
+        ("fontFamily", "255", None),
+        ("fontFamily", "300", None),
+        ("fontFamily", "-1", None),
+        ("fontFamily", "1.5", None),
+        ("fontFamily", "\"5\"", None),
+        ("fontFamily", "null", None),
+        ("lineHeight", "0.5", Some(serde_json::json!(0.5))),
+        ("lineHeight", "4", Some(serde_json::json!(4.0))),
+        ("lineHeight", "0.49", None),
+        ("lineHeight", "4.01", None),
+        ("lineHeight", "0.01", None),
+        ("lineHeight", "-1", None),
+        ("lineHeight", "\"1.2\"", None),
+        ("lineHeight", "null", None),
+    ];
+    for (key, raw, kept) in cases {
+        let json = legacy_scene_with(key, raw);
+
+        // A file, or the board the server sends.
+        let mut engine = DrawEngine::new();
+        assert!(engine.load_scene(&json), "{key}: {raw} refused the scene");
+        let exported: serde_json::Value = serde_json::from_str(&engine.export_json()).unwrap();
+        let label = exported["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|el| el["id"] == label_id)
+            .expect("the label loads");
+        assert_eq!(label.get(key), kept.as_ref(), "{key}: {raw} from a file");
+
+        // A peer's patch, which is read element by element.
+        let mut engine = DrawEngine::new();
+        assert!(engine.apply_remote_patch(&json), "{key}: {raw} from a peer");
+        let label = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == label_id)
+            .expect("the peer's label arrives");
+        let wire = serde_json::to_value(&label).unwrap();
+        assert_eq!(wire.get(key), kept.as_ref(), "{key}: {raw} from a peer");
     }
 }

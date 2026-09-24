@@ -137,7 +137,8 @@ export interface DrawElement extends DrawElementStyle {
    * Excalidraw's numeric font family id (1 Virgil, 2 Helvetica, 3 Cascadia, 5 Excalifont,
    * 6 Nunito, 7 Lilita One, 8 Comic Shanns, 9 Liberation Sans). Absent is the system
    * stack every text saved before families existed was drawn with; an id the engine does
-   * not know is kept, and drawn with that stack.
+   * not know is kept, and drawn with that stack. One outside 1..=64 is dropped as it
+   * comes in, as a `lineHeight` outside 0.5..=4 is: the server refuses both.
    */
   fontFamily?: number;
   /** Unitless, a multiple of the font size. Absent is the family's own. */

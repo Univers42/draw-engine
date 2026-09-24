@@ -161,8 +161,40 @@ const FONT_FAMILIES: [(u8, f64); 8] = [
     (9, 1.15), // Liberation Sans
 ];
 
-/// The range a stored line height is honoured in, the contract's (`element.ts`).
+/// The family ids a text may carry, the contract's (`MAX_FONT_FAMILY` in
+/// `packages/contract/src/limits.ts`). Wider than [`FONT_FAMILIES`], so a newer client's
+/// font survives a trip through this one.
+const FONT_FAMILY_IDS: std::ops::RangeInclusive<f64> = 1.0..=64.0;
+
+/// The line heights a text may carry, the contract's (`MIN_LINE_HEIGHT`/`MAX_LINE_HEIGHT`).
 const LINE_HEIGHTS: std::ops::RangeInclusive<f64> = 0.5..=4.0;
+
+/// A `fontFamily` as it comes in, kept only when the contract would store it.
+///
+/// Anything else — 0, 99, 1.5, a string — is dropped rather than refusing the document:
+/// the server refuses every patch that carries one, so a scene holding it would never
+/// save again. Dropped is what happened to the key before the engine knew it.
+fn contract_font_family<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_f64()
+        .filter(|id| id.fract() == 0.0 && FONT_FAMILY_IDS.contains(id))
+        // A whole number in 1..=64, so exact.
+        .map(|id| id as u8))
+}
+
+/// A `lineHeight` as it comes in, kept only when the contract would store it; see
+/// [`contract_font_family`].
+fn contract_line_height<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_f64().filter(|value| LINE_HEIGHTS.contains(value)))
+}
 
 /// The family to draw with, or `None` for the system stack every text used before
 /// families existed.
@@ -179,9 +211,10 @@ pub fn resolved_font_family(element: &DrawElement) -> Option<u8> {
 ///
 /// The element's own when it is in range; otherwise its family's, and for the system
 /// stack the [`TEXT_LINE_HEIGHT`](crate::render::TEXT_LINE_HEIGHT) every text has always
-/// had. Out of range — which the contract refuses, so only a file or a peer can carry it
-/// — is ignored rather than clamped. The oracle has no range to enforce: its restore
-/// replaces only a missing or zero value (`packages/excalidraw/data/restore.ts:557-564`).
+/// had. Out of range — which the contract refuses, and nothing coming in can carry, so
+/// only code can set it — is ignored rather than clamped. The oracle has no range to
+/// enforce: its restore replaces only a missing or zero value
+/// (`packages/excalidraw/data/restore.ts:557-564`).
 pub fn resolved_line_height(element: &DrawElement) -> f64 {
     element
         .line_height
@@ -295,12 +328,21 @@ pub struct DrawElement {
     pub font_size: Option<f64>,
     /// Excalidraw's numeric font family id. Read it through [`resolved_font_family`]:
     /// `None` is the system stack every text saved before families existed was drawn
-    /// with, and an id the engine does not know is kept but not drawn with.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// with, and an id the engine does not know is kept but not drawn with. One the
+    /// contract would refuse is dropped as it comes in.
+    #[serde(
+        default,
+        deserialize_with = "contract_font_family",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub font_family: Option<u8>,
     /// Unitless, a multiple of the font size. Read it through [`resolved_line_height`]:
-    /// `None` is the family's own.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `None` is the family's own. One the contract would refuse is dropped as it comes in.
+    #[serde(
+        default,
+        deserialize_with = "contract_line_height",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub line_height: Option<f64>,
     /// Read it through [`resolved_text_align`], never directly: `None` is "nobody has
     /// said", which is not the same as any of the three values.
