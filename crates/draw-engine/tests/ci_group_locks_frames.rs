@@ -765,6 +765,119 @@ fn an_edited_member_moved_within_its_frame_stays_in_its_group() {
     assert!(engine.editing_group_id().is_some());
 }
 
+/// A filled 80×80 box and its label, which carries the box's groups as every label does
+/// (`group_patches` reads labels in).
+fn labelled_box(x: f64, y: f64) -> (DrawElement, DrawElement) {
+    let mut shape = filled(box_at(x, y, 80.0, 80.0));
+    let mut label = text_at(x + 10.0, y + 30.0, 60.0, 20.0);
+    label.text = Some("hi".into());
+    label.container_id = Some(shape.id.clone());
+    shape.bound_text_id = Some(label.id.clone());
+    (shape, label)
+}
+
+/// A label leaves the edited group with its shape. Left behind, it kept the group alive
+/// as {B, A's label}: a click on B then held A's words too, and Delete took them.
+#[test]
+fn a_labelled_member_dragged_into_a_frame_takes_its_label_out_of_the_group() {
+    let (a, label) = labelled_box(0.0, 0.0);
+    let b = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let [a_id, label_id, b_id] = [a.id.clone(), label.id.clone(), b.id.clone()];
+    let mut engine = engine_with_measure(vec![a, label, b]);
+    let frame = draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    engine.select(vec![a_id.clone(), b_id.clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    assert_eq!(
+        element(&engine, &label_id).group_ids,
+        element(&engine, &a_id).group_ids,
+        "setup: the label is in its shape's group"
+    );
+    engine.handle_double_click(40.0, 10.0);
+    assert!(
+        engine.editing_group_id().is_some(),
+        "setup: the group is entered"
+    );
+
+    drag(&mut engine, (40.0, 10.0), (540.0, 310.0));
+
+    assert_eq!(frame_of(&engine, &a_id).as_deref(), Some(frame.as_str()));
+    for id in [&a_id, &label_id, &b_id] {
+        let groups = element(&engine, id).group_ids;
+        assert!(groups.is_empty(), "{id}: {groups:?}");
+    }
+    assert_eq!(engine.editing_group_id(), None);
+    click(&mut engine, 190.0, 40.0);
+    assert_eq!(selection(&engine), [b_id].into_iter().collect());
+}
+
+/// Every member of the edited group held and dragged into a frame is the whole group
+/// joining it, labels or no labels: the group stays, and so does its editing. The labels,
+/// never part of what a drag holds, counted as members left behind, and the group was
+/// dissolved.
+#[test]
+fn a_whole_labelled_group_dragged_into_a_frame_keeps_its_groups() {
+    let (a, a_label) = labelled_box(0.0, 0.0);
+    let (b, b_label) = labelled_box(150.0, 0.0);
+    let ids = [
+        a.id.clone(),
+        a_label.id.clone(),
+        b.id.clone(),
+        b_label.id.clone(),
+    ];
+    let mut engine = engine_with_measure(vec![a, a_label, b, b_label]);
+    let frame = draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    engine.select(vec![ids[0].clone(), ids[2].clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    let group = element(&engine, &ids[0]).group_ids;
+    engine.handle_double_click(40.0, 10.0);
+    engine.begin_pointer(190.0, 10.0, true, false);
+    engine.end_pointer();
+    assert_eq!(selection(&engine).len(), 2, "setup: both members held");
+    assert!(engine.editing_group_id().is_some(), "setup: still inside");
+
+    drag(&mut engine, (40.0, 10.0), (540.0, 310.0));
+
+    for id in &ids {
+        assert_eq!(element(&engine, id).group_ids, group, "{id}");
+    }
+    for id in [&ids[0], &ids[2]] {
+        assert_eq!(frame_of(&engine, id).as_deref(), Some(frame.as_str()));
+    }
+    assert!(engine.editing_group_id().is_some());
+}
+
+/// What a peer holds is theirs: the member left behind keeps its group rather than be
+/// rewritten — and restamped — under their hands. A group of one is no group
+/// (`is_live_group`), so nothing reads the id it keeps.
+#[test]
+fn leaving_the_edited_group_leaves_a_member_a_peer_holds_alone() {
+    let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
+    let b = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let (a, b, mut engine) = (a.id.clone(), b.id.clone(), engine_with_scene(vec![a, b]));
+    draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    engine.select(vec![a.clone(), b.clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    engine.handle_double_click(40.0, 40.0);
+    engine.set_peers(vec![Peer {
+        id: "ana".into(),
+        name: "Ana".into(),
+        color: "#e03131".into(),
+        holds: [b.clone()].into_iter().collect(),
+        preview: Vec::new(),
+    }]);
+    let before = element(&engine, &b);
+
+    drag(&mut engine, (40.0, 40.0), (540.0, 340.0));
+
+    assert!(element(&engine, &a).group_ids.is_empty(), "setup: A left");
+    let after = element(&engine, &b);
+    assert_eq!(after.group_ids, before.group_ids);
+    assert_eq!(after.version, before.version, "restamped");
+}
+
 // ---------------------------------------------------------------------------
 // Membership is settled for what a commit touched, and nothing else
 // ---------------------------------------------------------------------------

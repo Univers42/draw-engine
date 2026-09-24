@@ -106,11 +106,22 @@ impl DrawEngine {
     /// Judged as membership always is here, by where the dragged part lies — the oracle
     /// asks which frame is under the pointer — and only when the part is not a whole
     /// top-level group, which joins or leaves a frame whole with no surgery at all.
+    ///
+    /// The part goes with its labels. A label carries its shape's groups and is never
+    /// what a drag holds, so read without them it stayed in the group its shape left —
+    /// keeping that group alive as the rest plus those words — and a whole labelled group
+    /// counted its labels as members left behind. The oracle hands its surgery the
+    /// selection without bound text (`App.tsx:12001`) and shares the first half of that.
+    ///
+    /// What a peer holds is theirs, as it is to `group_selection`: a member left behind
+    /// under their hands keeps the group id rather than be rewritten and restamped, and a
+    /// group of one is no group ([`crate::edit::is_live_group`]).
     fn leave_edited_group_across_a_frame(&mut self, moved: &[String]) {
         let Some(editing) = self.editing_group_id.clone() else {
             return;
         };
-        let moved: std::collections::HashSet<String> = moved.iter().cloned().collect();
+        let moved =
+            crate::edit::with_labels(self.scene.iter_ordered(), &moved.iter().cloned().collect());
         let pending = self.scene.pending_ids();
         let part: Vec<&crate::scene::DrawElement> = moved
             .iter()
@@ -141,8 +152,9 @@ impl DrawEngine {
         if part.iter().all(|el| el.frame_id == target) {
             return;
         }
-        for element in crate::edit::leave_edited_group(self.scene.iter_ordered(), &moved, &editing)
-        {
+        let mut left = crate::edit::leave_edited_group(self.scene.iter_ordered(), &moved, &editing);
+        left.retain(|el| !self.held.contains_key(&el.id));
+        for element in left {
             self.scene.put(element);
         }
         self.editing_group_id = None;
