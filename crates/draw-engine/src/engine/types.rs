@@ -5,14 +5,24 @@ use crate::interaction::DrawTool;
 use crate::scene::DrawElementStylePatch;
 use crate::selection::HandleKind;
 
+/// What the host needs to open a text editor over an element.
+///
+/// camelCase like every other struct the host reads (`engine/src/types.ts`). It was the
+/// one that was not: the host read `fontSize`, `textAlign` and `containerId` as
+/// `undefined`, so the overlay drew in the browser's default font, left-aligned, and
+/// never wrapped a label. Pinned by `tests/ci_text_model_compat.rs`.
 #[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextEditRequest {
     pub id: String,
     pub x: f64,
     pub y: f64,
     pub font_size: f64,
     pub color: String,
+    /// What was typed ([`source_text`](crate::scene::source_text)), not what is drawn.
     pub text: String,
+    /// In screen px, the width the canvas wraps the lines at, with `x` its left edge.
+    /// `None` for auto-sizing text, whose glyphs decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,
     /// **Resolved**, not the raw field: the overlay has to draw the text where the

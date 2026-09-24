@@ -125,8 +125,24 @@ export interface DrawElement extends DrawElementStyle {
   endBindMode?: "inside" | "orbit";
   startArrowhead?: Arrowhead;
   endArrowhead?: Arrowhead;
+  /** What is drawn: the source with its soft line breaks baked in. */
   text?: string;
+  /**
+   * The text as it was typed, before wrapping (Excalidraw's `originalText`). Absent on
+   * every text saved before it existed, where `text` is the source.
+   */
+  originalText?: string;
   fontSize?: number;
+  /**
+   * Excalidraw's numeric font family id (1 Virgil, 2 Helvetica, 3 Cascadia, 5 Excalifont,
+   * 6 Nunito, 7 Lilita One, 8 Comic Shanns, 9 Liberation Sans). Absent is the system
+   * stack every text saved before families existed was drawn with; an id the engine does
+   * not know is kept, and drawn with that stack. One outside 1..=64 is dropped as it
+   * comes in, as a `lineHeight` outside 0.5..=4 is: the server refuses both.
+   */
+  fontFamily?: number;
+  /** Unitless, a multiple of the font size. Absent is the family's own. */
+  lineHeight?: number;
   /**
    * Absent means "nobody has chosen", which is not the same as any of the three values:
    * a text with no alignment falls back to left, a label with none falls back to centre.
@@ -141,6 +157,11 @@ export interface DrawElement extends DrawElementStyle {
    * existed sized itself to its glyphs, so only `false` is ever written.
    */
   autoResize?: boolean;
+  /**
+   * Only a label's: whether it wraps inside its shape (absent or `true`) or keeps its
+   * hard lines while the shape grows wide enough for them (`false`).
+   */
+  wrap?: boolean;
   containerId?: string | null;
   boundTextId?: string | null;
   /**
@@ -221,7 +242,12 @@ export interface TextEditRequest {
   y: number;
   fontSize: number;
   color: string;
+  /** What was typed (the element's `originalText`, else its `text`), not what is drawn. */
   text: string;
+  /**
+   * The width the canvas wraps the lines at, with `x` its left edge. Absent for
+   * auto-sizing text, whose glyphs decide.
+   */
   width?: number;
   /**
    * Already resolved, so the overlay never has to work out what an unset element means.
