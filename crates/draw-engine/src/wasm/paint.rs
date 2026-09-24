@@ -1421,7 +1421,8 @@ fn paint_element(
 }
 
 /// A line or arrow with its stroke cut away under its label, as the oracle clips it
-/// (`renderElement.ts@1118751f:784-812`): an even-odd region of a box around the arrow
+/// (`renderElement.ts@1118751f:784-812`; there only an arrow takes a label, here a line
+/// can too, and is cut the same way): an even-odd region of a box around the arrow
 /// less the label's padded box — here a clockwise box and a counter-clockwise hole under
 /// the default non-zero rule, which is the same region.
 ///

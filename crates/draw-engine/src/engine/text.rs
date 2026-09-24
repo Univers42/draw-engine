@@ -465,6 +465,10 @@ impl DrawEngine {
     /// must not save itself. Texts with no family use the system stack, which was
     /// never loading, and are left alone.
     ///
+    /// Divergence: Excalidraw only drops its caches and repaints here
+    /// (`Fonts.onLoaded`, `packages/excalidraw/fonts/Fonts.ts@1118751f:106-148`), so a box
+    /// sized in a fallback's widths keeps them until the text is next edited.
+    ///
     /// ponytail: an arrow bound to a shape that grew here is re-routed at the next edit
     /// of either — re-routing now would be an unstamped change to the arrow.
     pub fn fonts_loaded(&mut self) {
