@@ -46,10 +46,14 @@ impl DrawEngine {
         self.request_draw();
     }
 
+    /// Lines up what the selection carries, a group as one unit: see
+    /// [`crate::edit::align::units`]. The carried set, as a drag's, so a locked group
+    /// member comes with its group and a loose locked element stays.
     pub fn align_selection(&mut self, mode: AlignMode) {
         self.apply_patches(align_elements(
             &self.scene.ordered_cloned(),
-            &self.selected_ids,
+            &self.carried_selection(),
+            self.editing_group_id.as_deref(),
             mode,
         ));
     }
@@ -57,9 +61,31 @@ impl DrawEngine {
     pub fn distribute_selection(&mut self, axis: char) {
         self.apply_patches(distribute_elements(
             &self.scene.ordered_cloned(),
-            &self.selected_ids,
+            &self.carried_selection(),
+            self.editing_group_id.as_deref(),
             axis,
         ));
+    }
+
+    /// How many units align and distribute would move — none with a frame selected.
+    fn arrange_units(&self) -> usize {
+        crate::edit::units(
+            self.scene.iter_ordered(),
+            &self.carried_selection(),
+            self.editing_group_id.as_deref(),
+        )
+        .len()
+    }
+
+    /// Whether align has two units to line up (`alignActionsPredicate`,
+    /// `actionAlign.tsx:39-52`), so the host offers it when it would do something.
+    pub fn can_align(&self) -> bool {
+        self.arrange_units() > 1
+    }
+
+    /// Whether distribute has three units to space (`actionDistribute.tsx:35-46`).
+    pub fn can_distribute(&self) -> bool {
+        self.arrange_units() > 2
     }
 
     pub fn flip_selection(&mut self, axis: FlipAxis) {

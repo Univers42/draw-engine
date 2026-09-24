@@ -406,6 +406,20 @@ export class DrawEngine {
     this.inner.distributeSelection(axis);
   }
 
+  /**
+   * Whether align would move anything: at least two units — a group counts as one, a
+   * lone group as what it holds — and no frame in the selection. Offer the control on
+   * this rather than on the element count.
+   */
+  canAlign(): boolean {
+    return this.inner.canAlign();
+  }
+
+  /** Whether distribute would move anything: at least three units, and no frame. */
+  canDistribute(): boolean {
+    return this.inner.canDistribute();
+  }
+
   flipSelection(axis: FlipAxis): void {
     this.inner.flipSelection(axis);
   }
