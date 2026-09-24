@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::camera::{Camera, Point, IDENTITY};
 use crate::history::SnapshotHistory;
@@ -20,7 +20,9 @@ mod hover;
 mod image;
 mod live;
 pub use image::EmbedFrame;
+pub use peers::Peer;
 mod multi_linear;
+mod peers;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -31,7 +33,7 @@ mod text;
 mod types;
 
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
-pub use frame::{NoopPainter, PaintView, Painter};
+pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
@@ -62,6 +64,11 @@ const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
 /// Derived from pixels rather than world units so it does not shrink to nothing when
 /// zoomed out.
 const BINDING_HOVER_PX: f64 = 32.0;
+/// How close, in screen pixels, a dropped arrow end must come to a side midpoint to snap
+/// onto it. Excalidraw's reach is its binding distance, 15 scene units at ordinary zoom
+/// (`packages/element/src/utils.ts:634-695`); kept in pixels here so it feels the same at
+/// every zoom, and capped per shape by `midpoint_snap_radius`.
+const MIDPOINT_SNAP_PX: f64 = 16.0;
 const ROTATE_GAP_PX: f64 = 26.0;
 /// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`: how near a click must be to an element.
 const COLLISION_PX: f64 = 10.0;
@@ -111,7 +118,17 @@ pub struct DrawEngine {
     /// Session state, not document state: which level you are looking at is a property of
     /// your view, so it is never serialized. Every click and every group operation is
     /// resolved relative to it by `selected_group_for`.
+    ///
+    /// A claim about the selection — "what is held is inside this" — so `set_selection`
+    /// drops it the moment that stops being true.
     editing_group_id: Option<String>,
+    /// What the press in progress selects if it turns out to be a click.
+    ///
+    /// A press on something already selected might start a drag of the whole selection,
+    /// so it leaves the selection alone; released without moving anything, it was a click,
+    /// and a click selects what it hit — `App.tsx:12183-12190`, `:12322-12345`. Without
+    /// it, a click on one member of a multi-selection could never narrow it.
+    narrow_on_click: Option<HashSet<String>>,
     /// The path being placed point by point, if one is.
     ///
     /// Distinct from [`Self::interaction`] because this is the one gesture that spans
@@ -136,12 +153,31 @@ pub struct DrawEngine {
     /// without that, binding is invisible until after the fact and feels like a
     /// coincidence rather than a tool.
     binding_highlight: Option<String>,
+    /// Where the arrow end being placed — or the arrow tool hovering — is, for the painter
+    /// to mark which side midpoint it would snap to. Set together with
+    /// `binding_highlight` and cleared with it.
+    binding_point: Option<crate::camera::Point>,
+    /// Whether the end being dropped anchors at the side midpoint its dot marks — the
+    /// drop decides, as Shift or the far end sharing the shape turns the snap off.
+    /// `None` between gestures, where a press binds on the dot's own terms.
+    binding_snaps: Option<bool>,
+    /// The other end's binding as it was when the drag of one end began, so a drag that
+    /// passes over the shape the other end is on and moves on gives that end back.
+    /// `(arrow id, the end being dragged, the other end's anchor)`. See `pointer_move.rs`.
+    bind_drag_origin: Option<(
+        String,
+        crate::scene::binding::End,
+        Option<crate::scene::binding::Anchor>,
+    )>,
     /// Laser strokes on screen, drawn and fading.
     ///
     /// Not part of the scene and never serialized: a laser mark is a gesture, like a
     /// finger pointed at a slide, and putting it in the document would put it in the
     /// undo stack, the autosave and every other participant's board.
     laser: crate::interaction::LaserTrails,
+    /// Each peer's laser trails, by peer id — see `peers.rs`. Session state like the
+    /// local ones: in no scene, no history, no save.
+    peer_lasers: HashMap<String, peers::PeerLaser>,
     /// What the eraser sweep in progress has marked, drawn faded until release deletes
     /// it. Session state, like the selection: nothing in the document changes until the
     /// sweep ends, so Escape can let it all go. See `eraser.rs`.
@@ -151,6 +187,9 @@ pub struct DrawEngine {
     erasing_revision: u64,
     /// Alt, as of the last pointer move. See `set_alt_held`.
     alt_held: bool,
+    /// Ctrl/Cmd, as of the last press or move: while held, an arrow end binds to nothing,
+    /// as in Excalidraw (`App.tsx:5753-5761`). See `set_ctrl_held`.
+    ctrl_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
     /// A peer's copy of an element with an uncommitted local change, refused because a
@@ -158,6 +197,10 @@ pub struct DrawEngine {
     /// it if the gesture came to nothing. See `stamp.rs`.
     remote_refused: std::collections::HashMap<String, DrawElement>,
     events: EngineEvents,
+    /// The other people in the room, and what they hold. See `peers.rs`.
+    peers: Vec<peers::Peer>,
+    /// Element id to the index in `peers` of whoever holds it.
+    held: HashMap<String, usize>,
 }
 
 impl Default for DrawEngine {
@@ -191,20 +234,28 @@ impl DrawEngine {
             interaction: None,
             editing_linear: None,
             editing_group_id: None,
+            narrow_on_click: None,
             multi_linear: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
             objects_snap: false,
             binding_highlight: None,
+            binding_point: None,
+            binding_snaps: None,
+            bind_drag_origin: None,
             laser: crate::interaction::LaserTrails::default(),
+            peer_lasers: HashMap::new(),
             erasing: HashSet::new(),
             erasing_revision: 0,
             alt_held: false,
+            ctrl_held: false,
             history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
             history_seq: 0,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
+            peers: Vec::new(),
+            held: HashMap::new(),
         }
     }
 
@@ -214,6 +265,7 @@ impl DrawEngine {
         // view can stay borrow-only. Without it a long presentation keeps one dead stroke
         // per flick and walks all of them every frame to draw nothing.
         self.laser.prune(now_ms);
+        self.prune_peer_lasers(now_ms);
     }
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
@@ -234,6 +286,7 @@ impl DrawEngine {
         // parsed twice more on the other side. The host supplied this scene; it has it.
         self.scene.forget_pending();
         self.reset_history();
+        self.revalidate_editing();
         self.request_draw();
     }
 
@@ -312,7 +365,11 @@ impl DrawEngine {
     /// Answering here rather than in each host is the point — otherwise every frontend
     /// has to learn, separately, every reason the engine might still have work to do.
     pub fn needs_frame(&self) -> bool {
-        !self.disposed && (self.dirty || self.in_motion() || self.laser.is_active(self.now_ms))
+        !self.disposed
+            && (self.dirty
+                || self.in_motion()
+                || self.laser.is_active(self.now_ms)
+                || self.peer_laser_active())
     }
 
     pub fn is_disposed(&self) -> bool {
@@ -355,7 +412,7 @@ impl DrawEngine {
     fn selectable(&self) -> Vec<DrawElement> {
         self.scene
             .iter_ordered()
-            .filter(|el| !el.locked())
+            .filter(|el| !self.untouchable(el))
             .cloned()
             .collect()
     }
@@ -371,7 +428,9 @@ impl DrawEngine {
         self.scene
             .iter_ordered()
             .rev()
-            .find(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, tolerance))
+            .find(|el| {
+                !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, tolerance)
+            })
             .cloned()
     }
 
@@ -418,6 +477,8 @@ impl DrawEngine {
         }
         self.tool = tool;
         self.events.tool = Some(tool);
+        // The arrow tool's hover suggestion goes with it.
+        self.clear_binding_suggestion();
         // Picking any tool but select puts down whatever was being held.
         // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
         // style panel: it offers the union of what the active tool can style and what the
@@ -486,7 +547,13 @@ impl DrawEngine {
     }
 
     fn set_selection(&mut self, ids: impl IntoIterator<Item = String>) {
-        self.selected_ids = ids.into_iter().collect();
+        // The one door every selection goes through — a click, a marquee, a lasso, select
+        // all, a group expanding — so what someone else holds can never be let in, and
+        // nothing that acts on the selection can touch it. See `peers.rs`.
+        self.selected_ids = ids
+            .into_iter()
+            .filter(|id| !self.held.contains_key(id))
+            .collect();
         // The point editor belongs to one element, and closes the moment that element
         // stops being the only thing held. Without this it survives onto whatever is
         // picked up next, which shows a stranger's corners over the new selection.
@@ -495,8 +562,44 @@ impl DrawEngine {
                 self.editing_linear = None;
             }
         }
+        self.revalidate_editing();
         self.events.selection = Some(self.get_selection());
         self.request_draw();
+    }
+
+    /// Drops the group being edited unless it is still true: everything held is inside
+    /// it and it is still a group. Checked on every selection change rather than at each
+    /// way out — an empty click, select-all, an undo — because it used to be cleared at
+    /// two of them, and every one it missed left clicks and marquees board-wide resolving
+    /// inside a group they had nothing to do with. The scene changing under a selection —
+    /// a peer's patch, a board loaded, the eraser — checks it too.
+    pub(crate) fn revalidate_editing(&mut self) {
+        if let Some(editing) = self.editing_group_id.as_deref() {
+            if !crate::edit::keeps_editing(self.scene.iter_ordered(), &self.selected_ids, editing) {
+                self.editing_group_id = None;
+            }
+        }
+    }
+
+    /// Selects what a marquee or lasso caught, grown to whole groups.
+    ///
+    /// At the level being edited when all of it lies inside that group; otherwise the
+    /// group is left first and it grows at the top level. Growing inside and then leaving
+    /// held whatever was caught outside without its group, beside *part* of the one being
+    /// edited — the state Ctrl+G turns into groups that overlap instead of nesting.
+    ///
+    /// A deliberate divergence for a shift-drag that reaches outside the group: the oracle
+    /// keeps the group there and grows each side differently (`App.tsx:11331-11345`),
+    /// which is that same state.
+    fn select_caught(&mut self, ids: HashSet<String>) {
+        if let Some(editing) = self.editing_group_id.as_deref() {
+            if !crate::edit::keeps_editing(self.scene.iter_ordered(), &ids, editing) {
+                self.editing_group_id = None;
+            }
+        }
+        let editing = self.editing_group_id.as_deref();
+        let grown = crate::edit::expand_within(self.scene.iter_ordered(), ids, editing);
+        self.set_selection(grown);
     }
 
     /// Whether this element offers its individual points rather than a bounding box.
@@ -552,7 +655,11 @@ impl DrawEngine {
         self.set_selection(ids);
     }
 
+    /// A top-level selection even when everything is inside the group being edited
+    /// (`actionSelectAll.ts:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
+    /// the top rather than nesting a new level inside that group.
     pub fn select_all(&mut self) {
+        self.editing_group_id = None;
         let ids = self.scene.ordered_cloned().into_iter().map(|el| el.id);
         self.set_selection(ids);
     }
@@ -588,28 +695,36 @@ impl DrawEngine {
         self.editing_group_id.clone()
     }
 
-    /// Steps back out to the top level.
+    /// Steps back out of the group being edited, **one** level: into the group directly
+    /// around it, or to the top from the outermost — `actionDeselect.ts:36-62`, `:72-111`.
+    /// Leaving every level at once made three double clicks down a one-key trip back to
+    /// nothing.
     ///
-    /// Not a selection change on its own: leaving a group keeps what is held, so the
-    /// next click behaves normally rather than the selection vanishing under you.
+    /// What is held is kept, grown to the level stepped out to, so the next click behaves
+    /// normally rather than the selection vanishing under you.
     pub(crate) fn leave_group(&mut self) -> bool {
-        if self.editing_group_id.take().is_none() {
+        let Some(editing) = self.editing_group_id.take() else {
             return false;
-        }
+        };
+        // Everything held is inside `editing` (`set_selection` sees to it), so whatever
+        // is around it is around all of them: the first one that has a next id out says.
+        self.editing_group_id = self
+            .scene
+            .iter_ordered()
+            .filter(|el| self.selected_ids.contains(&el.id))
+            .find_map(|el| crate::edit::parent_group(el, &editing))
+            .cloned();
         // The selection is re-derived at the new level, so stepping out leaves you
         // holding the group you stepped out of rather than the pieces you were looking
         // at inside it. Without this the old inner selection survives, and the next
         // click on one of its members reads as "grab what is already selected" and never
         // re-expands — so the group could be entered but never properly left.
-        if !self.selected_ids.is_empty() {
-            let ids = crate::edit::expand_within(
-                self.scene.iter_ordered(),
-                self.selected_ids.iter().cloned(),
-                None,
-            );
-            self.set_selection(ids);
-        }
-        self.request_draw();
+        let ids = crate::edit::expand_within(
+            self.scene.iter_ordered(),
+            self.selected_ids.iter().cloned(),
+            self.editing_group_id.as_deref(),
+        );
+        self.set_selection(ids);
         true
     }
 

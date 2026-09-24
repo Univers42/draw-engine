@@ -31,7 +31,12 @@ impl DrawEngine {
         let touched: Vec<String> = self
             .scene
             .iter_ordered()
-            .filter(|el| !el.locked() && crate::segment_hits_element(el, from, to, tolerance))
+            // Not what someone else holds: erasing a shape a colleague is moving only for
+            // their next edit to bring it back is correct by the merge rule, and nothing
+            // like what either of them meant.
+            .filter(|el| {
+                !self.untouchable(el) && crate::segment_hits_element(el, from, to, tolerance)
+            })
             .map(|el| el.id.clone())
             .collect();
         if touched.is_empty() {
@@ -153,11 +158,12 @@ impl DrawEngine {
             .collect();
         for (id, start, end) in released {
             self.scene.update(&id, |arrow| {
+                use crate::scene::binding::{set_anchor, End};
                 if start {
-                    arrow.start_binding = None;
+                    set_anchor(arrow, End::Start, None);
                 }
                 if end {
-                    arrow.end_binding = None;
+                    set_anchor(arrow, End::End, None);
                 }
             });
         }
@@ -171,6 +177,7 @@ impl DrawEngine {
             }
         }
         if selection_changed {
+            self.revalidate_editing();
             self.events.selection = Some(self.get_selection());
         }
         self.push_history();

@@ -45,6 +45,98 @@ pub fn is_in_group(element: &DrawElement, group: &str) -> bool {
     element.group_ids.iter().any(|id| id == group)
 }
 
+/// Whether `group` is still a group: at least two live elements carry it.
+///
+/// Deleting all but one member leaves the id on the survivor, and a group of one is no
+/// group — the oracle drops it wherever it would select it (`selectGroup`,
+/// `packages/element/src/groups.ts:42-54`; `_selectGroups`, `:134-141`). So it cannot be
+/// stepped into, ungrouped, or kept as the level being edited.
+pub fn is_live_group<'a>(elements: impl Iterator<Item = &'a DrawElement>, group: &str) -> bool {
+    elements
+        .filter(|el| !el.is_deleted && is_in_group(el, group))
+        .nth(1)
+        .is_some()
+}
+
+/// The group directly around `group` on `element`, if any — the next id out in its
+/// innermost → outermost list. `getParentEditingGroupId`,
+/// `packages/excalidraw/actions/actionDeselect.ts:36-62`.
+pub fn parent_group<'a>(element: &'a DrawElement, group: &str) -> Option<&'a String> {
+    let index = element.group_ids.iter().position(|id| id == group)?;
+    element.group_ids.get(index + 1)
+}
+
+/// Whether `editing` can stay the group being edited once `selected` is what is held.
+///
+/// The edited group is a claim about the selection — "everything held is inside this" —
+/// and it holds only while something is held, all of it is inside, and the group is still
+/// a group. The oracle drops it wherever one of those stops being true: on an empty
+/// selection (`clearSelection`, `packages/excalidraw/components/App.tsx:12889-12902`;
+/// `groups.ts:188-196`), on a press outside it (`App.tsx:9639-9650`), and once its group
+/// is gone (`packages/element/src/delta.ts:806-818`). Kept past any of them, every later
+/// click and marquee was resolved inside a group it had nothing to do with.
+pub fn keeps_editing<'a, I>(elements: I, selected: &HashSet<String>, editing: &str) -> bool
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let mut held = elements
+        .clone()
+        .filter(|el| !el.is_deleted && selected.contains(&el.id))
+        .peekable();
+    held.peek().is_some()
+        && held.all(|el| is_in_group(el, editing))
+        && is_live_group(elements, editing)
+}
+
+/// Where deleting inside `editing` leaves you: the level still being edited, and what is
+/// held there. `elements` is the scene after the deletion.
+///
+/// `actionDeleteSelected.tsx:130-170`, then `handleGroupEditingState` (`:190-205`), which
+/// overrides the selection with the first member of whatever level is still open:
+///
+/// - two or more left: the group stays open, holding its first member;
+/// - one left: that level is no group now, so it steps up to the group around it, if
+///   that one still is;
+/// - otherwise the group is left, holding the survivor at the top level.
+///
+/// Only what `touchable` accepts is held — the oracle takes the first sibling whatever it
+/// is, but here a locked or peer-held element is never picked up, and holding one handed
+/// it to the next Delete. With none left to hold, nothing is.
+pub fn after_delete_within<'a, I>(
+    elements: I,
+    editing: &str,
+    touchable: impl Fn(&DrawElement) -> bool,
+) -> (Option<String>, HashSet<String>)
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let Some(any) = elements
+        .clone()
+        .find(|el| !el.is_deleted && is_in_group(el, editing))
+    else {
+        return (None, HashSet::new());
+    };
+    let level = if is_live_group(elements.clone(), editing) {
+        Some(editing)
+    } else {
+        parent_group(any, editing)
+            .map(String::as_str)
+            .filter(|parent| is_live_group(elements.clone(), parent))
+    };
+    let first_in = |group: &str| {
+        elements
+            .clone()
+            .find(|el| !el.is_deleted && is_in_group(el, group) && touchable(el))
+    };
+    match level.and_then(|level| Some((level, first_in(level)?))) {
+        Some((level, held)) => (Some(level.to_string()), HashSet::from([held.id.clone()])),
+        None => match first_in(editing) {
+            Some(survivor) => (None, expand_within(elements, [survivor.id.clone()], None)),
+            None => (None, HashSet::new()),
+        },
+    }
+}
+
 /// Grows a set of ids to cover every element of every group it touches.
 ///
 /// Group-aware through [`selected_group_for`], so what a click selects and what a
@@ -96,11 +188,61 @@ where
     out
 }
 
+/// What moving, resizing or turning the selection carries: the unlocked part of it,
+/// grown back to the groups that part belongs to, and nothing that is not selected.
+///
+/// A locked element is never picked up on its own, but a group is one thing. The oracle
+/// selects a group's members with no lock filter (`packages/element/src/groups.ts:94-132`)
+/// and drags every selected element, refusing only when *every* one is locked
+/// (`packages/excalidraw/components/App.tsx:10899-10904`). Filtering locked elements out
+/// one by one instead left a locked member behind while the rest of its group moved.
+///
+/// Grown from the unlocked part rather than taken whole because a locked element can be
+/// in the selection here without a group to carry it: Select All takes locked elements
+/// so they can be unlocked from the menu, where the oracle's skips them
+/// (`actionSelectAll.ts:32-38`). Such an element, or a group locked throughout, stays.
+pub fn carried_by<'a, I>(
+    elements: I,
+    selected: &HashSet<String>,
+    editing: Option<&str>,
+) -> HashSet<String>
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let unlocked = elements
+        .clone()
+        .filter(|el| selected.contains(&el.id) && !el.locked())
+        .map(|el| el.id.clone());
+    let mut carried = expand_within(elements, unlocked, editing);
+    carried.retain(|id| selected.contains(id));
+    carried
+}
+
 pub fn expand_to_groups(
     elements: &[DrawElement],
     ids: impl IntoIterator<Item = String>,
 ) -> HashSet<String> {
     expand_to_groups_among(elements.iter(), ids)
+}
+
+/// `ids` and the label of every shape among them.
+///
+/// A label is never selected on its own — a click on the words selects the shape — so
+/// whatever acts on a selection reads the labels in, or a shape leaves its words behind:
+/// `getSelectedElements` with `includeBoundTextElement: true`,
+/// `packages/element/src/selection.ts:184-193`.
+pub fn with_labels<'a>(
+    elements: impl IntoIterator<Item = &'a DrawElement>,
+    ids: &HashSet<String>,
+) -> HashSet<String> {
+    let mut out = ids.clone();
+    out.extend(
+        elements
+            .into_iter()
+            .filter(|el| ids.contains(&el.id))
+            .filter_map(|el| el.bound_text_id.clone()),
+    );
+    out
 }
 
 /// Adds `group_id` as a new level around `ids`.
@@ -122,6 +264,11 @@ pub fn group_patches(
     if is_single_group(elements, ids, editing) {
         return Vec::new();
     }
+    // A label joins the group with its shape, as the oracle groups the selection read
+    // with `includeBoundTextElement: true`, `packages/excalidraw/actions/actionGroup.tsx:
+    // 96-101`. Left out, the words were outside the group their shape is in, and every
+    // operation on the group after that treated the two apart.
+    let ids = with_labels(elements, ids);
     elements
         .iter()
         .filter(|el| ids.contains(&el.id) && !el.is_deleted)
@@ -142,16 +289,22 @@ pub fn group_patches(
 /// the level you can see, and ungrouping twice peels twice rather than flattening on the
 /// first press. `removeFromSelectedGroups`, `groups.ts:327-330`, observed on
 /// excalidraw.com: `[inner, outer]` becomes `[inner]`.
+///
+/// A group of one is not a level: the oracle never selects it (`groups.ts:134-141`), so
+/// `actionUngroup` finds nothing to remove (`actionGroup.tsx:226-231`) and the dead id
+/// stays on its survivor.
 pub fn ungroup_patches(
     elements: &[DrawElement],
     ids: &HashSet<String>,
     editing: Option<&str>,
 ) -> Vec<DrawElement> {
-    let doomed: HashSet<String> = elements
+    let mut doomed: HashSet<String> = elements
         .iter()
         .filter(|el| ids.contains(&el.id) && !el.is_deleted)
         .filter_map(|el| selected_group_for(el, editing).cloned())
         .collect();
+    // Once per group, not per selected element: a scan of the board each.
+    doomed.retain(|group| is_live_group(elements.iter(), group));
     if doomed.is_empty() {
         return Vec::new();
     }
@@ -176,10 +329,14 @@ pub fn is_single_group(
     ids: &HashSet<String>,
     editing: Option<&str>,
 ) -> bool {
+    // A label is carried by its shape and settles nothing here. It may or may not be in
+    // the selection — a click on a group holds it, a click on its shape alone does not —
+    // and on a board saved before labels joined groups it is in none.
+    let shape = |el: &DrawElement| !el.is_deleted && el.container_id.is_none();
     let mut group: Option<&String> = None;
     let mut count = 0;
     for element in elements {
-        if !ids.contains(&element.id) || element.is_deleted {
+        if !ids.contains(&element.id) || !shape(element) {
             continue;
         }
         count += 1;
@@ -194,14 +351,18 @@ pub fn is_single_group(
             _ => {}
         }
     }
-    if count < 2 || group.is_none() {
+    // One shape is enough once its label shares the group: a group holding a labelled
+    // shape and nothing else is still a group, as it is to the oracle's
+    // `allElementsInSameGroup` (`actionGroup.tsx:73-83`). Counted as two, it wrapped
+    // itself in a new level on every Ctrl+G.
+    let Some(group) = group.filter(|group| count > 0 && is_live_group(elements.iter(), group))
+    else {
         return false;
-    }
-    let group = group.expect("checked just above");
+    };
     // Every member of that group has to be selected, or this is a part of a group rather
     // than the group itself.
     elements
         .iter()
-        .filter(|el| !el.is_deleted && is_in_group(el, group))
+        .filter(|el| shape(el) && is_in_group(el, group))
         .all(|el| ids.contains(&el.id))
 }

@@ -43,6 +43,19 @@ pub enum Arrowhead {
     Bar,
 }
 
+/// How a bound arrow end sits against the shape it is bound to.
+///
+/// Excalidraw's `BindMode` (`packages/element/src/types.ts:316-333`), less the `skip` mode
+/// only its feature-flagged strategy produces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BindMode {
+    /// The end sits exactly on its anchor, wherever inside the shape that is.
+    Inside,
+    /// The end aims at its anchor but stops a gap clear of the outline.
+    Orbit,
+}
+
 pub const ARROWHEADS: [Arrowhead; 6] = [
     Arrowhead::None,
     Arrowhead::Arrow,
@@ -191,6 +204,18 @@ pub struct DrawElement {
     pub start_binding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_binding: Option<String>,
+    /// Where on its shape the start is anchored, as a ratio of the shape's own unrotated
+    /// width and height — Excalidraw's `fixedPoint`. Absent on every arrow bound before
+    /// anchors existed, which reads as the centre: exactly where those were always aimed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_fixed_point: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_fixed_point: Option<[f64; 2]>,
+    /// Absent reads as [`BindMode::Orbit`], again how every older binding was drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_bind_mode: Option<BindMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_bind_mode: Option<BindMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_arrowhead: Option<Arrowhead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -335,6 +360,10 @@ pub fn create_element(
         points: None,
         start_binding: None,
         end_binding: None,
+        start_fixed_point: None,
+        end_fixed_point: None,
+        start_bind_mode: None,
+        end_bind_mode: None,
         start_arrowhead: None,
         end_arrowhead: None,
         text: None,

@@ -574,3 +574,98 @@ fn a_disposed_engine_asks_for_nothing() {
         "kept the frame loop alive after destroy"
     );
 }
+
+/// A peer's laser, as the host reports it from their pointer: a stroke along x, pressed
+/// from the first point, and released at the last when `release` is set.
+fn peer_stroke(engine: &mut DrawEngine, id: &str, color: &str, release: bool) {
+    for i in 0..12 {
+        engine.set_now(i as f64 * 8.0);
+        engine.peer_laser(id, color, 100.0 + i as f64 * 9.0, 200.0, true);
+    }
+    if release {
+        engine.peer_laser(id, color, 210.0, 200.0, false);
+    }
+}
+
+#[test]
+fn a_peers_laser_is_drawn_here_in_their_colour() {
+    // It was drawn on their screen alone, which made the laser useless for pointing
+    // something out to anyone.
+    let mut engine = engine_with_scene(vec![]);
+    peer_stroke(&mut engine, "ana", "#2f9e44", false);
+
+    let view = engine.paint_view();
+    assert!(view.laser.is_empty(), "taken for this screen's own laser");
+    assert_eq!(view.peer_lasers.len(), 1);
+    let (color, outlines) = &view.peer_lasers[0];
+    assert_eq!(color, "#2f9e44");
+    assert_eq!(outlines.len(), 1);
+    assert!(span_x(&outlines[0]) > 50.0, "not a trail along their path");
+    drop(view);
+    assert!(engine.needs_frame(), "a trail on screen asks for frames");
+}
+
+#[test]
+fn a_peers_trail_fades_once_they_let_go() {
+    let mut engine = engine_with_scene(vec![]);
+    peer_stroke(&mut engine, "ana", "#2f9e44", true);
+
+    engine.set_now(150.0);
+    assert!(!engine.paint_view().peer_lasers.is_empty());
+
+    engine.set_now(LASER_DECAY_TIME_MS * 2.0);
+    assert!(engine.paint_view().peer_lasers.is_empty());
+    engine.take_dirty();
+    assert!(
+        !engine.needs_frame(),
+        "still asking for frames with nothing to show"
+    );
+}
+
+#[test]
+fn a_trail_whose_release_never_arrived_fades_all_the_same() {
+    // Cursor frames are dropped behind a clogged link, the release among them.
+    let mut engine = engine_with_scene(vec![]);
+    peer_stroke(&mut engine, "ana", "#2f9e44", false);
+
+    engine.set_now(LASER_DECAY_TIME_MS * 2.0);
+    assert!(engine.paint_view().peer_lasers.is_empty());
+    engine.take_dirty();
+    assert!(!engine.needs_frame());
+
+    // And a new press starts a new stroke rather than joining the old one.
+    engine.set_now(5_000.0);
+    engine.peer_laser("ana", "#2f9e44", 500.0, 500.0, true);
+    engine.set_now(5_008.0);
+    engine.peer_laser("ana", "#2f9e44", 540.0, 500.0, true);
+    let view = engine.paint_view();
+    let outline = &view.peer_lasers[0].1[0];
+    let min_x = outline.iter().fold(f64::MAX, |a, p| a.min(p.x));
+    assert!(min_x > 450.0, "joined to the stroke from seconds ago");
+}
+
+#[test]
+fn two_peers_have_a_trail_each() {
+    let mut engine = engine_with_scene(vec![]);
+    peer_stroke(&mut engine, "ana", "#2f9e44", false);
+    peer_stroke(&mut engine, "ben", "#1971c2", false);
+    let mut colors: Vec<String> = engine
+        .paint_view()
+        .peer_lasers
+        .iter()
+        .map(|(color, _)| color.clone())
+        .collect();
+    colors.sort();
+    assert_eq!(colors, vec!["#1971c2", "#2f9e44"]);
+}
+
+#[test]
+fn a_pointer_merely_passing_draws_nothing() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_now(0.0);
+    engine.take_dirty();
+    engine.peer_laser("ana", "#2f9e44", 10.0, 10.0, false);
+    engine.peer_laser("ana", "#2f9e44", 50.0, 10.0, false);
+    assert!(engine.paint_view().peer_lasers.is_empty());
+    assert!(!engine.needs_frame());
+}

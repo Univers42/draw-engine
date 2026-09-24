@@ -2,7 +2,7 @@ use crate::camera::Point;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
-use crate::scene::binding::bindable_among;
+use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
 use crate::scene::{scene_bounds, DrawElement};
 use crate::selection::{resize_element, rotate_element, HandleKind};
 
@@ -67,6 +67,7 @@ impl DrawEngine {
                 ) {
                     self.scene.put(next);
                 }
+                self.release_ends_outside(ids);
                 // Bound arrows have to keep up with the shapes they point at. Without
                 // this they held their old attachment for the whole gesture and jumped
                 // only on release, so a group could be scaled while its arrows sat
@@ -84,6 +85,7 @@ impl DrawEngine {
                 {
                     self.scene.put(next);
                 }
+                self.release_ends_outside(ids);
                 self.apply_bindings();
                 self.request_draw();
                 Some(it)
@@ -103,9 +105,13 @@ impl DrawEngine {
                     handle: next,
                 })
             }
-            Interaction::Linear { ref id, start } => {
+            Interaction::Linear { ref id, start, .. } => {
                 self.move_linear(id, start, world, square);
-                Some(it)
+                Some(Interaction::Linear {
+                    id: id.clone(),
+                    start,
+                    pointer: world,
+                })
             }
             // Dragging with the button still down after a press that placed a point: the
             // preview keeps tracking, so a point can be nudged before the release fixes
@@ -184,6 +190,13 @@ impl DrawEngine {
             Interaction::Rotate { ref id } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     element.angle = rotate_element(&element, world.x, world.y);
+                    // An arrow turned on its own lets go of both ends, as in Excalidraw
+                    // (`packages/element/src/resizeElements.ts:241-252`): its ends are being
+                    // placed by the turn, and holding them to shapes would fight it.
+                    if crate::scene::binding::is_binding_element(&element) {
+                        set_anchor(&mut element, End::Start, None);
+                        set_anchor(&mut element, End::End, None);
+                    }
                     self.scene.put(element);
                     // Turning a shape moves the perimeter its arrows attach to.
                     self.apply_bindings();
@@ -254,10 +267,10 @@ impl DrawEngine {
 
         // Re-resolve the binding for whichever end moved, so dropping an endpoint on a
         // shape attaches it and dragging it away releases it.
-        let moved = self.rebind_endpoint(moved, handle);
+        let moved = self.rebind_endpoint(moved, handle, square);
 
         self.scene.put(moved);
-        self.refresh_binding_highlight(handle, target);
+        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.request_draw();
     }
 
@@ -287,47 +300,35 @@ impl DrawEngine {
 
     /// Attaches or releases a binding for whichever end just moved.
     ///
-    /// Only the two ends bind; a point in the middle of a path is not an endpoint and
-    /// has nothing to attach to. Dragging an end onto a shape binds it, dragging it
-    /// clear releases it — so the gesture is reversible, which the previous
-    /// bind-on-create-only behaviour was not.
+    /// Only the two ends of an arrow bind; a point in the middle of a path is not an end,
+    /// and a line binds to nothing. Dragging an end onto a shape binds it, dragging it
+    /// clear releases it — so the gesture is reversible.
     fn rebind_endpoint(
-        &self,
+        &mut self,
         mut element: crate::scene::DrawElement,
         handle: crate::selection::LinearHandle,
+        angle_locked: bool,
     ) -> crate::scene::DrawElement {
         let points = element.points.as_ref().map(Vec::len).unwrap_or(0);
         let which = match handle {
-            crate::selection::LinearHandle::Point(0) => Some(false),
-            crate::selection::LinearHandle::Point(i) if i + 1 == points => Some(true),
+            crate::selection::LinearHandle::Point(0) => Some(End::Start),
+            crate::selection::LinearHandle::Point(i) if i + 1 == points => Some(End::End),
             _ => None,
         };
-        let Some(is_end) = which else {
+        let Some(end) = which.filter(|_| crate::scene::binding::is_binding_element(&element))
+        else {
+            self.binding_highlight = None;
+            self.binding_point = None;
             return element;
         };
 
         let world = crate::selection::linear::world_points(&element);
-        let Some(tip) = (if is_end { world.last() } else { world.first() }) else {
-            return element;
+        let tip = match end {
+            End::Start => world.first(),
+            End::End => world.last(),
         };
-
-        // Walked by reference. This used to clone the whole document, and so did the
-        // highlight refresh immediately after it — two deep copies of every element on
-        // the board for every single pointer move while dragging one endpoint.
-        let tolerance = self.binding_tolerance();
-        let target = crate::scene::binding::bindable_among(
-            self.scene.iter_ordered().rev(),
-            tip.x,
-            tip.y,
-            tolerance,
-            Some(&element.id),
-        )
-        .map(|shape| shape.id.clone());
-
-        if is_end {
-            element.end_binding = target;
-        } else {
-            element.start_binding = target;
+        if let Some(&tip) = tip {
+            self.bind_dropped_end(&mut element, end, tip, angle_locked);
         }
         element
     }
@@ -342,64 +343,138 @@ impl DrawEngine {
         super::BINDING_HOVER_PX / self.camera.scale
     }
 
-    /// Records which shape, if any, the dragged endpoint would bind to.
+    /// What dropping one end of `element` at `world` binds it to, with the modifiers
+    /// held: nothing at all while Ctrl/Cmd is down, exactly where it is with Alt.
     ///
-    /// The painter reads this to outline that shape, so you can see the attachment
-    /// before you commit to it.
-    fn refresh_binding_highlight(&mut self, handle: crate::selection::LinearHandle, at: Point) {
-        let is_endpoint = matches!(handle, crate::selection::LinearHandle::Point(_));
-        if !is_endpoint {
-            self.binding_highlight = None;
-            return;
+    /// Returns that end's binding and, when a drop on the other end's shape changes it,
+    /// the other end's. See [`anchor_for_drop`].
+    pub(crate) fn drop_binding(
+        &self,
+        element: &DrawElement,
+        end: End,
+        world: Point,
+        angle_locked: bool,
+    ) -> (Option<Anchor>, Option<Anchor>) {
+        if self.ctrl_held || !crate::scene::binding::is_binding_element(element) {
+            return (None, None);
         }
-        let tolerance = self.binding_tolerance();
-        self.binding_highlight = crate::scene::binding::bindable_among(
-            self.scene.iter_ordered().rev(),
-            at.x,
-            at.y,
-            tolerance,
-            None,
+        let drop = EndDrop {
+            pointer: world,
+            tolerance: self.binding_tolerance(),
+            snap: super::MIDPOINT_SNAP_PX / self.camera.scale,
+            exact: self.alt_held,
+            angle_locked,
+            pixel: 1.0 / self.camera.scale,
+            grid: self.grid.enabled && self.grid.snap,
+        };
+        let scene = &self.scene;
+        anchor_for_drop(
+            scene.iter_ordered().rev(),
+            &|id| scene.get(id),
+            element,
+            end,
+            &drop,
         )
-        .map(|shape| shape.id.clone());
+    }
+
+    /// Binds the end of `element` being dragged to wherever `world` is, and shows it.
+    ///
+    /// Dropping an end on the shape the other end is bound to puts both inside it — but
+    /// only while it is there. The other end's binding as this drag found it is
+    /// remembered, and given back the moment the drag moves on, so passing across the
+    /// far shape on the way somewhere else leaves no trace. (Excalidraw keeps the other
+    /// end inside for the rest of a new arrow's drag; nobody drawing across a shape means
+    /// to pin the arrow's start to wherever it happened to begin.)
+    fn bind_dropped_end(
+        &mut self,
+        element: &mut DrawElement,
+        end: End,
+        world: Point,
+        angle_locked: bool,
+    ) {
+        let same_drag = self
+            .bind_drag_origin
+            .as_ref()
+            .is_some_and(|(id, dragged, _)| id == &element.id && *dragged == end);
+        if !same_drag {
+            self.bind_drag_origin = Some((element.id.clone(), end, anchor(element, end.other())));
+        }
+        let original_other = self
+            .bind_drag_origin
+            .as_ref()
+            .and_then(|(_, _, other)| other.clone());
+        set_anchor(element, end.other(), original_other);
+
+        let (this, other) = self.drop_binding(element, end, world, angle_locked);
+        self.binding_snaps = Some(self.drop_snaps(this.as_ref(), world));
+        self.binding_highlight = this.as_ref().map(|a| a.element_id.clone());
+        self.binding_point = Some(world);
+        set_anchor(element, end, this);
+        if let Some(other) = other {
+            set_anchor(element, end.other(), Some(other));
+        }
+    }
+
+    /// Lets go of every arrow end in `ids` bound to a shape that is not in `ids`.
+    ///
+    /// For a group being resized or turned: its arrows move with it, rigidly, so an end
+    /// bound to a shape left outside it can no longer be where that binding says. Excalidraw
+    /// unbinds it (`packages/element/src/resizeElements.ts:464-475`, `1550-1569`) rather
+    /// than bend the arrow back to a shape the transform has carried it away from.
+    fn release_ends_outside(&mut self, ids: &[String]) {
+        let inside: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let released: Vec<DrawElement> = ids
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| crate::scene::binding::is_binding_element(el))
+            .filter_map(|el| {
+                let outside = |end: End| {
+                    anchor(el, end).is_some_and(|a| !inside.contains(a.element_id.as_str()))
+                };
+                let (start, finish) = (outside(End::Start), outside(End::End));
+                if !start && !finish {
+                    return None;
+                }
+                let mut next = el.clone();
+                if start {
+                    set_anchor(&mut next, End::Start, None);
+                }
+                if finish {
+                    set_anchor(&mut next, End::End, None);
+                }
+                Some(next)
+            })
+            .collect();
+        for element in released {
+            self.scene.put(element);
+        }
     }
 
     /// Extends the arrow or line currently being drawn to the pointer.
     ///
-    /// The endpoint binds on the same terms as one dragged later: within
-    /// [`Self::binding_tolerance`] of a shape, not strictly inside it. It used to require
-    /// a tolerance of zero here and a generous one everywhere else, so an arrow drawn
-    /// onto a shape refused to attach while the identical gesture performed a moment
-    /// later did. The shape it would attach to is recorded for the painter, so the
-    /// perimeter lights up **while** the arrow is being drawn, not only afterwards.
+    /// The end binds on the same terms as one dragged later — see [`Self::bind_dropped_end`]
+    /// — so an arrow drawn onto a shape attaches exactly as it would if its end were
+    /// dragged there afterwards. The shape it would attach to is recorded for the painter,
+    /// so the outline lights up **while** the arrow is being drawn, not only afterwards.
     fn move_linear(&mut self, id: &str, start: Point, world: Point, square: bool) {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
-        let tolerance = self.binding_tolerance();
-        // Only an arrow looks for something to attach to. A line reaching the edge of a
-        // shape means nothing more than a line reaching that spot.
-        let over = crate::scene::binding::is_binding_element(&element)
-            .then(|| {
-                bindable_among(
-                    self.scene.iter_ordered().rev(),
-                    world.x,
-                    world.y,
-                    tolerance,
-                    Some(id),
-                )
-                .map(|el| el.id.clone())
-            })
-            .flatten();
-
         let drag = linear_from_drag(start.x, start.y, world.x, world.y, square);
         element.x = drag.x;
         element.y = drag.y;
         element.width = drag.width;
         element.height = drag.height;
         element.points = Some(drag.points);
-        element.end_binding = over.filter(|hit| Some(hit) != element.start_binding.as_ref());
-        self.binding_highlight = element.end_binding.clone();
+        if crate::scene::binding::is_binding_element(&element) {
+            let tip = crate::selection::linear::world_points(&element)
+                .last()
+                .copied()
+                .unwrap_or(world);
+            self.bind_dropped_end(&mut element, End::End, tip, square);
+        }
         self.scene.put(element);
+        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.request_draw();
     }
 
@@ -447,10 +522,10 @@ impl DrawEngine {
                 }
                 let mut next = el.clone();
                 if drop_start {
-                    next.start_binding = None;
+                    set_anchor(&mut next, End::Start, None);
                 }
                 if drop_end {
-                    next.end_binding = None;
+                    set_anchor(&mut next, End::End, None);
                 }
                 Some(next)
             })
@@ -470,6 +545,10 @@ impl DrawEngine {
         else {
             return it;
         };
+        // Any move makes the press a drag, even one that comes back to where it started:
+        // the oracle's `drag.hasOccurred` (`App.tsx:10918-10921`). Judged by where the
+        // elements ended, a drag home — or one shorter than a grid cell — read as a click.
+        self.narrow_on_click = None;
         let mut dx = world.x - start.x;
         let mut dy = world.y - start.y;
         self.snap_guides.clear();
@@ -560,6 +639,12 @@ impl DrawEngine {
         // be scaled to match, from the ring the drag started with.
         if let Some(points) = origin_points {
             scale_ring(&mut element, points, &geom);
+        }
+        // Resizing an arrow by its box places its ends, so they let go of their shapes, as
+        // in Excalidraw (`packages/element/src/resizeElements.ts:930-946`).
+        if crate::scene::binding::is_binding_element(&element) {
+            set_anchor(&mut element, End::Start, None);
+            set_anchor(&mut element, End::End, None);
         }
         self.scene.put(element);
         self.apply_bindings();

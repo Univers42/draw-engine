@@ -238,6 +238,15 @@ impl Scene {
         matches!(self.baseline.get(id), Some(None))
     }
 
+    /// What every element changed since the last commit was before it — `None` for one
+    /// the change created. Left in place: see `engine/peers.rs`, which puts them back.
+    pub(crate) fn baseline(&self) -> Vec<(String, Option<Rc<DrawElement>>)> {
+        self.baseline
+            .iter()
+            .map(|(id, before)| (id.clone(), before.clone()))
+            .collect()
+    }
+
     pub(crate) fn take_baseline(&mut self) -> HashMap<String, Option<Rc<DrawElement>>> {
         std::mem::take(&mut self.baseline)
     }
@@ -410,6 +419,45 @@ impl Scene {
                 self.structural = true;
             }
         }
+    }
+
+    /// Moves `ids`, in the order given, to directly above `anchor`.
+    ///
+    /// For something new that belongs beside an existing element rather than on top of
+    /// the board — a label above its shape, a copy inside the group it was made in —
+    /// without cloning the board to say so. Nothing happens when they are already there.
+    pub(crate) fn place_above(&mut self, ids: &[String], anchor: &str) {
+        let Some(&at) = self.index.get(anchor) else {
+            return;
+        };
+        let in_place = ids
+            .iter()
+            .enumerate()
+            .all(|(k, id)| self.index.get(id) == Some(&(at + 1 + k)));
+        let moving: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        if in_place || moving.contains(anchor) {
+            return;
+        }
+        self.record(Change::Rearranged);
+        self.static_revision = next_revision();
+        self.note_order();
+        let mut taken: HashMap<String, Rc<DrawElement>> = HashMap::new();
+        let mut rest: Vec<Rc<DrawElement>> = Vec::with_capacity(self.elements.len());
+        for element in self.elements.drain(..) {
+            if moving.contains(element.id.as_str()) {
+                taken.insert(element.id.clone(), element);
+            } else {
+                rest.push(element);
+            }
+        }
+        let at = rest
+            .iter()
+            .position(|el| el.id == anchor)
+            .map_or(rest.len(), |i| i + 1);
+        rest.splice(at..at, ids.iter().filter_map(|id| taken.remove(id)));
+        self.elements = rest;
+        self.reindex();
+        self.structural = true;
     }
 
     /// Replaces the z-order with `live`, keeping tombstones at the back of the stack.

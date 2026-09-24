@@ -47,6 +47,8 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     spaceHeld: false,
     moveRaf: 0,
     pendingMove: null,
+    hoverRaf: 0,
+    pendingHover: null,
     toolBeforePenEraser: null,
   };
 

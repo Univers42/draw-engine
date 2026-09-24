@@ -29,6 +29,7 @@ use crate::camera::Point;
 use crate::engine::types::MultiLinear;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
+use crate::scene::binding::{anchor, is_inside, set_anchor, Anchor, End};
 use crate::scene::{
     bump_version, is_path_a_loop_within, DrawElement, DrawElementType, LINE_CONFIRM_THRESHOLD,
 };
@@ -129,8 +130,55 @@ impl DrawEngine {
             }
         }
 
+        // Clicking beside a shape the pending point would bind to ends the path there,
+        // the same as clicking back on the point just placed: a bind is as deliberate a
+        // "done" as a close is. Checked after the click-back case, not before, so
+        // re-clicking the same spot still ends the path through that simpler path.
+        //
+        // Only *beside* one, as in Excalidraw (`App.tsx:10178-10205`): a click inside a
+        // shape places a waypoint there, so a path can be routed across shapes — and
+        // beside the shape the path started from only when it came back from outside.
+        if self.ends_path_at(&element, world) {
+            // Same as landing back on the point just placed (above): whatever a hover
+            // would have put there, this press puts there too, so the commit below has a
+            // real point to fix rather than whatever was left over from before the press
+            // arrived — a click with no preceding move at this exact spot is not
+            // something the engine can tell apart from one that had it, but it must not
+            // matter to either.
+            self.track_multi_linear(world, false);
+            self.commit_multi_point();
+            self.finish_linear();
+            return;
+        }
+
         // Otherwise the press is placing a point, and the release is what places it.
         self.interaction = Some(Interaction::MultiLinearPress);
+    }
+
+    /// What the path's pending point would bind to at `world`: its own anchor and, when
+    /// it changes, the start's. Shared by the live highlight, the click-to-bind-and-finish
+    /// check, and the end committed at finish, so the three cannot drift apart on what
+    /// counts as "close enough".
+    fn end_binding_at(
+        &self,
+        element: &DrawElement,
+        world: Point,
+    ) -> (Option<Anchor>, Option<Anchor>) {
+        self.drop_binding(element, End::End, world, false)
+    }
+
+    /// Whether a click at `world` binds the path's end and so finishes it: in orbit round
+    /// a shape, or beside — not inside — the shape the path started from.
+    fn ends_path_at(&self, element: &DrawElement, world: Point) -> bool {
+        let Some(end) = self.end_binding_at(element, world).0 else {
+            return false;
+        };
+        let Some(shape) = self.scene.get(&end.element_id) else {
+            return false;
+        };
+        let from_start =
+            anchor(element, End::Start).is_some_and(|a| a.element_id == end.element_id);
+        !is_inside(shape, world) && (end.mode == crate::scene::BindMode::Orbit || from_start)
     }
 
     /// Fixes the preview point in place, so the next move starts a new segment from it.
@@ -165,6 +213,17 @@ impl DrawEngine {
             self.multi_linear = None;
             return;
         };
+
+        // Live suggestion for the point about to be placed — the painter outlines
+        // whatever shape a click would attach to, the same as a dragged arrow's
+        // endpoint (`move_linear`). Visual only: nothing here touches the element,
+        // since the pending point is not necessarily the path's actual end until a
+        // click on it (`press_multi_linear`) or `finish_multi_linear` says so.
+        let end = self.end_binding_at(&element, world).0;
+        self.binding_snaps = Some(self.drop_snaps(end.as_ref(), world));
+        self.binding_highlight = end.map(|a| a.element_id);
+        self.binding_point = self.binding_highlight.as_ref().map(|_| world);
+
         let Some(mut points) = element.points.clone() else {
             return;
         };
@@ -244,6 +303,26 @@ impl DrawEngine {
 
         element.points = Some(points);
         reseat_points(&mut element);
+
+        // The path's real end is only known now — unlike a drag, where the point being
+        // moved always *is* the end, a waypoint placed mid-path is not. Evaluated once,
+        // here, rather than on every click — except when `press_multi_linear` already
+        // decided the last point was a bind and finished on the strength of it, where
+        // this just confirms the same answer again. The start was bound by `begin_linear`
+        // on the very first press, and changes only if the end comes back to its shape.
+        if let Some(&last) = element.points.as_ref().and_then(|points| points.last()) {
+            let end = Point {
+                x: element.x + last[0],
+                y: element.y + last[1],
+            };
+            let (this, start) = self.end_binding_at(&element, end);
+            set_anchor(&mut element, End::End, this);
+            if let Some(start) = start {
+                set_anchor(&mut element, End::Start, Some(start));
+            }
+        }
+        self.clear_binding_suggestion();
+
         self.scene.put(bump_version(element, self.now_ms));
         self.apply_bindings();
         self.set_selection(vec![state.id]);

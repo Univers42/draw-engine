@@ -11,7 +11,7 @@ impl DrawEngine {
         let Some(single) = self.single_selected() else {
             return false;
         };
-        if single.is_deleted || single.locked() {
+        if single.is_deleted || self.untouchable(&single) {
             return false;
         }
         if single.kind == DrawElementType::Text {
@@ -85,10 +85,17 @@ impl DrawEngine {
         label.text_align = self.next_text_align;
         label.vertical_align = self.next_vertical_align;
         label.container_id = Some(container.id.clone());
+        // In its shape's groups and directly above it, as the oracle makes one
+        // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
+        // board instead, it was drawn over whatever covers its shape, and split the
+        // shape's group in the stack.
+        label.group_ids = container.group_ids.clone();
         label.stroke_color = self.get_next_style().stroke_color;
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
         self.scene.add(label.clone());
+        self.scene
+            .place_above(std::slice::from_ref(&label.id), &container.id);
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)
@@ -123,6 +130,13 @@ impl DrawEngine {
             // already reachable, so there is nowhere further to go.
             return false;
         };
+        // A group of one — its other members deleted — has nothing inside to show. The
+        // oracle only steps into a group the click selected (`App.tsx:7310-7330`), which
+        // a group of one never is (`groups.ts:134-141`), so the double click does what it
+        // does on any lone shape.
+        if !crate::edit::is_live_group(self.scene.iter_ordered(), group) {
+            return false;
+        }
         let group = group.clone();
         self.editing_group_id = Some(group);
         let ids = crate::edit::expand_within(
@@ -264,6 +278,27 @@ impl DrawEngine {
             self.request_draw();
             return;
         }
+        let next = self.with_text(element, text);
+        self.scene.put(bump_version(next, self.now_ms));
+        self.apply_bindings();
+        self.push_history();
+        self.request_draw();
+    }
+
+    /// A text element as it would be with `text` in it, uncommitted — what peers are
+    /// shown while it is being typed, so a word appears on their screens as it is
+    /// written rather than all at once when the editor closes. `None` for an id that is
+    /// not a text in the scene.
+    pub fn text_preview(&self, id: &str, text: &str) -> Option<DrawElement> {
+        let element = self.scene.get(id)?;
+        if element.kind != DrawElementType::Text {
+            return None;
+        }
+        Some(self.with_text(element.clone(), text))
+    }
+
+    /// `element` with `text` in it, wrapped and measured as the canvas will draw it.
+    fn with_text(&self, element: DrawElement, text: &str) -> DrawElement {
         let font_size = self.font_size_of(&element);
         // Three ways a text element gets its width, and only the last lets the glyphs
         // decide. A label takes its container's; a dragged-out column keeps the one it
@@ -293,10 +328,7 @@ impl DrawEngine {
         next.height = height.max(
             font_size.max(final_text.split('\n').count() as f64 * font_size * TEXT_LINE_HEIGHT),
         );
-        self.scene.put(bump_version(next, self.now_ms));
-        self.apply_bindings();
-        self.push_history();
-        self.request_draw();
+        next
     }
 }
 

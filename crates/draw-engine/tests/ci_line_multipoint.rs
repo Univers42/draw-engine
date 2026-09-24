@@ -435,6 +435,266 @@ fn an_arrow_still_binds() {
     assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
 }
 
+/// The reported bug, end to end through the real gesture: a big rectangle drawn (or
+/// raised) *after* a small circle it happens to enclose must not shadow the circle as a
+/// bind target. `bindable_among` used to pick whichever candidate it reached first
+/// walking topmost-first, with no regard for size — a container added last, however
+/// large, always won for every point inside it.
+#[test]
+fn an_arrow_binds_to_a_small_shape_nested_inside_a_larger_one() {
+    let circle = ellipse_at(150.0, 150.0, 50.0, 50.0);
+    let frame = box_at(0.0, 0.0, 400.0, 400.0);
+    let circle_id = circle.id.clone();
+    // circle first (bottom of z-order), frame last (topmost) — draw content, then frame
+    // it, the workflow that exposed this.
+    let mut engine = engine_with_scene(vec![circle, frame]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(500.0, 175.0, false, false);
+    engine.move_pointer(175.0, 175.0, false, false);
+    engine.end_pointer();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(circle_id.as_str()),
+        "the arrow should bind to the circle, not the rectangle framing it"
+    );
+}
+
+/// The same guarantee as `an_arrow_still_binds`, but placed point by point instead of
+/// dragged. The two gestures share `begin_linear`/`end_linear` up to the release and then
+/// fork into `multi_linear.rs`, which has to keep offering the binding the drag gesture
+/// does — a waypoint in open space in between should not lose it.
+#[test]
+fn a_multi_click_arrow_still_binds() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    // Click on A to start the path, a waypoint in open space, then finish on B.
+    click(&mut engine, 50.0, 30.0);
+    place(&mut engine, &[(200.0, 150.0)]);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+    engine.finish_linear();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
+/// The selection frame has to actually contain the arrow it is drawn around.
+///
+/// `x`/`y` is a linear element's **first point**, not a box corner
+/// (`scene::geometry::is_point_based`) — reading `x + width` as an edge is wrong for any
+/// arrow that does not run left-to-right or top-to-bottom, and `selection_corners_padded`
+/// used to do exactly that. It read as fine for a two-point drag, where the sign of
+/// `width` happens to keep the arithmetic correct, and broke silently for a bound,
+/// waypoint-carrying one: the frame stayed pinned near the first point while the arrow
+/// itself moved to its attach point underneath it — the selection sitting where the
+/// arrow used to be, not where it now is.
+#[test]
+fn the_selection_frame_contains_a_bound_waypoint_arrow() {
+    let a = box_at(300.0, 0.0, 100.0, 60.0);
+    let b = box_at(600.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    // The waypoint sits well to the left of A, so the point the retargeted start aims
+    // toward — its own adjacent point — pulls it leftward past the waypoint: exactly the
+    // shape that leaves `x` (pinned to the first point, the retargeted start) short of
+    // the box's true left edge.
+    click(&mut engine, 350.0, 30.0);
+    place(&mut engine, &[(100.0, 30.0)]);
+    // Beside B, not in it: a click inside a shape places a waypoint there.
+    hover(&mut engine, 595.0, 30.0);
+    click(&mut engine, 595.0, 30.0);
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert!(arrow.start_binding.is_some(), "setup: bound at the start");
+    assert!(arrow.end_binding.is_some(), "setup: bound at the end");
+
+    assert_frame_contains_points(&arrow);
+}
+
+/// The same guarantee, after the shape moves again. `linear_retarget` runs on every move
+/// of a bound shape, not only once at bind time, so a fix reaching only the selection
+/// code and not every caller of it would still miss this — the exact "the div stays
+/// where it was originally drawn, and moves the trail independently from the shape"
+/// symptom this is guarding against.
+#[test]
+fn the_selection_frame_contains_a_bound_waypoint_arrow_after_the_shape_moves() {
+    let a = box_at(300.0, 0.0, 100.0, 60.0);
+    let b = box_at(600.0, 0.0, 100.0, 60.0);
+    let a_id = a.id.clone();
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 350.0, 30.0);
+    place(&mut engine, &[(100.0, 30.0)]);
+    hover(&mut engine, 650.0, 30.0);
+    click(&mut engine, 650.0, 30.0);
+
+    // Grab A off its top edge — y=10, clear of the arrow's own y=30, since every point
+    // in this path shares that y and a grab on it would pick up the arrow instead
+    // (transparent shapes are only grabbable by their outline unless selected first,
+    // and an explicit select puts the whole frame up for it).
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![a_id]);
+    engine.begin_pointer(350.0, 10.0, false, false);
+    engine.move_pointer(350.0, 480.0, false, false);
+    engine.end_pointer();
+
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert!(
+        arrow.start_binding.is_some() && arrow.end_binding.is_some(),
+        "setup: still bound at both ends after the move"
+    );
+
+    assert_frame_contains_points(&arrow);
+}
+
+/// Every point of `element`, in world space, must fall within the padding-free selection
+/// frame drawn around it — the same corners the painter strokes and the marquee/handles
+/// are laid out from (`selection_corners_padded(element, 0.0)`).
+fn assert_frame_contains_points(element: &DrawElement) {
+    let corners = selection_corners_padded(element, 0.0);
+    let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    for &[px, py] in element.points.as_deref().unwrap_or_default().iter() {
+        let wx = element.x + px;
+        let wy = element.y + py;
+        assert!(
+            wx >= min_x - 0.001 && wx <= max_x + 0.001,
+            "a point at world x={wx} falls outside the selection frame [{min_x}, {max_x}]"
+        );
+        assert!(
+            wy >= min_y - 0.001 && wy <= max_y + 0.001,
+            "a point at world y={wy} falls outside the selection frame [{min_y}, {max_y}]"
+        );
+    }
+}
+
+/// Clicking beside a shape the pending point would bind to finishes the path right there
+/// — no Enter, no Escape, no second click on the point just placed. The suggestion
+/// already promised the attach; asking for a separate confirmation after it would make
+/// the highlight a lie for one more click. Beside it, not inside: a click inside a shape
+/// places a waypoint, so a path can be routed across one (`App.tsx:10178-10205`) — see
+/// `a_multi_click_arrow_still_binds`.
+#[test]
+fn clicking_a_bind_suggestion_finishes_the_path() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 295.0, 30.0);
+    click(&mut engine, 295.0, 30.0);
+
+    assert!(
+        engine.linear_in_progress().is_none(),
+        "clicking a suggested shape should have finished the path on its own"
+    );
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
+/// The same, with a waypoint first — the click-to-bind-and-finish has to work from any
+/// point in the path, not only the second click overall.
+#[test]
+fn clicking_a_bind_suggestion_finishes_the_path_after_a_waypoint() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let (a_id, b_id) = (a.id.clone(), b.id.clone());
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    place(&mut engine, &[(200.0, 150.0)]);
+    hover(&mut engine, 295.0, 30.0);
+    click(&mut engine, 295.0, 30.0);
+
+    assert!(engine.linear_in_progress().is_none());
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow should exist");
+    assert_eq!(arrow.start_binding.as_deref(), Some(a_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(b_id.as_str()));
+}
+
+/// A click nowhere near a bindable shape must not finish anything — only landing on one
+/// does. Otherwise every ordinary waypoint would end the path.
+#[test]
+fn a_click_in_open_space_does_not_finish_the_path() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a]);
+    engine.set_tool(DrawTool::Arrow);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 400.0, 400.0);
+    click(&mut engine, 400.0, 400.0);
+
+    assert!(
+        engine.linear_in_progress().is_some(),
+        "a click in open space is an ordinary waypoint, not a finish"
+    );
+}
+
+/// A line never binds, so clicking on a shape while placing one is just an ordinary
+/// waypoint that happens to land there — the path stays open.
+#[test]
+fn clicking_a_shape_does_not_finish_a_line() {
+    let a = box_at(0.0, 0.0, 100.0, 60.0);
+    let b = box_at(300.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![a, b]);
+    engine.set_tool(DrawTool::Line);
+
+    click(&mut engine, 50.0, 30.0);
+    hover(&mut engine, 350.0, 30.0);
+    click(&mut engine, 350.0, 30.0);
+
+    assert!(
+        engine.linear_in_progress().is_some(),
+        "a line does not bind, so landing on a shape is not a reason to finish"
+    );
+}
+
 /// A line already on the board must not be dragged about by a shape it happens to
 /// overlap either. Binding is refreshed for the whole scene whenever anything moves, so
 /// the rule has to hold there as well as at creation.

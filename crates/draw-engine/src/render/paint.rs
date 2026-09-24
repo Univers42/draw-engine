@@ -7,8 +7,14 @@ pub struct DrawTheme {
     /// The colour a bindable element's outline is traced with while an arrow endpoint
     /// hovers it. Excalidraw's BINDING_HIGHLIGHT_RGB, verified by sampling their
     /// interactive canvas.
-    #[serde(default = "default_binding_highlight")]
+    // The host writes camelCase. Without the alias its value was dropped unread and the
+    // light default drawn on both themes.
+    #[serde(default = "default_binding_highlight", alias = "bindingHighlight")]
     pub binding_highlight: String,
+    /// A side midpoint an arrow end is near but would not snap to yet. Excalidraw's
+    /// `BINDING_MIDPOINT_COLOR` (`interactiveScene.ts:128-131`).
+    #[serde(default = "default_binding_midpoint", alias = "bindingMidpoint")]
+    pub binding_midpoint: String,
     pub background: String,
     pub grid: String,
     pub accent: String,
@@ -17,7 +23,7 @@ pub struct DrawTheme {
     /// Part of the theme rather than a constant because it is the one piece of frame
     /// chrome that sits on the canvas background instead of on the frame, so it is the
     /// one piece that has to change when the background does.
-    #[serde(default = "default_frame_name_color")]
+    #[serde(default = "default_frame_name_color", alias = "frameName")]
     pub frame_name: String,
 }
 
@@ -35,6 +41,10 @@ fn default_binding_highlight() -> String {
     "rgb(106, 189, 252)".into()
 }
 
+fn default_binding_midpoint() -> String {
+    "rgba(65, 65, 65, 0.5)".into()
+}
+
 pub fn light_theme() -> DrawTheme {
     DrawTheme {
         background: "#ffffff".into(),
@@ -43,6 +53,7 @@ pub fn light_theme() -> DrawTheme {
         // the selection frame was a different violet from the panels around it.
         accent: "#6965db".into(),
         binding_highlight: default_binding_highlight(),
+        binding_midpoint: default_binding_midpoint(),
         frame_name: crate::scene::FRAME_NAME_COLOR_LIGHT.into(),
     }
 }
@@ -53,6 +64,7 @@ pub fn dark_theme() -> DrawTheme {
         grid: "rgba(255, 255, 255, 0.06)".into(),
         accent: "#a8a5ff".into(),
         binding_highlight: "rgb(104, 182, 240)".into(),
+        binding_midpoint: "rgba(237, 237, 237, 0.8)".into(),
         frame_name: crate::scene::FRAME_NAME_COLOR_DARK.into(),
     }
 }

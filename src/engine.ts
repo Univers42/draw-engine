@@ -10,6 +10,7 @@ import type {
   DrawElement,
   DrawElementStyle,
   DrawEngineOptions,
+  DrawPeer,
   DrawTheme,
   DrawTool,
   FlipAxis,
@@ -126,6 +127,38 @@ export class DrawEngine {
     // is runtime-agnostic and has no clock of its own.
     const json = timeHitTest(() => this.inner.hitTest(sx, sy, tolerance));
     return json ? parseJson<DrawElement | null>(json, null) : null;
+  }
+
+  /**
+   * Who else is in the room, what they hold and what they are doing right now. Replaces
+   * what the engine knew; `[]` when everyone has left. What this engine had selected and
+   * a peer now holds is let go — see `engine/peers.rs`.
+   */
+  setPeers(peers: readonly DrawPeer[]): void {
+    this.inner.setPeers(JSON.stringify(peers));
+  }
+
+  /**
+   * Where a peer's laser pointer is, in world units, and whether they are pressing it —
+   * their trail is drawn in their colour and fades as it does on their screen. See
+   * `engine/peers.rs`.
+   */
+  peerLaser(id: string, color: string, x: number, y: number, down: boolean): void {
+    this.inner.peerLaser(id, color, x, y, down);
+  }
+
+  /** The id of the peer holding what is under the pointer, if someone does. */
+  peerAt(sx: number, sy: number): string | null {
+    return this.inner.peerAt(sx, sy) ?? null;
+  }
+
+  /**
+   * The elements the gesture in progress is changing, as they are this instant — empty
+   * between gestures. What a host streams to peers while something is being drawn,
+   * moved or resized, so it moves on their screens too.
+   */
+  gestureElements(): DrawElement[] {
+    return parseJson<DrawElement[]>(this.inner.gestureElementsJson(), []);
   }
 
   /**
@@ -249,6 +282,14 @@ export class DrawEngine {
   }
 
   /**
+   * Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+   * Returns whether it changed: `false` for a refused link, or a locked or held embed.
+   */
+  setEmbedUrl(id: string, rawUrl: string): boolean {
+    return this.inner.setEmbedUrl(id, rawUrl);
+  }
+
+  /**
    * What a pasted link resolves to, or `null` if it cannot be embedded.
    *
    * Lets a caller say so *before* putting an empty box on the board.
@@ -266,7 +307,7 @@ export class DrawEngine {
     return json ? JSON.parse(json) : null;
   }
 
-  /** The embeds on screen and where their frames go, in screen pixels. */
+  /** Every live embed, where its frame goes in screen pixels, and whether it is on screen. */
   embedFramesJson(): string {
     return this.inner.embedFrames();
   }
@@ -475,6 +516,21 @@ export class DrawEngine {
     this.inner.setAltHeld(held);
   }
 
+  /** Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to nothing while it is down. */
+  setCtrlHeld(held: boolean): void {
+    this.inner.setCtrlHeld(held);
+  }
+
+  /** A move with no button held: the arrow tool lights the shape it would attach to. */
+  hoverPointer(sx: number, sy: number): void {
+    this.inner.hoverPointer(sx, sy);
+  }
+
+  /** The pointer left the canvas; whatever a hover lit goes out. */
+  endHover(): void {
+    this.inner.endHover();
+  }
+
   /** `invertSnap` flips object snapping for this move — the host's Ctrl/Cmd. */
   movePointer(sx: number, sy: number, square = false, invertSnap = false): void {
     this.inner.movePointer(sx, sy, square, invertSnap);
@@ -509,6 +565,15 @@ export class DrawEngine {
 
   setElementText(id: string, text: string): void {
     this.inner.setElementText(id, text);
+  }
+
+  /**
+   * The text element `id` as it would be with `text` in it, without committing it —
+   * what a host streams to peers while someone types, so the words appear on their
+   * screens as they are written. Null when `id` is not a text.
+   */
+  textPreview(id: string, text: string): DrawElement | null {
+    return parseJson<DrawElement | null>(this.inner.textPreviewJson(id, text), null);
   }
 
   setArrowheads(patch: { start?: Arrowhead; end?: Arrowhead }): void {

@@ -28,16 +28,22 @@ thread_local! {
     /// any moment is correct, just slower.
     static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::new());
 
-    /// Decoded images, by the `data:` URL that produced them.
+    /// Decoded images, by the id of the element that shows them, each with the length
+    /// of the `data:` URL it was decoded from.
     ///
     /// Decoding happens once and is reused for every frame afterwards. Without this the
     /// painter would hand the canvas a fresh `HTMLImageElement` sixty times a second and
     /// the browser would decode the same megabyte over and over.
-    static IMAGES: std::cell::RefCell<HashMap<String, web_sys::HtmlImageElement>> =
+    ///
+    /// By id, not by the URL itself: that hashed the whole URL — megabytes — for every
+    /// image in every frame that painted it, which is every frame while anything near it
+    /// moves. An element's picture does not change once it has one; the length is there
+    /// to notice if it ever did.
+    static IMAGES: std::cell::RefCell<HashMap<String, (usize, web_sys::HtmlImageElement)>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
-/// The decoded image for a `data:` URL, if it is ready yet.
+/// The decoded picture of an image element, if it is ready yet.
 ///
 /// Decoding is asynchronous even for a `data:` URL, so the first frame after an image is
 /// inserted usually has nothing to draw. Rather than leave a hole until something else
@@ -49,11 +55,19 @@ thread_local! {
 /// which a decode does not change, so the "repaint" was served from the layer painted
 /// *before* the image existed and the placeholder stayed on screen until something
 /// unrelated edited the scene. Loading a board full of images showed only empty boxes.
-fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
+fn decoded_image(element: &DrawElement) -> Option<web_sys::HtmlImageElement> {
     IMAGES.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(image) = cache.get(data_url) {
-            return image.complete().then(|| image.clone());
+        let cached = cache.get(&element.id);
+        let Some(data_url) = element.data_url.as_deref() else {
+            // A peer's gesture, sent without the picture it cannot change: the one
+            // already decoded for this element.
+            return cached.and_then(|(_, image)| image.complete().then(|| image.clone()));
+        };
+        if let Some((len, image)) = cached {
+            if *len == data_url.len() {
+                return image.complete().then(|| image.clone());
+            }
         }
         let Ok(image) = web_sys::HtmlImageElement::new() else {
             return None;
@@ -65,7 +79,7 @@ fn decoded_image(data_url: &str) -> Option<web_sys::HtmlImageElement> {
         image.set_onload(Some(on_load.unchecked_ref()));
         image.set_src(data_url);
         let ready = image.complete();
-        cache.insert(data_url.to_string(), image.clone());
+        cache.insert(element.id.clone(), (data_url.len(), image.clone()));
         ready.then_some(image)
     })
 }
@@ -86,11 +100,9 @@ fn evict_images(live: &[&DrawElement]) {
         if cache.len() <= MAX_CACHED_IMAGES {
             return;
         }
-        let visible: std::collections::HashSet<&str> = live
-            .iter()
-            .filter_map(|element| element.data_url.as_deref())
-            .collect();
-        cache.retain(|url, _| visible.contains(url.as_str()));
+        let visible: std::collections::HashSet<&str> =
+            live.iter().map(|element| element.id.as_str()).collect();
+        cache.retain(|id, _| visible.contains(id.as_str()));
     });
 }
 
@@ -109,7 +121,7 @@ fn evict_images(live: &[&DrawElement]) {
 /// (`renderElement.ts:606-616`).
 fn paint_image(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     let (w, h) = (element.width.abs(), element.height.abs());
-    let decoded = element.data_url.as_deref().and_then(decoded_image);
+    let decoded = decoded_image(element);
 
     with_element_transform(ctx, view, element, || match decoded {
         Some(image) => {
@@ -1153,10 +1165,10 @@ impl Painter for CanvasPainter<'_> {
             let appended = paint_on_top(layers, view, key, digest);
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
-                view.selected.len(),
+                view.selected.len() + view.peer_marks.len(),
                 view.marquee.is_some(),
                 view.lasso.len(),
-                view.laser.len(),
+                view.laser.len() + view.peer_lasers.len(),
                 view.snap_guides.len(),
                 view.binding_highlight.is_some(),
                 view.linear_handles.len(),
@@ -1284,12 +1296,25 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 /// get differently. Filled rather than stroked: a stroke has one width, and the whole
 /// point of the trail is that it tapers.
 fn paint_laser(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    if view.laser.is_empty() {
+    // The others' first, so a trail of one's own stays on top of theirs.
+    for (color, outlines) in &view.peer_lasers {
+        fill_outlines(ctx, view, color, outlines);
+    }
+    fill_outlines(ctx, view, &view.laser_color, &view.laser);
+}
+
+fn fill_outlines(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    color: &str,
+    outlines: &[Vec<crate::interaction::LaserPoint>],
+) {
+    if outlines.is_empty() {
         return;
     }
     ctx.save();
-    set_fill(ctx, &view.laser_color);
-    for outline in &view.laser {
+    set_fill(ctx, color);
+    for outline in outlines {
         let Some(first) = outline.first() else {
             continue;
         };
@@ -1648,6 +1673,10 @@ const POINT_HANDLE_ACTIVE_FILL: &str = "rgba(134, 131, 226, 0.9)";
 ///   omits the cardinal handles by default; drawing them adds four targets that mostly
 ///   get in the way of the corners.
 fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    // Under this engine's own chrome: what someone else holds is context, what you hold
+    // is what you are working on.
+    paint_peer_marks(ctx, view);
+
     set_stroke(ctx, &view.theme.accent);
     ctx.set_line_width(1.0);
     // Solid, said rather than assumed. The dash is sticky canvas state and the element
@@ -1862,6 +1891,78 @@ const MEMBER_OUTLINE_PX: f64 = 1.5;
 /// the edge of a rectangle, the curve of an ellipse or a line, the ink of a stroke. See
 /// [`crate::render::outline`].
 fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    trace_outlines(ctx, view, &view.selected, MEMBER_OUTLINE_PX);
+}
+
+/// How wide the trace around what a peer holds is, in CSS pixels: wider than a member's,
+/// because it has to read against whatever colour that peer was given.
+const PEER_OUTLINE_PX: f64 = 2.0;
+
+/// What other people hold, each traced in their colour with their name above it — the
+/// way Figma shows who is working where. See `engine/peers.rs`.
+fn paint_peer_marks(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.peer_marks.is_empty() {
+        return;
+    }
+    set_dash_cached(ctx, None);
+    for mark in &view.peer_marks {
+        // Set outside the trace's save/restore, so the cache and the context agree after.
+        set_stroke(ctx, mark.color);
+        trace_outlines(ctx, view, &mark.elements, PEER_OUTLINE_PX);
+    }
+    for mark in &view.peer_marks {
+        paint_name_tag(ctx, view, mark);
+    }
+    // The tags set the font behind the cache's back.
+    FONT.with(|f| *f.borrow_mut() = None);
+}
+
+/// Height of a peer's name tag, and the size of the name in it, in CSS pixels.
+const NAME_TAG_PX: f64 = 18.0;
+const NAME_TAG_FONT: &str = "600 11px system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+/// A peer's name on a tag of their colour, sitting on the top-left corner of what they
+/// hold. At a fixed size on screen, like a frame's name: it labels the board rather than
+/// being drawn on it.
+fn paint_name_tag(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    mark: &crate::engine::PeerMark,
+) {
+    let Some(bounds) = crate::scene_bounds(mark.elements.iter().copied()) else {
+        return;
+    };
+    let pad = view.handle_layout.frame_pad;
+    let corner = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
+    ctx.set_font(NAME_TAG_FONT);
+    let text_w = ctx
+        .measure_text(mark.name)
+        .map(|metrics| metrics.width())
+        .unwrap_or(0.0);
+    let (w, h) = (text_w + 12.0, NAME_TAG_PX);
+    // Above the corner, or inside the top of the screen when that is off it.
+    let x = corner.x.max(0.0);
+    let y = (corner.y - h - 2.0).max(0.0);
+    set_fill(ctx, mark.color);
+    ctx.begin_path();
+    let _ = ctx.round_rect_with_f64(x, y, w, h, 4.0);
+    ctx.fill();
+    set_fill(ctx, PEER_TAG_TEXT);
+    ctx.set_text_baseline("middle");
+    let _ = ctx.fill_text(mark.name, x + 6.0, y + h / 2.0);
+}
+
+/// The name on a peer's tag. White reads on every colour the host hands out.
+const PEER_TAG_TEXT: &str = "#ffffff";
+
+/// Traces `elements` along their own shapes in the current stroke colour, `width_px` CSS
+/// pixels wide. See [`paint_member_outlines`].
+fn trace_outlines(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    elements: &[&DrawElement],
+    width_px: f64,
+) {
     use crate::render::outline::{element_outline, Outline};
     use draw_rough::renderer::Segment;
 
@@ -1877,14 +1978,14 @@ fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     ];
     let level = crate::render::path_data::lod_level(view.detail_scale);
     let selected: std::collections::HashSet<&str> =
-        view.selected.iter().map(|e| e.id.as_str()).collect();
+        elements.iter().map(|e| e.id.as_str()).collect();
 
     ctx.save();
     // In the element's own units, where one CSS pixel is `1 / scale`.
-    ctx.set_line_width(MEMBER_OUTLINE_PX / s.max(f64::MIN_POSITIVE));
+    ctx.set_line_width(width_px / s.max(f64::MIN_POSITIVE));
     ctx.set_line_join("round");
     ctx.set_line_cap("round");
-    for element in view.selected.iter().copied() {
+    for element in elements.iter().copied() {
         // A label is traced by its container, which is the shape someone sees.
         if element
             .container_id
@@ -1957,15 +2058,17 @@ fn paint_member_outlines(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 /// handles, so dragging its corner fell through to the hit test and started a marquee.
 /// A group could only ever be moved, never scaled or turned.
 fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
-    let Some(bounds) = crate::scene_bounds(view.selected.iter().copied()) else {
-        return;
-    };
-
     // Every member is traced first. Without it a multi-selection showed only the box
     // around the whole lot, so you could see *that* a region was held but not *which*
     // shapes in it were — and an unselected shape sitting inside those bounds was
     // indistinguishable from a selected one.
     paint_member_outlines(ctx, view);
+
+    // The box the handles are hit on, so they are drawn where a press finds them: a loose
+    // locked element is outlined as held, but nothing transforms it.
+    let Some(bounds) = view.group_box else {
+        return;
+    };
 
     let pad = view.handle_layout.frame_pad;
     let tl = crate::world_to_screen(view.camera, bounds.min_x - pad, bounds.min_y - pad);
@@ -2135,6 +2238,21 @@ fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     }
 
     ctx.stroke();
+
+    // The side midpoint an end would snap to, filled in the highlight's colour, or a
+    // quieter dot for one it is only near.
+    if let Some((m, snaps)) = view.binding_midpoint {
+        let at = crate::world_to_screen(view.camera, m.x, m.y);
+        let colour = if snaps {
+            view.theme.binding_highlight.as_str()
+        } else {
+            view.theme.binding_midpoint.as_str()
+        };
+        set_fill(ctx, colour);
+        ctx.begin_path();
+        let _ = ctx.arc(at.x, at.y, 4.0, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+    }
     ctx.restore();
     let _ = scale;
 }

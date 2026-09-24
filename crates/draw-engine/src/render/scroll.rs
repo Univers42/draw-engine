@@ -186,7 +186,8 @@ pub fn scroll_is_worth_it(intersecting: usize, visible: usize) -> bool {
 
 /// Whether anything is drawn on top of the static layer this frame.
 ///
-/// Selection chrome, a marquee, a lasso, snap guides, a binding halo, the laser. When
+/// Selection chrome, what other people hold, a marquee, a lasso, snap guides, a binding
+/// halo, the laser. When
 /// none of them is there, a frame whose static layer is unchanged has nothing new to show
 /// at all — the canvas already holds exactly the right pixels — and the whole frame can be
 /// skipped, blit included.
@@ -195,8 +196,10 @@ pub fn scroll_is_worth_it(intersecting: usize, visible: usize) -> bool {
 /// frames for 140ms after the last event so that motion settles smoothly, and on a board
 /// of screen-sized shapes each of those was costing a full-canvas copy: 243 of them in a
 /// measured pan, against 120 that actually had something to draw.
+///
+/// `outlined` counts what is outlined: the selection, and each peer's hold.
 pub fn overlay_is_empty(
-    selected: usize,
+    outlined: usize,
     has_marquee: bool,
     lasso_points: usize,
     laser_strokes: usize,
@@ -204,7 +207,7 @@ pub fn overlay_is_empty(
     has_binding_highlight: bool,
     linear_handles: usize,
 ) -> bool {
-    selected == 0
+    outlined == 0
         && !has_marquee
         && lasso_points == 0
         && laser_strokes == 0

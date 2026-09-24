@@ -52,6 +52,9 @@ pub struct PaintView<'a> {
     /// Changes whenever `erasing` does. The painter keys its cached layer on it.
     pub erasing_revision: u64,
     pub selected: Vec<&'a DrawElement>,
+    /// Where a multi-selection's box and handles go: around what a transform carries,
+    /// the same box the handles are hit on. `None` when fewer than two are carried.
+    pub group_box: Option<WorldBounds>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
     pub lasso: Vec<crate::camera::Point>,
@@ -73,6 +76,8 @@ pub struct PaintView<'a> {
     pub laser: Vec<Vec<crate::interaction::LaserPoint>>,
     /// The colour laser strokes are filled with.
     pub laser_color: String,
+    /// Each peer's laser strokes, with the colour they are filled with: theirs.
+    pub peer_lasers: Vec<(String, Vec<Vec<crate::interaction::LaserPoint>>)>,
     pub snap_guides: Vec<SnapGuide>,
     pub rotate_gap: f64,
     pub handle_px: f64,
@@ -82,6 +87,9 @@ pub struct PaintView<'a> {
     /// The shape a dragged arrow endpoint would bind to. Painted as a halo on its
     /// outline, so the attachment is visible before it is committed.
     pub binding_highlight: Option<&'a DrawElement>,
+    /// The side midpoint of `binding_highlight` the pointer is near, and whether an end
+    /// let go there would snap onto it. See [`crate::scene::binding::midpoint_mark`].
+    pub binding_midpoint: Option<(crate::camera::Point, bool)>,
     /// Point handles for a selected line or arrow, **or** for one being placed.
     ///
     /// Non-empty when exactly one linear element is selected, and while a path is being
@@ -101,6 +109,16 @@ pub struct PaintView<'a> {
     pub radius_handles: Vec<crate::camera::Point>,
     /// The radius handle being dragged, painted in the focus colour.
     pub active_radius_handle: Option<usize>,
+    /// Who else is here and what they hold: outlined in their colour, with their name.
+    pub peer_marks: Vec<PeerMark<'a>>,
+}
+
+/// One peer's hold, as the painter draws it. See `peers.rs`.
+pub struct PeerMark<'a> {
+    pub name: &'a str,
+    pub color: &'a str,
+    /// What they hold, as it is shown — their preview of it, when they have one.
+    pub elements: Vec<&'a DrawElement>,
 }
 
 pub trait Painter {
@@ -118,6 +136,48 @@ impl DrawEngine {
         let dirty = self.dirty;
         self.dirty = false;
         dirty
+    }
+
+    /// The side midpoint of the suggested shape to mark, and whether a drop would snap
+    /// to it. Alt binds exactly where the end is, so there is no snap to promise.
+    pub(crate) fn binding_midpoint(&self) -> Option<(crate::camera::Point, bool)> {
+        let shape = self.binding_shape()?;
+        let pointer = self.binding_point.filter(|_| !self.alt_held)?;
+        let (mark, snaps) = crate::scene::binding::midpoint_mark(
+            shape,
+            pointer,
+            super::MIDPOINT_SNAP_PX / self.camera.scale,
+        )?;
+        // Only the snap a drop would really make: none on the grid (`binding.ts:876-878`),
+        // and in a drag, the anchor it chose.
+        let grid = self.grid.enabled && self.grid.snap;
+        Some((mark, snaps && !grid && self.binding_snaps.unwrap_or(true)))
+    }
+
+    /// The shape the suggestion lights, while it is still there: an undo can delete it
+    /// under the pointer.
+    fn binding_shape(&self) -> Option<&DrawElement> {
+        self.scene
+            .get(self.binding_highlight.as_deref()?)
+            .filter(|shape| !shape.is_deleted)
+    }
+
+    /// Whether `anchor`, dropped at `pointer`, is the side midpoint snap.
+    pub(crate) fn drop_snaps(
+        &self,
+        anchor: Option<&crate::scene::binding::Anchor>,
+        pointer: crate::camera::Point,
+    ) -> bool {
+        use crate::scene::binding::{focus_point, snapped_midpoint};
+        let Some(anchor) = anchor.filter(|a| a.mode == crate::scene::BindMode::Orbit) else {
+            return false;
+        };
+        let Some(shape) = self.scene.get(&anchor.element_id) else {
+            return false;
+        };
+        let focus = focus_point(shape, anchor.fixed_point);
+        snapped_midpoint(shape, pointer, super::MIDPOINT_SNAP_PX / self.camera.scale)
+            .is_some_and(|m| (m.x - focus.x).hypot(m.y - focus.y) < 0.01 / self.camera.scale)
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
@@ -146,6 +206,11 @@ impl DrawEngine {
         let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
+        let group_box = if selected.len() > 1 {
+            self.group_box()
+        } else {
+            None
+        };
         let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
         let linear_handles = match self.multi_linear.as_ref() {
             // A path being placed shows a joint on every point it has taken, so the
@@ -208,6 +273,57 @@ impl DrawEngine {
             }
         }
 
+        // What peers are doing right now, painted in place of what is committed: a shape
+        // moves on every screen while it is being moved. See `peers.rs`.
+        let previews = self.previews();
+        let mut elements: Vec<&DrawElement> = self
+            .scene
+            .iter_ordered()
+            .map(|element| {
+                previews
+                    .get(element.id.as_str())
+                    .copied()
+                    .unwrap_or(element)
+            })
+            .filter(|element| {
+                !element.is_deleted && crate::render::bounds::intersects_viewport(element, &visible)
+            })
+            .collect();
+        // What a peer is drawing that is not in the scene yet goes on top, where it will be.
+        for peer in self.peers() {
+            for element in &peer.preview {
+                if self.scene.get(&element.id).is_none()
+                    && !element.is_deleted
+                    && crate::render::bounds::intersects_viewport(element, &visible)
+                {
+                    elements.push(element);
+                }
+            }
+        }
+        let peer_marks = self
+            .peers()
+            .iter()
+            .filter_map(|peer| {
+                let held: Vec<&DrawElement> = peer
+                    .holds
+                    .iter()
+                    .chain(peer.preview.iter().map(|element| &element.id))
+                    .filter_map(|id| {
+                        previews
+                            .get(id.as_str())
+                            .copied()
+                            .or_else(|| self.scene.get(id))
+                    })
+                    .filter(|element| !element.is_deleted)
+                    .collect();
+                (!held.is_empty()).then_some(PeerMark {
+                    name: &peer.name,
+                    color: &peer.color,
+                    elements: held,
+                })
+            })
+            .collect();
+
         PaintView {
             scene: &self.scene,
             camera: self.camera,
@@ -221,35 +337,32 @@ impl DrawEngine {
             // Culled here rather than in the painter: an element off-screen costs a
             // bounds check instead of a full path replay, which is what keeps a large
             // document responsive when you are zoomed in on one corner of it.
-            elements: self
-                .scene
-                .iter_ordered()
-                .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
-                .collect(),
+            elements,
             scene_revision,
             live: self.scene.live(),
             static_revision: self.scene.static_revision(),
             erasing: &self.erasing,
             erasing_revision: self.erasing_revision,
             selected,
+            group_box,
             marquee,
             lasso,
             frame_clips,
             frame_names,
             laser: self.laser.outlines(self.now_ms, self.camera.scale),
             laser_color: crate::interaction::DEFAULT_LASER_COLOR.to_string(),
+            peer_lasers: self.peer_laser_outlines(),
             snap_guides: self.snap_guides.clone(),
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
             handle_layout: self.handle_layout(),
-            binding_highlight: self
-                .binding_highlight
-                .as_deref()
-                .and_then(|id| self.scene.get(id)),
+            binding_highlight: self.binding_shape(),
+            binding_midpoint: self.binding_midpoint(),
             linear_handles,
             active_handle,
             radius_handles,
             active_radius_handle,
+            peer_marks,
         }
     }
 

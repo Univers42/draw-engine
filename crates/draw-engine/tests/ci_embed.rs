@@ -149,6 +149,24 @@ fn a_playlist_becomes_a_playlist_player() {
 }
 
 #[test]
+fn a_video_shared_from_a_playlist_keeps_the_playlist() {
+    // Otherwise the player shows the one video, with nothing to step through after it.
+    for link in [
+        "https://www.youtube.com/watch?v=abc&list=PL1234",
+        "https://youtu.be/abc?list=PL1234",
+    ] {
+        assert_eq!(
+            url_of(link).as_deref(),
+            Some("https://www.youtube.com/embed/abc?list=PL1234&enablejsapi=1"),
+            "{link}"
+        );
+    }
+    // Stored resolved and resolved again on every frame: that has to be a fixed point.
+    let stored = "https://www.youtube.com/embed/abc?list=PL1234&enablejsapi=1";
+    assert_eq!(url_of(stored).as_deref(), Some(stored));
+}
+
+#[test]
 fn a_timestamp_survives_the_rewrite() {
     // Someone who shared a link at 2:03 meant 2:03.
     assert_eq!(
@@ -380,20 +398,59 @@ fn a_frames_box_follows_the_camera() {
 }
 
 #[test]
-fn an_embed_scrolled_out_of_view_reports_no_frame() {
-    // An off-screen `<iframe>` is a page still running. A board with thirty videos
-    // should not have thirty players loaded because one of them is visible.
+fn an_embed_scrolled_out_of_view_keeps_its_frame_but_says_so() {
+    // Still reported: dropping the frame made the host unmount a playing video the
+    // moment it was panned away. `visible` is what lets the host not load a player
+    // nobody has seen yet — thirty videos on a board, one of them on screen.
     let mut engine = engine_with_scene(vec![]);
     engine.set_viewport(1200.0, 900.0, 1.0);
     engine
         .insert_embed("https://youtu.be/abc", 600.0, 450.0)
         .expect("embed was not inserted");
-    assert_eq!(engine.embed_frames().len(), 1);
+    assert!(engine.embed_frames()[0].visible);
 
     engine.pan_by(-5000.0, 0.0);
+    let frames = engine.embed_frames();
+    assert_eq!(frames.len(), 1, "an embed off screen lost its frame");
     assert!(
-        engine.embed_frames().is_empty(),
-        "an embed far off screen still asked for a frame"
+        !frames[0].visible,
+        "an embed far off screen reads as visible"
+    );
+}
+
+#[test]
+fn an_embed_can_be_pointed_at_another_link() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    let id = engine
+        .insert_embed("https://youtu.be/abc", 600.0, 450.0)
+        .expect("embed was not inserted");
+    let before = engine.embed_frames()[0].clone();
+
+    assert!(engine.set_embed_url(&id, "https://vimeo.com/123456"));
+    let after = engine.embed_frames()[0].clone();
+    assert_eq!(after.url, "https://player.vimeo.com/video/123456?api=1");
+    // The box is where the person put it and the size they made it.
+    assert_close(after.x, before.x);
+    assert_close(after.width, before.width);
+
+    // Undo is how a wrong link is taken back.
+    engine.undo();
+    assert_eq!(engine.embed_frames()[0].url, before.url);
+}
+
+#[test]
+fn a_link_the_rules_refuse_leaves_the_embed_alone() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    let id = engine
+        .insert_embed("https://youtu.be/abc", 600.0, 450.0)
+        .expect("embed was not inserted");
+    assert!(!engine.set_embed_url(&id, "https://evil.example/"));
+    assert!(!engine.set_embed_url(&id, "javascript:alert(1)"));
+    assert_eq!(
+        engine.embed_frames()[0].url,
+        "https://www.youtube.com/embed/abc?enablejsapi=1"
     );
 }
 

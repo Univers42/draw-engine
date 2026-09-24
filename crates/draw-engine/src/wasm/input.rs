@@ -187,6 +187,15 @@ impl WasmEngine {
         id
     }
 
+    /// Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+    /// Returns whether it changed.
+    #[wasm_bindgen(js_name = setEmbedUrl)]
+    pub fn set_embed_url(&self, id: &str, raw_url: &str) -> bool {
+        let changed = self.cell.borrow_mut().engine.set_embed_url(id, raw_url);
+        self.flush();
+        changed
+    }
+
     /// Whether a pasted link can be embedded, and what it resolves to, as JSON.
     ///
     /// Lets a host tell someone their link will not work *before* it puts an empty box
@@ -237,6 +246,27 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = movePointer)]
     pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));
+    }
+
+    /// A pointer move with no button held. See `DrawEngine::hover_pointer`.
+    #[wasm_bindgen(js_name = hoverPointer)]
+    pub fn hover_pointer(&self, sx: f64, sy: f64) {
+        self.cell.borrow_mut().engine.hover_pointer(sx, sy);
+        self.flush();
+    }
+
+    /// The pointer left the canvas. See `DrawEngine::end_hover`.
+    #[wasm_bindgen(js_name = endHover)]
+    pub fn end_hover(&self) {
+        self.cell.borrow_mut().engine.end_hover();
+        self.flush();
+    }
+
+    /// Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to
+    /// nothing while it is down. See `DrawEngine::set_ctrl_held`.
+    #[wasm_bindgen(js_name = setCtrlHeld)]
+    pub fn set_ctrl_held(&self, held: bool) {
+        self.cell.borrow_mut().engine.set_ctrl_held(held);
     }
 
     #[wasm_bindgen(js_name = endPointer)]
@@ -312,6 +342,49 @@ impl WasmEngine {
         match self.cell.try_borrow() {
             Ok(state) => state.engine.hover_cursor(sx, sy).code(),
             Err(_) => crate::HoverCursor::Default.code(),
+        }
+    }
+
+    /// Tells the engine who else is in the room, what they hold and what their gesture in
+    /// progress looks like: a JSON array of [`crate::engine::Peer`]. See `engine/peers.rs`.
+    /// Anything unreadable is ignored rather than clearing the peers — a malformed frame
+    /// from one peer must not release everyone's holds.
+    #[wasm_bindgen(js_name = setPeers)]
+    pub fn set_peers(&self, json: &str) {
+        if let Ok(peers) = serde_json::from_str(json) {
+            self.cell.borrow_mut().engine.set_peers(peers);
+            self.flush();
+        }
+    }
+
+    /// Where a peer's laser pointer is, in world units, and whether they are pressing it:
+    /// their trail is drawn here in their colour, as it is on their screen.
+    #[wasm_bindgen(js_name = peerLaser)]
+    ///
+    /// On the clock read now, not the last frame's: an idle board paints no frames, and a
+    /// point stamped with a stale time would be old enough to have faded on arrival.
+    pub fn peer_laser(&self, id: &str, color: &str, x: f64, y: f64, down: bool) {
+        self.with_now(|engine| engine.peer_laser(id, color, x, y, down));
+    }
+
+    /// The id of the peer holding what is under `(sx, sy)`, if someone does — so a click
+    /// on something in use can say who is using it.
+    #[wasm_bindgen(js_name = peerAt)]
+    pub fn peer_at(&self, sx: f64, sy: f64) -> Option<String> {
+        let state = self.cell.try_borrow().ok()?;
+        state.engine.peer_at(sx, sy).map(|peer| peer.id.clone())
+    }
+
+    /// The elements this engine's gesture in progress is changing, as they are right now,
+    /// as a JSON array — `[]` between gestures. What the host streams to peers while a
+    /// shape is being drawn, moved or resized.
+    #[wasm_bindgen(js_name = gestureElementsJson)]
+    pub fn gesture_elements_json(&self) -> String {
+        match self.cell.try_borrow() {
+            Ok(state) => {
+                serde_json::to_string(&state.engine.gesture_elements()).unwrap_or_default()
+            }
+            Err(_) => String::new(),
         }
     }
 
@@ -535,6 +608,20 @@ impl WasmEngine {
     pub fn set_element_text(&self, id: &str, text: &str) {
         self.cell.borrow_mut().engine.set_element_text(id, text);
         self.flush();
+    }
+
+    /// The text element `id` as it would be with `text` in it, uncommitted, as JSON —
+    /// empty when `id` is not a text. What the host streams to peers while typing.
+    #[wasm_bindgen(js_name = textPreviewJson)]
+    pub fn text_preview_json(&self, id: &str, text: &str) -> String {
+        let Ok(state) = self.cell.try_borrow() else {
+            return String::new();
+        };
+        state
+            .engine
+            .text_preview(id, text)
+            .and_then(|element| serde_json::to_string(&element).ok())
+            .unwrap_or_default()
     }
 
     /// Re-widths a dragged-out text column and re-wraps it. Ignored for auto-sizing

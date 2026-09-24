@@ -12,6 +12,7 @@
 
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
+use crate::scene::binding::arrow_target_among;
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 /// The cursor the host should show. Values are part of the JS contract — append only.
@@ -73,6 +74,70 @@ fn resize_cursor(kind: HandleKind, angle: f64) -> HoverCursor {
 }
 
 impl DrawEngine {
+    /// Lights up the shape an arrow started here would attach to, before anything is drawn.
+    ///
+    /// Excalidraw suggests the binding as soon as the arrow tool is over a shape
+    /// (`packages/excalidraw/components/App.tsx:7939-7973`). Without it the outline only
+    /// lit once a drag had begun, so where an arrow would attach was a guess until it was
+    /// already being drawn. Only the arrow tool, and only between gestures: a drag or a
+    /// path being placed shows its own.
+    pub fn hover_pointer(&mut self, sx: f64, sy: f64) {
+        if self.tool != DrawTool::Arrow || self.interaction.is_some() || self.multi_linear.is_some()
+        {
+            return;
+        }
+        let world = self.snap(self.screen_to_world(sx, sy));
+        let target = if self.ctrl_held {
+            None
+        } else {
+            arrow_target_among(
+                self.scene.iter_ordered().rev(),
+                &|id| self.scene.get(id),
+                world.x,
+                world.y,
+                self.binding_tolerance(),
+                None,
+            )
+            .map(|el| el.id.clone())
+        };
+        // Repainted only when what is drawn changes — the shape or its midpoint dot —
+        // not on every move across it.
+        let shown = (self.binding_highlight.clone(), self.binding_midpoint());
+        self.binding_snaps = None;
+        self.binding_point = target.as_ref().map(|_| world);
+        self.binding_highlight = target;
+        if shown != (self.binding_highlight.clone(), self.binding_midpoint()) {
+            self.request_draw();
+        }
+    }
+
+    /// Puts the binding suggestion out, and forgets what the drag remembered of the far
+    /// end — when a gesture ends, is cancelled or taken over by a peer, when the tool
+    /// changes, and when undo replaces the scene under a drag.
+    pub(crate) fn clear_binding_suggestion(&mut self) {
+        self.binding_highlight = None;
+        self.binding_point = None;
+        self.binding_snaps = None;
+        self.bind_drag_origin = None;
+    }
+
+    /// The pointer left the canvas: whatever [`Self::hover_pointer`] lit goes out.
+    pub fn end_hover(&mut self) {
+        if self.interaction.is_some() || self.multi_linear.is_some() {
+            return;
+        }
+        if self.binding_highlight.take().is_some() {
+            self.binding_point = None;
+            self.request_draw();
+        }
+    }
+
+    /// Ctrl/Cmd, as held for the pointer event about to be reported: while it is down an
+    /// arrow binds to nothing, as in Excalidraw (`App.tsx:5753-5761`).
+    pub fn set_ctrl_held(&mut self, held: bool) {
+        self.ctrl_held = held;
+    }
+
     /// The cursor for the pointer at `(sx, sy)`, in screen pixels.
     pub fn hover_cursor(&self, sx: f64, sy: f64) -> HoverCursor {
         // A drag in progress outranks whatever is under the pointer: the cursor must not
@@ -139,7 +204,7 @@ impl DrawEngine {
             .scene
             .iter_ordered()
             .rev()
-            .any(|el| !el.locked() && crate::hit_test_element(el, world.x, world.y, reach))
+            .any(|el| !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, reach))
         {
             return HoverCursor::Move;
         }
