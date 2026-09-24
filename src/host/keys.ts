@@ -56,6 +56,8 @@ export interface KeySession {
   spaceHeld: boolean;
 }
 
+const BRACKET_KEYS: Partial<Record<string, "]" | "[">> = { BracketRight: "]", BracketLeft: "[" };
+
 function handleModChords(session: KeySession, event: KeyEvent, key: string): boolean {
   const { engine } = session;
   if (key === "z") {
@@ -84,9 +86,18 @@ function handleModChords(session: KeySession, event: KeyEvent, key: string): boo
     else engine.toggleGroupSelection();
     return true;
   }
-  if (event.key === "]" || event.key === "[") {
-    const toEnd = event.altKey;
-    engine.reorderSelection(event.key === "]" ? (toEnd ? "front" : "forward") : toEnd ? "back" : "backward");
+  // Excalidraw sends to the end with Shift on Windows and Linux, with Alt on macOS
+  // (`actionZindex.tsx`); both work here on every platform. Either modifier changes what
+  // the key prints, so held, the physical key decides — as the oracle's `event.code` does.
+  const bracket =
+    event.key === "]" || event.key === "["
+      ? event.key
+      : event.shiftKey || event.altKey
+        ? BRACKET_KEYS[event.code]
+        : undefined;
+  if (bracket) {
+    const toEnd = event.shiftKey || event.altKey;
+    engine.reorderSelection(bracket === "]" ? (toEnd ? "front" : "forward") : toEnd ? "back" : "backward");
     return true;
   }
   if (event.key === "=" || event.key === "+") {
