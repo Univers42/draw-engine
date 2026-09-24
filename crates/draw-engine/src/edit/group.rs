@@ -45,6 +45,84 @@ pub fn is_in_group(element: &DrawElement, group: &str) -> bool {
     element.group_ids.iter().any(|id| id == group)
 }
 
+/// Whether `group` is still a group: at least two live elements carry it.
+///
+/// Deleting all but one member leaves the id on the survivor, and a group of one is no
+/// group — the oracle drops it wherever it would select it (`selectGroup`,
+/// `packages/element/src/groups.ts:42-54`; `_selectGroups`, `:134-141`). So it cannot be
+/// stepped into, ungrouped, or kept as the level being edited.
+pub fn is_live_group<'a>(elements: impl Iterator<Item = &'a DrawElement>, group: &str) -> bool {
+    elements
+        .filter(|el| !el.is_deleted && is_in_group(el, group))
+        .nth(1)
+        .is_some()
+}
+
+/// The group directly around `group` on `element`, if any — the next id out in its
+/// innermost → outermost list. `getParentEditingGroupId`,
+/// `packages/excalidraw/actions/actionDeselect.ts:36-62`.
+pub fn parent_group<'a>(element: &'a DrawElement, group: &str) -> Option<&'a String> {
+    let index = element.group_ids.iter().position(|id| id == group)?;
+    element.group_ids.get(index + 1)
+}
+
+/// Whether `editing` can stay the group being edited once `selected` is what is held.
+///
+/// The edited group is a claim about the selection — "everything held is inside this" —
+/// and it holds only while something is held, all of it is inside, and the group is still
+/// a group. The oracle drops it wherever one of those stops being true: on an empty
+/// selection (`clearSelection`, `packages/excalidraw/components/App.tsx:12889-12902`;
+/// `groups.ts:188-196`), on a press outside it (`App.tsx:9639-9650`), and once its group
+/// is gone (`packages/element/src/delta.ts:806-818`). Kept past any of them, every later
+/// click and marquee was resolved inside a group it had nothing to do with.
+pub fn keeps_editing<'a, I>(elements: I, selected: &HashSet<String>, editing: &str) -> bool
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let mut held = elements
+        .clone()
+        .filter(|el| !el.is_deleted && selected.contains(&el.id))
+        .peekable();
+    held.peek().is_some()
+        && held.all(|el| is_in_group(el, editing))
+        && is_live_group(elements, editing)
+}
+
+/// Where deleting inside `editing` leaves you: the level still being edited, and what is
+/// held there. `elements` is the scene after the deletion.
+///
+/// `actionDeleteSelected.tsx:130-170`, then `handleGroupEditingState` (`:190-205`), which
+/// overrides the selection with the first member of whatever level is still open:
+///
+/// - two or more left: the group stays open, holding its first member;
+/// - one left: that level is no group now, so it steps up to the group around it, if
+///   that one still is;
+/// - otherwise the group is left, holding the survivor at the top level.
+pub fn after_delete_within<'a, I>(elements: I, editing: &str) -> (Option<String>, HashSet<String>)
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let first_in = |group: &str| {
+        elements
+            .clone()
+            .find(|el| !el.is_deleted && is_in_group(el, group))
+    };
+    let Some(first) = first_in(editing) else {
+        return (None, HashSet::new());
+    };
+    let level = if is_live_group(elements.clone(), editing) {
+        Some(editing)
+    } else {
+        parent_group(first, editing)
+            .map(String::as_str)
+            .filter(|parent| is_live_group(elements.clone(), parent))
+    };
+    match level.and_then(|level| Some((level, first_in(level)?))) {
+        Some((level, held)) => (Some(level.to_string()), HashSet::from([held.id.clone()])),
+        None => (None, expand_within(elements, [first.id.clone()], None)),
+    }
+}
+
 /// Grows a set of ids to cover every element of every group it touches.
 ///
 /// Group-aware through [`selected_group_for`], so what a click selects and what a
@@ -142,6 +220,10 @@ pub fn group_patches(
 /// the level you can see, and ungrouping twice peels twice rather than flattening on the
 /// first press. `removeFromSelectedGroups`, `groups.ts:327-330`, observed on
 /// excalidraw.com: `[inner, outer]` becomes `[inner]`.
+///
+/// A group of one is not a level: the oracle never selects it (`groups.ts:134-141`), so
+/// `actionUngroup` finds nothing to remove (`actionGroup.tsx:226-231`) and the dead id
+/// stays on its survivor.
 pub fn ungroup_patches(
     elements: &[DrawElement],
     ids: &HashSet<String>,
@@ -151,6 +233,7 @@ pub fn ungroup_patches(
         .iter()
         .filter(|el| ids.contains(&el.id) && !el.is_deleted)
         .filter_map(|el| selected_group_for(el, editing).cloned())
+        .filter(|group| is_live_group(elements.iter(), group))
         .collect();
     if doomed.is_empty() {
         return Vec::new();

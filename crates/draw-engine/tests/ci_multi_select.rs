@@ -205,6 +205,11 @@ fn dragging_one_member_carries_the_others() {
 /// Grabbing a member must not narrow the selection to it. This is the rule that makes
 /// "select three, drag one, all three move" work at all, and it is easy to lose: the
 /// obvious reading of a click is *select what was clicked*.
+///
+/// That reading is right once the press is let go without moving anything — then it was
+/// a click, and it narrows (`App.tsx:12183-12190`, `:12322-12345`). This used to assert
+/// the release kept everything too, which is not the oracle's click: it left no way to
+/// narrow a multi-selection short of clicking off it first.
 #[test]
 fn grabbing_a_member_does_not_drop_the_rest() {
     let (mut engine, a, b, _c) = three_boxes();
@@ -212,9 +217,10 @@ fn grabbing_a_member_does_not_drop_the_rest() {
 
     let (x, y) = middle_of(0);
     engine.begin_pointer(x, y, false, false);
-    engine.end_pointer();
-
     assert!(holds(&engine, &[&a, &b]), "got {:?}", selection(&engine));
+
+    engine.end_pointer();
+    assert!(holds(&engine, &[&a]), "got {:?}", selection(&engine));
 }
 
 /// Clicking a *non*-member with no modifier does narrow it, which is the other half.

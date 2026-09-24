@@ -298,6 +298,7 @@ impl DrawEngine {
     }
 
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
+        self.narrow_on_click = None;
         if let Some(single) = self.single_selected() {
             if !single.locked() {
                 // Radius handles first. They sit *inside* the shape, so a press on one of
@@ -379,14 +380,19 @@ impl DrawEngine {
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
-            if let Some(editing) = self.editing_group_id.clone() {
-                if !is_in_group(&hit, &editing) {
-                    // Dropped directly rather than through `leave_group`, which also
-                    // re-derives the selection: this click is about to compute its own,
-                    // and a re-derivation here would make the hit look already-selected
-                    // and turn the press into a drag of the wrong thing.
-                    self.editing_group_id = None;
-                }
+            //
+            // By letting go of what is held, shift or not, which lets go of the group
+            // too (`App.tsx:9639-9650`): a shift-click that kept the pieces inside held
+            // half of one group beside all of another. Not through `leave_group`, which
+            // re-derives the selection: this click is about to compute its own, and a
+            // re-derivation here would make the hit look already-selected and turn the
+            // press into a drag of the wrong thing.
+            if self
+                .editing_group_id
+                .as_deref()
+                .is_some_and(|editing| !is_in_group(&hit, editing))
+            {
+                self.set_selection(Vec::new());
             }
             let editing = self.editing_group_id.clone();
             let hit_ids = expand_within(
@@ -395,17 +401,19 @@ impl DrawEngine {
                 editing.as_deref(),
             );
             if additive {
-                let has = self.selected_ids.contains(&hit.id);
-                for id in hit_ids {
-                    if has {
-                        self.selected_ids.remove(&id);
-                    } else {
-                        self.selected_ids.insert(id);
-                    }
+                let mut next = self.selected_ids.clone();
+                if next.contains(&hit.id) {
+                    next.retain(|id| !hit_ids.contains(id));
+                } else {
+                    next.extend(hit_ids);
                 }
-                self.events.selection = Some(self.get_selection());
+                // Through the one door, so a shift-click that lets go of the last thing
+                // held lets go of the group being edited with it.
+                self.set_selection(next);
             } else if !self.selected_ids.contains(&hit.id) {
                 self.set_selection(hit_ids);
+            } else if !duplicate && hit_ids != self.selected_ids {
+                self.narrow_on_click = Some(hit_ids);
             }
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
