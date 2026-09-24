@@ -467,10 +467,7 @@ mod families {
         assert_eq!(text.font_family, Some(5));
         assert_eq!(text.line_height, Some(1.25));
         assert_eq!(text.original_text.as_deref(), Some(""));
-        assert_eq!(
-            request.font_family,
-            "Excalifont, Xiaolai, sans-serif, Segoe UI Emoji"
-        );
+        assert_eq!(request.font_family, 5);
         assert_close(request.line_height, 1.25);
     }
 

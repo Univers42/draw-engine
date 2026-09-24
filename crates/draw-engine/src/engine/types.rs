@@ -34,9 +34,10 @@ pub struct TextEditRequest {
     pub text_align: crate::scene::TextAlign,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
-    /// The CSS `font-family` the text is drawn in ([`crate::text::font::css_stack`]), so
-    /// the editor types in the face the canvas will draw.
-    pub font_family: String,
+    /// The family the text is drawn in — an Excalidraw id, `0` for the system stack of a
+    /// text with none — so the editor types in the face the canvas will draw
+    /// (`fontFamily(id)` gives its CSS) and measures in it.
+    pub font_family: u8,
     /// Unitless, [`resolved_line_height`](crate::scene::resolved_line_height): the
     /// editor's lines are as far apart as the canvas's.
     pub line_height: f64,

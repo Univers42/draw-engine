@@ -58,7 +58,7 @@ impl DrawEngine {
             width: wrap.map(|wrap| wrap * self.camera.scale),
             text_align,
             container_id: element.container_id.clone(),
-            font_family: crate::text::font::css_stack(family).to_owned(),
+            font_family: family.unwrap_or(crate::text::FontKey::LEGACY),
             line_height: crate::scene::resolved_line_height(element),
         });
     }
