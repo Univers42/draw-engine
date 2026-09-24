@@ -181,13 +181,47 @@ impl DrawEngine {
     /// membership anywhere on the board was rewritten, stamped and sent as part of an
     /// edit that had nothing to do with it — and undone with it.
     pub(crate) fn refresh_frame_membership(&mut self) {
-        if !self.scene.iter_ordered().any(crate::scene::is_frame) {
-            return;
-        }
         let touched = self.scene.pending_ids();
         let everything = touched
             .iter()
             .any(|id| self.scene.get(id).is_some_and(crate::scene::is_frame));
+        self.judge_frame_membership(&touched, everything);
+    }
+
+    /// What the commit in progress created is judged where it lands — drawn, typed,
+    /// pasted, duplicated, dropped in — as the oracle gives a new element the frame it
+    /// is created in (`createGenericElementOnPointerDown`, `App.tsx:10442-10465`; a
+    /// paste, `App.duplicate.ts:124-135`). Nothing else judges it: membership is
+    /// re-judged only for what a commit touches, so a shape drawn inside a frame stayed
+    /// out of it — and was left behind when the frame moved — and a pasted copy kept the
+    /// frame of an original it lay far from.
+    ///
+    /// A frame among them takes in only what was created with it: a pasted or duplicated
+    /// frame adopts nothing it lands on, where a frame *drawn* over work does
+    /// ([`Self::end_draft`]). Judged as a moved frame is, the whole board over, a frame
+    /// duplicated a few units over its original took the original's children.
+    pub(super) fn judge_created_frame_membership(&mut self) {
+        let created: std::collections::HashSet<String> = self
+            .scene
+            .pending_ids()
+            .into_iter()
+            .filter(|id| self.scene.created_since_commit(id))
+            .collect();
+        if !created.is_empty() {
+            self.judge_frame_membership(&created, false);
+        }
+    }
+
+    /// Settles membership for `touched` and the members of their groups — or for every
+    /// element, when `everything`.
+    fn judge_frame_membership(
+        &mut self,
+        touched: &std::collections::HashSet<String>,
+        everything: bool,
+    ) {
+        if !self.scene.iter_ordered().any(crate::scene::is_frame) {
+            return;
+        }
         let groups: std::collections::HashSet<&String> = touched
             .iter()
             .filter_map(|id| self.scene.get(id))
@@ -210,12 +244,11 @@ impl DrawEngine {
                 changes.push((element.id.clone(), owner));
             }
         }
+        // Stamped by the commit, as every change is (`stamp.rs`) — so one created here
+        // keeps the stamp it was created with.
         for (id, frame_id) in changes {
-            if let Some(mut element) = self.scene.get(&id).cloned() {
-                element.frame_id = frame_id;
-                self.scene
-                    .put(crate::scene::bump_version(element, self.now_ms));
-            }
+            self.scene
+                .update(&id, |element| element.frame_id = frame_id);
         }
     }
 

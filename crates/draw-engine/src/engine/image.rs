@@ -58,9 +58,6 @@ impl DrawEngine {
 
         let id = element.id.clone();
         self.scene.add(element);
-        // Membership follows position, and an image dropped inside a frame belongs to it
-        // exactly as a shape drawn there would.
-        self.refresh_frame_membership();
         self.set_selection(vec![id.clone()]);
         self.push_history();
         self.request_draw();
@@ -111,7 +108,6 @@ impl DrawEngine {
 
         let id = element.id.clone();
         self.scene.add(element);
-        self.refresh_frame_membership();
         self.set_selection(vec![id.clone()]);
         self.push_history();
         self.request_draw();

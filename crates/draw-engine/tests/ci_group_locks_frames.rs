@@ -942,3 +942,88 @@ fn a_child_aligned_out_of_its_frame_stays_in_it_past_an_unrelated_click() {
         Some(frame.as_str())
     );
 }
+
+/// The newest element on the board that is not a frame.
+fn last_drawn(engine: &DrawEngine) -> String {
+    engine
+        .get_scene()
+        .into_iter()
+        .rev()
+        .find(|el| !is_frame(el) && !el.is_deleted)
+        .map(|el| el.id)
+        .expect("nothing was drawn")
+}
+
+/// What is created is judged as it is committed. A shape drawn inside a frame is that
+/// frame's at once — the oracle gives a new element the frame it is created in
+/// (`App.tsx:9897-9927`) — and moves with it. Judged only by a later gesture of its own,
+/// it stayed out of the frame, which then moved without it.
+#[test]
+fn a_shape_drawn_inside_a_frame_joins_it_and_moves_with_it() {
+    let mut engine = engine_with_scene(Vec::new());
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (400.0, 300.0));
+    engine.set_tool(DrawTool::Rectangle);
+    drag(&mut engine, (60.0, 60.0), (140.0, 120.0));
+    let rect = last_drawn(&engine);
+    engine.set_tool(DrawTool::Line);
+    drag(&mut engine, (200.0, 200.0), (300.0, 250.0));
+    let line = last_drawn(&engine);
+    engine.set_tool(DrawTool::Select);
+
+    for id in [&rect, &line] {
+        assert_eq!(
+            frame_of(&engine, id).as_deref(),
+            Some(frame.as_str()),
+            "{id}"
+        );
+    }
+    engine.select(vec![frame.clone()]);
+    drag(&mut engine, (200.0, 20.0), (300.0, 70.0));
+    assert_close(element(&engine, &rect).x, 160.0);
+    assert_close(element(&engine, &line).x, 300.0);
+}
+
+/// A pasted copy is judged where it lands: out of the frame its original is in when
+/// pasted away from it, in the frame it is pasted into.
+#[test]
+fn a_pasted_copy_belongs_to_the_frame_it_lands_in() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    assert_eq!(
+        frame_of(&engine, &child_id).as_deref(),
+        Some(frame.as_str()),
+        "setup"
+    );
+    engine.select(vec![child_id]);
+    let copied = engine.copy_selection();
+
+    assert!(engine.paste_json(copied.as_deref(), Some((600.0, 150.0))));
+    let far = last_drawn(&engine);
+    assert!(engine.paste_json(copied.as_deref(), Some((160.0, 200.0))));
+    let near = last_drawn(&engine);
+
+    assert_eq!(frame_of(&engine, &far), None);
+    assert_eq!(frame_of(&engine, &near).as_deref(), Some(frame.as_str()));
+}
+
+/// A copy of a frame takes nothing it lands on: Ctrl+D puts the copy a few units over
+/// the original, wholly around its children, and judged as a moved frame is — the whole
+/// board over — the copy, on top, took them.
+#[test]
+fn a_duplicated_frame_leaves_the_originals_children_alone() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    engine.select(vec![frame.clone()]);
+
+    engine.duplicate_selection(10.0, 10.0);
+
+    assert_ne!(selection(&engine), [frame.clone()].into_iter().collect());
+    assert_eq!(
+        frame_of(&engine, &child_id).as_deref(),
+        Some(frame.as_str())
+    );
+}
