@@ -90,6 +90,8 @@ pub struct DrawEngine {
     disposed: bool,
     now_ms: f64,
     measure_text: fn(&str, f64) -> (f64, f64),
+    /// Char widths and wrapped lines measured with `measure_text` (`crate::text`).
+    text_cache: crate::text::MeasureCache,
     tool: DrawTool,
     /// Where a toggle tool goes back to. Never a toggle tool itself, so pressing the
     /// eraser key three times enters, leaves, and enters again rather than oscillating.
@@ -224,6 +226,7 @@ impl DrawEngine {
             disposed: false,
             now_ms: 0.0,
             measure_text: default_measure,
+            text_cache: crate::text::MeasureCache::new(),
             tool: DrawTool::Select,
             tool_before_toggle: DrawTool::Select,
             tool_locked: false,
@@ -270,6 +273,8 @@ impl DrawEngine {
 
     pub fn set_measure_text(&mut self, measure: fn(&str, f64) -> (f64, f64)) {
         self.measure_text = measure;
+        // Everything cached was measured by the hook this replaces.
+        self.text_cache.clear();
     }
 
     pub fn drain_events(&mut self) -> EngineEvents {
