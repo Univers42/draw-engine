@@ -1125,7 +1125,20 @@ pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElem
 ///
 /// This walks the same logic but writes only what actually moved. A scene with no
 /// bindings costs one pass and no allocation at all.
-pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
+///
+/// Only for what `touched` names — the elements the commit in progress changed. An arrow
+/// is re-resolved when it or either shape it is bound to was touched; a label when it or
+/// its container was, or its container was re-routed here. So an edit re-resolves the
+/// arrows of what it moved, as the oracle's `updateBoundElements(changedElement)` does
+/// (`packages/element/src/align.ts:45-48`), and nothing else: re-resolving the whole
+/// board rewrote an arrow saved before its ends were anchored on the first unrelated
+/// edit — stamped as part of that edit, or, on a peer's patch, not stamped at all, so
+/// this engine and the server held two geometries under one version.
+pub fn refresh_bindings_in_place(
+    scene: &mut crate::scene::store::Scene,
+    touched: &std::collections::HashSet<String>,
+) {
+    let touches = |id: Option<&str>| id.is_some_and(|id| touched.contains(id));
     // Pass 1: arrows with a bound end.
     //
     // Collected before writing because the reads borrow the scene immutably; only the
@@ -1138,6 +1151,12 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
             // resurrect one saved by an older build that did bind them.
             if !is_binding_element(element)
                 || (element.start_binding.is_none() && element.end_binding.is_none())
+            {
+                continue;
+            }
+            if !touches(Some(&element.id))
+                && !touches(element.start_binding.as_deref())
+                && !touches(element.end_binding.as_deref())
             {
                 continue;
             }
@@ -1163,6 +1182,8 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
             }
         }
     }
+    let rerouted: std::collections::HashSet<String> =
+        moved.iter().map(|element| element.id.clone()).collect();
     for element in moved {
         scene.put(element);
     }
@@ -1177,6 +1198,12 @@ pub fn refresh_bindings_in_place(scene: &mut crate::scene::store::Scene) {
         let Some(container_id) = element.container_id.as_deref() else {
             continue;
         };
+        if !touches(Some(&element.id))
+            && !touches(Some(container_id))
+            && !rerouted.contains(container_id)
+        {
+            continue;
+        }
         let Some(container) = scene.get(container_id).filter(|c| !c.is_deleted) else {
             continue;
         };

@@ -274,6 +274,10 @@ impl DrawEngine {
         }
 
         if changed {
+            // The arrows of what the peer changed, and of what is pending here, and no
+            // others: a peer's edit elsewhere re-routed an arrow saved before its ends
+            // were anchored, unstamped and unsent, so the server kept the old geometry
+            // under the same version.
             self.apply_bindings();
             // Drop the delta this produced: the host already has these elements, and
             // emitting them would send them straight back to the peer that sent them.

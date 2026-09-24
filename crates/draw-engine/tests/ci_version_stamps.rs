@@ -153,6 +153,85 @@ fn an_arrow_that_follows_its_shape_is_bumped() {
     assert_eq!(after.version, arrow.version + 1);
 }
 
+/// Two boxes and an arrow between them saved before ends were anchored: bound at both
+/// ends, with no fixed points, drawn centre to centre where the anchor model would stop
+/// it a gap clear of each outline. And a third box, X, bound to nothing.
+fn legacy_arrow() -> (DrawEngine, DrawElement, [String; 3]) {
+    let r1 = filled(box_at(0.0, 0.0, 100.0, 100.0));
+    let r2 = filled(box_at(300.0, 0.0, 100.0, 100.0));
+    let x = filled(box_at(0.0, 400.0, 60.0, 60.0));
+    let mut arrow = connector(100.0, 50.0, 300.0, 50.0, DrawElementType::Arrow);
+    arrow.start_binding = Some(r1.id.clone());
+    arrow.end_binding = Some(r2.id.clone());
+    arrow.version = 7;
+    let ids = [r1.id.clone(), r2.id.clone(), x.id.clone()];
+    let engine = engine_with_scene(vec![r1, r2, x, arrow.clone()]);
+    (engine, arrow, ids)
+}
+
+fn sent(engine: &mut DrawEngine) -> Vec<String> {
+    engine
+        .drain_events()
+        .scene_delta
+        .map(|delta| delta.updated.into_iter().map(|el| el.id).collect())
+        .unwrap_or_default()
+}
+
+/// A commit re-resolves what it touched and nothing else. Re-resolving every bound
+/// arrow on the board instead rewrote a legacy arrow on the first nudge of anything,
+/// stamped it, sent it, and put it in that nudge's undo step. The oracle updates the
+/// arrows of the elements that changed (`updateBoundElements(changedElement)`,
+/// `packages/element/src/align.ts:45-48`).
+#[test]
+fn a_legacy_arrow_is_not_restamped_by_an_unrelated_edit() {
+    let (mut engine, arrow, [_, _, x]) = legacy_arrow();
+    let _ = engine.drain_events();
+    engine.select(vec![x.clone()]);
+
+    engine.nudge_selection(1.0, 0.0);
+
+    let after = get(&engine, &arrow.id);
+    assert_eq!(after.version, arrow.version, "restamped");
+    assert_eq!(after.points, arrow.points);
+    let sent = sent(&mut engine);
+    assert!(sent.contains(&x), "setup: the nudge was sent");
+    assert!(!sent.contains(&arrow.id));
+}
+
+/// Nor by a peer's edit of something else — which used to re-route it with no stamp at
+/// all, so this engine and the server held two geometries under one version.
+#[test]
+fn an_unrelated_peer_patch_leaves_a_legacy_arrow_alone() {
+    let (mut engine, arrow, [_, _, x]) = legacy_arrow();
+    let mut moved = get(&engine, &x);
+    moved.x = 50.0;
+    moved.version = 99;
+
+    assert!(engine.apply_remote_patch(&scene_to_json(&[moved])));
+
+    let after = get(&engine, &arrow.id);
+    assert_eq!(after.points, arrow.points);
+    assert_eq!((after.x, after.y), (arrow.x, arrow.y));
+    assert_eq!(after.version, arrow.version);
+}
+
+/// The other half, and what anything that moves shapes relies on: an arrow that is not
+/// part of the edit but is bound to a shape that is follows it in the same commit,
+/// stamped once. A pending shape touches its arrows.
+#[test]
+fn an_arrow_bound_to_a_moved_shape_follows_it_though_not_selected() {
+    let (mut engine, arrow, [r1, _, _]) = legacy_arrow();
+    let _ = engine.drain_events();
+    engine.select(vec![r1.clone()]);
+
+    engine.nudge_selection(0.0, 10.0);
+
+    let after = get(&engine, &arrow.id);
+    assert!(after.y > arrow.y, "the tail followed R1 down: {after:?}");
+    assert_eq!(after.version, arrow.version + 1, "stamped once");
+    assert!(sent(&mut engine).contains(&arrow.id));
+}
+
 /// One edit, one bump — a path that stamps its own change is not stamped again.
 #[test]
 fn a_style_change_is_bumped_once() {

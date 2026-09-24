@@ -672,8 +672,12 @@ impl DrawEngine {
         self.scene.get(id).cloned()
     }
 
+    /// Re-resolves the bindings of what the commit in progress touched — see
+    /// [`crate::scene::binding::refresh_bindings_in_place`]. On a peer's patch that is the
+    /// patch's elements too, still pending when this runs.
     fn apply_bindings(&mut self) {
-        crate::scene::binding::refresh_bindings_in_place(&mut self.scene);
+        let touched = self.scene.pending_ids();
+        crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &touched);
     }
 
     fn settle_tool(&mut self) {
