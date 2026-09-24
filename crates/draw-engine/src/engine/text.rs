@@ -21,17 +21,7 @@ impl DrawEngine {
         if !is_bindable_element(&single) && !is_linear_element(&single) {
             return false;
         }
-        let bound = single
-            .bound_text_id
-            .as_ref()
-            .and_then(|id| self.scene.get(id).cloned());
-        let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
-            bound
-        } else {
-            self.create_label(&single)
-        };
-        self.set_selection(vec![label.id.clone()]);
-        self.request_text_edit(&label);
+        self.edit_label(&single);
         true
     }
 

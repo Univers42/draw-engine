@@ -85,8 +85,8 @@ pub fn is_binding_element(element: &DrawElement) -> bool {
 
 /// Whether this element can hold a label, and so be found by [`bindable_at`].
 ///
-/// Narrower than [`is_arrow_target`]: an arrow can attach to a picture or a line of text,
-/// but neither takes a label.
+/// Narrower than what an arrow can attach to (`is_target_kind`): an arrow can attach to
+/// a picture or a line of text, but neither takes a label.
 pub fn is_bindable_element(element: &DrawElement) -> bool {
     matches!(
         element.kind,
@@ -94,18 +94,13 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
     )
 }
 
-/// Whether an arrow end can attach to this element.
+/// Whether an arrow end can attach to this kind of element.
 ///
 /// Excalidraw's `isBindableElement(element, false)` (`typeChecks.ts:184-202`): the three
 /// shapes, pictures, embeds, frames and free-standing text — not a label, which belongs
-/// to its container, and never a line or arrow. A locked element is not a target: it is
-/// not something the pointer can act on at all.
-pub fn is_arrow_target(element: &DrawElement) -> bool {
-    !element.is_deleted && element.locked != Some(true) && is_target_kind(element)
-}
-
-/// [`is_arrow_target`] without the lock: a locked shape still stands in the way of what
-/// is behind it.
+/// to its container, and never a line or arrow. A locked one is not a target, but it
+/// still stands in the way of what is behind it, so the lock is [`arrow_target_among`]'s
+/// to judge.
 fn is_target_kind(element: &DrawElement) -> bool {
     match element.kind {
         DrawElementType::Rectangle
