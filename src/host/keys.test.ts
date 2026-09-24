@@ -244,6 +244,8 @@ describe("dispatchKeyDown", () => {
       [{ key: "“", code: "BracketLeft", metaKey: true, altKey: true }, "reorder:back"],
       // Unshifted, a layout that prints + on that key keeps it for zoom.
       [{ key: "+", code: "BracketRight", ctrlKey: true }, "zoomIn"],
+      // Shifted too: Ctrl++ on US Dvorak, whose = / + key is BracketRight.
+      [{ key: "+", code: "BracketRight", ctrlKey: true, shiftKey: true }, "zoomIn"],
     ];
     for (const [chord, call] of chords) {
       const { engine, calls } = recording(["id"]);

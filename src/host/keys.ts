@@ -86,6 +86,20 @@ function handleModChords(session: KeySession, event: KeyEvent, key: string): boo
     else engine.toggleGroupSelection();
     return true;
   }
+  // Zoom by the printed key, and before the brackets' physical-key fallback below: on a
+  // layout whose + sits on a bracket key (Dvorak, QWERTZ), Ctrl++ is still a zoom.
+  if (event.key === "=" || event.key === "+") {
+    engine.zoomIn();
+    return true;
+  }
+  if (event.key === "-" || event.key === "_") {
+    engine.zoomOut();
+    return true;
+  }
+  if (event.key === "0") {
+    engine.zoomReset();
+    return true;
+  }
   // Excalidraw sends to the end with Shift on Windows and Linux, with Alt on macOS
   // (`actionZindex.tsx`); both work here on every platform. Either modifier changes what
   // the key prints, so held, the physical key decides — as the oracle's `event.code` does.
@@ -98,18 +112,6 @@ function handleModChords(session: KeySession, event: KeyEvent, key: string): boo
   if (bracket) {
     const toEnd = event.shiftKey || event.altKey;
     engine.reorderSelection(bracket === "]" ? (toEnd ? "front" : "forward") : toEnd ? "back" : "backward");
-    return true;
-  }
-  if (event.key === "=" || event.key === "+") {
-    engine.zoomIn();
-    return true;
-  }
-  if (event.key === "-" || event.key === "_") {
-    engine.zoomOut();
-    return true;
-  }
-  if (event.key === "0") {
-    engine.zoomReset();
     return true;
   }
   if (key === "c") {
