@@ -115,12 +115,13 @@ impl DrawEngine {
         if !self.scene.iter_ordered().any(crate::scene::is_frame) {
             return;
         }
+        let owners = crate::scene::frame::FrameOwners::new(self.scene.iter_ordered());
         let mut changes: Vec<(String, Option<String>)> = Vec::new();
         for element in self.scene.iter_ordered() {
             if element.is_deleted || crate::scene::is_frame(element) {
                 continue;
             }
-            let owner = crate::scene::frame_for_element(self.scene.iter_ordered(), element);
+            let owner = owners.of(element);
             if owner != element.frame_id {
                 changes.push((element.id.clone(), owner));
             }

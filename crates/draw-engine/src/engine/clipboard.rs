@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::edit::clipboard::{materialize_elements, serialize_selection};
 use crate::engine::DrawEngine;
 use crate::export::scene_to_json;
@@ -341,8 +343,37 @@ impl DrawEngine {
             return;
         }
         let now = self.now_ms;
-        let mut doomed = self.selected_ids.clone();
-        for id in &self.selected_ids {
+        // Deleting a frame deletes the frame, not the work in it, as Excalidraw's does
+        // (`packages/excalidraw/actions/actionDeleteSelected.tsx:57-73,115-122`): its
+        // children stay — even one selected along with it, since deleting the frame is
+        // taken to mean the frame — leave it, and become the selection, so a second
+        // Delete takes them too if that was what was meant. This used to take them with
+        // the frame, and claimed parity for it.
+        //
+        // Collected before anything is written, because reading a frame's children needs
+        // the scene the removals below are about to change.
+        let kept: HashSet<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .collect();
+        // A kept child's label stays with it, selected or not.
+        let doomed_selected: Vec<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| {
+                !kept.contains(*id)
+                    && !self
+                        .scene
+                        .get(id)
+                        .and_then(|el| el.container_id.as_ref())
+                        .is_some_and(|container| kept.contains(container))
+            })
+            .cloned()
+            .collect();
+        let mut doomed: HashSet<String> = doomed_selected.iter().cloned().collect();
+        for id in &doomed_selected {
             if let Some(element) = self.scene.get(id) {
                 if let Some(bound) = &element.bound_text_id {
                     doomed.insert(bound.clone());
@@ -357,24 +388,18 @@ impl DrawEngine {
                 }
             }
         }
-        // Deleting a frame deletes what it holds, as Excalidraw's does. A frame is the
-        // thing those elements live in, not a label on them: leaving the contents behind
-        // would scatter a diagram you had deliberately gathered.
-        //
-        // Collected before the removals rather than inside the loop above, because
-        // reading a frame's children needs the scene while the loop above is already
-        // writing to it.
-        let orphaned: Vec<String> = self
-            .selected_ids
-            .iter()
-            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
-            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
-            .collect();
-        doomed.extend(orphaned);
         for id in doomed {
             self.scene.remove(&id, now);
         }
-        self.set_selection(Vec::new());
+        for id in &kept {
+            self.scene.update(id, |child| child.frame_id = None);
+        }
+        let selection = crate::edit::expand_within(
+            self.scene.iter_ordered(),
+            kept,
+            self.editing_group_id.as_deref(),
+        );
+        self.set_selection(selection);
         self.push_history();
     }
 

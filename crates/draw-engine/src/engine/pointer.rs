@@ -234,18 +234,23 @@ impl DrawEngine {
         });
     }
 
-    /// The unlocked members of the current multi-selection, with their shared frame.
+    /// What a transform of the selection carries: see [`crate::edit::carried_by`].
+    pub(crate) fn carried_selection(&self) -> std::collections::HashSet<String> {
+        crate::edit::carried_by(
+            self.scene.iter_ordered(),
+            &self.selected_ids,
+            self.editing_group_id.as_deref(),
+        )
+    }
+
+    /// What the current multi-selection carries, with its shared frame.
     fn group_frame(&self) -> Option<(Vec<String>, crate::selection::GroupFrame)> {
-        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
-        let elements: Vec<crate::scene::DrawElement> = ids
-            .iter()
-            .filter_map(|id| self.scene.get(id).cloned())
-            .filter(|e| !e.locked())
-            .collect();
-        if elements.len() < 2 {
+        let ids: Vec<String> = self.carried_selection().into_iter().collect();
+        if ids.len() < 2 {
             return None;
         }
-        let frame = crate::selection::GroupFrame::capture(elements.iter())?;
+        let frame =
+            crate::selection::GroupFrame::capture(ids.iter().filter_map(|id| self.scene.get(id)))?;
         Some((ids, frame))
     }
 
@@ -473,41 +478,43 @@ impl DrawEngine {
             && world.y <= bounds.max_y + pad
     }
 
-    fn begin_move(&mut self, world: Point) {
-        let mut origins = std::collections::HashMap::new();
-        // A frame carries what it contains. Expanding the set here rather than moving
-        // children separately means one code path moves everything: the children snap,
-        // re-bind and undo exactly as they would if you had selected them yourself.
-        let mut moving_elements = self.get_selected_elements();
-        let frame_ids: Vec<String> = moving_elements
+    /// What moving the selection moves, by drag or by arrow key: what it carries, plus
+    /// everything a frame in it contains.
+    ///
+    /// A frame carries what it contains. Expanding the set here rather than moving
+    /// children separately means one code path moves everything: the children snap,
+    /// re-bind and undo exactly as they would if you had selected them yourself.
+    ///
+    /// Locked children included, as a group's locked members are: the oracle adds every
+    /// child of a dragged frame with no lock filter (`packages/element/src/
+    /// dragElements.ts:75-84`), and one left behind would sit outside the frame that
+    /// still claims it.
+    pub(crate) fn moving_selection(&self) -> std::collections::HashSet<String> {
+        let mut moving = self.carried_selection();
+        let children: Vec<String> = moving
             .iter()
-            .filter(|el| crate::scene::is_frame(el))
-            .map(|el| el.id.clone())
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
             .collect();
-        for frame_id in frame_ids {
-            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame_id) {
-                if origins.contains_key(&child_id) {
-                    continue;
-                }
-                if let Some(child) = self.scene.get(&child_id) {
-                    if !moving_elements.iter().any(|el| el.id == child_id) {
-                        moving_elements.push(child.clone());
-                    }
-                }
-            }
-        }
-        for element in moving_elements {
-            if !element.locked() {
-                origins.insert(
-                    element.id.clone(),
+        moving.extend(children);
+        moving
+    }
+
+    fn begin_move(&mut self, world: Point) {
+        let moving = self.moving_selection();
+        let origins: std::collections::HashMap<String, Point> = moving
+            .iter()
+            .filter_map(|id| {
+                let element = self.scene.get(id)?;
+                Some((
+                    id.clone(),
                     Point {
                         x: element.x,
                         y: element.y,
                     },
-                );
-            }
-        }
-        let moving: std::collections::HashSet<_> = origins.keys().cloned().collect();
+                ))
+            })
+            .collect();
         // By reference: this runs once per drag-start but touches every element in the
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.

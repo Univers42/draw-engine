@@ -11,9 +11,14 @@
 //! that answered it slightly differently would produce boards that disagree about what
 //! moves when a frame moves.
 //!
+//! A group is judged as one element: it is inside a frame when all of it is, so it joins
+//! or leaves whole and never straddles the border as two halves ([`frame_for_element`]).
+//!
 //! What this deliberately does not cover yet, and why it is safe to add later: frames
-//! inside frames, and the interaction between frame membership and groups. Both change
-//! only which elements are captured, not how capture is decided.
+//! inside frames. It changes only which elements are captured, not how capture is
+//! decided.
+
+use std::collections::HashMap;
 
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{DrawElement, DrawElementType};
@@ -67,9 +72,17 @@ pub fn frame_style() -> crate::scene::element::DrawElementStyle {
 /// Excalidraw's `elementsAreInFrameBounds`: compared as boxes, and as the element's
 /// *rotated* box, so a turned rectangle is judged by the room it actually occupies.
 pub fn element_in_frame_bounds(element: &DrawElement, frame: &DrawElement) -> bool {
-    let e = element_rotated_bounds(element);
-    let f = element_rotated_bounds(frame);
-    f.min_x <= e.min_x && f.min_y <= e.min_y && f.max_x >= e.max_x && f.max_y >= e.max_y
+    within(
+        element_rotated_bounds(element),
+        element_rotated_bounds(frame),
+    )
+}
+
+fn within(inner: WorldBounds, outer: WorldBounds) -> bool {
+    outer.min_x <= inner.min_x
+        && outer.min_y <= inner.min_y
+        && outer.max_x >= inner.max_x
+        && outer.max_y >= inner.max_y
 }
 
 /// Whether the element's outline crosses the frame's border.
@@ -93,9 +106,10 @@ pub fn element_intersects_frame(element: &DrawElement, frame: &DrawElement) -> b
 /// Excalidraw keeps this case because a big background rectangle behind a frame contains
 /// it without ever crossing its border, and should still be clipped by it.
 pub fn element_contains_frame(element: &DrawElement, frame: &DrawElement) -> bool {
-    let e = element_rotated_bounds(element);
-    let f = element_rotated_bounds(frame);
-    e.min_x <= f.min_x && e.min_y <= f.min_y && e.max_x >= f.max_x && e.max_y >= f.max_y
+    within(
+        element_rotated_bounds(frame),
+        element_rotated_bounds(element),
+    )
 }
 
 /// Excalidraw's `elementOverlapsWithFrame`: inside it, crossing it, or swallowing it.
@@ -113,20 +127,74 @@ fn can_belong_to_frame(element: &DrawElement) -> bool {
     !element.is_deleted && !is_frame(element) && element.container_id.is_none()
 }
 
-/// The elements a frame captures: those lying wholly inside it.
+/// The elements a frame captures: those lying wholly inside it, a group only whole.
 ///
 /// Wholly inside, not merely overlapping. Excalidraw captures on containment because
 /// capture is silent — nothing asks first — and a rule that swept in everything a frame
 /// merely touched would take neighbouring diagrams with it the moment you drew one.
-pub fn elements_captured_by<'a>(
-    elements: impl Iterator<Item = &'a DrawElement>,
-    frame: &DrawElement,
-) -> Vec<String> {
+pub fn elements_captured_by<'a, I>(elements: I, frame: &DrawElement) -> Vec<String>
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let groups = group_boxes(elements.clone());
+    let area = element_rotated_bounds(frame);
     elements
         .filter(|element| can_belong_to_frame(element) && element.id != frame.id)
-        .filter(|element| element_in_frame_bounds(element, frame))
+        .filter(|element| judged_box(element, &groups).is_some_and(|b| within(b, area)))
         .map(|element| element.id.clone())
         .collect()
+}
+
+/// Every group's box taken whole, by group id — at any depth, so an outer group's box
+/// covers the groups nested in it. `None` for a group holding a frame, which no frame
+/// can hold (`omitGroupsContainingFrameLikes`, `packages/element/src/frame.ts:747-788`).
+fn group_boxes<'a>(
+    elements: impl Iterator<Item = &'a DrawElement>,
+) -> HashMap<&'a str, Option<WorldBounds>> {
+    let mut boxes: HashMap<&str, Option<WorldBounds>> = HashMap::new();
+    for member in elements.filter(|el| !el.is_deleted) {
+        let own = (!is_frame(member)).then(|| element_rotated_bounds(member));
+        for id in &member.group_ids {
+            let so_far = boxes.entry(id.as_str()).or_insert(own);
+            *so_far = so_far.zip(own).map(|(a, b)| union(a, b));
+        }
+    }
+    boxes
+}
+
+/// The box a frame judges `element` by: its own, or — for a grouped element — its
+/// outermost group's, taken whole.
+///
+/// So a group joins a frame or leaves it as one, as the oracle's does: a new frame takes
+/// a group only when all of it is inside (`omitPartialGroups`, `packages/element/src/
+/// frame.ts:395-434`), and a dragged member is decided by its group, never on its own
+/// (`isElementInFrame`, `frame.ts:857-906`). Judged per element, a group straddling the
+/// border was split in two, half of it clipped and carried by a frame the rest ignored.
+///
+/// The element's own box is folded in, so one not yet in the scene — a bucket fill
+/// joining its walls' group — is judged by where it will be.
+fn judged_box(
+    element: &DrawElement,
+    groups: &HashMap<&str, Option<WorldBounds>>,
+) -> Option<WorldBounds> {
+    let own = element_rotated_bounds(element);
+    match element
+        .group_ids
+        .last()
+        .and_then(|outermost| groups.get(outermost.as_str()))
+    {
+        Some(group) => group.map(|group| union(group, own)),
+        None => Some(own),
+    }
+}
+
+fn union(a: WorldBounds, b: WorldBounds) -> WorldBounds {
+    WorldBounds {
+        min_x: a.min_x.min(b.min_x),
+        min_y: a.min_y.min(b.min_y),
+        max_x: a.max_x.max(b.max_x),
+        max_y: a.max_y.max(b.max_y),
+    }
 }
 
 /// The ids currently claiming membership of this frame.
@@ -141,22 +209,53 @@ pub fn frame_children<'a>(
         .collect()
 }
 
-/// The frame that should own this element, if any.
+/// The frame that should own this element, if any: see [`FrameOwners::of`].
+pub fn frame_for_element<'a, I>(elements: I, element: &DrawElement) -> Option<String>
+where
+    I: DoubleEndedIterator<Item = &'a DrawElement> + Clone,
+{
+    FrameOwners::new(elements).of(element)
+}
+
+/// What frame membership is judged against, read from the scene once: its frames,
+/// topmost first, and every group's box taken whole.
 ///
-/// The topmost frame it lies wholly within. Topmost because frames are drawn on top of
-/// one another freely, and the one you can see is the one you meant.
-pub fn frame_for_element<'a>(
-    elements: impl DoubleEndedIterator<Item = &'a DrawElement>,
-    element: &DrawElement,
-) -> Option<String> {
-    if !can_belong_to_frame(element) {
-        return None;
+/// Once, because membership is re-derived across the whole scene after a gesture, and
+/// reading the frames and each group's members again for every element is quadratic in
+/// the size of the board.
+pub(crate) struct FrameOwners<'a> {
+    frames: Vec<&'a DrawElement>,
+    groups: HashMap<&'a str, Option<WorldBounds>>,
+}
+
+impl<'a> FrameOwners<'a> {
+    pub(crate) fn new<I>(elements: I) -> Self
+    where
+        I: DoubleEndedIterator<Item = &'a DrawElement> + Clone,
+    {
+        Self {
+            frames: elements
+                .clone()
+                .rev()
+                .filter(|candidate| is_frame(candidate) && !candidate.is_deleted)
+                .collect(),
+            groups: group_boxes(elements),
+        }
     }
-    elements
-        .rev()
-        .filter(|candidate| is_frame(candidate) && !candidate.is_deleted)
-        .find(|frame| element_in_frame_bounds(element, frame))
-        .map(|frame| frame.id.clone())
+
+    /// The topmost frame `element` lies wholly within — with its whole group, if it has
+    /// one. Topmost because frames are drawn on top of one another freely, and the one
+    /// you can see is the one you meant.
+    pub(crate) fn of(&self, element: &DrawElement) -> Option<String> {
+        if !can_belong_to_frame(element) {
+            return None;
+        }
+        let judged = judged_box(element, &self.groups)?;
+        self.frames
+            .iter()
+            .find(|frame| within(judged, element_rotated_bounds(frame)))
+            .map(|frame| frame.id.clone())
+    }
 }
 
 /// Whether a child should be clipped to its frame when painted.
