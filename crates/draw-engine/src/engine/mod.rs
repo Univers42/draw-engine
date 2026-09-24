@@ -64,6 +64,11 @@ const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
 /// Derived from pixels rather than world units so it does not shrink to nothing when
 /// zoomed out.
 const BINDING_HOVER_PX: f64 = 32.0;
+/// How close, in screen pixels, a dropped arrow end must come to a side midpoint to snap
+/// onto it. Excalidraw's reach is its binding distance, 15 scene units at ordinary zoom
+/// (`packages/element/src/utils.ts:634-695`); kept in pixels here so it feels the same at
+/// every zoom, and capped per shape by `midpoint_snap_radius`.
+const MIDPOINT_SNAP_PX: f64 = 16.0;
 const ROTATE_GAP_PX: f64 = 26.0;
 /// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`: how near a click must be to an element.
 const COLLISION_PX: f64 = 10.0;
@@ -138,6 +143,14 @@ pub struct DrawEngine {
     /// without that, binding is invisible until after the fact and feels like a
     /// coincidence rather than a tool.
     binding_highlight: Option<String>,
+    /// Where the arrow end being placed — or the arrow tool hovering — is, for the painter
+    /// to mark which side midpoint it would snap to. Set together with
+    /// `binding_highlight` and cleared with it.
+    binding_point: Option<crate::camera::Point>,
+    /// The other end's binding as it was when the drag of one end began, so a drag that
+    /// passes over the shape the other end is on and moves on gives that end back.
+    /// `(arrow id, the end being dragged, the other end's anchor)`. See `pointer_move.rs`.
+    bind_drag_origin: Option<(String, crate::scene::binding::End, Option<crate::scene::binding::Anchor>)>,
     /// Laser strokes on screen, drawn and fading.
     ///
     /// Not part of the scene and never serialized: a laser mark is a gesture, like a
@@ -156,6 +169,9 @@ pub struct DrawEngine {
     erasing_revision: u64,
     /// Alt, as of the last pointer move. See `set_alt_held`.
     alt_held: bool,
+    /// Ctrl/Cmd, as of the last press or move: while held, an arrow end binds to nothing,
+    /// as in Excalidraw (`App.tsx:5753-5761`). See `set_ctrl_held`.
+    ctrl_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
     /// A peer's copy of an element with an uncommitted local change, refused because a
@@ -206,11 +222,14 @@ impl DrawEngine {
             snap_guides: Vec::new(),
             objects_snap: false,
             binding_highlight: None,
+            binding_point: None,
+            bind_drag_origin: None,
             laser: crate::interaction::LaserTrails::default(),
             peer_lasers: HashMap::new(),
             erasing: HashSet::new(),
             erasing_revision: 0,
             alt_held: false,
+            ctrl_held: false,
             history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
             history_seq: 0,
             remote_refused: std::collections::HashMap::new(),
