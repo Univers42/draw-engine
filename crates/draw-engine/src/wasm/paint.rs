@@ -1272,8 +1272,10 @@ fn paint_frame_names(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         crate::scene::FRAME_NAME_FONT_SIZE,
     ));
     ctx.set_text_baseline("alphabetic");
-    // Set, not inherited: text painting leaves its own alignment on the context, so after a
-    // centred label every name sat centred on its frame's left edge, half outside it.
+    // Set, not inherited: `paint_text` leaves its own alignment on the context — setting it
+    // per element and resetting it after would cost a call across the WASM boundary per
+    // text — so every other text painter sets its own. After a centred label every name
+    // sat centred on its frame's left edge, half outside it.
     ctx.set_text_align("left");
     for (anchor, name, frame) in &view.frame_names {
         // Set for each name, not inherited: the last element painted leaves its own
@@ -1952,6 +1954,10 @@ fn paint_name_tag(
     ctx.fill();
     set_fill(ctx, PEER_TAG_TEXT);
     ctx.set_text_baseline("middle");
+    // Set, not inherited, like the baseline: during a gesture `paint_text` draws what moves
+    // straight onto this context and leaves its alignment behind, and a centred label
+    // centred the name on the tag's inset, half of it outside the tag.
+    ctx.set_text_align("left");
     let _ = ctx.fill_text(mark.name, x + 6.0, y + h / 2.0);
 }
 
