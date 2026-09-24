@@ -158,13 +158,28 @@ impl DrawEngine {
             .filter(|label| !label.is_deleted)
     }
 
+    /// Whether `element` is the label of a shape that is selected too. Select All takes
+    /// labels with their shapes, where the oracle's skips bound text
+    /// (`actions/actionSelectAll.ts@1118751f:32-38`) and a marquee never takes one alone
+    /// (`selection/marquee.rs`). Held that way a label is still its shape's words: the
+    /// panel reads and styles it through its shape, as after a click on the shape.
+    fn is_carried_label(&self, element: &DrawElement) -> bool {
+        element
+            .container_id
+            .as_deref()
+            .filter(|container| self.selected_ids.contains(*container))
+            .and_then(|container| self.scene.get(container))
+            .and_then(|container| self.live_label(container))
+            .is_some_and(|label| label.id == element.id)
+    }
+
     /// Everything the panel shows, in one pass over the selection.
     pub fn selection_style(&self) -> SelectionStyle {
         let selected: Vec<&DrawElement> = self
             .selected_ids
             .iter()
             .filter_map(|id| self.scene.get(id))
-            .filter(|element| !element.is_deleted)
+            .filter(|element| !element.is_deleted && !self.is_carried_label(element))
             .collect();
         if selected.is_empty() {
             return self.next_selection_style();
@@ -317,7 +332,8 @@ impl DrawEngine {
     /// Every selected element takes the whole patch. The label of a selected shape takes
     /// the stroke colour and the opacity and nothing else — the two properties whose
     /// oracle actions pass `includeBoundText` (`actionProperties.tsx@1118751f:381-397`,
-    /// `:962-970`); a label has no use for a fill, a width, a dash or a sloppiness.
+    /// `:962-970`); a label has no use for a fill, a width, a dash or a sloppiness. So
+    /// does a label selected along with its shape: see [`Self::is_carried_label`].
     fn style_targets(
         &self,
         patch: &DrawElementStylePatch,
@@ -328,7 +344,8 @@ impl DrawEngine {
             ..Default::default()
         };
         let reaches_labels = for_label.stroke_color.is_some() || for_label.opacity.is_some();
-        let selected = self.get_selected_elements();
+        let mut selected = self.get_selected_elements();
+        selected.retain(|element| !self.is_carried_label(element));
         let ids: HashSet<&str> = selected.iter().map(|element| element.id.as_str()).collect();
         let mut labels = Vec::new();
         if reaches_labels {

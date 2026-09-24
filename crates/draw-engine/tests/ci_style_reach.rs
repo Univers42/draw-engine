@@ -141,3 +141,38 @@ fn a_style_chosen_for_the_selection_is_the_next_style_too() {
     assert_eq!(next.stroke_color, "#e03131");
     assert_eq!(next.opacity, 60.0);
 }
+
+/// Select All takes a label along with its shape — this engine's does, where the
+/// oracle's skips bound text (`actions/actionSelectAll.ts@1118751f:32-38`) — and a label
+/// held that way is still its shape's words. The panel read it as a second selected
+/// element: "2 selected", the width mixed, and a fill or a width reached the text.
+#[test]
+fn a_label_select_all_takes_is_still_carried_by_its_shape() {
+    let mut engine = engine_with_measure(labelled_box());
+    engine.select(vec!["box".into()]);
+    let clicked = engine.selection_style();
+    engine.select_all();
+    assert_eq!(engine.get_selection().len(), 2, "setup: the label is held");
+    assert_eq!(
+        engine.selection_style(),
+        clicked,
+        "read as a click reads it"
+    );
+    let before = element(&engine, "label");
+
+    engine.apply_style(DrawElementStylePatch {
+        stroke_color: Some("#e03131".into()),
+        background_color: Some("#ffc9c9".into()),
+        stroke_width: Some(4.0),
+        ..Default::default()
+    });
+
+    assert_eq!(element(&engine, "box").background_color, "#ffc9c9");
+    let label = element(&engine, "label");
+    assert_eq!(
+        label.stroke_color, "#e03131",
+        "the text colour still reaches it"
+    );
+    assert_eq!(label.background_color, before.background_color);
+    assert_eq!(label.stroke_width, before.stroke_width);
+}
