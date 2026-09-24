@@ -1150,10 +1150,26 @@ pub fn linear_retarget(element: DrawElement, start: Point, end: Point) -> DrawEl
 /// it — an arrow's label never turns.
 ///
 /// Position only: its lines and its size are [`crate::text::layout_text`]'s, laid out when
-/// its text, font or container's width changes. This runs on every move of a container
-/// and on a peer's patch, where the label arrives laid out by whoever wrote it.
+/// its text, its font, its alignment or its wrap changes — not when its container is moved
+/// or resized. This runs on every move of a container and on a peer's patch, where the
+/// label arrives laid out by whoever wrote it.
+///
+/// Divergence: a label taller than its room starts at the padded top, whatever its
+/// vertical alignment — text that overflows downward is still read from its first line,
+/// text pushed up off the shape is not. The oracle never meets such a label, because
+/// laying one out grows its shape; here one saved before shapes grew, or in a shape since
+/// resized smaller, is placed on every move of its shape.
 pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElement {
-    let at = crate::text::layout::bound_text_position(container, &label);
+    use crate::text::layout::{bound_text_max_height, bound_text_position};
+    let overflows = !is_linear_element(container)
+        && label.height > bound_text_max_height(container, label.height);
+    let at = if overflows {
+        let mut from_top = label.clone();
+        from_top.vertical_align = Some(crate::scene::VerticalAlign::Top);
+        bound_text_position(container, &from_top)
+    } else {
+        bound_text_position(container, &label)
+    };
     label.x = at.x;
     label.y = at.y;
     label.angle = if is_linear_element(container) {

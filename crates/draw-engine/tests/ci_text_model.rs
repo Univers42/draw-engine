@@ -360,6 +360,27 @@ mod labels {
             Some("the quick brown fox")
         );
     }
+
+    /// A label saved taller than its shape — before shapes grew for their labels, or in
+    /// a shape since resized smaller — starts at the shape's padded top when the shape
+    /// moves, rather than being centred up off the shape: text that overflows downward is
+    /// still read from its first line.
+    #[test]
+    fn a_label_taller_than_its_shape_starts_at_its_top_when_the_shape_moves() {
+        let mut rect = box_at(0.0, 0.0, 120.0, 30.0);
+        let mut label = text_at(8.0, 0.0, 104.0, 90.0);
+        label.text = Some("one\ntwo\nthree".into());
+        label.container_id = Some(rect.id.clone());
+        rect.bound_text_id = Some(label.id.clone());
+        let (rect_id, label_id) = (rect.id.clone(), label.id.clone());
+        let mut engine = engine_with_measure(vec![rect, label]);
+        engine.select(vec![rect_id.clone()]);
+        engine.nudge_selection(1.0, 0.0);
+        let rect = element(&engine, &rect_id);
+        let label = element(&engine, &label_id);
+        assert_close(label.y, rect.y + BOUND_TEXT_PADDING);
+        assert_close(label.x, rect.x + 8.0);
+    }
 }
 
 /// Free text: auto-sizing or a fixed width, and the edge it keeps as it changes.
