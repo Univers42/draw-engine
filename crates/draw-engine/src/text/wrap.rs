@@ -253,7 +253,7 @@ fn nfc_boundary_before(c: char) -> bool {
 
 /// `String.prototype.normalize("NFC")` — the platform's, as the oracle calls it. In the
 /// browser that is the browser's own; natively (tests, benches) the `unicode-normalization`
-/// crate stands in, kept out of the wasm, where it would weigh 129 KB (72 KB gzipped).
+/// crate stands in, kept out of the wasm, where it would weigh 126 KB (71 KB gzipped).
 #[cfg(target_arch = "wasm32")]
 fn platform_nfc(text: &str) -> String {
     js_sys::JsString::from(text).normalize("NFC").into()

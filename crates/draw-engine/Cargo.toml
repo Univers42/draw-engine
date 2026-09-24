@@ -40,8 +40,8 @@ getrandom = { version = "0.2", features = ["js"] }
 
 # NFC for the text wrapper's tokenizer (src/text/wrap.rs). In the browser the platform's
 # own `String.prototype.normalize` does it — what the oracle calls — so the crate stays
-# out of the wasm, where it measured +128,879 bytes (+71,736 gzipped) on a 1,355,882-byte
-# module. Natively (tests, benches) it stands in.
+# out of the wasm, where it measured +125,540 bytes (+70,643 under gzip -9) on the
+# 1,392,722-byte module built without it. Natively (tests, benches) it stands in.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 unicode-normalization = "0.1"
 
