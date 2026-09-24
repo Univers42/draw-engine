@@ -205,17 +205,32 @@ export class DrawEngine {
    * Measured against the font the canvas actually draws with, so anything sizing itself
    * to text — the editing overlay, a label's box — agrees with what appears on screen.
    */
-  measureText(text: string, fontSize: number): { width: number; height: number } {
+  measureText(
+    text: string,
+    fontSize: number,
+    family?: number,
+  ): { width: number; height: number } {
     // A `Float64Array` from WASM, so indexing is `number | undefined` under
     // `noUncheckedIndexedAccess`. The engine always returns both, but the fallback keeps
     // a truncated array from becoming `NaN` widths downstream.
-    const measured = this.inner.measureText(text, fontSize);
+    const measured = this.inner.measureText(text, fontSize, family);
     return { width: measured[0] ?? 4, height: measured[1] ?? fontSize };
   }
 
-  /** The CSS font family the canvas draws text with. */
-  fontFamily(): string {
-    return this.inner.fontFamily();
+  /**
+   * The CSS font stack the canvas draws text with — for Excalidraw family `id`
+   * (`TextEditRequest.fontFamily`), or the system stack legacy text uses when omitted or 0.
+   */
+  fontFamily(id?: number): string {
+    return this.inner.fontFamily(id);
+  }
+
+  /**
+   * Tell the engine web fonts finished loading: it re-measures and re-lays every text in a
+   * named family without stamping it, so a late font never reads as an edit.
+   */
+  fontsLoaded(): void {
+    this.inner.fontsLoaded();
   }
 
   /**
@@ -466,6 +481,30 @@ export class DrawEngine {
 
   getFontSize(): number {
     return this.inner.getFontSize();
+  }
+
+  /**
+   * Set the Excalidraw font family (1 Virgil, 2 Helvetica, 3 Cascadia, 5 Excalifont,
+   * 6 Nunito, 7 Lilita One, 8 Comic Shanns, 9 Liberation Sans) of the selected texts and
+   * labels, and of the next text drawn. Unknown ids are ignored.
+   */
+  setFontFamily(id: number): void {
+    this.inner.setFontFamily(id);
+  }
+
+  /** The family of the first selected text, else the one the next text is drawn in. */
+  getFontFamily(): number {
+    return this.inner.getFontFamily();
+  }
+
+  /** Switch the selected free texts between growing with their text and a fixed width. */
+  setTextAutoResize(autoResize: boolean): void {
+    this.inner.setTextAutoResize(autoResize);
+  }
+
+  /** Whether the selected containers' labels wrap (the container grows taller) or not (wider). */
+  setLabelWrap(wrap: boolean): void {
+    this.inner.setLabelWrap(wrap);
   }
 
   /** Re-widths a dragged-out text column and re-wraps it. Auto-sizing text is ignored. */

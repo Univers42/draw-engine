@@ -256,6 +256,13 @@ export interface TextEditRequest {
    */
   textAlign: TextAlign;
   containerId?: string | null;
+  /**
+   * The family the text is drawn in — an Excalidraw id, `0` for the system stack of a
+   * text with none. `engine.fontFamily(id)` gives its CSS; measure with it too.
+   */
+  fontFamily: number;
+  /** Unitless: the overlay's lines must be as far apart as the canvas's. */
+  lineHeight: number;
 }
 
 /**
