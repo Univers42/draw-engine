@@ -538,6 +538,52 @@ fn binding_reach_matches_oracle() {
     assert_eq!(hovered(0.1, (131.0, 50.0)), None);
 }
 
+// ------------------------------------------------------------------ the double click
+
+fn texts(engine: &DrawEngine) -> Vec<DrawElement> {
+    engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| el.kind == DrawElementType::Text && !el.is_deleted)
+        .collect()
+}
+
+/// A double click that finishes a click-mode arrow — its second click lands on the
+/// waypoint its first placed — goes on to open a label on **the arrow**, never on the
+/// square under the pointer. Checked on excalidraw.com with element ids: the typed text
+/// was bound to the new arrow's id, inside the pack and over an empty board alike. The
+/// oracle gets there because the finished arrow is the one selected element
+/// (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`).
+#[test]
+fn a_double_click_that_finishes_an_arrow_labels_the_arrow() {
+    let scene = pack(CTRL_D);
+    for at in [(471.3, 270.7), (1000.0, 150.0)] {
+        let mut engine = arrow_engine(&scene, 1.0);
+        click(&mut engine, 1.0, FROM);
+        glide(&mut engine, 1.0, FROM, at);
+        click(&mut engine, 1.0, at);
+        click(&mut engine, 1.0, at);
+        assert!(engine.linear_in_progress().is_none());
+        engine.handle_double_click(at.0, at.1);
+        let arrow = the_arrow(&engine);
+        let labels: Vec<Option<String>> =
+            texts(&engine).into_iter().map(|t| t.container_id).collect();
+        assert_eq!(labels, vec![Some(arrow.id.clone())], "at {at:?}");
+    }
+}
+
+/// A double click on an empty board with the arrow tool places nothing: its path of one
+/// point is thrown away, and no text box is left in its place. Excalidraw's double click
+/// does nothing while a path is being placed (`App.tsx@1118751f:7197-7201`).
+#[test]
+fn a_double_click_that_places_no_arrow_opens_nothing() {
+    let mut engine = arrow_engine(&[], 1.0);
+    click(&mut engine, 1.0, (300.0, 300.0));
+    click(&mut engine, 1.0, (300.0, 300.0));
+    engine.handle_double_click(300.0, 300.0);
+    assert!(engine.get_scene().iter().all(|el| el.is_deleted));
+}
+
 // ------------------------------------------------------------- the distance, in itself
 
 /// The painted outline of a rounded box, as a dense polyline: the sides and each corner's

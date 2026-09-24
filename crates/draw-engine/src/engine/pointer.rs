@@ -15,6 +15,7 @@ impl DrawEngine {
     }
 
     fn begin_pointer_step(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
+        self.finished_by_press = None;
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
         let world = self.snap(self.screen_to_world(sx, sy));

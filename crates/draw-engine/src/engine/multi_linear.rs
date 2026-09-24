@@ -106,7 +106,7 @@ impl DrawEngine {
             // trim. Excalidraw does this explicitly for the same reason
             // (`App.tsx:10120-10134`).
             self.commit_multi_point();
-            self.finish_linear();
+            self.finish_by_press(&state.id);
             return;
         }
 
@@ -124,7 +124,7 @@ impl DrawEngine {
         if state.committed >= 1 {
             if let Some(&last) = points.get(state.committed - 1) {
                 if distance(local, last) < tolerance {
-                    self.finish_linear();
+                    self.finish_by_press(&state.id);
                     return;
                 }
             }
@@ -156,12 +156,21 @@ impl DrawEngine {
             // matter to either.
             self.track_multi_linear(world, false);
             self.commit_multi_point();
-            self.finish_linear();
+            self.finish_by_press(&state.id);
             return;
         }
 
         // Otherwise the press is placing a point, and the release is what places it.
         self.interaction = Some(Interaction::MultiLinearPress);
+    }
+
+    /// Ends the path because a press said so, remembering which path it was: the press
+    /// may be the second half of a double click, whose `dblclick` arrives next and is
+    /// about this path, not about whatever lies under the pointer. The next press
+    /// forgets it (`begin_pointer`).
+    fn finish_by_press(&mut self, id: &str) {
+        self.finished_by_press = Some(id.to_string());
+        self.finish_linear();
     }
 
     /// What the path's pending point would bind to at `world`: its own anchor and, when

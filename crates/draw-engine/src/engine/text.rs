@@ -149,6 +149,21 @@ impl DrawEngine {
         true
     }
 
+    /// Opens `container`'s label for editing, making it first if it has none.
+    fn edit_label(&mut self, container: &DrawElement) {
+        let bound = container
+            .bound_text_id
+            .as_ref()
+            .and_then(|id| self.scene.get(id).cloned());
+        let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
+            bound
+        } else {
+            self.create_label(container)
+        };
+        self.set_selection(vec![label.id.clone()]);
+        self.request_text_edit(&label);
+    }
+
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
         // Only with the selection tools, as Excalidraw's `handleCanvasDoubleClick` has it
         // (`App.tsx:7200-7209`): a double click with the eraser, say, put an empty text
@@ -158,6 +173,24 @@ impl DrawEngine {
             DrawTool::Select | DrawTool::Lasso | DrawTool::AutoShape
         ) {
             return;
+        }
+        // The double click whose second press just ended a path — landing on the point
+        // its first press placed. Excalidraw's finished arrow is then its one selected
+        // element, and a double click labels the selected container
+        // (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`): the label
+        // goes on the arrow, never on the shape under the pointer (checked on
+        // excalidraw.com by element id). A path too short to keep was thrown away, and
+        // Excalidraw's double click does nothing while a path is open
+        // (`App.tsx@1118751f:7199-7201`), so neither does this one.
+        if let Some(id) = self.finished_by_press.take() {
+            match self.scene.get(&id).filter(|el| !el.is_deleted).cloned() {
+                Some(arrow) if arrow.kind == DrawElementType::Arrow => {
+                    self.edit_label(&arrow);
+                    return;
+                }
+                Some(_) => {}
+                None => return,
+            }
         }
         let world = self.screen_to_world(sx, sy);
         // Stepping into a group comes first. A double click inside one means "show me
@@ -188,17 +221,7 @@ impl DrawEngine {
             }
         }
         if let Some(container) = self.label_target_at(world.x, world.y) {
-            let bound = container
-                .bound_text_id
-                .as_ref()
-                .and_then(|id| self.scene.get(id).cloned());
-            let label = if let Some(bound) = bound.filter(|el| !el.is_deleted) {
-                bound
-            } else {
-                self.create_label(&container)
-            };
-            self.set_selection(vec![label.id.clone()]);
-            self.request_text_edit(&label);
+            self.edit_label(&container);
             return;
         }
         let style = merge_style(&default_element_style(), &self.next_style);

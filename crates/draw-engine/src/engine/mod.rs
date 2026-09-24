@@ -132,6 +132,9 @@ pub struct DrawEngine {
     /// dozen clicks later — an end. Putting it in `Interaction` would have it thrown away
     /// by the release that places its second point.
     multi_linear: Option<types::MultiLinear>,
+    /// The path the last press finished, until the next press: a double click whose
+    /// second press ends a path is about that path (see `handle_double_click`).
+    finished_by_press: Option<String>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -232,6 +235,7 @@ impl DrawEngine {
             editing_group_id: None,
             narrow_on_click: None,
             multi_linear: None,
+            finished_by_press: None,
             selected_ids: HashSet::new(),
             clipboard_buffer: None,
             snap_guides: Vec::new(),
