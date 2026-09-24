@@ -422,6 +422,36 @@ mod preview {
         assert_eq!(element(&engine, "l").opacity, 100.0);
     }
 
+    /// What the host's release relies on: a drag that ends where it began is still ended
+    /// by a commit. Until then the previewed element is pending and a peer's copy of it is
+    /// refused, as during any gesture; the commit changes nothing, records nothing, and
+    /// takes the peer's copy in.
+    #[test]
+    fn a_drag_back_to_the_start_ends_in_the_peers_copy() {
+        let mut engine = engine_with_measure(vec![with_id(box_at(0.0, 0.0, 50.0, 50.0), "a")]);
+        engine.select(vec!["a".into()]);
+        for value in [70.0, 40.0, 70.0, 100.0] {
+            engine.preview_style(opacity(value));
+        }
+        let mut theirs = element(&engine, "a");
+        theirs.stroke_color = "#2f9e44".into();
+        theirs.version += 5;
+        assert!(
+            !engine.apply_remote_patch(&scene_to_json(&[theirs])),
+            "refused mid-gesture"
+        );
+
+        engine.apply_style(opacity(100.0));
+
+        assert_eq!(element(&engine, "a").stroke_color, "#2f9e44");
+        engine.undo();
+        assert_eq!(
+            element(&engine, "a").stroke_color,
+            "#2f9e44",
+            "the commit recorded no step of its own"
+        );
+    }
+
     #[test]
     fn a_preview_is_not_sent() {
         let mut engine = engine_with_measure(vec![with_id(box_at(0.0, 0.0, 50.0, 50.0), "a")]);
