@@ -31,6 +31,7 @@ mod stamp;
 mod style;
 mod text;
 mod types;
+pub mod vectorize;
 
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};

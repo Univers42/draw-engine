@@ -629,4 +629,33 @@ export class DrawEngine {
   destroy(): void {
     this.inner.destroy();
   }
+
+  /**
+   * Replaces the image `imageId` with its trace, in one undoable step: the traced regions
+   * as a group of editable shapes, or one SVG picture in the image's box. Tracing itself
+   * happens off the main thread — see `TraceWorker` in `./vectorize`.
+   */
+  vectorizeImage(
+    imageId: string,
+    insert: import("./vectorize").VectorizeInsert,
+    options: import("./vectorize").VectorizeOptions,
+  ): import("./vectorize").VectorizeOutcome {
+    const json = JSON.stringify(options);
+    const raw =
+      insert.as === "shapes"
+        ? this.inner.vectorizeToShapes(
+            imageId,
+            insert.rings.colours,
+            insert.rings.lengths,
+            insert.rings.coords,
+            json,
+          )
+        : this.inner.vectorizeToPicture(imageId, insert.dataUrl, json);
+    const outcome = parseJson<{ ids?: string[]; id?: string; refused?: import("./vectorize").VectorizeRefusal }>(
+      raw,
+      { refused: "malformed" },
+    );
+    if (outcome.refused) return { refused: outcome.refused };
+    return { ids: outcome.ids ?? (outcome.id ? [outcome.id] : []) };
+  }
 }

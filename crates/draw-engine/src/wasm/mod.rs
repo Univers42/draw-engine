@@ -12,6 +12,7 @@ use crate::engine::{DrawEngine, Painter};
 mod edit_api;
 mod input;
 mod paint;
+mod vectorize_api;
 
 use paint::CanvasPainter;
 
