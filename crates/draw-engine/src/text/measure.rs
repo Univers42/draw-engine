@@ -68,6 +68,13 @@ impl FontKey {
 /// ever show it thrashing.
 pub const MEMO_LIMIT: usize = 4096;
 
+/// How many bytes of text the memo holds before it starts over: each hard line plus the
+/// lines it wrapped to. The entry count alone does not bound it — with a peer watching,
+/// every keystroke previews the whole hard line typed so far, and 4,096 of a long
+/// paragraph is tens of MB that a wasm memory, which never shrinks, keeps for good.
+/// Table and allocator overhead is not counted; [`MEMO_LIMIT`] bounds that.
+pub const MEMO_BYTES: usize = 1 << 20;
+
 type Memo = HashMap<(FontKey, u64), HashMap<String, Vec<WrappedLine>>>;
 
 /// Char widths and wrapped hard lines, for ONE measurer: a cache outlives no change of
@@ -78,6 +85,7 @@ pub struct MeasureCache {
     chars: RefCell<HashMap<(FontKey, char), f64>>,
     lines: RefCell<Memo>,
     memo_len: Cell<usize>,
+    memo_bytes: Cell<usize>,
 }
 
 impl MeasureCache {
@@ -89,6 +97,7 @@ impl MeasureCache {
         self.chars.borrow_mut().clear();
         self.lines.borrow_mut().clear();
         self.memo_len.set(0);
+        self.memo_bytes.set(0);
     }
 
     /// `line_width` for `font`, with char widths cached per full char. The oracle keys its
@@ -143,16 +152,23 @@ impl MeasureCache {
     }
 
     fn remember(&self, key: (FontKey, u64), line: &str, wrapped: &[WrappedLine]) {
+        let bytes = line.len()
+            + wrapped
+                .iter()
+                .map(|w| w.text.len() + std::mem::size_of::<WrappedLine>())
+                .sum::<usize>();
         let mut lines = self.lines.borrow_mut();
-        if self.memo_len.get() >= MEMO_LIMIT {
+        if self.memo_len.get() >= MEMO_LIMIT || self.memo_bytes.get() + bytes > MEMO_BYTES {
             lines.clear();
             self.memo_len.set(0);
+            self.memo_bytes.set(0);
         }
         lines
             .entry(key)
             .or_default()
             .insert(line.to_string(), wrapped.to_vec());
         self.memo_len.set(self.memo_len.get() + 1);
+        self.memo_bytes.set(self.memo_bytes.get() + bytes);
     }
 }
 

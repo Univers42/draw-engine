@@ -6,7 +6,7 @@ mod common;
 use common::*;
 use draw_engine::text::{
     normalize_text, parse_tokens, wrap_lines, wrap_text, FontKey, MeasureCache, TextMetrics,
-    WrappedLine, MEMO_LIMIT,
+    WrappedLine, MEMO_BYTES, MEMO_LIMIT,
 };
 use std::cell::Cell;
 use unicode_normalization::UnicodeNormalization;
@@ -401,6 +401,42 @@ fn the_memo_is_bounded() {
     assert!(
         counting.calls.get() > before,
         "the memo started over when full"
+    );
+}
+
+/// Bounded in bytes as well as in entries. With a peer watching, every keystroke into a
+/// label is previewed (`text_preview`), and each preview memoises the whole hard line typed
+/// so far: 4,096 of those is tens of MB, kept for good by a wasm memory that never shrinks.
+#[test]
+fn the_memo_is_bounded_in_bytes() {
+    let cache = MeasureCache::new();
+    let font = FontKey::legacy(20.0);
+    let counting = Counting::default();
+    let measure = |line: &str| counting.measure(line);
+    // One paragraph typed a keystroke at a time: 3,000 lines, all different, 4.5 MB of them.
+    let paragraph = prose(3000);
+    let typed: Vec<&str> = (1..=paragraph.len()).map(|n| &paragraph[..n]).collect();
+    for line in &typed {
+        cache.wrap_text(line, 300.0, font, &measure);
+    }
+    // The memo starts over wholesale, so what it still holds is the newest lines. Walk
+    // back until one has to be measured; the memo holds at least the hard lines themselves.
+    let mut held = 0;
+    let mut held_bytes = 0;
+    for line in typed.iter().rev() {
+        let before = counting.calls.get();
+        cache.wrap_text(line, 300.0, font, &measure);
+        if counting.calls.get() > before {
+            break;
+        }
+        held += 1;
+        held_bytes += line.len();
+    }
+    println!("the memo held the last {held} lines, {held_bytes} bytes of them");
+    assert!(held > 0, "the latest line is remembered");
+    assert!(
+        held_bytes <= MEMO_BYTES,
+        "{held_bytes} bytes of hard lines held, over {MEMO_BYTES}"
     );
 }
 
