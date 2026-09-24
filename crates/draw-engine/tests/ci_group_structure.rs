@@ -411,16 +411,15 @@ fn inside_a_group_an_inner_group_goes_to_the_back_as_one_block() {
     assert_eq!(stack(&engine, &cast), vec!["X", "A", "B", "C"]);
 }
 
-/// The host can select anything while a group is entered — this engine keeps the group
-/// through select-all, where the oracle leaves it — and a selection from outside the
-/// group is not confined to it: confined, it stopped at the top of the group.
+/// Selecting something outside the entered group leaves it (`set_selection`), so the
+/// selection is not confined to the group: confined, it stopped at the top of the group.
 #[test]
 fn a_selection_outside_the_entered_group_still_goes_to_the_front() {
     let (mut engine, cast) = board(&[("X", &[]), ("A", &["g"]), ("B", &["g"]), ("Y", &[])]);
     click(&mut engine, &cast, "A");
     step_in(&mut engine, &cast, "A");
     engine.select(vec![id(&cast, "X")]);
-    assert_eq!(engine.editing_group_id().as_deref(), Some("g"), "setup");
+    assert_eq!(engine.editing_group_id(), None, "setup");
 
     engine.reorder_selection(ZOrderMode::Front);
 

@@ -174,6 +174,36 @@ where
     out
 }
 
+/// What moving, resizing or turning the selection carries: the unlocked part of it,
+/// grown back to the groups that part belongs to, and nothing that is not selected.
+///
+/// A locked element is never picked up on its own, but a group is one thing. The oracle
+/// selects a group's members with no lock filter (`packages/element/src/groups.ts:94-132`)
+/// and drags every selected element, refusing only when *every* one is locked
+/// (`packages/excalidraw/components/App.tsx:10899-10904`). Filtering locked elements out
+/// one by one instead left a locked member behind while the rest of its group moved.
+///
+/// Grown from the unlocked part rather than taken whole because a locked element can be
+/// in the selection here without a group to carry it: Select All takes locked elements
+/// so they can be unlocked from the menu, where the oracle's skips them
+/// (`actionSelectAll.ts:32-38`). Such an element, or a group locked throughout, stays.
+pub fn carried_by<'a, I>(
+    elements: I,
+    selected: &HashSet<String>,
+    editing: Option<&str>,
+) -> HashSet<String>
+where
+    I: Iterator<Item = &'a DrawElement> + Clone,
+{
+    let unlocked = elements
+        .clone()
+        .filter(|el| selected.contains(&el.id) && !el.locked())
+        .map(|el| el.id.clone());
+    let mut carried = expand_within(elements, unlocked, editing);
+    carried.retain(|id| selected.contains(id));
+    carried
+}
+
 pub fn expand_to_groups(
     elements: &[DrawElement],
     ids: impl IntoIterator<Item = String>,

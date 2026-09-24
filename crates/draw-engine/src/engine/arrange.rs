@@ -6,11 +6,14 @@ use crate::engine::DrawEngine;
 use crate::scene::{bump_version, new_element_id, DrawElement};
 
 impl DrawEngine {
+    /// The arrow keys: the same set a drag moves, so a locked group member and a
+    /// frame's children come along — the oracle's arrow keys move every selected element
+    /// and what their frames hold (`packages/excalidraw/components/App.tsx:5770-5775`).
     pub fn nudge_selection(&mut self, dx: f64, dy: f64) {
         let targets: Vec<DrawElement> = self
-            .get_selected_elements()
-            .into_iter()
-            .filter(|el| !el.locked())
+            .moving_selection()
+            .iter()
+            .filter_map(|id| self.scene.get(id).cloned())
             .collect();
         if targets.is_empty() {
             return;
@@ -72,6 +75,13 @@ impl DrawEngine {
         for element in patches {
             self.scene.put(bump_version(element, now));
         }
+        // Frame membership follows position and grouping, and a patch can change either:
+        // grouping across a frame's edge takes the group out whole
+        // (`packages/excalidraw/actions/actionGroup.tsx:138-150`), and align, distribute
+        // and flip settle membership as a drag does (`actionAlign.tsx:72`,
+        // `actionDistribute.tsx:66`, `actionFlip.ts:36`). In this step, so one undo puts
+        // it back with the patch.
+        self.refresh_frame_membership();
         self.apply_bindings();
         self.push_history();
         self.request_draw();
