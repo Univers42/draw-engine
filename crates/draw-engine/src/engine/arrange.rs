@@ -1,6 +1,6 @@
 use crate::edit::{
-    align_elements, distribute_elements, flip_elements, group_patches, is_single_group,
-    reorder_elements, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    align_elements, distribute_elements, flip_elements, gather, group_patches, is_single_group,
+    reorder_within, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
 };
 use crate::engine::DrawEngine;
 use crate::scene::{bump_version, new_element_id, DrawElement};
@@ -29,7 +29,12 @@ impl DrawEngine {
         if self.selected_ids.is_empty() {
             return;
         }
-        let next = reorder_elements(&self.scene.ordered_cloned(), &self.selected_ids, mode);
+        let next = reorder_within(
+            &self.scene.ordered_cloned(),
+            &self.selected_ids,
+            mode,
+            self.editing_group_id.as_deref(),
+        );
         self.scene.set_order(next);
         self.push_history();
         self.request_draw();
@@ -77,12 +82,26 @@ impl DrawEngine {
             return;
         }
         let editing = self.editing_group_id.clone();
-        self.apply_patches(group_patches(
-            &self.scene.ordered_cloned(),
+        let live = self.scene.ordered_cloned();
+        let patches = group_patches(
+            &live,
             &self.selected_ids,
             &new_element_id(),
             editing.as_deref(),
-        ));
+        );
+        // Gathered in the same step as the grouping, so one undo takes both away. Only
+        // when it moves something: a reorder sends the host the whole scene, where a
+        // grouping alone is a delta.
+        let members = patches.iter().map(|el| el.id.clone()).collect();
+        let gathered = gather(&live, &members);
+        if gathered
+            .iter()
+            .map(|el| &el.id)
+            .ne(live.iter().map(|el| &el.id))
+        {
+            self.scene.set_order(gathered);
+        }
+        self.apply_patches(patches);
     }
 
     pub fn ungroup_selection(&mut self) {
