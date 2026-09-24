@@ -135,9 +135,18 @@ impl DrawEngine {
         // "done" as a close is. Checked after the click-back case, not before, so
         // re-clicking the same spot still ends the path through that simpler path.
         //
-        // Only *beside* one, as in Excalidraw (`App.tsx:10178-10205`): a click inside a
+        // Only *beside* one, as in Excalidraw (`boundOutsideFromElsewhere` and
+        // `endOutsideSameElement`, `App.tsx@1118751f:10189-10215`): a click inside a
         // shape places a waypoint there, so a path can be routed across shapes — and
         // beside the shape the path started from only when it came back from outside.
+        //
+        // **Deliberate divergence:** the press is judged where it is, the point the hover
+        // just judged for its outline. Excalidraw judges it at its preview point instead
+        // (`multiElement.points[last]`, `App.tsx@1118751f:10170`), which its hover has
+        // already moved onto the outline gap of the shape it shows; re-tested there, the
+        // point often falls inside another shape, and a press made under an orbit outline
+        // placed a waypoint — 13 of 48 probes in a Ctrl+D pack on excalidraw.com. Here
+        // what the outline shows is what the press does.
         if self.ends_path_at(&element, world) {
             // Same as landing back on the point just placed (above): whatever a hover
             // would have put there, this press puts there too, so the commit below has a

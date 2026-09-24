@@ -60,10 +60,6 @@ const DRAGGING_THRESHOLD_PX: f64 = 10.0;
 /// How long a segment must be on screen before it gets its own midpoint handle.
 /// Two handles a few pixels apart cannot be aimed at deliberately.
 const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
-/// How close, in screen pixels, an endpoint must come to a shape to bind to it.
-/// Derived from pixels rather than world units so it does not shrink to nothing when
-/// zoomed out.
-const BINDING_HOVER_PX: f64 = 32.0;
 /// How close, in screen pixels, a dropped arrow end must come to a side midpoint to snap
 /// onto it. Excalidraw's reach is its binding distance, 15 scene units at ordinary zoom
 /// (`packages/element/src/utils.ts:634-695`); kept in pixels here so it feels the same at

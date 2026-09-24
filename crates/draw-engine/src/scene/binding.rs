@@ -25,6 +25,7 @@ use crate::scene::geometry::{
     element_rotated_bounds, is_transparent, normalize_rect, rotation_center, to_element_local,
     within_shape,
 };
+use crate::scene::outline_distance::signed_outline_distance;
 
 /// Excalidraw's `BASE_BINDING_GAP` (`packages/element/src/binding.ts:115`): the air between
 /// an orbiting end and the outline, before half the target's stroke is added to it.
@@ -100,9 +101,12 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
 /// to its container, and never a line or arrow. A locked element is not a target: it is
 /// not something the pointer can act on at all.
 pub fn is_arrow_target(element: &DrawElement) -> bool {
-    if element.is_deleted || element.locked == Some(true) {
-        return false;
-    }
+    !element.is_deleted && element.locked != Some(true) && is_target_kind(element)
+}
+
+/// [`is_arrow_target`] without the lock: a locked shape still stands in the way of what
+/// is behind it.
+fn is_target_kind(element: &DrawElement) -> bool {
     match element.kind {
         DrawElementType::Rectangle
         | DrawElementType::Diamond
@@ -117,17 +121,29 @@ pub fn is_arrow_target(element: &DrawElement) -> bool {
 
 /// Whether a target hides whatever is beneath it from an arrow end.
 ///
-/// `getAllHoveredElementAtPoint` stops at the first filled candidate
-/// (`packages/element/src/collision.ts:323-357`): an arrow dropped on a filled shape binds
-/// to it or to something drawn on top of it, never to a shape it cannot see.
+/// `isOpaqueForBinding` (`packages/element/src/collision.ts@1118751f:346-348`): a picture,
+/// or a shape with a background. An arrow dropped on one binds to it or to something drawn
+/// on top of it, never to a shape it cannot see.
 fn occludes(element: &DrawElement) -> bool {
-    matches!(
-        element.kind,
+    match element.kind {
+        DrawElementType::Image => true,
         DrawElementType::Rectangle
-            | DrawElementType::Diamond
-            | DrawElementType::Ellipse
-            | DrawElementType::Embed
-    ) && !is_transparent(&element.background_color)
+        | DrawElementType::Diamond
+        | DrawElementType::Ellipse
+        | DrawElementType::Embed => !is_transparent(&element.background_color),
+        _ => false,
+    }
+}
+
+/// How far outside a shape an arrow end still binds to it, in world units.
+///
+/// Excalidraw's `maxBindingDistance_simple` (`packages/element/src/binding.ts@1118751f:
+/// 133-143`): 15 at zoom 1 and above, growing as the view zooms out — damped, so the reach
+/// stays close to the binding gap — to at most 30.
+pub fn max_binding_distance(zoom: f64) -> f64 {
+    const BASE: f64 = 15.0;
+    let zoom = if zoom > 0.0 && zoom < 1.0 { zoom } else { 1.0 };
+    (BASE / (zoom * 1.5)).clamp(BASE, BASE * 2.0)
 }
 
 pub fn element_center(element: &DrawElement) -> Point {
@@ -347,9 +363,10 @@ pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
 
 /// Whether `p` is inside `shape` itself, filled or not — the test that decides between an
 /// end bound [`BindMode::Inside`] and one in orbit. `isPointInElement`
-/// (`packages/element/src/collision.ts:775-810`).
+/// (`packages/element/src/collision.ts@1118751f:823-878`): the painted outline, so a
+/// rounded corner's cut-away is outside, and so is a point exactly on the outline.
 pub fn is_inside(shape: &DrawElement, p: Point) -> bool {
-    contains(shape, p, 0.0)
+    signed_outline_distance(shape, p) > 0.0
 }
 
 fn contains(shape: &DrawElement, p: Point, grow: f64) -> bool {
@@ -565,28 +582,29 @@ fn ray_hits_segment(from: Point, toward: Point, p: Point, q: Point) -> Option<(f
 
 // ------------------------------------------------------------------------- choosing
 
-/// The shape an arrow end at `(x, y)` would attach to.
+/// The shape an arrow end at `(x, y)` would attach to: the one whose **outline** is
+/// nearest.
 ///
-/// `getHoveredElementForBinding` (`packages/element/src/collision.ts:323-385`):
+/// A transcription of Excalidraw's `getBindingCandidates` and
+/// `getHoveredElementForBinding` (`packages/element/src/collision.ts@1118751f:350-486`,
+/// #10753 4850bf33 and dc2c16d9):
 ///
-/// - a candidate matches anywhere inside it, or within `tolerance` of its outline, tested
-///   against the real rotated outline — an ellipse's corner is not the ellipse;
-/// - a frame matches only from outside, near its border, so a point inside a frame is
-///   aimed at what the frame holds; and a shape inside a frame does not match where the
-///   frame clips it from view (`bindingBorderTest`, `collision.ts:275-322`);
-/// - candidates are walked top of the z-order first, and the walk stops at the first
-///   filled one the point is inside, so nothing hidden under a filled shape can be bound
-///   through it;
-/// - among what matched, the smallest wins (`width² + height²`), so a shape nested inside
-///   another is reachable however the two are stacked. Equal sizes go to the one on top
-///   — what the eye picks; Excalidraw's sort happens to leave the lowest
-///   (`collision.ts:376-384`).
+/// - candidates are walked top of the z-order first; each is measured by its signed
+///   distance to its real outline ([`signed_outline_distance`]: positive inside, negative
+///   outside), and one the point is outside of counts only within `tolerance`;
+/// - a frame is bound only from outside, near its border, so a point inside a frame is
+///   aimed at what the frame holds; a shape inside a frame is skipped where the frame
+///   clips it from view (`isPointClippedByEnclosingFrame`, `collision.ts:283-298`);
+/// - the walk stops at the first opaque shape — filled, or a picture — the point is
+///   inside, so nothing hidden under it can be bound through it. A locked shape is never
+///   a candidate, but an opaque one still hides what is behind it;
+/// - the nearest outline wins, ties going to the one on top. When the point is inside the
+///   winner, a smaller shape the point is also inside — overlapping the winner by more
+///   than a quarter of its own area and under three quarters of the winner's size — takes
+///   over, so a shape nested in another is reached from anywhere inside it.
 ///
-/// **Deliberate divergence:** once the point is inside a shape, only that shape, or one
-/// nested within it, can win. Excalidraw stops at a filled shape the point is merely
-/// *near*, so a neighbour a few units off — on top, or smaller — took a press made inside
-/// another shape; with a reach set in screen pixels that happened at any zoom. A shape
-/// nested in the one pressed is still reached from just outside its border.
+/// So in a pack of overlapping squares a point just outside one square's edge binds that
+/// square in orbit, however many other squares it is inside.
 ///
 /// `candidates` must run top of the z-order first.
 pub fn arrow_target_among<'a>(
@@ -609,55 +627,58 @@ pub fn arrow_target_among<'a>(
                 !(b.min_x..=b.max_x).contains(&x) || !(b.min_y..=b.max_y).contains(&y)
             })
     };
-    // (element, the point is inside it), top first.
-    let mut matched: Vec<(&'a DrawElement, bool)> = Vec::new();
+    // The cheap reject first, as the oracle does: the bounds grown by the reach.
+    let reach = tolerance.max(1.0);
+    // (element, signed distance to its outline), top first.
+    let mut found: Vec<(&'a DrawElement, f64)> = Vec::new();
     for element in candidates {
-        if Some(element.id.as_str()) == exclude_id || !is_arrow_target(element) {
+        if element.is_deleted || Some(element.id.as_str()) == exclude_id || !is_target_kind(element)
+        {
             continue;
         }
-        let (near, inside) = if element.kind == DrawElementType::Frame {
-            (
-                !contains(element, p, 0.0) && contains(element, p, tolerance),
-                false,
-            )
-        } else {
-            let inside = contains(element, p, 0.0);
-            (
-                (inside || contains(element, p, tolerance)) && !clipped(element),
-                inside,
-            )
-        };
-        if !near {
+        let b = element_rotated_bounds(element);
+        if x < b.min_x - reach || x > b.max_x + reach || y < b.min_y - reach || y > b.max_y + reach
+        {
             continue;
         }
-        matched.push((element, inside));
-        if inside && occludes(element) {
+        if clipped(element) {
+            continue;
+        }
+        let d = signed_outline_distance(element, p);
+        let inside = d > 0.0;
+        if (inside && element.kind == DrawElementType::Frame) || (!inside && -d >= tolerance) {
+            continue;
+        }
+        if element.locked != Some(true) {
+            found.push((element, d));
+        }
+        // `d >= 0.0` holds on the outline too (`-0.0`), exactly as the oracle's does.
+        if d >= 0.0 && occludes(element) {
             break;
         }
     }
-    let holders: Vec<WorldBounds> = matched
-        .iter()
-        .filter(|(_, inside)| *inside)
-        .map(|(element, _)| element_rotated_bounds(element))
-        .collect();
-    let within = |b: WorldBounds, outer: &WorldBounds| {
-        b.min_x >= outer.min_x
-            && b.max_x <= outer.max_x
-            && b.min_y >= outer.min_y
-            && b.max_y <= outer.max_y
-    };
-    let mut best: Option<(&'a DrawElement, f64)> = None;
-    for (element, inside) in matched {
-        let eligible = inside || holders.is_empty() || {
+    // Stable: equal distances keep the top of the stack first.
+    found.sort_by(|a, b| a.1.abs().total_cmp(&b.1.abs()));
+    let &(nearest, distance) = found.first()?;
+    if distance >= 0.0 {
+        let area = |b: &WorldBounds| ((b.max_x - b.min_x) * (b.max_y - b.min_y)).max(1e-5);
+        let outer = element_rotated_bounds(nearest);
+        let outer_area = area(&outer);
+        let nested = found[1..].iter().find(|(element, d)| {
+            if *d < 0.0 {
+                return false;
+            }
             let b = element_rotated_bounds(element);
-            holders.iter().any(|outer| within(b, outer))
-        };
-        let size = element.width * element.width + element.height * element.height;
-        if eligible && best.is_none_or(|(_, best_size)| size < best_size) {
-            best = Some((element, size));
+            let w = (b.max_x.min(outer.max_x) - b.min_x.max(outer.min_x)).max(0.0);
+            let h = (b.max_y.min(outer.max_y) - b.min_y.max(outer.min_y)).max(0.0);
+            let own = area(&b);
+            w * h / own > 0.25 && own / outer_area < 0.75
+        });
+        if let Some(&(element, _)) = nested {
+            return Some(element);
         }
     }
-    best.map(|(element, _)| element)
+    Some(nearest)
 }
 
 /// The shape a label placed at `(x, y)` would go into.
@@ -850,7 +871,7 @@ pub fn anchor_for_drop<'a>(
             }),
         );
     }
-    if drop.exact || contains(hit, pointer, 0.0) {
+    if drop.exact || is_inside(hit, pointer) {
         return (Some(at(BindMode::Inside, pointer)), None);
     }
     let reach = DEGENERATE_ARROW_PX * drop.pixel;
@@ -964,7 +985,10 @@ fn resolve_end(
         aim,
     ) {
         Some(outline) => (outline, false),
-        None => (focus, is_inside(this.shape, focus)),
+        // The box, edge included, not [`is_inside`]: an anchor snapped onto a side
+        // midpoint sits exactly on the outline, and is as held by its shape as one a
+        // hair inside it.
+        None => (focus, contains(this.shape, focus, 0.0)),
     }
 }
 
