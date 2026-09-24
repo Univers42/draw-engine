@@ -103,7 +103,33 @@ fn head_svg(
     }
 }
 
-fn linear_svg(element: &DrawElement) -> String {
+fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
+    let body = linear_body_svg(element);
+    let Some(label) = label.filter(|_| !body.is_empty()) else {
+        return body;
+    };
+    // The stroke cut away under the label, as the canvas cuts it: a mask white
+    // everywhere around the arrow but for the label's padded box
+    // (`staticSvgScene.ts@1118751f:404-470`). In user space, or an axis-aligned arrow's
+    // zero-height bounding box would mask it away entirely (#11439 there).
+    let hole = crate::render::label_hole(label);
+    let bounds = crate::scene::element_bounds(element);
+    let reach = (bounds.max_x - bounds.min_x).max(bounds.max_y - bounds.min_y)
+        + 100.0
+        + element.stroke_width * 10.0;
+    let (x, y) = (bounds.min_x - reach, bounds.min_y - reach);
+    let (width, height) = (
+        bounds.max_x - bounds.min_x + reach * 2.0,
+        bounds.max_y - bounds.min_y + reach * 2.0,
+    );
+    let id = escape_xml(&format!("mask-{}", element.id));
+    format!(
+        "<mask id=\"{id}\" maskUnits=\"userSpaceOnUse\" x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" fill=\"#fff\"/><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#000\"/></mask><g mask=\"url(#{id})\">{body}</g>",
+        hole.x, hole.y, hole.width, hole.height
+    )
+}
+
+fn linear_body_svg(element: &DrawElement) -> String {
     let (start, end) = linear_endpoints(element);
     let dx = end.x - start.x;
     let dy = end.y - start.y;
@@ -141,9 +167,12 @@ fn linear_svg(element: &DrawElement) -> String {
     )
 }
 
-fn element_svg(element: &DrawElement) -> String {
+fn element_svg<'a>(
+    element: &DrawElement,
+    lookup: impl Fn(&str) -> Option<&'a DrawElement>,
+) -> String {
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
-        return linear_svg(element);
+        return linear_svg(element, crate::render::linear_label(element, lookup));
     }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
     let fill = if element.background_color.is_empty() || element.background_color == "transparent" {
@@ -203,7 +232,7 @@ fn element_svg(element: &DrawElement) -> String {
                 element.opacity / 100.0
             )
         }
-        DrawElementType::Text => text_svg(element, &rect, &transform),
+        DrawElementType::Text => text_svg(element),
         // The picture itself. This fell through to the arm below and was written as a
         // stroked `<rect>`, so a board with a photo on it exported an empty box. An image
         // with no picture yet — a board loaded without its file — exports as nothing
@@ -236,37 +265,51 @@ fn element_svg(element: &DrawElement) -> String {
     }
 }
 
-fn text_svg(element: &DrawElement, rect: &crate::scene::geometry::Rect, transform: &str) -> String {
+/// A text, one `<text>` per line, placed as the canvas places it
+/// (`staticSvgScene.ts@1118751f:776-832`): in the family it was measured in, each line at
+/// its alignment's anchor and its baseline ([`crate::render::text_line_placement`]),
+/// whitespace kept as typed. A text with no family is drawn on the canvas from the top of
+/// each line; here its first baseline stays 0.85 of the size below the top, where this
+/// export has always put it.
+///
+/// ponytail: no `direction` — the canvas does not lay out right-to-left text either.
+fn text_svg(element: &DrawElement) -> String {
+    let text = element.text.as_deref().unwrap_or("");
     let font_size = element.font_size.unwrap_or(20.0);
-    let lines = element.text.as_deref().unwrap_or("").split('\n');
-    let is_container_text = element.container_id.is_some();
-    let (text_anchor, base_x) = if is_container_text {
-        (" text-anchor=\"middle\"", rect.x + rect.width / 2.0)
+    let family = crate::scene::resolved_font_family(element);
+    let (first, line_height) = crate::render::text_line_placement(element);
+    let first = if family.is_some() {
+        first
     } else {
-        ("", rect.x)
+        font_size * 0.85
     };
-    let spans = lines
+    let align = crate::scene::resolved_text_align(element);
+    let anchor_x = crate::render::text_anchor_x(align, element.width);
+    let text_anchor = match align {
+        crate::scene::TextAlign::Left => "start",
+        crate::scene::TextAlign::Center => "middle",
+        crate::scene::TextAlign::Right => "end",
+    };
+    let css = crate::text::font::css_stack(family);
+    let fill = escape_xml(&element.stroke_color);
+    let lines = text
+        .split('\n')
         .enumerate()
         .map(|(i, line)| {
-            let dy = if i == 0 {
-                font_size * 0.85
-            } else {
-                font_size * 1.25
-            };
             format!(
-                "<tspan x=\"{base_x}\" dy=\"{dy}\">{}</tspan>",
+                "<text x=\"{anchor_x}\" y=\"{}\" font-family=\"{css}\" font-size=\"{font_size}px\" fill=\"{fill}\" text-anchor=\"{text_anchor}\" style=\"white-space: pre;\" dominant-baseline=\"alphabetic\">{}</text>",
+                i as f64 * line_height + first,
                 escape_xml(line)
             )
         })
         .collect::<String>();
     format!(
-        // The family the canvas draws with, not a third opinion. Exporting in a different
-        // face from the one the text was measured and laid out in makes every text box
-        // the wrong size in the exported file.
-        "<text x=\"{base_x}\" y=\"{}\" font-family=\"{}\" font-size=\"{font_size}\" fill=\"{}\" opacity=\"{}\"{text_anchor}{transform}>{spans}</text>",
-        rect.y,
-        crate::FONT_FAMILY,
-        element.stroke_color,
+        "<g transform=\"translate({} {}) rotate({} {} {})\" opacity=\"{}\">{lines}</g>",
+        element.x,
+        element.y,
+        (element.angle * 180.0) / std::f64::consts::PI,
+        element.width / 2.0,
+        element.height / 2.0,
         element.opacity / 100.0
     )
 }
@@ -281,10 +324,16 @@ pub fn scene_to_svg(
     let height = bounds.max_y - bounds.min_y + padding * 2.0;
     let dx = padding - bounds.min_x;
     let dy = padding - bounds.min_y;
+    // Labels by id, for the arrows whose stroke is cut away under theirs.
+    let labels: std::collections::HashMap<&str, &DrawElement> = elements
+        .iter()
+        .filter(|el| el.kind == DrawElementType::Text && el.container_id.is_some())
+        .map(|el| (el.id.as_str(), el))
+        .collect();
     let body = elements
         .iter()
         .filter(|el| !el.is_deleted)
-        .map(element_svg)
+        .map(|el| element_svg(el, |id| labels.get(id).copied()))
         .collect::<Vec<_>>()
         .join("\n");
     format!(

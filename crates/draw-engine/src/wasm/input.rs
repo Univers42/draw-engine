@@ -395,27 +395,51 @@ impl WasmEngine {
     /// `maxLineLength * fontSize * 0.65` — so the textarea, the painted glyphs and the
     /// element's own box were three different widths.
     ///
+    /// `family` is an Excalidraw family id; absent, or one the engine does not draw
+    /// with, measures in the system stack a text with no family is drawn in.
+    ///
     /// Returns `[width, height]`.
     #[wasm_bindgen(js_name = measureText)]
-    pub fn measure_text(&self, text: &str, font_size: f64) -> Vec<f64> {
+    pub fn measure_text(&self, text: &str, font_size: f64, family: Option<u8>) -> Vec<f64> {
+        let family = family.filter(|id| crate::text::font::family(*id).is_some());
+        let font =
+            crate::text::FontKey::new(family.unwrap_or(crate::text::FontKey::LEGACY), font_size);
+        let line_height = family
+            .and_then(crate::text::font::family)
+            .map_or(crate::TEXT_LINE_HEIGHT, |family| family.line_height);
         let lines: Vec<&str> = text.split('\n').collect();
         let width = lines
             .iter()
-            .map(|line| super::measure_line(line, font_size))
+            .map(|line| super::measure_font_line(line, font))
             .fold(0.0_f64, f64::max);
         vec![
             width.max(4.0),
-            (lines.len() as f64 * font_size * crate::TEXT_LINE_HEIGHT).max(font_size),
+            (lines.len() as f64 * font_size * line_height).max(font_size),
         ]
     }
 
-    /// The CSS font family every piece of text is drawn with.
+    /// The CSS font family a text is drawn with: the family `id`'s stack, or — absent,
+    /// or an id the engine does not draw with — the system stack of a text with none.
     ///
     /// The host needs it so its editing overlay renders in the same face; a textarea in
     /// a different font shifts the text visibly the moment an edit is committed.
     #[wasm_bindgen(js_name = fontFamily)]
-    pub fn font_family(&self) -> String {
-        crate::FONT_FAMILY.to_string()
+    pub fn font_family(&self, id: Option<u8>) -> String {
+        crate::text::font::css_stack(id).to_string()
+    }
+
+    /// Tells the engine a font face has finished loading: texts in a family are
+    /// measured again and laid out anew, without an edit — nothing is stamped, saved or
+    /// undoable (`DrawEngine::fonts_loaded`).
+    #[wasm_bindgen(js_name = fontsLoaded)]
+    pub fn fonts_loaded(&self) {
+        super::forget_measure_font();
+        {
+            let mut state = self.cell.borrow_mut();
+            super::paint::forget_font(&state.ctx);
+            state.engine.fonts_loaded();
+        }
+        self.flush();
     }
 
     /// Replaces the grid settings.
@@ -641,6 +665,37 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = getFontSize)]
     pub fn get_font_size(&self) -> f64 {
         self.cell.borrow().engine.get_font_size()
+    }
+
+    /// An Excalidraw family id for the selected text, or for the next text when nothing
+    /// is selected. An id the engine does not draw with is ignored.
+    #[wasm_bindgen(js_name = setFontFamily)]
+    pub fn set_font_family(&self, family: u8) {
+        self.cell.borrow_mut().engine.set_font_family(family);
+        self.flush();
+    }
+
+    /// The selected text's family id — `0` for the system stack — or the next text's.
+    #[wasm_bindgen(js_name = getFontFamily)]
+    pub fn get_font_family(&self) -> u8 {
+        self.cell.borrow().engine.get_font_family()
+    }
+
+    /// Selected free texts size to their text (`true`) or keep a fixed width (`false`).
+    #[wasm_bindgen(js_name = setTextAutoResize)]
+    pub fn set_text_auto_resize(&self, auto_resize: bool) {
+        self.cell
+            .borrow_mut()
+            .engine
+            .set_text_auto_resize(auto_resize);
+        self.flush();
+    }
+
+    /// Selected labels wrap inside their shape (`true`) or keep their lines and widen it.
+    #[wasm_bindgen(js_name = setLabelWrap)]
+    pub fn set_label_wrap(&self, wrap: bool) {
+        self.cell.borrow_mut().engine.set_label_wrap(wrap);
+        self.flush();
     }
 
     /// `"left"`, `"center"` or `"right"`. Anything else is ignored rather than coerced,

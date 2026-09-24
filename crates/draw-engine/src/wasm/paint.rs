@@ -988,13 +988,7 @@ fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[
                 .as_ref()
                 .is_some_and(|frame| view.erasing.contains(frame));
         ERASE_FADE.with(|fade| fade.set(if marked { READY_TO_ERASE_OPACITY } else { 1.0 }));
-        paint_element(
-            ctx,
-            view_transform,
-            element,
-            &view.theme.background,
-            &view.elements,
-        );
+        paint_element(ctx, view_transform, element, view.scene);
         if clip.is_some() {
             ctx.restore();
             // `restore` put the context's alpha, stroke, fill, dash and font back to what
@@ -1410,32 +1404,61 @@ fn paint_element(
     ctx: &CanvasRenderingContext2d,
     view: [f64; 6],
     element: &DrawElement,
-    background: &str,
-    elements: &[&DrawElement],
+    scene: &crate::scene::Scene,
 ) {
     match element.kind {
-        DrawElementType::Line | DrawElementType::Arrow => paint_linear(ctx, view, element),
+        DrawElementType::Line | DrawElementType::Arrow => {
+            match crate::render::linear_label(element, |id| scene.get(id)) {
+                Some(label) => paint_linear_around(ctx, view, element, label),
+                None => paint_linear(ctx, view, element),
+            }
+        }
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
-        DrawElementType::Text => {
-            let is_linear_label = element
-                .container_id
-                .as_deref()
-                .and_then(|cid| elements.iter().find(|e| e.id == cid))
-                .is_some_and(|c| crate::is_linear_element(c));
-            paint_text(
-                ctx,
-                view,
-                element,
-                if is_linear_label {
-                    Some(background)
-                } else {
-                    None
-                },
-            )
-        }
+        DrawElementType::Text => paint_text(ctx, view, element),
         _ => paint_shape(ctx, view, element),
     }
+}
+
+/// A line or arrow with its stroke cut away under its label, as the oracle clips it
+/// (`renderElement.ts@1118751f:784-812`): an even-odd region of a box around the arrow
+/// less the label's padded box — here a clockwise box and a counter-clockwise hole under
+/// the default non-zero rule, which is the same region.
+///
+/// It replaces a backdrop painted behind the label in the board's colour, which covered
+/// whatever else lay under an arrow's label, not only the arrow.
+fn paint_linear_around(
+    ctx: &CanvasRenderingContext2d,
+    view: [f64; 6],
+    element: &DrawElement,
+    label: &DrawElement,
+) {
+    let hole = crate::render::label_hole(label);
+    let bounds = crate::scene::element_bounds(element);
+    // Generously covers the arrow and its heads at any size, as the oracle's does.
+    let reach = (bounds.max_x - bounds.min_x).max(bounds.max_y - bounds.min_y)
+        + 100.0
+        + element.stroke_width * 10.0;
+    ctx.save();
+    let _ = ctx.set_transform(view[0], view[1], view[2], view[3], view[4], view[5]);
+    ctx.begin_path();
+    ctx.rect(
+        bounds.min_x - reach,
+        bounds.min_y - reach,
+        bounds.max_x - bounds.min_x + reach * 2.0,
+        bounds.max_y - bounds.min_y + reach * 2.0,
+    );
+    ctx.move_to(hole.x, hole.y);
+    ctx.line_to(hole.x, hole.y + hole.height);
+    ctx.line_to(hole.x + hole.width, hole.y + hole.height);
+    ctx.line_to(hole.x + hole.width, hole.y);
+    ctx.close_path();
+    ctx.clip();
+    paint_linear(ctx, view, element);
+    ctx.restore();
+    // `restore` put back what the caches believe was set inside.
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
 }
 
 /// Paints a rectangle, diamond or ellipse as rough.js would.
@@ -1586,40 +1609,22 @@ fn freehand_path(points: &[[f64; 2]], stroke_width: f64, level: i32) -> Option<P
 ///
 /// # The baseline
 ///
-/// `textBaseline` was never set, so Canvas2D's default of `"alphabetic"` applied and
-/// the first line's *baseline* sat on the element's top edge — meaning the glyphs
-/// rendered entirely **above** their own bounding box. Three things followed from that:
-/// text jumped by a line height when you committed an edit, clicking on visible text
-/// did not select it (the hit test uses the box, which was empty), and a bound label's
-/// backdrop was painted below its glyphs instead of behind them. The SVG exporter got
-/// it right, so canvas and export disagreed about where text was.
-///
-/// `"top"` puts the top of the line on the top of the box, which is what the box means.
-/// Excalidraw reaches the same result via `alphabetic` plus a computed vertical offset;
-/// matching that exactly needs real font metrics, which is tracked separately.
-fn paint_text(
-    ctx: &CanvasRenderingContext2d,
-    view: [f64; 6],
-    element: &DrawElement,
-    backdrop: Option<&str>,
-) {
+/// A text in a family is placed as the oracle places it: `alphabetic`, each line's
+/// baseline at `i * lineHeightPx + getVerticalOffset` (`renderElement.ts@1118751f:626-676`),
+/// which is what puts the glyphs where the box measured them. A text with none — every
+/// board saved before families — keeps `"top"`, the top of each line on the top of its
+/// line box, exactly as it has always been drawn. See [`crate::render::text_line_placement`].
+fn paint_text(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     let text = element.text.as_deref().unwrap_or("");
     if text.is_empty() {
         return;
     }
-    let font_size = element.font_size.unwrap_or(20.0);
+    let (first, line_height) = crate::render::text_line_placement(element);
 
     with_element_transform(ctx, view, element, || {
-        set_font_cached(ctx, font_size);
-        ctx.set_text_baseline("top");
-
-        if let Some(backdrop) = backdrop {
-            set_fill(ctx, backdrop);
-            ctx.fill_rect(-4.0, -2.0, element.width + 8.0, element.height + 4.0);
-        }
-
+        set_font_cached(ctx, crate::text::layout::font_of(element));
+        ctx.set_text_baseline(crate::render::text_baseline(element));
         set_fill(ctx, &element.stroke_color);
-        let line_height = font_size * crate::TEXT_LINE_HEIGHT;
         // The two used to be a hard-coded pair chosen by `container_id`: centre for a
         // label, left for anything else. They are element properties now, and the anchor
         // and the canvas setting have to be derived from the same value — `fill_text`
@@ -1628,26 +1633,33 @@ fn paint_text(
         ctx.set_text_align(crate::render::canvas_text_align(align));
         let anchor_x = crate::render::text_anchor_x(align, element.width);
         for (i, line) in text.split('\n').enumerate() {
-            let _ = ctx.fill_text(line, anchor_x, i as f64 * line_height);
+            let _ = ctx.fill_text(line, anchor_x, i as f64 * line_height + first);
         }
     });
 }
 
 thread_local! {
-    /// The font string currently set, so `format!` and the property write only happen
-    /// when the size actually changes.
-    static FONT: std::cell::RefCell<Option<f64>> = const { std::cell::RefCell::new(None) };
+    /// The font currently set, so `format!` and the property write only happen when the
+    /// family or the size actually changes.
+    static FONT: std::cell::RefCell<Option<crate::text::FontKey>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-fn set_font_cached(ctx: &CanvasRenderingContext2d, size: f64) {
+/// Makes the next text painted set its font afresh — see `forget_measure_font`: a face
+/// that has just loaded draws under the same `ctx.font` the fallback did.
+pub(crate) fn forget_font(ctx: &CanvasRenderingContext2d) {
+    ctx.set_font("1px serif");
+    FONT.with(|f| *f.borrow_mut() = None);
+}
+
+fn set_font_cached(ctx: &CanvasRenderingContext2d, font: crate::text::FontKey) {
     FONT.with(|f| {
         let mut f = f.borrow_mut();
-        if *f != Some(size) {
-            // The same string the measurer uses. Drawing with `sans-serif` while
-            // measuring with anything else is how a text box ends up the wrong size for
-            // the glyphs inside it.
-            ctx.set_font(&crate::font_string(size));
-            *f = Some(size);
+        if *f != Some(font) {
+            // The same string the measurer uses. Drawing in one face while measuring
+            // in another is how a text box ends up the wrong size for its glyphs.
+            ctx.set_font(&crate::text::font::font_string(font));
+            *f = Some(font);
         }
     });
 }

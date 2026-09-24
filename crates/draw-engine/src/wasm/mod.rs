@@ -202,7 +202,7 @@ impl WasmEngine {
     pub fn new(canvas: HtmlCanvasElement) -> Result<WasmEngine, JsValue> {
         let ctx = context_2d(&canvas)?;
         let mut engine = DrawEngine::new();
-        engine.set_measure_text(measure_via_ctx);
+        engine.set_measure_line(measure_font_line);
         let cell = Rc::new(RefCell::new(EngineCell {
             stats: PaintStats::default(),
             frames: FrameLog::default(),
@@ -470,11 +470,15 @@ thread_local! {
     /// nothing else.
     static MEASURE: std::cell::RefCell<Option<web_sys::CanvasRenderingContext2d>> =
         const { std::cell::RefCell::new(None) };
+    /// The font `MEASURE` holds, so `ctx.font` — a string parsed by the browser on every
+    /// write — is only set when the family or size changes.
+    static MEASURE_FONT: std::cell::Cell<Option<crate::text::FontKey>> =
+        const { std::cell::Cell::new(None) };
 }
 
-/// Runs `body` with a context whose font is already set to `font_size`.
+/// Runs `body` with a context whose font is already set to `font`.
 fn with_measure_ctx<T>(
-    font_size: f64,
+    font: crate::text::FontKey,
     body: impl FnOnce(&web_sys::CanvasRenderingContext2d) -> T,
 ) -> Option<T> {
     MEASURE.with(|cell| {
@@ -491,19 +495,38 @@ fn with_measure_ctx<T>(
                 .ok()
                 .flatten()
                 .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok());
+            MEASURE_FONT.with(|set| set.set(None));
         }
         let ctx = cell.as_ref()?;
-        ctx.set_font(&crate::font_string(font_size));
+        MEASURE_FONT.with(|set| {
+            if set.get() != Some(font) {
+                ctx.set_font(&crate::text::font::font_string(font));
+                set.set(Some(font));
+            }
+        });
         Some(body(ctx))
     })
 }
 
-/// The width of one line, as the browser will actually draw it.
-pub(crate) fn measure_line(line: &str, font_size: f64) -> f64 {
-    with_measure_ctx(font_size, |ctx| {
+/// Makes the next measure set its font afresh: a face that has just loaded measures
+/// differently under the same `ctx.font`, and a browser may keep the face it resolved
+/// while the string is unchanged — so the string is changed.
+pub(crate) fn forget_measure_font() {
+    MEASURE.with(|cell| {
+        if let Some(ctx) = cell.borrow().as_ref() {
+            ctx.set_font("1px serif");
+        }
+    });
+    MEASURE_FONT.with(|set| set.set(None));
+}
+
+/// The width of one line in `font`, as the browser will actually draw it — the engine's
+/// line measure ([`crate::DrawEngine::set_measure_line`]).
+pub(crate) fn measure_font_line(line: &str, font: crate::text::FontKey) -> f64 {
+    with_measure_ctx(font, |ctx| {
         ctx.measure_text(line).map(|m| m.width()).unwrap_or(0.0)
     })
-    .unwrap_or_else(|| estimate_line(line, font_size))
+    .unwrap_or_else(|| estimate_line(line, font.size()))
 }
 
 /// The fallback when there is no document to measure against — a server-side render, or
@@ -514,23 +537,4 @@ pub(crate) fn measure_line(line: &str, font_size: f64) -> f64 {
 /// four times too wide.
 fn estimate_line(line: &str, font_size: f64) -> f64 {
     line.chars().count() as f64 * font_size * 0.6
-}
-
-/// Measures text with the font it will be drawn with.
-///
-/// This used to estimate `bytes * fontSize * 0.6` despite its name, and the error was not
-/// subtle: measured against a real canvas at 20px, "iiiiiiiiii" came out 170% too wide,
-/// "WWWWWWWWWW" 36% too narrow, "Ω≈ç√∫" 198% too wide, and even "Hello" 32% too wide.
-/// Everything downstream inherits that error — the selection frame, the hit test, where
-/// the editing overlay sits, how a bound label is laid out, and the exported SVG.
-fn measure_via_ctx(text: &str, font_size: f64) -> (f64, f64) {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let width = lines
-        .iter()
-        .map(|line| measure_line(line, font_size))
-        .fold(0.0, f64::max);
-    (
-        width.max(4.0),
-        (lines.len() as f64 * font_size * crate::TEXT_LINE_HEIGHT).max(font_size),
-    )
 }

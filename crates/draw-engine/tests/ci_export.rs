@@ -200,3 +200,69 @@ fn scene_to_svg_arrowhead_marker_rendered() {
     let svg = scene_to_svg(&[arrow], bounds, 10.0, "#ffffff");
     assert!(svg.contains("<polygon "));
 }
+
+fn text_element(engine: &DrawEngine, id: &str) -> DrawElement {
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("the element is in the scene")
+}
+
+/// Text is exported as the canvas draws it (`staticSvgScene.ts@1118751f:776-832`).
+#[test]
+fn exported_text_is_in_its_family_one_line_at_a_time() {
+    let mut text = text_at(10.0, 20.0, 100.0, 50.0);
+    text.text = Some("one  two\nthree".into());
+    text.font_family = Some(5);
+    text.text_align = Some(TextAlign::Right);
+    let mut engine = engine_with_scene(vec![text]);
+    let svg = engine.export_svg(0.0).unwrap();
+    assert_eq!(svg.matches("<text ").count(), 2, "{svg}");
+    assert!(svg.contains("font-family=\"Excalifont, Xiaolai, sans-serif, Segoe UI Emoji\""));
+    assert!(svg.contains("white-space: pre;"));
+    assert!(svg.contains("text-anchor=\"end\""));
+    assert!(svg.contains(">one  two</text>"));
+    assert!(svg.contains("dominant-baseline=\"alphabetic\""));
+    // The first baseline where the canvas puts it: 17.62 below the top.
+    let ys: Vec<f64> = svg
+        .split("<text ")
+        .skip(1)
+        .map(|text| {
+            let y = &text[text.find(" y=\"").unwrap() + 4..];
+            y[..y.find('"').unwrap()].parse().unwrap()
+        })
+        .collect();
+    assert!(
+        (ys[0] - 17.62).abs() < 1e-9 && (ys[1] - 42.62).abs() < 1e-9,
+        "{ys:?}"
+    );
+    let _ = engine.drain_events();
+}
+
+/// The arrow's stroke is masked away under its label, as the canvas clips it.
+#[test]
+fn an_arrows_stroke_is_masked_under_its_label() {
+    let mut arrow = connector(0.0, 0.0, 400.0, 0.0, DrawElementType::Arrow);
+    arrow.roundness = None;
+    let arrow_id = arrow.id.clone();
+    let mut engine = engine_with_measure(vec![arrow]);
+    engine.select(vec![arrow_id.clone()]);
+    assert!(engine.edit_selected_text());
+    let id = engine.drain_events().text_edit.unwrap().id;
+    engine.set_element_text(&id, "label");
+    let label = text_element(&engine, &id);
+    let svg = engine.export_svg(0.0).unwrap();
+    assert!(
+        svg.contains(&format!("<mask id=\"mask-{arrow_id}\"")),
+        "{svg}"
+    );
+    assert!(svg.contains(&format!("mask=\"url(#mask-{arrow_id})\"")));
+    let hole = render::label_hole(&label);
+    assert_close(hole.x, label.x - 5.0);
+    assert_close(hole.width, label.width + 10.0);
+    assert!(svg.contains(&format!(
+        "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#000\"/>",
+        hole.x, hole.y, hole.width, hole.height
+    )));
+}
