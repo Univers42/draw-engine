@@ -211,11 +211,25 @@ describe("dispatchKeyDown", () => {
     // already panning goes back to the tool it interrupted. A toolbar click stays on
     // `setTool`, which never toggles.
     const flip = recording(["id"]);
-    assert.equal(dispatchKeyDown(session(flip.engine), event({ key: "H", shiftKey: true })), "prevent");
+    assert.equal(dispatchKeyDown(session(flip.engine), event({ key: "H", code: "KeyH", shiftKey: true })), "prevent");
     assert.deepEqual(flip.calls, ["flip:horizontal"]);
     const hand = recording([]);
     assert.equal(dispatchKeyDown(session(hand.engine), event({ key: "h" })), "prevent");
     assert.deepEqual(hand.calls, ["activateTool:hand"]);
+  });
+
+  it("flips by the physical key, whatever the layout prints on it (actionFlip.ts:51, :76-77)", () => {
+    // A Russian layout prints Р on the H key and М on the V key.
+    const horizontal = recording(["id"]);
+    assert.equal(dispatchKeyDown(session(horizontal.engine), event({ key: "Р", code: "KeyH", shiftKey: true })), "prevent");
+    assert.deepEqual(horizontal.calls, ["flip:horizontal"]);
+    const vertical = recording(["id"]);
+    assert.equal(dispatchKeyDown(session(vertical.engine), event({ key: "М", code: "KeyV", shiftKey: true })), "prevent");
+    assert.deepEqual(vertical.calls, ["flip:vertical"]);
+    // Ctrl+Shift+V is the browser's paste as plain text, never a flip.
+    const paste = recording(["id"]);
+    dispatchKeyDown(session(paste.engine), event({ key: "V", code: "KeyV", shiftKey: true, ctrlKey: true }));
+    assert.deepEqual(paste.calls, []);
   });
 
   it("toggles the tool lock on Q", () => {
