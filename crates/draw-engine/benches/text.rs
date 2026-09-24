@@ -21,8 +21,8 @@ use draw_engine::{DrawEngine, Scene};
 
 const LABEL: &str = "the quick brown fox jumps over the lazy dog";
 
-/// `n` rectangles in a grid, each with a label long enough to wrap.
-fn labelled_board(n: usize) -> Vec<DrawElement> {
+/// `n` rectangles in a grid, each with a label long enough to wrap, in `family`.
+fn labelled_board(n: usize, family: Option<u8>) -> Vec<DrawElement> {
     let mut out = Vec::with_capacity(n * 2);
     for i in 0..n {
         let row = (i / 40) as f64;
@@ -49,6 +49,7 @@ fn labelled_board(n: usize) -> Vec<DrawElement> {
         label.id = format!("label-{i}");
         label.text = Some(LABEL.into());
         label.font_size = Some(20.0);
+        label.font_family = family;
         label.container_id = Some(shape.id.clone());
         shape.bound_text_id = Some(label.id.clone());
         out.push(shape);
@@ -57,10 +58,10 @@ fn labelled_board(n: usize) -> Vec<DrawElement> {
     out
 }
 
-fn engine_of(n: usize) -> DrawEngine {
+fn engine_of(n: usize, family: Option<u8>) -> DrawEngine {
     let mut engine = DrawEngine::new();
     engine.set_viewport(1440.0, 900.0, 1.0);
-    engine.set_scene(Scene::new(labelled_board(n)));
+    engine.set_scene(Scene::new(labelled_board(n, family)));
     engine
 }
 
@@ -71,7 +72,7 @@ fn text_layout(c: &mut Criterion) {
     group.bench_function("font_size_1k_labels", |b| {
         b.iter_batched_ref(
             || {
-                let mut engine = engine_of(1000);
+                let mut engine = engine_of(1000, None);
                 let shapes = (0..1000).map(|i| format!("shape-{i}")).collect();
                 engine.select(shapes);
                 engine
@@ -84,13 +85,24 @@ fn text_layout(c: &mut Criterion) {
         );
     });
 
+    group.bench_function("fonts_loaded_1k_labels", |b| {
+        b.iter_batched_ref(
+            || engine_of(1000, Some(5)),
+            |engine| {
+                engine.fonts_loaded();
+                black_box(engine.needs_frame())
+            },
+            BatchSize::LargeInput,
+        );
+    });
+
     group.finish();
 }
 
 fn paint_view(c: &mut Criterion) {
     let mut group = c.benchmark_group("paint_view");
     group.bench_function("texts_1k", |b| {
-        let mut engine = engine_of(1000);
+        let mut engine = engine_of(1000, None);
         // Everything on screen: 40 × 25 shapes at 220 × 160 fit 1440 × 900 at 0.16.
         engine.camera = Camera {
             x: 0.0,
