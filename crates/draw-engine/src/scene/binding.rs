@@ -95,9 +95,9 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
 /// Whether an arrow end can attach to this element.
 ///
 /// Excalidraw's `isBindableElement(element, false)` (`typeChecks.ts:184-202`): the three
-/// shapes, pictures, embeds and free-standing text — not a label, which belongs to its
-/// container, and never a line or arrow. A locked element is not a target: it is not
-/// something the pointer can act on at all.
+/// shapes, pictures, embeds, frames and free-standing text — not a label, which belongs
+/// to its container, and never a line or arrow. A locked element is not a target: it is
+/// not something the pointer can act on at all.
 pub fn is_arrow_target(element: &DrawElement) -> bool {
     if element.is_deleted || element.locked == Some(true) {
         return false;
@@ -107,7 +107,8 @@ pub fn is_arrow_target(element: &DrawElement) -> bool {
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
         | DrawElementType::Image
-        | DrawElementType::Embed => true,
+        | DrawElementType::Embed
+        | DrawElementType::Frame => true,
         DrawElementType::Text => element.container_id.is_none(),
         _ => false,
     }
@@ -569,25 +570,48 @@ fn ray_hits_segment(from: Point, toward: Point, p: Point, q: Point) -> Option<(f
 ///
 /// - a candidate matches anywhere inside it, or within `tolerance` of its outline, tested
 ///   against the real rotated outline — an ellipse's corner is not the ellipse;
+/// - a frame matches only from outside, near its border, so a point inside a frame is
+///   aimed at what the frame holds; and a shape inside a frame does not match where the
+///   frame clips it from view (`bindingBorderTest`, `collision.ts:275-322`);
 /// - candidates are walked top of the z-order first, and the walk stops at the first
 ///   filled one, so nothing hidden under a filled shape can be bound through it;
 /// - among what matched, the smallest wins (`width² + height²`), so a shape nested inside
-///   another is reachable however the two are stacked. Equal sizes go to the one on top.
+///   another is reachable however the two are stacked. Equal sizes go to the one on top
+///   — what the eye picks; Excalidraw's sort happens to leave the lowest
+///   (`collision.ts:376-384`).
 ///
 /// `candidates` must run top of the z-order first.
 pub fn arrow_target_among<'a>(
     candidates: impl Iterator<Item = &'a DrawElement>,
+    lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
     x: f64,
     y: f64,
     tolerance: f64,
     exclude_id: Option<&str>,
 ) -> Option<&'a DrawElement> {
+    let p = Point { x, y };
+    let clipped = |element: &DrawElement| {
+        element
+            .frame_id
+            .as_deref()
+            .and_then(lookup)
+            .filter(|frame| frame.kind == DrawElementType::Frame && !frame.is_deleted)
+            .is_some_and(|frame| {
+                let b = crate::scene::geometry::element_bounds(frame);
+                !(b.min_x..=b.max_x).contains(&x) || !(b.min_y..=b.max_y).contains(&y)
+            })
+    };
     let mut best: Option<(&'a DrawElement, f64)> = None;
     for element in candidates {
         if Some(element.id.as_str()) == exclude_id || !is_arrow_target(element) {
             continue;
         }
-        if !contains(element, Point { x, y }, tolerance) {
+        let matched = if element.kind == DrawElementType::Frame {
+            !contains(element, p, 0.0) && contains(element, p, tolerance)
+        } else {
+            contains(element, p, tolerance) && !clipped(element)
+        };
+        if !matched {
             continue;
         }
         let size = element.width * element.width + element.height * element.height;
@@ -765,6 +789,7 @@ pub fn anchor_for_drop<'a>(
     let pointer = drop.pointer;
     let Some(hit) = arrow_target_among(
         candidates,
+        lookup,
         pointer.x,
         pointer.y,
         drop.tolerance,

@@ -92,6 +92,7 @@ impl DrawEngine {
         } else {
             arrow_target_among(
                 self.scene.iter_ordered().rev(),
+                &|id| self.scene.get(id),
                 world.x,
                 world.y,
                 self.binding_tolerance(),
@@ -99,10 +100,12 @@ impl DrawEngine {
             )
             .map(|el| el.id.clone())
         };
-        let point = target.as_ref().map(|_| world);
-        if target != self.binding_highlight || point != self.binding_point {
-            self.binding_highlight = target;
-            self.binding_point = point;
+        // Repainted only when what is drawn changes — the shape or its midpoint dot —
+        // not on every move across it.
+        let shown = (self.binding_highlight.clone(), self.binding_midpoint());
+        self.binding_point = target.as_ref().map(|_| world);
+        self.binding_highlight = target;
+        if shown != (self.binding_highlight.clone(), self.binding_midpoint()) {
             self.request_draw();
         }
     }

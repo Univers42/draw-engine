@@ -600,3 +600,68 @@ fn a_hostile_anchor_is_made_safe() {
     let (_, tip) = ends(scene.iter().find(|el| el.id == "arrow").unwrap());
     assert!(tip.x.is_finite() && tip.y.is_finite());
 }
+
+// ------------------------------------------------------------------- frames
+
+/// A frame — a slide, in a presentation — is bound from outside, near its border. Inside
+/// it, an arrow is aimed at what the frame holds, never at the frame
+/// (`collision.ts:275-322`).
+#[test]
+fn a_frame_is_bound_from_outside_only() {
+    let slide = shape(
+        "slide",
+        create_element_default(
+            DrawElementType::Frame,
+            Geometry {
+                x: 300.0,
+                y: 300.0,
+                width: 300.0,
+                height: 200.0,
+            },
+        ),
+    );
+    let mut engine = engine_with_scene(vec![slide.clone()]);
+    let arrow = draw_arrow(&mut engine, (100.0, 100.0), (295.0, 420.0));
+    let a = anchor(&arrow, End::End).expect("bound to the frame from outside");
+    assert_eq!((a.element_id.as_str(), a.mode), ("slide", BindMode::Orbit));
+
+    let mut engine = engine_with_scene(vec![slide]);
+    let arrow = draw_arrow(&mut engine, (100.0, 100.0), (450.0, 420.0));
+    assert_eq!(
+        arrow.end_binding, None,
+        "inside the frame, nothing to bind to"
+    );
+}
+
+/// A shape inside a frame is clipped by it, and cannot be bound where it is not shown.
+#[test]
+fn a_shape_is_not_bound_where_its_frame_clips_it() {
+    let slide = shape(
+        "slide",
+        create_element_default(
+            DrawElementType::Frame,
+            Geometry {
+                x: 0.0,
+                y: 0.0,
+                width: 350.0,
+                height: 600.0,
+            },
+        ),
+    );
+    let mut b = target();
+    b.frame_id = Some("slide".into());
+    let mut engine = engine_with_scene(vec![slide, b]);
+    // B spans x 300..400; the frame clips it at 350.
+    let arrow = draw_arrow(&mut engine, (700.0, 100.0), (380.0, 340.0));
+    assert_ne!(
+        arrow.end_binding.as_deref(),
+        Some(B),
+        "B is not drawn there"
+    );
+    let arrow = draw_arrow(&mut engine, (100.0, 100.0), (320.0, 340.0));
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(B),
+        "where B is shown, it binds"
+    );
+}

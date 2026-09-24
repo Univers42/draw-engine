@@ -135,6 +135,18 @@ impl DrawEngine {
         dirty
     }
 
+    /// The side midpoint of the suggested shape to mark, and whether a drop would snap
+    /// to it. Alt binds exactly where the end is, so there is no snap to promise.
+    pub(crate) fn binding_midpoint(&self) -> Option<(crate::camera::Point, bool)> {
+        let shape = self.scene.get(self.binding_highlight.as_deref()?)?;
+        let pointer = self.binding_point.filter(|_| !self.alt_held)?;
+        crate::scene::binding::midpoint_mark(
+            shape,
+            pointer,
+            super::MIDPOINT_SNAP_PX / self.camera.scale,
+        )
+    }
+
     pub fn paint_view(&self) -> PaintView<'_> {
         let selected: Vec<&DrawElement> = self
             .selected_ids
@@ -309,19 +321,7 @@ impl DrawEngine {
                 .binding_highlight
                 .as_deref()
                 .and_then(|id| self.scene.get(id)),
-            // Alt binds exactly where the end is, so there is no snap to promise.
-            binding_midpoint: self
-                .binding_highlight
-                .as_deref()
-                .and_then(|id| self.scene.get(id))
-                .zip(self.binding_point.filter(|_| !self.alt_held))
-                .and_then(|(shape, p)| {
-                    crate::scene::binding::midpoint_mark(
-                        shape,
-                        p,
-                        super::MIDPOINT_SNAP_PX / self.camera.scale,
-                    )
-                }),
+            binding_midpoint: self.binding_midpoint(),
             linear_handles,
             active_handle,
             radius_handles,
