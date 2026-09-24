@@ -11,7 +11,7 @@ mod common;
 use common::*;
 use draw_engine::scene::binding::{anchor, binding_gap, focus_point, End};
 use draw_engine::scene::element::BindMode;
-use draw_engine::scene::geometry::mirror_signs;
+use draw_engine::scene::geometry::{element_outline_bounds, mirror_signs};
 use draw_engine::selection::linear::world_points;
 use draw_engine::*;
 use std::f64::consts::PI;
@@ -57,10 +57,11 @@ fn mirrored(p: Point, axis: FlipAxis, mid: f64) -> Point {
     }
 }
 
-/// The middle of the turned boxes of `elements` on `axis` — the oracle's
-/// `getCommonBoundingBox` (`actionFlip.ts:131`, `bounds.ts:1005-1029`).
+/// The middle of what `elements` draw, turned, on `axis` — the oracle's
+/// `getCommonBoundingBox` (`actionFlip.ts:131`, `bounds.ts:1005-1029`), with a line
+/// measured by its points rather than by its rendered path.
 fn midline<'a>(elements: impl IntoIterator<Item = &'a DrawElement>, axis: FlipAxis) -> f64 {
-    let (lo, hi) = elements.into_iter().map(element_rotated_bounds).fold(
+    let (lo, hi) = elements.into_iter().map(element_outline_bounds).fold(
         (f64::INFINITY, f64::NEG_INFINITY),
         |(lo, hi), b| {
             if axis == FlipAxis::Horizontal {
@@ -380,9 +381,9 @@ fn turned_text_turns_the_other_way() {
     assert!((t.x - (2.0 * mid - 80.0)).abs() < 1e-9, "x {}", t.x);
 }
 
-/// The mirror line is the middle of the *turned* boxes, as the selection is seen on the
-/// board. A 200×20 bar stood on end occupies x 90..110; with a box at 300..350 the line is
-/// 220 and the box lands at 90. The unturned box put the line at 175 and the box at 0.
+/// The mirror line is the middle of the *turned* shapes, as the oracle measures the
+/// selection. A 200×20 bar stood on end occupies x 90..110; with a box at 300..350 the line
+/// is 220 and the box lands at 90. The unturned box put the line at 175 and the box at 0.
 #[test]
 fn the_axis_is_the_turned_selection_box() {
     let mut bar = named("bar", filled(box_at(0.0, 0.0, 200.0, 20.0)));
@@ -393,6 +394,59 @@ fn the_axis_is_the_turned_selection_box() {
     flip(&mut engine, &["bar", "o"], FlipAxis::Horizontal);
     let o = get(&engine, "o");
     assert!((o.x - 90.0).abs() < 1e-9, "x {}", o.x);
+}
+
+/// Each kind reaches as far as what it draws, not as far as its box, once turned — the
+/// oracle's `getElementBounds` (`packages/element/src/bounds.ts:147-240` at 1118751f): an
+/// ellipse by its own curve, a diamond by its four corners, a line or a freehand stroke by
+/// its turned points. Each is turned by π/4 beside a box at x 300..350, so the box lands on
+/// the kind's left edge. The turned box put all four further left, the line and the stroke
+/// 70 units off: both of theirs stand on end at x = 50.
+#[test]
+fn the_axis_is_what_each_kind_draws() {
+    let (sin, cos) = (PI / 4.0).sin_cos();
+    let mut stroke = create_element_default(
+        DrawElementType::Freedraw,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        },
+    );
+    stroke.points = Some(vec![[0.0, 0.0], [50.0, 50.0], [100.0, 100.0]]);
+    let cases = [
+        // `cx - hypot(w/2 · cos, h/2 · sin)`, bounds.ts:202-209.
+        (
+            "ellipse",
+            ellipse_at(0.0, 0.0, 200.0, 20.0),
+            100.0 - (100.0 * cos).hypot(10.0 * sin),
+        ),
+        // The corners on the long axis reach furthest, bounds.ts:176-201.
+        (
+            "diamond",
+            diamond_at(0.0, 0.0, 200.0, 20.0),
+            100.0 - 100.0 * cos,
+        ),
+        // The turned points, bounds.ts:934-995.
+        (
+            "line",
+            connector(0.0, 0.0, 100.0, 100.0, DrawElementType::Line),
+            50.0,
+        ),
+        // The turned points, bounds.ts:157-173.
+        ("freehand", stroke, 50.0),
+    ];
+    for (kind, mut shape, left) in cases {
+        shape.id = "s".into();
+        shape.angle = PI / 4.0;
+        let other = named("o", filled(box_at(300.0, 0.0, 50.0, 50.0)));
+        let mut engine = engine_with_scene(vec![shape, other]);
+
+        flip(&mut engine, &["s", "o"], FlipAxis::Horizontal);
+        let o = get(&engine, "o");
+        assert!((o.x - left).abs() < 1e-9, "{kind}: x {}, want {left}", o.x);
+    }
 }
 
 /// The words on an arrow count toward the box, as the oracle adds an arrow's label to it
@@ -632,6 +686,24 @@ fn every_kind() -> DrawEngine {
         ),
     );
     sketch.points = Some(vec![[0.0, 0.0], [-40.0, 20.0], [-80.0, 40.0]]);
+    let mut scrawl = named(
+        "scrawl",
+        create_element_default(
+            DrawElementType::Freedraw,
+            Geometry {
+                x: 600.0,
+                y: 1200.0,
+                width: 100.0,
+                height: 50.0,
+            },
+        ),
+    );
+    scrawl.points = Some(vec![[0.0, 0.0], [30.0, 50.0], [100.0, 10.0]]);
+    scrawl.angle = 0.6;
+    let mut oval = named("oval", filled(ellipse_at(600.0, 300.0, 120.0, 50.0)));
+    oval.angle = 0.7;
+    let mut kite = named("kite", filled(diamond_at(800.0, 300.0, 100.0, 60.0)));
+    kite.angle = 0.4;
 
     let mut image = named("image", image_at(0.0, 1500.0, 200.0, 100.0));
     image.angle = 0.4;
@@ -651,6 +723,8 @@ fn every_kind() -> DrawEngine {
         named("rect", filled(box_at(0.0, 300.0, 100.0, 60.0))),
         named("ellipse", filled(ellipse_at(200.0, 300.0, 100.0, 60.0))),
         named("diamond", filled(diamond_at(400.0, 300.0, 100.0, 60.0))),
+        oval,
+        kite,
         turned,
         text,
         labelled,
@@ -660,6 +734,7 @@ fn every_kind() -> DrawEngine {
         multi,
         stroke,
         sketch,
+        scrawl,
         image,
         embed,
         frame,
@@ -673,10 +748,12 @@ fn every_kind() -> DrawEngine {
 /// exactly, for every kind — and once changes something, and one undo takes it back.
 #[test]
 fn every_kind_round_trips() {
-    let cases: [&[&str]; 16] = [
+    let cases: [&[&str]; 19] = [
         &["rect", "far"],
         &["ellipse", "far"],
         &["diamond", "far"],
+        &["oval", "far"],
+        &["kite", "far"],
         &["turned"],
         &["text", "far"],
         &["labelled", "far"],
@@ -685,6 +762,7 @@ fn every_kind_round_trips() {
         &["multi", "far"],
         &["stroke", "far"],
         &["sketch"],
+        &["scrawl", "far"],
         &["image"],
         &["embed", "far"],
         &["frame"],
@@ -707,10 +785,16 @@ fn every_kind_round_trips() {
             flip(&mut engine, ids, axis);
             flip(&mut engine, ids, axis);
             let twice = poses(&engine);
-            if ids.contains(&"arr") && ids.len() > 1 {
-                // A bound arrow's ends are not reflected, they are re-resolved from its
-                // mirrored anchors after each flip — orbit geometry, exact to the last
-                // bits of a float but not beyond.
+            // Two cases are exact to the last bits of a float but not beyond. A bound
+            // arrow's ends are not reflected, they are re-resolved from its mirrored
+            // anchors after each flip — orbit geometry. And a turned ellipse, diamond or
+            // stroke beside something else sets the line through a sine and a cosine of
+            // its own, which the mirror image rounds differently.
+            let rounded = (ids.contains(&"arr") && ids.len() > 1)
+                || ["oval", "kite", "scrawl"]
+                    .iter()
+                    .any(|turned| ids.contains(turned));
+            if rounded {
                 assert_eq!(
                     to_nanos(twice),
                     to_nanos(original),

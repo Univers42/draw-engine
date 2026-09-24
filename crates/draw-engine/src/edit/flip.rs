@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::render::default_arrowhead;
 use crate::scene::binding::{anchor, is_binding_element, is_linear_element, set_anchor, End};
 use crate::scene::element::{DrawElement, DrawElementType};
-use crate::scene::geometry::{element_rotated_bounds, normalize_rect};
+use crate::scene::geometry::{element_outline_bounds, normalize_rect};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlipAxis {
@@ -199,9 +199,11 @@ pub fn flip_elements(
     }
 
     let horizontal = axis == FlipAxis::Horizontal;
-    // The middle of the turned boxes, as the selection is seen on the board
-    // (`getCommonBoundingBox`, `actionFlip.ts:131`), with the words on an arrow, which can
-    // reach past its ends (`resizeElements.ts:1280-1310`).
+    // The middle of what the selection draws, turned — the oracle's `getCommonBoundingBox`
+    // (`actionFlip.ts:131`) — with the words on an arrow, which can reach past its ends
+    // (`resizeElements.ts:1280-1310`). Not the frame drawn round the selection here,
+    // which is unturned (`group_box`): with a turned element in the selection, that frame
+    // shifts on a flip where the oracle's stays put (`docs/reference/resize.md` › Flip).
     let words: HashSet<&str> = targets
         .iter()
         .filter(|el| is_linear_element(el))
@@ -215,7 +217,7 @@ pub fn flip_elements(
                 .iter()
                 .filter(|el| !el.is_deleted && words.contains(el.id.as_str())),
         )
-        .map(element_rotated_bounds)
+        .map(element_outline_bounds)
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), b| {
             if horizontal {
                 (lo.min(b.min_x), hi.max(b.max_x))
