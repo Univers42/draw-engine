@@ -196,6 +196,12 @@ impl DrawEngine {
             }
         }
 
+        // Inside the selection's box a press picks the selection up, hit or hole, so it
+        // reads as movable there too (`App.tsx:8280-8286`).
+        if self.pointer_is_inside_selection(world) {
+            return HoverCursor::Move;
+        }
+
         let reach = self.collision_tolerance();
         // Anything grabbable under the pointer reads as movable. Locked elements
         // deliberately do not: they are not draggable, so promising otherwise is worse
