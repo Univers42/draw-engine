@@ -576,3 +576,256 @@ fn the_selection_box_is_drawn_where_its_handles_are_hit() {
     assert_close(drawn.min_x, 0.0);
     assert_close(drawn.max_x, 230.0);
 }
+
+// ---------------------------------------------------------------------------
+// Align and distribute carry what a drag carries
+// ---------------------------------------------------------------------------
+
+/// The oracle's align has no lock filter (`packages/element/src/align.ts:19-50`): a
+/// locked member is aligned with its group, as a drag carries it. Filtered out one by
+/// one, B stayed at 250 while A went to 0 — and the group was torn apart.
+#[test]
+fn align_carries_a_locked_group_member() {
+    let boxes = vec![
+        filled(box_at(100.0, 0.0, 80.0, 80.0)),
+        filled(box_at(250.0, 0.0, 80.0, 80.0)),
+        filled(box_at(0.0, 200.0, 80.0, 80.0)),
+    ];
+    let [a, b, c] = std::array::from_fn(|i| boxes[i].id.clone());
+    let mut engine = engine_with_scene(boxes);
+    engine.select(vec![a.clone(), b.clone()]);
+    engine.group_selection();
+    lock(&mut engine, &[&b]);
+    click(&mut engine, 140.0, 40.0);
+    engine.begin_pointer(40.0, 240.0, true, false);
+    engine.end_pointer();
+    assert_eq!(selection(&engine).len(), 3, "setup: the group and C");
+
+    engine.align_selection(AlignMode::Left);
+
+    assert_close(element(&engine, &a).x, 0.0);
+    assert_close(element(&engine, &b).x, 150.0);
+    assert_close(element(&engine, &c).x, 0.0);
+}
+
+/// A loose locked element held by Select All is not carried by anything, so align
+/// leaves it where it is — as the oracle's Select All never takes it.
+#[test]
+fn align_leaves_a_loose_locked_element_alone() {
+    let a = filled(box_at(100.0, 0.0, 80.0, 80.0));
+    let c = filled(box_at(0.0, 200.0, 80.0, 80.0));
+    let mut locked = filled(box_at(300.0, 400.0, 80.0, 80.0));
+    locked.locked = Some(true);
+    let (a_id, c_id, locked_id) = (a.id.clone(), c.id.clone(), locked.id.clone());
+    let mut engine = engine_with_scene(vec![a, c, locked]);
+    engine.select_all();
+    assert_eq!(selection(&engine).len(), 3, "setup");
+
+    engine.align_selection(AlignMode::Left);
+
+    assert_close(element(&engine, &a_id).x, 0.0);
+    assert_close(element(&engine, &c_id).x, 0.0);
+    assert_close(element(&engine, &locked_id).x, 300.0);
+}
+
+/// Distribute carries it too: the group [G1, G2 locked] keeps its inner gap of 100.
+#[test]
+fn distribute_carries_a_locked_group_member() {
+    let a = filled(box_at(0.0, 0.0, 40.0, 40.0));
+    let g1 = filled(box_at(100.0, 0.0, 40.0, 40.0));
+    let g2 = filled(box_at(200.0, 0.0, 40.0, 40.0));
+    let d = filled(box_at(600.0, 0.0, 40.0, 40.0));
+    let (a_id, g1_id, g2_id, d_id) = (a.id.clone(), g1.id.clone(), g2.id.clone(), d.id.clone());
+    let mut engine = engine_with_scene(vec![a, g1, g2, d]);
+    engine.select(vec![g1_id.clone(), g2_id.clone()]);
+    engine.group_selection();
+    lock(&mut engine, &[&g2_id]);
+    engine.select(vec![a_id, g1_id.clone(), g2_id.clone(), d_id]);
+
+    engine.distribute_selection('x');
+
+    assert_close(element(&engine, &g1_id).x, 250.0);
+    assert_close(element(&engine, &g2_id).x, 350.0);
+}
+
+// ---------------------------------------------------------------------------
+// Part of an edited group dragged across a frame's edge leaves the group
+// ---------------------------------------------------------------------------
+
+/// `updateGroupIdsAfterEditingGroup` (`App.tsx:11993-12060`): a member of the edited
+/// group dragged into a frame leaves that group — and every group around it — and joins
+/// the frame. The group it left, down to one member, is no group any more, and nothing
+/// is being edited. Judged here by where the dragged part lies, as membership always is.
+#[test]
+fn edited_member_dragged_into_a_frame_leaves_the_group() {
+    let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
+    let b = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let (a, b, mut engine) = (a.id.clone(), b.id.clone(), engine_with_scene(vec![a, b]));
+    let frame = draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    engine.select(vec![a.clone(), b.clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    engine.handle_double_click(40.0, 40.0);
+    assert!(
+        engine.editing_group_id().is_some(),
+        "setup: the group is entered"
+    );
+
+    drag(&mut engine, (40.0, 40.0), (540.0, 340.0));
+
+    let (a, b) = (element(&engine, &a), element(&engine, &b));
+    assert_eq!(a.frame_id.as_deref(), Some(frame.as_str()));
+    assert!(a.group_ids.is_empty(), "{:?}", a.group_ids);
+    assert!(b.group_ids.is_empty(), "a group of one is no group");
+    assert_eq!(b.frame_id, None);
+    assert_eq!(engine.editing_group_id(), None);
+}
+
+/// The groups inside the dragged part stay: `{outer {inner {A, B}, C}}` with `outer`
+/// entered and `inner` dragged into the frame keeps `[inner]` on A and B, and C, alone in
+/// `outer` now, carries no group.
+#[test]
+fn an_inner_group_dragged_into_a_frame_keeps_its_own_group() {
+    let Probe {
+        mut engine,
+        a,
+        b,
+        c,
+        ..
+    } = nested_plus_h();
+    let frame = draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    engine.handle_double_click(40.0, 40.0);
+    assert_eq!(
+        selection(&engine),
+        [a.clone(), b.clone()].into_iter().collect()
+    );
+    let inner = element(&engine, &a).group_ids[0].clone();
+
+    drag(&mut engine, (40.0, 40.0), (490.0, 290.0));
+
+    for id in [&a, &b] {
+        let member = element(&engine, id);
+        assert_eq!(member.group_ids, vec![inner.clone()]);
+        assert_eq!(member.frame_id.as_deref(), Some(frame.as_str()));
+    }
+    let c = element(&engine, &c);
+    assert!(c.group_ids.is_empty(), "{:?}", c.group_ids);
+    assert_eq!(c.frame_id, None);
+    assert_eq!(engine.editing_group_id(), None);
+}
+
+/// Dragged out, the member leaves the frame on its own: judged with its whole group, it
+/// used to take its untouched group-mate out of the frame too.
+#[test]
+fn edited_member_dragged_out_leaves_the_rest_in_the_frame() {
+    let a = filled(box_at(450.0, 250.0, 80.0, 80.0));
+    let b = filled(box_at(600.0, 250.0, 80.0, 80.0));
+    let (a, b, mut engine) = (a.id.clone(), b.id.clone(), engine_with_scene(vec![a, b]));
+    engine.select(vec![a.clone(), b.clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    let frame = draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    assert_eq!(
+        frame_of(&engine, &b).as_deref(),
+        Some(frame.as_str()),
+        "setup"
+    );
+    engine.handle_double_click(490.0, 290.0);
+    assert!(
+        engine.editing_group_id().is_some(),
+        "setup: the group is entered"
+    );
+
+    drag(&mut engine, (490.0, 290.0), (90.0, 90.0));
+
+    assert_eq!(frame_of(&engine, &a), None);
+    assert_eq!(frame_of(&engine, &b).as_deref(), Some(frame.as_str()));
+    assert!(element(&engine, &a).group_ids.is_empty());
+    assert_eq!(engine.editing_group_id(), None);
+}
+
+/// A drag that keeps the part where it was — inside the group's frame, or out of every
+/// frame — leaves the group alone: only crossing a frame's edge takes a part out.
+#[test]
+fn an_edited_member_moved_within_its_frame_stays_in_its_group() {
+    let a = filled(box_at(450.0, 250.0, 80.0, 80.0));
+    let b = filled(box_at(600.0, 250.0, 80.0, 80.0));
+    let (a, b, mut engine) = (a.id.clone(), b.id.clone(), engine_with_scene(vec![a, b]));
+    engine.select(vec![a.clone(), b.clone()]);
+    engine.group_selection();
+    engine.clear_selection();
+    draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    let group = element(&engine, &a).group_ids.clone();
+    engine.handle_double_click(490.0, 290.0);
+
+    drag(&mut engine, (490.0, 290.0), (490.0, 390.0));
+
+    assert_eq!(element(&engine, &a).group_ids, group);
+    assert_eq!(element(&engine, &b).group_ids, group);
+    assert!(engine.editing_group_id().is_some());
+}
+
+// ---------------------------------------------------------------------------
+// Membership is settled for what a commit touched, and nothing else
+// ---------------------------------------------------------------------------
+
+/// Ungrouping a group that straddles a frame leaves its members where they were — the
+/// oracle re-judges only frames they already belong to (`actionGroup.tsx:262-285`). The
+/// next unrelated click used to re-derive membership across the board: A joined the
+/// frame, was restamped and sent as part of that click, and its undo took A back out.
+#[test]
+fn an_unrelated_click_does_not_rewrite_frame_membership() {
+    let boxes = vec![
+        filled(box_at(450.0, 250.0, 80.0, 80.0)),
+        filled(box_at(100.0, 250.0, 80.0, 80.0)),
+        filled(box_at(100.0, 450.0, 60.0, 60.0)),
+    ];
+    let [a, b, x] = std::array::from_fn(|i| boxes[i].id.clone());
+    let mut engine = engine_with_scene(boxes);
+    engine.select(vec![a.clone(), b]);
+    engine.group_selection();
+    engine.clear_selection();
+    draw_frame(&mut engine, (400.0, 200.0), (780.0, 580.0));
+    click(&mut engine, 490.0, 290.0);
+    engine.ungroup_selection();
+    let before = element(&engine, &a);
+    assert_eq!(before.frame_id, None, "setup: ungrouping settles no frame");
+    let _ = engine.drain_events();
+
+    engine.begin_pointer(130.0, 480.0, false, false);
+    engine.move_pointer(140.0, 480.0, false, false);
+    engine.end_pointer();
+
+    let after = element(&engine, &a);
+    assert_eq!(after.frame_id, None);
+    assert_eq!(after.version, before.version, "restamped");
+    let sent: Vec<String> = engine
+        .drain_events()
+        .scene_delta
+        .map(|delta| delta.updated.into_iter().map(|el| el.id).collect())
+        .unwrap_or_default();
+    assert!(sent.contains(&x), "setup: the drag of X was sent");
+    assert!(!sent.contains(&a), "A went out with a drag of X");
+    engine.undo();
+    assert_eq!(element(&engine, &a).version, before.version);
+}
+
+/// The oracle's "align leaves frameId alone" is permanent, not until the next click.
+#[test]
+fn a_child_aligned_out_of_its_frame_stays_in_it_past_an_unrelated_click() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let far = filled(box_at(600.0, 60.0, 80.0, 80.0));
+    let x = filled(box_at(600.0, 450.0, 60.0, 60.0));
+    let (child_id, far_id) = (child.id.clone(), far.id.clone());
+    let mut engine = engine_with_scene(vec![child, far, x]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    engine.select(vec![child_id.clone(), far_id]);
+    engine.align_selection(AlignMode::Right);
+
+    drag(&mut engine, (630.0, 480.0), (650.0, 480.0));
+
+    assert_eq!(
+        frame_of(&engine, &child_id).as_deref(),
+        Some(frame.as_str())
+    );
+}

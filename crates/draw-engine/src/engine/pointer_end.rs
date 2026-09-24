@@ -87,7 +87,8 @@ impl DrawEngine {
                 }
                 self.select_caught(ids);
             }
-            Interaction::Move { .. } => {
+            Interaction::Move { ids, .. } => {
+                self.leave_edited_group_across_a_frame(&ids);
                 // Still pending only if the pointer never moved: a click.
                 self.settle_gesture();
                 if let Some(ids) = self.narrow_on_click.take() {
@@ -96,6 +97,55 @@ impl DrawEngine {
             }
             _ => self.settle_gesture(),
         }
+    }
+
+    /// Part of the edited group dragged into a frame, or out of one, leaves the group:
+    /// `updateGroupIdsAfterEditingGroup` (`App.tsx:11941-12067`), through
+    /// [`crate::edit::leave_edited_group`].
+    ///
+    /// Judged as membership always is here, by where the dragged part lies — the oracle
+    /// asks which frame is under the pointer — and only when the part is not a whole
+    /// top-level group, which joins or leaves a frame whole with no surgery at all.
+    fn leave_edited_group_across_a_frame(&mut self, moved: &[String]) {
+        let Some(editing) = self.editing_group_id.clone() else {
+            return;
+        };
+        let moved: std::collections::HashSet<String> = moved.iter().cloned().collect();
+        let pending = self.scene.pending_ids();
+        let part: Vec<&crate::scene::DrawElement> = moved
+            .iter()
+            .filter(|id| pending.contains(*id))
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| el.container_id.is_none() && crate::edit::is_in_group(el, &editing))
+            .collect();
+        let Some(top) = part.first().and_then(|el| el.group_ids.last()) else {
+            return;
+        };
+        let whole = self
+            .scene
+            .iter_ordered()
+            .filter(|el| crate::edit::is_in_group(el, top))
+            .all(|el| moved.contains(&el.id));
+        if whole || part.iter().any(|el| crate::scene::is_frame(el)) {
+            return;
+        }
+        let Some(judged) = part
+            .iter()
+            .map(|el| crate::scene::element_rotated_bounds(el))
+            .reduce(crate::scene::frame::union)
+        else {
+            return;
+        };
+        let target =
+            crate::scene::frame::FrameOwners::new(self.scene.iter_ordered()).of_bounds(judged);
+        if part.iter().all(|el| el.frame_id == target) {
+            return;
+        }
+        for element in crate::edit::leave_edited_group(self.scene.iter_ordered(), &moved, &editing)
+        {
+            self.scene.put(element);
+        }
+        self.editing_group_id = None;
     }
 
     /// Commits what a move, resize, rotation or point drag did to the scene.
@@ -109,19 +159,38 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    /// Re-derive which frame owns what, across the whole scene.
+    /// Re-derive which frame owns what this commit touched.
     ///
-    /// Derived rather than remembered. A drag can change membership in both directions
-    /// at once — a shape leaves one frame as the frame it is leaving grows over another
-    /// — and tracking only the elements that moved would miss the second half of that.
+    /// Derived rather than remembered, from where things are. What the commit changed —
+    /// and every member of a group it changed, since a group is judged by its whole box
+    /// — is judged again; a frame among them (moved, resized, drawn) judges the whole
+    /// board, since a frame that grew or went elsewhere can take in or let go of
+    /// anything. Nothing else is touched: re-judged by a click somewhere else, stale
+    /// membership anywhere on the board was rewritten, stamped and sent as part of an
+    /// edit that had nothing to do with it — and undone with it.
     pub(crate) fn refresh_frame_membership(&mut self) {
         if !self.scene.iter_ordered().any(crate::scene::is_frame) {
             return;
         }
+        let touched = self.scene.pending_ids();
+        let everything = touched
+            .iter()
+            .any(|id| self.scene.get(id).is_some_and(crate::scene::is_frame));
+        let groups: std::collections::HashSet<&String> = touched
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .flat_map(|el| el.group_ids.iter())
+            .collect();
         let owners = crate::scene::frame::FrameOwners::new(self.scene.iter_ordered());
         let mut changes: Vec<(String, Option<String>)> = Vec::new();
         for element in self.scene.iter_ordered() {
             if element.is_deleted || crate::scene::is_frame(element) {
+                continue;
+            }
+            if !everything
+                && !touched.contains(&element.id)
+                && !element.group_ids.iter().any(|id| groups.contains(id))
+            {
                 continue;
             }
             let owner = owners.of(element);
