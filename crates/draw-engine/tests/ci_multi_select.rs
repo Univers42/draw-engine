@@ -150,6 +150,49 @@ fn shift_click_takes_out_what_is_already_held() {
     assert!(holds(&engine, &[&a, &c]), "got {:?}", selection(&engine));
 }
 
+/// The take-out happens on the release, and only if the press stayed a click: the oracle
+/// changes nothing on a shift-press over something already held (`App.tsx:9656-9660`)
+/// and removes it on a release with no drag (`:12183-12260`). Taken out on the press, a
+/// shift-drag moved the rest of the selection and left the grabbed member behind.
+#[test]
+fn a_shift_drag_on_a_held_member_moves_everything() {
+    let (mut engine, a, b, _c) = three_boxes();
+    click_box(&mut engine, 0, false);
+    click_box(&mut engine, 1, true);
+
+    let (x, y) = middle_of(0);
+    engine.begin_pointer(x, y, true, false);
+    assert!(
+        holds(&engine, &[&a, &b]),
+        "the press took something out: {:?}",
+        selection(&engine)
+    );
+    for step in 1..=4 {
+        engine.move_pointer(x + 10.0 * f64::from(step), y, true, false);
+    }
+    engine.end_pointer();
+
+    assert!(holds(&engine, &[&a, &b]), "got {:?}", selection(&engine));
+    let scene = engine.get_scene();
+    assert_close(scene.iter().find(|el| el.id == a).unwrap().x, 90.0);
+    assert_close(scene.iter().find(|el| el.id == b).unwrap().x, 240.0);
+}
+
+/// A shift-press on a held member that is let go without moving still takes it out.
+#[test]
+fn a_shift_click_on_a_held_member_takes_it_out_on_release() {
+    let (mut engine, _a, b, _c) = three_boxes();
+    click_box(&mut engine, 0, false);
+    click_box(&mut engine, 1, true);
+
+    let (x, y) = middle_of(0);
+    engine.begin_pointer(x, y, true, false);
+    assert_eq!(selection(&engine).len(), 2, "not on the press");
+    engine.end_pointer();
+
+    assert!(holds(&engine, &[&b]), "got {:?}", selection(&engine));
+}
+
 /// Shift on empty canvas is not a clear. It is the start of a band that adds, and a band
 /// that was never dragged has to leave the selection exactly as it found it.
 #[test]

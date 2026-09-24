@@ -188,7 +188,7 @@ fn judged_box(
     }
 }
 
-fn union(a: WorldBounds, b: WorldBounds) -> WorldBounds {
+pub(crate) fn union(a: WorldBounds, b: WorldBounds) -> WorldBounds {
     WorldBounds {
         min_x: a.min_x.min(b.min_x),
         min_y: a.min_y.min(b.min_y),
@@ -250,7 +250,12 @@ impl<'a> FrameOwners<'a> {
         if !can_belong_to_frame(element) {
             return None;
         }
-        let judged = judged_box(element, &self.groups)?;
+        self.of_bounds(judged_box(element, &self.groups)?)
+    }
+
+    /// The topmost frame a box lies wholly within — for judging part of a group on its
+    /// own, as the edited group's dragged part is (`engine/pointer_end.rs`).
+    pub(crate) fn of_bounds(&self, judged: WorldBounds) -> Option<String> {
         self.frames
             .iter()
             .find(|frame| within(judged, element_rotated_bounds(frame)))

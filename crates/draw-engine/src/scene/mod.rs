@@ -5,6 +5,7 @@ pub mod embed;
 pub mod frame;
 pub mod geometry;
 pub mod image;
+pub mod outline_distance;
 pub mod recognize;
 pub mod store;
 
@@ -15,5 +16,6 @@ pub use embed::*;
 pub use frame::*;
 pub use geometry::*;
 pub use image::*;
+pub use outline_distance::*;
 pub use recognize::*;
 pub use store::{Change, Scene};

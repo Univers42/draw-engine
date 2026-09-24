@@ -451,8 +451,10 @@ fn a_tiny_shape_keeps_its_arrow_close() {
     }
 }
 
-/// The same drawn by hand at the deepest zoom: the tolerance is in screen pixels, so a
-/// shape two units across is as easy to hit at 30× as a sixty-unit one at 1×.
+/// The same drawn by hand at the deepest zoom. The reach is Excalidraw's, in world units
+/// (`maxBindingDistance_simple`, never below 15), so at 30× it spans hundreds of screen
+/// pixels and a shape two units across is easy to hit; the arrow starts 40 units away so
+/// that only its end binds.
 #[test]
 fn binding_at_the_deepest_zoom() {
     let tiny = shape(B, filled(box_at(10.0, 10.0, 2.0, 2.0)));
@@ -465,7 +467,8 @@ fn binding_at_the_deepest_zoom() {
     let scale = MAX_ZOOM;
     // A screen point 10px left of the shape's left midpoint.
     let (sx, sy) = (10.0 * scale - 10.0, 11.0 * scale);
-    let arrow = draw_arrow(&mut engine, (sx - 300.0, sy), (sx, sy));
+    let arrow = draw_arrow(&mut engine, (sx - 40.0 * scale, sy), (sx, sy));
+    assert_eq!(arrow.start_binding, None, "setup");
     let a = anchor(&arrow, End::End).expect("bound at the deepest zoom");
     assert_eq!(a.fixed_point, [0.0, 0.5]);
     let (_, tip) = ends(&arrow);
@@ -675,14 +678,15 @@ fn length(arrow: &DrawElement) -> f64 {
 
 /// Pressed and let go beside two shapes, off their midpoints, each anchor is where the
 /// end was put — outside its shape. Read as trapped inside, the two collapsed the arrow
-/// to nothing, the release took it for a click, and Escape then lost it.
+/// to nothing, the release took it for a click, and Escape then lost it. (Ten units
+/// beside them: inside Excalidraw's reach of 15.)
 #[test]
 fn an_arrow_drawn_beside_two_shapes_keeps_its_length() {
     let a = shape("a", filled(box_at(0.0, 0.0, 100.0, 80.0)));
     let b = shape(B, filled(box_at(0.0, 300.0, 100.0, 80.0)));
     let mut engine = engine_with_scene(vec![a, b]);
 
-    let arrow = draw_arrow(&mut engine, (-20.0, 20.0), (-20.0, 320.0));
+    let arrow = draw_arrow(&mut engine, (-10.0, 20.0), (-10.0, 320.0));
 
     assert_eq!(engine.linear_in_progress(), None, "a drag, not a click");
     assert_eq!(arrow.start_binding.as_deref(), Some("a"), "setup");

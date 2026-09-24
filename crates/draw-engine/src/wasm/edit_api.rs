@@ -52,12 +52,14 @@ impl WasmEngine {
         ok
     }
 
+    /// Ctrl+D: a copy ten units down and right, Excalidraw's `DEFAULT_GRID_SIZE / 2`
+    /// (`packages/excalidraw/actions/actionDuplicateSelection.tsx:78-79`).
     #[wasm_bindgen(js_name = duplicateSelection)]
     pub fn duplicate_selection(&self) {
         self.cell
             .borrow_mut()
             .engine
-            .duplicate_selection(12.0, 12.0);
+            .duplicate_selection(10.0, 10.0);
         self.flush();
     }
 
@@ -88,6 +90,18 @@ impl WasmEngine {
         let axis = axis.chars().next().unwrap_or('x');
         self.cell.borrow_mut().engine.distribute_selection(axis);
         self.flush();
+    }
+
+    /// Whether align would move anything: two units, and no frame selected.
+    #[wasm_bindgen(js_name = canAlign)]
+    pub fn can_align(&self) -> bool {
+        self.cell.borrow().engine.can_align()
+    }
+
+    /// Whether distribute would move anything: three units, and no frame selected.
+    #[wasm_bindgen(js_name = canDistribute)]
+    pub fn can_distribute(&self) -> bool {
+        self.cell.borrow().engine.can_distribute()
     }
 
     #[wasm_bindgen(js_name = flipSelection)]
