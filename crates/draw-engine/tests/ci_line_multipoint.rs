@@ -516,8 +516,9 @@ fn the_selection_frame_contains_a_bound_waypoint_arrow() {
     // the box's true left edge.
     click(&mut engine, 350.0, 30.0);
     place(&mut engine, &[(100.0, 30.0)]);
-    hover(&mut engine, 650.0, 30.0);
-    click(&mut engine, 650.0, 30.0);
+    // Beside B, not in it: a click inside a shape places a waypoint there.
+    hover(&mut engine, 595.0, 30.0);
+    click(&mut engine, 595.0, 30.0);
 
     let arrow = engine
         .get_scene()
@@ -601,10 +602,12 @@ fn assert_frame_contains_points(element: &DrawElement) {
     }
 }
 
-/// Clicking a shape the pending point would bind to finishes the path right there — no
-/// Enter, no Escape, no second click on the point just placed. The suggestion already
-/// promised the attach; asking for a separate confirmation after it would make the
-/// highlight a lie for one more click.
+/// Clicking beside a shape the pending point would bind to finishes the path right there
+/// — no Enter, no Escape, no second click on the point just placed. The suggestion
+/// already promised the attach; asking for a separate confirmation after it would make
+/// the highlight a lie for one more click. Beside it, not inside: a click inside a shape
+/// places a waypoint, so a path can be routed across one (`App.tsx:10178-10205`) — see
+/// `a_multi_click_arrow_still_binds`.
 #[test]
 fn clicking_a_bind_suggestion_finishes_the_path() {
     let a = box_at(0.0, 0.0, 100.0, 60.0);
@@ -614,8 +617,8 @@ fn clicking_a_bind_suggestion_finishes_the_path() {
     engine.set_tool(DrawTool::Arrow);
 
     click(&mut engine, 50.0, 30.0);
-    hover(&mut engine, 350.0, 30.0);
-    click(&mut engine, 350.0, 30.0);
+    hover(&mut engine, 295.0, 30.0);
+    click(&mut engine, 295.0, 30.0);
 
     assert!(
         engine.linear_in_progress().is_none(),
@@ -642,8 +645,8 @@ fn clicking_a_bind_suggestion_finishes_the_path_after_a_waypoint() {
 
     click(&mut engine, 50.0, 30.0);
     place(&mut engine, &[(200.0, 150.0)]);
-    hover(&mut engine, 350.0, 30.0);
-    click(&mut engine, 350.0, 30.0);
+    hover(&mut engine, 295.0, 30.0);
+    click(&mut engine, 295.0, 30.0);
 
     assert!(engine.linear_in_progress().is_none());
     let arrow = engine

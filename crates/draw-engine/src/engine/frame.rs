@@ -52,6 +52,9 @@ pub struct PaintView<'a> {
     /// Changes whenever `erasing` does. The painter keys its cached layer on it.
     pub erasing_revision: u64,
     pub selected: Vec<&'a DrawElement>,
+    /// Where a multi-selection's box and handles go: around what a transform carries,
+    /// the same box the handles are hit on. `None` when fewer than two are carried.
+    pub group_box: Option<WorldBounds>,
     pub marquee: Option<WorldBounds>,
     /// The lasso loop in progress, in world space. Empty unless one is being drawn.
     pub lasso: Vec<crate::camera::Point>,
@@ -84,6 +87,9 @@ pub struct PaintView<'a> {
     /// The shape a dragged arrow endpoint would bind to. Painted as a halo on its
     /// outline, so the attachment is visible before it is committed.
     pub binding_highlight: Option<&'a DrawElement>,
+    /// The side midpoint of `binding_highlight` the pointer is near, and whether an end
+    /// let go there would snap onto it. See [`crate::scene::binding::midpoint_mark`].
+    pub binding_midpoint: Option<(crate::camera::Point, bool)>,
     /// Point handles for a selected line or arrow, **or** for one being placed.
     ///
     /// Non-empty when exactly one linear element is selected, and while a path is being
@@ -132,6 +138,48 @@ impl DrawEngine {
         dirty
     }
 
+    /// The side midpoint of the suggested shape to mark, and whether a drop would snap
+    /// to it. Alt binds exactly where the end is, so there is no snap to promise.
+    pub(crate) fn binding_midpoint(&self) -> Option<(crate::camera::Point, bool)> {
+        let shape = self.binding_shape()?;
+        let pointer = self.binding_point.filter(|_| !self.alt_held)?;
+        let (mark, snaps) = crate::scene::binding::midpoint_mark(
+            shape,
+            pointer,
+            super::MIDPOINT_SNAP_PX / self.camera.scale,
+        )?;
+        // Only the snap a drop would really make: none on the grid (`binding.ts:876-878`),
+        // and in a drag, the anchor it chose.
+        let grid = self.grid.enabled && self.grid.snap;
+        Some((mark, snaps && !grid && self.binding_snaps.unwrap_or(true)))
+    }
+
+    /// The shape the suggestion lights, while it is still there: an undo can delete it
+    /// under the pointer.
+    fn binding_shape(&self) -> Option<&DrawElement> {
+        self.scene
+            .get(self.binding_highlight.as_deref()?)
+            .filter(|shape| !shape.is_deleted)
+    }
+
+    /// Whether `anchor`, dropped at `pointer`, is the side midpoint snap.
+    pub(crate) fn drop_snaps(
+        &self,
+        anchor: Option<&crate::scene::binding::Anchor>,
+        pointer: crate::camera::Point,
+    ) -> bool {
+        use crate::scene::binding::{focus_point, snapped_midpoint};
+        let Some(anchor) = anchor.filter(|a| a.mode == crate::scene::BindMode::Orbit) else {
+            return false;
+        };
+        let Some(shape) = self.scene.get(&anchor.element_id) else {
+            return false;
+        };
+        let focus = focus_point(shape, anchor.fixed_point);
+        snapped_midpoint(shape, pointer, super::MIDPOINT_SNAP_PX / self.camera.scale)
+            .is_some_and(|m| (m.x - focus.x).hypot(m.y - focus.y) < 0.01 / self.camera.scale)
+    }
+
     pub fn paint_view(&self) -> PaintView<'_> {
         let selected: Vec<&DrawElement> = self
             .selected_ids
@@ -158,6 +206,11 @@ impl DrawEngine {
         let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
+        let group_box = if selected.len() > 1 {
+            self.group_box()
+        } else {
+            None
+        };
         let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
         let linear_handles = match self.multi_linear.as_ref() {
             // A path being placed shows a joint on every point it has taken, so the
@@ -291,6 +344,7 @@ impl DrawEngine {
             erasing: &self.erasing,
             erasing_revision: self.erasing_revision,
             selected,
+            group_box,
             marquee,
             lasso,
             frame_clips,
@@ -302,10 +356,8 @@ impl DrawEngine {
             rotate_gap: super::ROTATE_GAP_PX / self.camera.scale,
             handle_px: super::HANDLE_PX,
             handle_layout: self.handle_layout(),
-            binding_highlight: self
-                .binding_highlight
-                .as_deref()
-                .and_then(|id| self.scene.get(id)),
+            binding_highlight: self.binding_shape(),
+            binding_midpoint: self.binding_midpoint(),
             linear_handles,
             active_handle,
             radius_handles,

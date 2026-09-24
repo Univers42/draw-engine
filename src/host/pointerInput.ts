@@ -18,8 +18,36 @@ function processMove(session: HostSession, event: PointerEvent): void {
   // Alt first: the eraser reads it to un-mark what it passes back over.
   session.engine.setAltHeld(event.altKey);
   // Ctrl/Cmd inverts object snapping for the move, as in Excalidraw. Not Alt: Alt+drag
-  // duplicates, and one key doing both meant a duplicate could never snap.
+  // duplicates, and one key doing both meant a duplicate could never snap. It also keeps
+  // an arrow end from binding.
+  session.engine.setCtrlHeld(event.ctrlKey || event.metaKey);
   session.engine.movePointer(x, y, event.shiftKey, event.ctrlKey || event.metaKey);
+}
+
+function clearPendingHover(session: HostSession): void {
+  if (session.hoverRaf) cancelAnimationFrame(session.hoverRaf);
+  session.hoverRaf = 0;
+  session.pendingHover = null;
+}
+
+/**
+ * A move with no button held, coalesced to one engine step per frame like any other. The
+ * arrow tool lights the shape an arrow started here would attach to; every other tool
+ * returns at once inside the engine.
+ */
+function queueHover(session: HostSession, event: PointerEvent): void {
+  session.pendingHover = event;
+  if (session.hoverRaf) return;
+  session.hoverRaf = requestAnimationFrame(() => {
+    const queued = session.pendingHover;
+    session.hoverRaf = 0;
+    session.pendingHover = null;
+    if (!queued || session.down) return;
+    const { x, y } = localPoint(session.canvas, queued);
+    session.engine.setAltHeld(queued.altKey);
+    session.engine.setCtrlHeld(queued.ctrlKey || queued.metaKey);
+    session.engine.hoverPointer(x, y);
+  });
 }
 
 function clearPendingMove(session: HostSession): void {
@@ -57,6 +85,7 @@ export function attachPointerInput(session: HostSession): () => void {
   const onPointerDown = (event: PointerEvent) => {
     if (event.button === 2) return;
     clearPendingMove(session);
+    clearPendingHover(session);
     session.down = true;
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
@@ -82,6 +111,7 @@ export function attachPointerInput(session: HostSession): () => void {
       return;
     }
     intercepted = false;
+    engine.setCtrlHeld(event.ctrlKey || event.metaKey);
     engine.beginPointer(x, y, event.shiftKey, event.altKey);
   };
 
@@ -100,7 +130,10 @@ export function attachPointerInput(session: HostSession): () => void {
     // Counted before the gate, so the ratio of events to engine steps is honest about
     // what the device actually sent rather than about what we chose to forward.
     countPointerEvent();
-    if (!wantsMove()) return;
+    if (!wantsMove()) {
+      queueHover(session, event);
+      return;
+    }
     const { x, y } = localPoint(canvas, event);
     // Still only while a button is held. Hosts read this callback as "a drag is
     // happening", and firing it on hover would make every one of them wrong.
@@ -135,6 +168,11 @@ export function attachPointerInput(session: HostSession): () => void {
     }
   };
 
+  const onPointerLeave = () => {
+    clearPendingHover(session);
+    if (!session.down) engine.endHover();
+  };
+
   const onDoubleClick = (event: MouseEvent) => {
     const { x, y } = localPoint(canvas, event);
     engine.handleDoubleClick(x, y);
@@ -155,15 +193,18 @@ export function attachPointerInput(session: HostSession): () => void {
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointerleave", onPointerLeave);
   canvas.addEventListener("dblclick", onDoubleClick);
   canvas.addEventListener("contextmenu", onContext);
 
   return () => {
     clearPendingMove(session);
+    clearPendingHover(session);
     canvas.removeEventListener("wheel", onWheel);
     canvas.removeEventListener("pointerdown", onPointerDown);
     canvas.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("pointerup", onPointerUp);
+    canvas.removeEventListener("pointerleave", onPointerLeave);
     canvas.removeEventListener("dblclick", onDoubleClick);
     canvas.removeEventListener("contextmenu", onContext);
   };

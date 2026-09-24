@@ -15,6 +15,9 @@ export interface HostSession {
   spaceHeld: boolean;
   moveRaf: number;
   pendingMove: PointerEvent | null;
+  /** The same coalescing for moves with no button held. */
+  hoverRaf: number;
+  pendingHover: PointerEvent | null;
   /**
    * The tool in hand before a pen's eraser end took over, to go back to on release.
    * Null the rest of the time.

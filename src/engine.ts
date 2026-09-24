@@ -282,6 +282,14 @@ export class DrawEngine {
   }
 
   /**
+   * Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+   * Returns whether it changed: `false` for a refused link, or a locked or held embed.
+   */
+  setEmbedUrl(id: string, rawUrl: string): boolean {
+    return this.inner.setEmbedUrl(id, rawUrl);
+  }
+
+  /**
    * What a pasted link resolves to, or `null` if it cannot be embedded.
    *
    * Lets a caller say so *before* putting an empty box on the board.
@@ -299,7 +307,7 @@ export class DrawEngine {
     return json ? JSON.parse(json) : null;
   }
 
-  /** The embeds on screen and where their frames go, in screen pixels. */
+  /** Every live embed, where its frame goes in screen pixels, and whether it is on screen. */
   embedFramesJson(): string {
     return this.inner.embedFrames();
   }
@@ -506,6 +514,21 @@ export class DrawEngine {
   /** Alt, as held for the move about to be reported. The eraser un-marks with it. */
   setAltHeld(held: boolean): void {
     this.inner.setAltHeld(held);
+  }
+
+  /** Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to nothing while it is down. */
+  setCtrlHeld(held: boolean): void {
+    this.inner.setCtrlHeld(held);
+  }
+
+  /** A move with no button held: the arrow tool lights the shape it would attach to. */
+  hoverPointer(sx: number, sy: number): void {
+    this.inner.hoverPointer(sx, sy);
+  }
+
+  /** The pointer left the canvas; whatever a hover lit goes out. */
+  endHover(): void {
+    this.inner.endHover();
   }
 
   /** `invertSnap` flips object snapping for this move — the host's Ctrl/Cmd. */

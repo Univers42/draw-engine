@@ -1,16 +1,22 @@
 use crate::edit::{
-    align_elements, distribute_elements, flip_elements, group_patches, is_single_group,
-    reorder_elements, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    align_elements, distribute_elements, flip_elements, gather, group_patches, is_single_group,
+    reorder_within, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
 };
+use std::collections::HashMap;
+
 use crate::engine::DrawEngine;
-use crate::scene::{bump_version, new_element_id, DrawElement};
+use crate::scene::frame::FrameOwners;
+use crate::scene::{bump_version, is_frame, new_element_id, DrawElement};
 
 impl DrawEngine {
+    /// The arrow keys: the same set a drag moves, so a locked group member and a
+    /// frame's children come along — the oracle's arrow keys move every selected element
+    /// and what their frames hold (`packages/excalidraw/components/App.tsx:5770-5775`).
     pub fn nudge_selection(&mut self, dx: f64, dy: f64) {
         let targets: Vec<DrawElement> = self
-            .get_selected_elements()
-            .into_iter()
-            .filter(|el| !el.locked())
+            .moving_selection()
+            .iter()
+            .filter_map(|id| self.scene.get(id).cloned())
             .collect();
         if targets.is_empty() {
             return;
@@ -29,7 +35,12 @@ impl DrawEngine {
         if self.selected_ids.is_empty() {
             return;
         }
-        let next = reorder_elements(&self.scene.ordered_cloned(), &self.selected_ids, mode);
+        let next = reorder_within(
+            &self.scene.ordered_cloned(),
+            &self.selected_ids,
+            mode,
+            self.editing_group_id.as_deref(),
+        );
         self.scene.set_order(next);
         self.push_history();
         self.request_draw();
@@ -67,22 +78,69 @@ impl DrawEngine {
         for element in patches {
             self.scene.put(bump_version(element, now));
         }
+        // No frame membership pass: outside a drag the oracle's align, distribute and
+        // flip leave `frameId` alone (`isElementInFrame` is true unless the selection is
+        // being dragged, `packages/element/src/frame.ts:845-855`), and a lock has no frame
+        // logic at all. Grouping settles its own members in `group_selection`.
         self.apply_bindings();
         self.push_history();
         self.request_draw();
     }
 
     pub fn group_selection(&mut self) {
-        if self.selected_ids.len() < 2 {
+        // Labels are not counted: a shape and its own words are one thing to group, as
+        // `enableActionGroup` reads the selection without them (`actionGroup.tsx:73-83`).
+        let shapes = self
+            .selected_ids
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| el.container_id.is_none())
+            .count();
+        if shapes < 2 {
             return;
         }
         let editing = self.editing_group_id.clone();
-        self.apply_patches(group_patches(
-            &self.scene.ordered_cloned(),
+        let live = self.scene.ordered_cloned();
+        let mut patches = group_patches(
+            &live,
             &self.selected_ids,
             &new_element_id(),
             editing.as_deref(),
-        ));
+        );
+        // A label comes along with its shape, but not one a peer holds — they may be
+        // typing into it, and their commit would stamp above this and take it back out.
+        patches.retain(|el| !self.held.contains_key(&el.id));
+        // Grouping across a frame's edge takes the group out whole
+        // (`packages/excalidraw/actions/actionGroup.tsx:138-150`): each member is judged
+        // with its new group's box, and nothing else on the board is touched.
+        let owners: Vec<Option<String>> = {
+            let patched: HashMap<&str, &DrawElement> =
+                patches.iter().map(|el| (el.id.as_str(), el)).collect();
+            let next: Vec<&DrawElement> = live
+                .iter()
+                .map(|el| patched.get(el.id.as_str()).copied().unwrap_or(el))
+                .collect();
+            let frames = FrameOwners::new(next.iter().copied());
+            patches.iter().map(|el| frames.of(el)).collect()
+        };
+        for (element, frame_id) in patches.iter_mut().zip(owners) {
+            if !is_frame(element) {
+                element.frame_id = frame_id;
+            }
+        }
+        // Gathered in the same step as the grouping, so one undo takes both away. Only
+        // when it moves something: a reorder sends the host the whole scene, where a
+        // grouping alone is a delta.
+        let members = patches.iter().map(|el| el.id.clone()).collect();
+        let gathered = gather(&live, &members);
+        if gathered
+            .iter()
+            .map(|el| &el.id)
+            .ne(live.iter().map(|el| &el.id))
+        {
+            self.scene.set_order(gathered);
+        }
+        self.apply_patches(patches);
     }
 
     pub fn ungroup_selection(&mut self) {

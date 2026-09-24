@@ -21,10 +21,11 @@ use draw_engine::*;
 
 /// Two filled boxes with an arrow drawn between them, bound at both ends.
 ///
-/// The arrow runs along y = 40 from just outside the left box (x ≈ 106) to just outside
-/// the right one (x ≈ 344). Its midpoint handle sits at x ≈ 225 — a press there bends the
-/// arrow, as Excalidraw's does, rather than moving it — so every grab below is on the
-/// shaft well clear of it and of both ends.
+/// The arrow runs along y = 40 from where it was pressed inside the left box (x = 50) to
+/// where it was let go inside the right one (x = 400): an end drawn inside a shape binds
+/// inside it, exactly there (`packages/element/src/binding.ts:838-845`). Its midpoint
+/// handle sits at x = 225 — a press there bends the arrow, as Excalidraw's does, rather
+/// than moving it — so every grab below is on the shaft well clear of it and of both ends.
 fn bound_arrow() -> (DrawEngine, String, String, String) {
     let left = filled(box_at(0.0, 0.0, 100.0, 80.0));
     let right = filled(box_at(350.0, 0.0, 100.0, 80.0));
@@ -191,7 +192,8 @@ fn moving_a_shape_still_drags_a_bound_arrow_end() {
     let before = get(&engine, &arrow);
     engine.select(vec![right]);
 
-    drag(&mut engine, (400.0, 40.0), 0.0, 120.0);
+    // Grabbed clear of the arrow, which is drawn across the box.
+    drag(&mut engine, (430.0, 70.0), 0.0, 120.0);
 
     let after = get(&engine, &arrow);
     assert!(

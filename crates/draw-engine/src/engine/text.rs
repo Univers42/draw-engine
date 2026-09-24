@@ -85,10 +85,17 @@ impl DrawEngine {
         label.text_align = self.next_text_align;
         label.vertical_align = self.next_vertical_align;
         label.container_id = Some(container.id.clone());
+        // In its shape's groups and directly above it, as the oracle makes one
+        // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
+        // board instead, it was drawn over whatever covers its shape, and split the
+        // shape's group in the stack.
+        label.group_ids = container.group_ids.clone();
         label.stroke_color = self.get_next_style().stroke_color;
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
         self.scene.add(label.clone());
+        self.scene
+            .place_above(std::slice::from_ref(&label.id), &container.id);
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)
@@ -123,6 +130,13 @@ impl DrawEngine {
             // already reachable, so there is nowhere further to go.
             return false;
         };
+        // A group of one — its other members deleted — has nothing inside to show. The
+        // oracle only steps into a group the click selected (`App.tsx:7310-7330`), which
+        // a group of one never is (`groups.ts:134-141`), so the double click does what it
+        // does on any lone shape.
+        if !crate::edit::is_live_group(self.scene.iter_ordered(), group) {
+            return false;
+        }
         let group = group.clone();
         self.editing_group_id = Some(group);
         let ids = crate::edit::expand_within(

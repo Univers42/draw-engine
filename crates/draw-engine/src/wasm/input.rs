@@ -187,6 +187,15 @@ impl WasmEngine {
         id
     }
 
+    /// Point embed `id` at another link, resolved by the same rules as `insertEmbed`.
+    /// Returns whether it changed.
+    #[wasm_bindgen(js_name = setEmbedUrl)]
+    pub fn set_embed_url(&self, id: &str, raw_url: &str) -> bool {
+        let changed = self.cell.borrow_mut().engine.set_embed_url(id, raw_url);
+        self.flush();
+        changed
+    }
+
     /// Whether a pasted link can be embedded, and what it resolves to, as JSON.
     ///
     /// Lets a host tell someone their link will not work *before* it puts an empty box
@@ -237,6 +246,27 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = movePointer)]
     pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));
+    }
+
+    /// A pointer move with no button held. See `DrawEngine::hover_pointer`.
+    #[wasm_bindgen(js_name = hoverPointer)]
+    pub fn hover_pointer(&self, sx: f64, sy: f64) {
+        self.cell.borrow_mut().engine.hover_pointer(sx, sy);
+        self.flush();
+    }
+
+    /// The pointer left the canvas. See `DrawEngine::end_hover`.
+    #[wasm_bindgen(js_name = endHover)]
+    pub fn end_hover(&self) {
+        self.cell.borrow_mut().engine.end_hover();
+        self.flush();
+    }
+
+    /// Ctrl/Cmd, as held for the pointer event about to be reported: an arrow binds to
+    /// nothing while it is down. See `DrawEngine::set_ctrl_held`.
+    #[wasm_bindgen(js_name = setCtrlHeld)]
+    pub fn set_ctrl_held(&self, held: bool) {
+        self.cell.borrow_mut().engine.set_ctrl_held(held);
     }
 
     #[wasm_bindgen(js_name = endPointer)]

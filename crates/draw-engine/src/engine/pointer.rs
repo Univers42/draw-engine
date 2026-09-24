@@ -2,7 +2,7 @@ use crate::camera::Point;
 use crate::edit::{expand_within, is_in_group};
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
-use crate::scene::binding::bindable_among;
+use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
     create_element, default_element_style, element_bounds, merge_style, DrawElementType, Geometry,
 };
@@ -23,6 +23,9 @@ impl DrawEngine {
             return;
         }
         if is_linear_tool(self.tool) {
+            // Alt at the press, not as of the last move: with no button held, moves are
+            // not reported, so that one can be long stale.
+            self.alt_held = duplicate;
             self.begin_linear(world);
             return;
         }
@@ -50,7 +53,13 @@ impl DrawEngine {
                     },
                 });
                 if !additive {
+                    // The level being edited outlives the empty selection a loop starts
+                    // from, and the release resolves the loop at it (`select_caught`), as
+                    // the oracle's does (`lasso/index.ts:72-89`, `:119-127`). Cleared with
+                    // the selection, a lasso inside a group took whole top-level groups.
+                    let editing = self.editing_group_id.take();
                     self.clear_selection();
+                    self.editing_group_id = editing;
                 }
                 self.request_draw();
             }
@@ -153,28 +162,21 @@ impl DrawEngine {
             style,
             self.now_ms,
         );
-        // Same tolerance the far end gets, so both ends of an arrow attach on the same
-        // terms. A zero tolerance here meant the tail only bound when the gesture started
-        // strictly inside a shape.
-        let tolerance = self.binding_tolerance();
-        let anchor = crate::scene::binding::is_binding_element(&element)
-            .then(|| {
-                bindable_among(
-                    self.scene.iter_ordered().rev(),
-                    world.x,
-                    world.y,
-                    tolerance,
-                    None,
-                )
-                .map(|el| el.id.clone())
-            })
-            .flatten();
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
-        element.start_binding = anchor;
-        element.end_binding = None;
+        // The tail binds on the same terms the head will, as Excalidraw's initial binding
+        // does (`packages/excalidraw/components/App.tsx:10317-10339`): inside a shape it
+        // sits exactly where the press was, near one it orbits from there.
+        let (start, _) = self.drop_binding(&element, End::Start, world, false);
+        set_anchor(&mut element, End::Start, start);
+        set_anchor(&mut element, End::End, None);
+        self.bind_drag_origin = None;
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::Linear { id, start: world });
+        self.interaction = Some(Interaction::Linear {
+            id,
+            start: world,
+            pointer: world,
+        });
         self.request_draw();
     }
 
@@ -234,18 +236,37 @@ impl DrawEngine {
         });
     }
 
-    /// The unlocked members of the current multi-selection, with their shared frame.
-    fn group_frame(&self) -> Option<(Vec<String>, crate::selection::GroupFrame)> {
-        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
-        let elements: Vec<crate::scene::DrawElement> = ids
-            .iter()
-            .filter_map(|id| self.scene.get(id).cloned())
-            .filter(|e| !e.locked())
-            .collect();
-        if elements.len() < 2 {
+    /// What a transform of the selection carries: see [`crate::edit::carried_by`].
+    ///
+    /// Read from the selected elements alone — what is carried is always part of the
+    /// selection — because this runs on every hover move over a multi-selection, and a
+    /// walk of the whole board there cost the size of the board per move.
+    pub(crate) fn carried_selection(&self) -> std::collections::HashSet<String> {
+        crate::edit::carried_by(
+            self.selected_ids.iter().filter_map(|id| self.scene.get(id)),
+            &self.selected_ids,
+            self.editing_group_id.as_deref(),
+        )
+    }
+
+    /// The box a multi-selection's handles sit on: around what it carries, so a loose
+    /// locked element is neither framed nor grabbed. `None` below two carried elements.
+    pub(crate) fn group_box(&self) -> Option<crate::camera::WorldBounds> {
+        let ids = self.carried_selection();
+        if ids.len() < 2 {
             return None;
         }
-        let frame = crate::selection::GroupFrame::capture(elements.iter())?;
+        crate::scene_bounds(ids.iter().filter_map(|id| self.scene.get(id)))
+    }
+
+    /// What the current multi-selection carries, with its shared frame.
+    fn group_frame(&self) -> Option<(Vec<String>, crate::selection::GroupFrame)> {
+        let ids: Vec<String> = self.carried_selection().into_iter().collect();
+        if ids.len() < 2 {
+            return None;
+        }
+        let frame =
+            crate::selection::GroupFrame::capture(ids.iter().filter_map(|id| self.scene.get(id)))?;
         Some((ids, frame))
     }
 
@@ -254,8 +275,7 @@ impl DrawEngine {
     /// Shared with the hover cursor, so what the pointer reports and what a press
     /// actually starts are decided by one piece of code.
     pub(crate) fn group_handle_at(&self, world: Point) -> Option<HandleKind> {
-        let (_, frame) = self.group_frame()?;
-        let b = frame.bounds;
+        let b = self.group_box()?;
         let layout = self.handle_layout();
         // Offset exactly as the painter offsets them, and exactly as a single shape's
         // are, so the inside of a group stays a move target.
@@ -306,6 +326,7 @@ impl DrawEngine {
     }
 
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
+        self.narrow_on_click = None;
         if let Some(single) = self.single_selected() {
             if !single.locked() {
                 // Radius handles first. They sit *inside* the shape, so a press on one of
@@ -387,14 +408,19 @@ impl DrawEngine {
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
-            if let Some(editing) = self.editing_group_id.clone() {
-                if !is_in_group(&hit, &editing) {
-                    // Dropped directly rather than through `leave_group`, which also
-                    // re-derives the selection: this click is about to compute its own,
-                    // and a re-derivation here would make the hit look already-selected
-                    // and turn the press into a drag of the wrong thing.
-                    self.editing_group_id = None;
-                }
+            //
+            // By letting go of what is held, shift or not, which lets go of the group
+            // too (`App.tsx:9639-9650`): a shift-click that kept the pieces inside held
+            // half of one group beside all of another. Not through `leave_group`, which
+            // re-derives the selection: this click is about to compute its own, and a
+            // re-derivation here would make the hit look already-selected and turn the
+            // press into a drag of the wrong thing.
+            if self
+                .editing_group_id
+                .as_deref()
+                .is_some_and(|editing| !is_in_group(&hit, editing))
+            {
+                self.set_selection(Vec::new());
             }
             let editing = self.editing_group_id.clone();
             let hit_ids = expand_within(
@@ -403,17 +429,19 @@ impl DrawEngine {
                 editing.as_deref(),
             );
             if additive {
-                let has = self.selected_ids.contains(&hit.id);
-                for id in hit_ids {
-                    if has {
-                        self.selected_ids.remove(&id);
-                    } else {
-                        self.selected_ids.insert(id);
-                    }
+                let mut next = self.selected_ids.clone();
+                if next.contains(&hit.id) {
+                    next.retain(|id| !hit_ids.contains(id));
+                } else {
+                    next.extend(hit_ids);
                 }
-                self.events.selection = Some(self.get_selection());
+                // Through the one door, so a shift-click that lets go of the last thing
+                // held lets go of the group being edited with it.
+                self.set_selection(next);
             } else if !self.selected_ids.contains(&hit.id) {
                 self.set_selection(hit_ids);
+            } else if !duplicate && hit_ids != self.selected_ids {
+                self.narrow_on_click = Some(hit_ids);
             }
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
@@ -473,41 +501,45 @@ impl DrawEngine {
             && world.y <= bounds.max_y + pad
     }
 
-    fn begin_move(&mut self, world: Point) {
-        let mut origins = std::collections::HashMap::new();
-        // A frame carries what it contains. Expanding the set here rather than moving
-        // children separately means one code path moves everything: the children snap,
-        // re-bind and undo exactly as they would if you had selected them yourself.
-        let mut moving_elements = self.get_selected_elements();
-        let frame_ids: Vec<String> = moving_elements
+    /// What moving the selection moves, by drag or by arrow key: what it carries, plus
+    /// everything a frame in it contains.
+    ///
+    /// A frame carries what it contains. Expanding the set here rather than moving
+    /// children separately means one code path moves everything: the children snap,
+    /// re-bind and undo exactly as they would if you had selected them yourself.
+    ///
+    /// Locked children included, as a group's locked members are: the oracle adds every
+    /// child of a dragged frame with no lock filter (`packages/element/src/
+    /// dragElements.ts:75-84`), and one left behind would sit outside the frame that
+    /// still claims it. A child a peer holds stays where they have it: what a peer holds
+    /// is untouchable, and moving it anyway left the two sides stamping the same version.
+    pub(crate) fn moving_selection(&self) -> std::collections::HashSet<String> {
+        let mut moving = self.carried_selection();
+        let children: Vec<String> = moving
             .iter()
-            .filter(|el| crate::scene::is_frame(el))
-            .map(|el| el.id.clone())
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .filter(|child| !self.held.contains_key(child))
             .collect();
-        for frame_id in frame_ids {
-            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame_id) {
-                if origins.contains_key(&child_id) {
-                    continue;
-                }
-                if let Some(child) = self.scene.get(&child_id) {
-                    if !moving_elements.iter().any(|el| el.id == child_id) {
-                        moving_elements.push(child.clone());
-                    }
-                }
-            }
-        }
-        for element in moving_elements {
-            if !element.locked() {
-                origins.insert(
-                    element.id.clone(),
+        moving.extend(children);
+        moving
+    }
+
+    fn begin_move(&mut self, world: Point) {
+        let moving = self.moving_selection();
+        let origins: std::collections::HashMap<String, Point> = moving
+            .iter()
+            .filter_map(|id| {
+                let element = self.scene.get(id)?;
+                Some((
+                    id.clone(),
                     Point {
                         x: element.x,
                         y: element.y,
                     },
-                );
-            }
-        }
-        let moving: std::collections::HashSet<_> = origins.keys().cloned().collect();
+                ))
+            })
+            .collect();
         // By reference: this runs once per drag-start but touches every element in the
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.

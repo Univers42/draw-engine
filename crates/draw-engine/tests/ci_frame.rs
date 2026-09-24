@@ -299,9 +299,11 @@ fn an_element_half_out_of_a_frame_does_not_belong_to_it() {
 // -------------------------------------------------------------------- deleting
 
 #[test]
-fn deleting_a_frame_deletes_what_it_holds() {
-    // A frame is the thing those elements live in, not a label on them. Leaving the
-    // contents behind would scatter a diagram you had deliberately gathered.
+fn deleting_a_frame_keeps_what_it_held() {
+    // This pinned the opposite — the child went with its frame — under a comment that
+    // claimed Excalidraw's behaviour. The oracle keeps the children, clears their frame
+    // and selects them (`actionDeleteSelected.tsx:115-122`, pinned by
+    // `actionDeleteSelected.test.tsx:11`): the frame goes, the work in it does not.
     let child = box_at(60.0, 60.0, 80.0, 60.0);
     let bystander = box_at(600.0, 60.0, 80.0, 60.0);
     let (child_id, bystander_id) = (child.id.clone(), bystander.id.clone());
@@ -319,7 +321,9 @@ fn deleting_a_frame_deletes_what_it_holds() {
             .is_none_or(|el| el.is_deleted)
     };
     assert!(gone(&frame_id), "the frame survived");
-    assert!(gone(&child_id), "the child survived its frame");
+    assert!(!gone(&child_id), "the child went with its frame");
+    assert_eq!(child_frame_of(&engine, &child_id), None);
+    assert_eq!(engine.get_selection(), vec![child_id]);
     assert!(
         !gone(&bystander_id),
         "an element outside the frame was deleted"

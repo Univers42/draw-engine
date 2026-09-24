@@ -106,6 +106,30 @@ pub fn world_points(element: &DrawElement) -> Vec<Point> {
         .collect()
 }
 
+/// Rebuilds a point-based element from where its points are in the world: the inverse of
+/// [`world_points`] for the whole path.
+///
+/// Whatever turn the element had is already in those positions, so the result carries
+/// none — a transform applied to a path's points is exact, where one applied to its box
+/// and angle is only right while the points happen to fill the box.
+pub fn from_world_points(element: &DrawElement, world: &[Point]) -> DrawElement {
+    let mut next = element.clone();
+    let Some(first) = world.first() else {
+        return next;
+    };
+    next.x = first.x;
+    next.y = first.y;
+    next.angle = 0.0;
+    normalise_points(
+        &mut next,
+        world
+            .iter()
+            .map(|p| [p.x - first.x, p.y - first.y])
+            .collect(),
+    );
+    next
+}
+
 /// Converts a world position back into the element's local point space.
 ///
 /// The inverse of [`world_points`] for a single point — what a drag needs in order to

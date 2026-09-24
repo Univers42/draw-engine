@@ -119,6 +119,36 @@ impl DrawEngine {
     }
 }
 
+impl DrawEngine {
+    /// Point an embed at another link, resolved exactly as a pasted one is.
+    ///
+    /// The box keeps its place and size: it is the person's, sized where they wanted it.
+    /// Returns whether anything changed — `false` for a link the rules refuse, an element
+    /// that is not an embed, or one that is locked or held by a peer.
+    pub fn set_embed_url(&mut self, id: &str, raw_url: &str) -> bool {
+        let Some(mut element) = self.scene.get(id).cloned() else {
+            return false;
+        };
+        if element.kind != DrawElementType::Embed
+            || element.is_deleted
+            || self.untouchable(&element)
+        {
+            return false;
+        }
+        let Some(resolved) = crate::scene::embed_link(raw_url) else {
+            return false;
+        };
+        if element.embed_url.as_deref() == Some(resolved.url.as_str()) {
+            return false;
+        }
+        element.embed_url = Some(resolved.url);
+        self.scene.put(element);
+        self.push_history();
+        self.request_draw();
+        true
+    }
+}
+
 /// Where a live frame has to be put, in screen pixels.
 ///
 /// An embed is the one element a canvas cannot draw: a page inside a board is a real
@@ -149,22 +179,23 @@ pub struct EmbedFrame {
     /// and scales it by this, so the page zooms with the board instead of reflowing into
     /// a box that grows and shrinks around it.
     pub scale: f64,
+    /// Whether any of it is on screen. The host loads a frame only once it has been
+    /// seen, and keeps it after — see [`DrawEngine::embed_frames`].
+    pub visible: bool,
 }
 
 impl DrawEngine {
-    /// The embeds currently on screen, with their boxes in screen pixels.
+    /// Every live embed, with its box in screen pixels.
     ///
-    /// Culled, because an off-screen `<iframe>` is a page still running: a board with
-    /// thirty videos on it should not have thirty players loaded because one is visible.
+    /// Not culled: a frame the host stops hearing about is an `<iframe>` it unmounts,
+    /// which stopped a video the moment it was panned out of view. Instead each says
+    /// whether it is on screen, so a board with thirty videos still loads only the
+    /// players someone has looked at — Excalidraw's `initializedEmbeds`.
     pub fn embed_frames(&self) -> Vec<EmbedFrame> {
         let visible = crate::camera::visible_world_rect(self.camera, self.width, self.height);
         self.scene
             .iter_ordered()
-            .filter(|element| {
-                element.kind == DrawElementType::Embed
-                    && !element.is_deleted
-                    && crate::render::bounds::intersects_viewport(element, &visible)
-            })
+            .filter(|element| element.kind == DrawElementType::Embed && !element.is_deleted)
             .filter_map(|element| {
                 // Resolved again, not read back as stored: a board saved under older
                 // rules — a tweet framed at its own page, which refuses — gets the rules
@@ -192,6 +223,7 @@ impl DrawEngine {
                     height: rect.height * self.camera.scale,
                     angle: element.angle,
                     scale: self.camera.scale,
+                    visible: crate::render::bounds::intersects_viewport(element, &visible),
                 })
             })
             .collect()

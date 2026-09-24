@@ -101,6 +101,7 @@ impl DrawEngine {
     /// to nothing (`stamp.rs`).
     fn abandon_gesture(&mut self) {
         self.interaction = None;
+        self.clear_binding_suggestion();
         self.snap_guides.clear();
         for (id, before) in self.scene.baseline() {
             match before {

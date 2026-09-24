@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::edit::clipboard::{materialize_elements, serialize_selection};
 use crate::engine::DrawEngine;
 use crate::export::scene_to_json;
@@ -105,9 +107,14 @@ impl DrawEngine {
     }
 
     fn after_history_step(&mut self) {
-        self.selected_ids.clear();
-        self.events.selection = Some(Vec::new());
-        self.request_draw();
+        // Through `set_selection`, so the group being edited goes with what was held.
+        // The step may have taken that group away (the oracle then drops it,
+        // `packages/element/src/delta.ts:806-818`); cleared behind its back, it named a
+        // group nothing carried, and no click anywhere on the board expanded to a group.
+        self.set_selection(Vec::new());
+        // A drag carries on over the scene the step left, and what it remembered of the
+        // arrow under it — the far end's binding as it found it — is of the scene before.
+        self.clear_binding_suggestion();
         // An undo replaces the whole scene; there is no delta that describes it.
         self.scene.invalidate_delta();
         self.events.scene_json = Some(scene_to_json(&self.scene.ordered_cloned()));
@@ -168,6 +175,10 @@ impl DrawEngine {
         let changed = self.apply_remote_patch_step(json);
         // A peer's element can bind to one being dragged here, and then moves with it.
         self.refresh_live();
+        if changed {
+            // A peer may have ungrouped or deleted the group being edited here.
+            self.revalidate_editing();
+        }
         changed
     }
 
@@ -324,12 +335,39 @@ impl DrawEngine {
         // is how a board full of one shape gets made) was quadratic in its own output.
         let copied =
             crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
-        let Some(copies) = crate::edit::materialize(copied, offset_x, offset_y, self.now_ms) else {
+        // Ctrl+D and Alt-drag both come through here, and both copy inside the group being
+        // edited: `duplicateElements` is handed the app state's `editingGroupId`, by
+        // `packages/excalidraw/actions/actionDuplicateSelection.tsx:63-72` and by
+        // `packages/excalidraw/components/App.duplicate.ts:195-199`.
+        let editing = self.editing_group_id.as_deref();
+        let Some(copies) =
+            crate::edit::materialize_within(copied, offset_x, offset_y, self.now_ms, editing)
+        else {
             return;
         };
         let ids: Vec<String> = copies.iter().map(|el| el.id.clone()).collect();
         for element in copies {
             self.scene.add(element);
+        }
+        // A copy that stays in the group being edited goes directly above that group's
+        // top member, not on top of the board, which split the group in the stack with
+        // whatever lay between. The oracle puts each copy directly above its source
+        // (`packages/element/src/duplicate.ts:322-348`); above the group is the same run.
+        // Any other copy is in groups of its own and stays on top, where the host hears
+        // of it as a delta rather than as the whole reordered scene.
+        if let Some(editing) = self.editing_group_id.clone() {
+            let copied: HashSet<&str> = ids.iter().map(String::as_str).collect();
+            let top = self
+                .scene
+                .iter_ordered()
+                .rev()
+                .find(|el| {
+                    !copied.contains(el.id.as_str()) && crate::edit::is_in_group(el, &editing)
+                })
+                .map(|el| el.id.clone());
+            if let Some(top) = top {
+                self.scene.place_above(&ids, &top);
+            }
         }
         self.set_selection(ids);
         self.apply_bindings();
@@ -341,8 +379,37 @@ impl DrawEngine {
             return;
         }
         let now = self.now_ms;
-        let mut doomed = self.selected_ids.clone();
-        for id in &self.selected_ids {
+        // Deleting a frame deletes the frame, not the work in it, as Excalidraw's does
+        // (`packages/excalidraw/actions/actionDeleteSelected.tsx:57-73,115-122`): its
+        // children stay — even one selected along with it, since deleting the frame is
+        // taken to mean the frame — leave it, and become the selection, so a second
+        // Delete takes them too if that was what was meant. This used to take them with
+        // the frame, and claimed parity for it.
+        //
+        // Collected before anything is written, because reading a frame's children needs
+        // the scene the removals below are about to change.
+        let kept: HashSet<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
+            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
+            .collect();
+        // A kept child's label stays with it, selected or not.
+        let doomed_selected: Vec<String> = self
+            .selected_ids
+            .iter()
+            .filter(|id| {
+                !kept.contains(*id)
+                    && !self
+                        .scene
+                        .get(id)
+                        .and_then(|el| el.container_id.as_ref())
+                        .is_some_and(|container| kept.contains(container))
+            })
+            .cloned()
+            .collect();
+        let mut doomed: HashSet<String> = doomed_selected.iter().cloned().collect();
+        for id in &doomed_selected {
             if let Some(element) = self.scene.get(id) {
                 if let Some(bound) = &element.bound_text_id {
                     doomed.insert(bound.clone());
@@ -357,24 +424,34 @@ impl DrawEngine {
                 }
             }
         }
-        // Deleting a frame deletes what it holds, as Excalidraw's does. A frame is the
-        // thing those elements live in, not a label on them: leaving the contents behind
-        // would scatter a diagram you had deliberately gathered.
-        //
-        // Collected before the removals rather than inside the loop above, because
-        // reading a frame's children needs the scene while the loop above is already
-        // writing to it.
-        let orphaned: Vec<String> = self
-            .selected_ids
-            .iter()
-            .filter(|id| self.scene.get(id).is_some_and(crate::scene::is_frame))
-            .flat_map(|id| crate::scene::frame_children(self.scene.iter_ordered(), id))
-            .collect();
-        doomed.extend(orphaned);
         for id in doomed {
             self.scene.remove(&id, now);
         }
-        self.set_selection(Vec::new());
+        for id in &kept {
+            self.scene.update(id, |child| child.frame_id = None);
+        }
+        if !kept.is_empty() {
+            let selection = crate::edit::expand_within(
+                self.scene.iter_ordered(),
+                kept,
+                self.editing_group_id.as_deref(),
+            );
+            self.set_selection(selection);
+        } else {
+            // Inside a group, deleting keeps you inside what is left of it, holding its next
+            // member — or a level up once it is down to one. Emptied instead, the selection
+            // took the group being edited with it, and the next Delete had nothing to act on.
+            let (editing, held) = match self.editing_group_id.take() {
+                Some(editing) => {
+                    crate::edit::after_delete_within(self.scene.iter_ordered(), &editing, |el| {
+                        !self.untouchable(el)
+                    })
+                }
+                None => (None, Default::default()),
+            };
+            self.editing_group_id = editing;
+            self.set_selection(held);
+        }
         self.push_history();
     }
 

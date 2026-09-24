@@ -76,6 +76,9 @@ pub(crate) enum Interaction {
     Linear {
         id: String,
         start: Point,
+        /// Where the pointer is now. Click or drag is read off the hand, `start` to here —
+        /// not off the arrow, whose bound ends are pulled onto outlines.
+        pointer: Point,
     },
     Freedraw {
         id: String,
