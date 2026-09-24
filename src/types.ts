@@ -242,6 +242,7 @@ export interface TextEditRequest {
   y: number;
   fontSize: number;
   color: string;
+  /** What was typed (the element's `originalText`, else its `text`), not what is drawn. */
   text: string;
   width?: number;
   /**

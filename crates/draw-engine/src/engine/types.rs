@@ -19,6 +19,7 @@ pub struct TextEditRequest {
     pub y: f64,
     pub font_size: f64,
     pub color: String,
+    /// What was typed ([`source_text`](crate::scene::source_text)), not what is drawn.
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<f64>,

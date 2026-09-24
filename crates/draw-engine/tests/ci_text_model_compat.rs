@@ -350,3 +350,78 @@ fn a_value_the_contract_refuses_is_dropped_where_it_comes_in() {
         assert_eq!(wire.get(key), kept.as_ref(), "{key}: {raw} from a peer");
     }
 }
+
+/// The oracle's `originalText || text` (`packages/excalidraw/data/restore.ts:572`): an
+/// empty string is no source, and must not hide the text that is drawn.
+#[test]
+fn an_empty_source_falls_back_to_the_text_drawn() {
+    let mut label = modern_label();
+    label.original_text = Some(String::new());
+    assert_eq!(source_text(&label), "hello\nworld");
+}
+
+fn element(engine: &DrawEngine, id: &str) -> DrawElement {
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("the element is in the scene")
+}
+
+/// A free text a newer client wrapped: `text` has the soft break baked in, and
+/// `original_text` is what was typed. Fixed width, so it wraps.
+fn wrapped_column() -> DrawElement {
+    let mut text = text_at(0.0, 0.0, 60.0, 50.0);
+    text.text = Some("hello\nworld".into());
+    text.original_text = Some("hello world".into());
+    text.auto_resize = Some(false);
+    text
+}
+
+/// An edit is typed over the source, so it becomes the source. Left as it was, the
+/// source would still read what the text said before the edit, and a client laying text
+/// out from it would put the old words back.
+#[test]
+fn an_edit_keeps_the_source_in_step() {
+    let column = wrapped_column();
+    let mut engine = engine_with_measure(vec![column.clone()]);
+    engine.set_element_text(&column.id, "goodbye");
+    let edited = element(&engine, &column.id);
+    // Drawn wrapped to the column, kept as typed.
+    assert_eq!(edited.text.as_deref(), Some("goodb\nye"));
+    assert_eq!(edited.original_text.as_deref(), Some("goodbye"));
+    assert_eq!(source_text(&edited), "goodbye");
+
+    // A text with no source of its own gains none: its `text` is still the source, and
+    // an old board edited here saves exactly the fields it always did.
+    let mut legacy = text_at(0.0, 200.0, 60.0, 25.0);
+    legacy.text = Some("hello".into());
+    let mut engine = engine_with_measure(vec![legacy.clone()]);
+    engine.set_element_text(&legacy.id, "goodbye");
+    assert_eq!(element(&engine, &legacy.id).original_text, None);
+}
+
+/// The editor opens on what was typed, as the oracle's does
+/// (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`). Opened on `text`, every soft
+/// break a newer client wrapped at would come back from the edit as a hard one.
+#[test]
+fn the_editor_opens_on_the_source() {
+    let column = wrapped_column();
+    let mut engine = engine_with_measure(vec![column.clone()]);
+    engine.select(vec![column.id.clone()]);
+    assert!(engine.edit_selected_text());
+    let request = engine.drain_events().text_edit.expect("the editor opens");
+    assert_eq!(request.text, "hello world");
+}
+
+/// A column given a new width re-wraps what was typed, not what was drawn at the old
+/// width: the soft break goes where the new width puts it, and the source is untouched.
+#[test]
+fn a_resized_column_rewraps_its_source() {
+    let column = wrapped_column();
+    let mut engine = engine_with_measure(vec![column.clone()]);
+    engine.set_text_box_width(&column.id, 1000.0);
+    let resized = element(&engine, &column.id);
+    assert_eq!(resized.text.as_deref(), Some("hello world"));
+    assert_eq!(resized.original_text.as_deref(), Some("hello world"));
+}

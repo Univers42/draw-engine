@@ -137,11 +137,14 @@ pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
 /// The text as it was typed, before any wrapping — Excalidraw's `originalText`.
 ///
 /// `text` is what is drawn: the source with its soft line breaks baked in. Every text
-/// saved before `original_text` existed has only that, so it stands in as the source.
+/// saved before `original_text` existed has only that, so it stands in as the source,
+/// and so does it for an empty source, as the oracle's `originalText || text` has it
+/// (`packages/excalidraw/data/restore.ts:572`).
 pub fn source_text(element: &DrawElement) -> &str {
     element
         .original_text
         .as_deref()
+        .filter(|source| !source.is_empty())
         .or(element.text.as_deref())
         .unwrap_or_default()
 }

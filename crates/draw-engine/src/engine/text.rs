@@ -55,7 +55,10 @@ impl DrawEngine {
             y: screen.y,
             font_size: element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE),
             color: element.stroke_color.clone(),
-            text: element.text.clone().unwrap_or_default(),
+            // What was typed, as the oracle's editor opens on `originalText`
+            // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`): opened on the drawn
+            // text, every soft break would come back from the edit a hard one.
+            text: crate::scene::source_text(element).to_owned(),
             width,
             text_align: crate::scene::resolved_text_align(element),
             container_id: element.container_id.clone(),
@@ -241,7 +244,8 @@ impl DrawEngine {
         {
             return;
         }
-        let text = element.text.clone().unwrap_or_default();
+        // What was typed, not what was drawn at the old width.
+        let text = crate::scene::source_text(&element).to_owned();
         let mut next = element;
         next.width = width.abs().max(8.0);
         self.scene.put(next);
@@ -319,6 +323,13 @@ impl DrawEngine {
         let (width, height) = (self.measure_text)(&final_text, font_size);
         let mut next = element;
         next.text = Some(final_text.clone());
+        // What was typed is the source now. Left alone it would still read what the text
+        // said before the edit, and a client laying text out from it would put the old
+        // words back. A text with none keeps none: its `text` is its source, and an old
+        // board edited here saves exactly the fields it always did.
+        if next.original_text.is_some() {
+            next.original_text = Some(text.to_owned());
+        }
         // A column keeps the width it was given: it is the thing the person set, and
         // shrinking it to the longest wrapped line would make the box creep inwards a
         // little on every edit.
