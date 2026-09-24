@@ -589,6 +589,75 @@ mod style {
     }
 }
 
+/// What a peer holds is untouchable (`engine/peers.rs`), and a change that changes
+/// nothing is not an edit.
+mod holds_and_no_ops {
+    use super::*;
+
+    /// A peer typing into a label holds the label alone, so its shape stays selectable
+    /// here. Restyling the shape, or changing its label's font, size, alignment or wrap,
+    /// must not reach into the label under their hands.
+    #[test]
+    fn a_label_a_peer_holds_is_left_alone() {
+        let rect = box_at(0.0, 0.0, 200.0, 100.0);
+        let rect_id = rect.id.clone();
+        let (mut engine, label_id) = labelled(rect, "hello");
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![label_id.clone()],
+            preview: Vec::new(),
+        }]);
+        let before = element(&engine, &label_id);
+        engine.select(vec![rect_id.clone()]);
+        assert_eq!(engine.get_selection(), vec![rect_id.clone()]);
+        engine.apply_style(stroke_patch("#e03131"));
+        engine.set_font_family(7);
+        engine.set_font_size(36.0);
+        engine.set_text_align(TextAlign::Right);
+        engine.set_vertical_align(VerticalAlign::Top);
+        engine.set_label_wrap(false);
+        assert_eq!(element(&engine, &label_id), before);
+        // The shape itself is still anyone's.
+        assert_eq!(element(&engine, &rect_id).stroke_color, "#e03131");
+    }
+
+    /// Picking the family a text already has, or the wrap it already has, is not an edit:
+    /// nothing is stamped, and the redo stack survives it (`newElementWith` returns the
+    /// element unchanged when no value differs, `mutateElement.ts@1118751f:149-181`).
+    #[test]
+    fn a_change_that_changes_nothing_is_not_an_edit() {
+        let rect = box_at(0.0, 0.0, 200.0, 100.0);
+        let rect_id = rect.id.clone();
+        let (mut engine, label_id) = labelled(rect, "hello");
+        engine.select(vec![rect_id.clone()]);
+        engine.set_label_wrap(false);
+        let unwrapped = element(&engine, &label_id);
+        engine.set_text_align(TextAlign::Right);
+        engine.undo();
+        let before = element(&engine, &label_id);
+        assert_eq!(before.text_align, unwrapped.text_align);
+
+        engine.select(vec![rect_id.clone()]);
+        engine.set_font_family(before.font_family.unwrap());
+        engine.set_label_wrap(false);
+        engine.apply_style(stroke_patch(&before.stroke_color));
+        let after = element(&engine, &label_id);
+        assert_eq!(
+            (after.version, after.version_nonce),
+            (before.version, before.version_nonce),
+            "nothing changed, nothing is stamped"
+        );
+        // And nothing was recorded over the undone step.
+        engine.redo();
+        assert_eq!(
+            element(&engine, &label_id).text_align,
+            Some(TextAlign::Right)
+        );
+    }
+}
+
 /// A font arriving is not an edit.
 mod fonts_loaded {
     use super::*;

@@ -4,13 +4,16 @@ use crate::scene::{
 };
 
 impl DrawEngine {
+    /// Styles the selection. Stamped by the commit (`push_history`), and only what the
+    /// patch really changed: a colour picked again is not an edit (`newElementWith`
+    /// returns the element unchanged when no value differs,
+    /// `packages/element/src/mutateElement.ts@1118751f:149-181`).
     pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
         let selected = self.get_selected_elements();
         if selected.is_empty() {
             self.set_next_style(patch);
             return;
         }
-        let now = self.now_ms;
         // A shape's label is drawn in the shape's stroke colour and fades with it: the
         // oracle applies both to the bound text of what is selected
         // (`changeProperty(…, includeBoundText = true)` in `actionChangeStrokeColor` and
@@ -28,24 +31,31 @@ impl DrawEngine {
         for mut element in selected {
             if reaches_labels {
                 labels.extend(
-                    element
-                        .bound_text_id
-                        .as_deref()
-                        .filter(|id| !selected_ids.contains(*id))
-                        .and_then(|id| self.scene.get(id))
-                        .filter(|label| !label.is_deleted)
+                    self.label_of(&element)
+                        .filter(|label| !selected_ids.contains(&label.id))
                         .cloned(),
                 );
             }
             apply_style_patch(&mut element, &patch);
-            self.scene.put(bump_version(element, now));
+            self.scene.put(element);
         }
         for mut label in labels {
             apply_style_patch(&mut label, &label_patch);
-            self.scene.put(bump_version(label, now));
+            self.scene.put(label);
         }
         self.push_history();
         self.request_draw();
+    }
+
+    /// The live label of `container` that is ours to change: not one a peer holds —
+    /// typing into a label holds the label alone, and its shape stays selectable — nor a
+    /// locked one (`untouchable`).
+    fn label_of(&self, container: &DrawElement) -> Option<&DrawElement> {
+        container
+            .bound_text_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|label| !label.is_deleted && !self.untouchable(label))
     }
 
     pub fn set_arrowheads(
@@ -85,9 +95,10 @@ impl DrawEngine {
 
     /// Writes `change` into every selected text, lays each out again from its source
     /// (`redrawTextBoundingBox`), grows the shapes that no longer hold their labels, and
-    /// commits. With `anchor_font_resize`, a free auto-sizing text keeps its aligned edge
-    /// and its vertical middle (`offsetElementAfterFontResize`); otherwise a free text
-    /// stays where it is, as the oracle's family and alignment changes leave it.
+    /// commits — which stamps only what changed. With `anchor_font_resize`, a free
+    /// auto-sizing text keeps its aligned edge and its vertical middle
+    /// (`offsetElementAfterFontResize`); otherwise a free text stays where it is, as the
+    /// oracle's family and alignment changes leave it.
     fn relayout_selected_texts(
         &mut self,
         change: impl Fn(&mut DrawElement),
@@ -97,7 +108,6 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
-        let now = self.now_ms;
         for prev in texts {
             let mut next = prev.clone();
             change(&mut next);
@@ -111,7 +121,7 @@ impl DrawEngine {
             if let Some(container) = laid.container {
                 self.scene.put(container);
             }
-            self.scene.put(bump_version(laid.text, now));
+            self.scene.put(laid.text);
         }
         self.apply_bindings();
         self.push_history();
@@ -161,7 +171,6 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
-        let now = self.now_ms;
         for prev in texts {
             let mut next = prev.clone();
             next.auto_resize = Some(auto_resize);
@@ -175,7 +184,7 @@ impl DrawEngine {
                 laid.text.x = at.x;
                 laid.text.y = at.y;
             }
-            self.scene.put(bump_version(laid.text, now));
+            self.scene.put(laid.text);
         }
         self.push_history();
         self.request_draw();
@@ -214,8 +223,8 @@ impl DrawEngine {
     /// A bound label is not separately selectable — clicking a shape with a label in it
     /// selects the shape — so following `bound_text_id` is not a convenience here, it is
     /// the difference between the control working on labels and being dead for all of
-    /// them. Deduplicated by id, because selecting a shape *and* a loose text must not
-    /// visit anything twice.
+    /// them. A label a peer holds is not followed ([`Self::label_of`]). Deduplicated by
+    /// id, because selecting a shape *and* a loose text must not visit anything twice.
     fn selected_texts(&self) -> Vec<crate::scene::DrawElement> {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -223,11 +232,7 @@ impl DrawEngine {
             let candidate = if element.kind == crate::scene::DrawElementType::Text {
                 Some(element)
             } else {
-                element
-                    .bound_text_id
-                    .as_deref()
-                    .and_then(|id| self.scene.get(id).cloned())
-                    .filter(|label| !label.is_deleted)
+                self.label_of(&element).cloned()
             };
             if let Some(text) = candidate {
                 if seen.insert(text.id.clone()) {
