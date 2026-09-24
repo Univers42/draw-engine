@@ -68,6 +68,10 @@ const MIDPOINT_SNAP_PX: f64 = 16.0;
 const ROTATE_GAP_PX: f64 = 26.0;
 /// Excalidraw's `DEFAULT_COLLISION_THRESHOLD`: how near a click must be to an element.
 const COLLISION_PX: f64 = 10.0;
+/// Excalidraw's `DOUBLE_TAP_POSITION_THRESHOLD` (`packages/common/src/constants.ts@1118751f:609`):
+/// how far apart, in screen pixels, the two clicks of a double click may land and still
+/// be one (`shouldHandleBrowserCanvasDoubleClick`, `App.tsx@1118751f:7154-7176`).
+const DOUBLE_TAP_PX: f64 = 35.0;
 const DEFAULT_FONT_SIZE: f64 = 20.0;
 const SNAP_PX: f64 = 6.0;
 const PASTE_OFFSET: f64 = 12.0;
@@ -132,9 +136,11 @@ pub struct DrawEngine {
     /// dozen clicks later — an end. Putting it in `Interaction` would have it thrown away
     /// by the release that places its second point.
     multi_linear: Option<types::MultiLinear>,
-    /// The path the last press finished, until the next press: a double click whose
-    /// second press ends a path is about that path (see `handle_double_click`).
-    finished_by_press: Option<String>,
+    /// The path a press finished, and where on screen that press landed: the double click
+    /// it may be the first or second half of is about that path (see
+    /// `handle_double_click`). Kept across the one press that lands on the same spot and
+    /// forgotten by any other press, a pan, or another tool.
+    finished_by_press: Option<(String, Point)>,
     selected_ids: HashSet<String>,
     clipboard_buffer: Option<String>,
     snap_guides: Vec<SnapGuide>,
@@ -458,6 +464,7 @@ impl DrawEngine {
         if tool == self.tool {
             return;
         }
+        self.finished_by_press = None;
         // Reaching for another tool is an answer to "is this path finished?" too, and
         // leaving it open would strand it: nothing else would ever end it, and the next
         // click of the line tool would carry on from wherever it was abandoned. Not

@@ -84,7 +84,7 @@ impl DrawEngine {
     }
 
     /// A press while a path is open: either it ends the path, or it places a point.
-    pub(crate) fn press_multi_linear(&mut self, world: Point) {
+    pub(crate) fn press_multi_linear(&mut self, world: Point, screen: Point) {
         let Some(state) = self.multi_linear.clone() else {
             return;
         };
@@ -106,7 +106,7 @@ impl DrawEngine {
             // trim. Excalidraw does this explicitly for the same reason
             // (`App.tsx:10120-10134`).
             self.commit_multi_point();
-            self.finish_by_press(&state.id);
+            self.finish_by_press(&state.id, screen);
             return;
         }
 
@@ -124,7 +124,7 @@ impl DrawEngine {
         if state.committed >= 1 {
             if let Some(&last) = points.get(state.committed - 1) {
                 if distance(local, last) < tolerance {
-                    self.finish_by_press(&state.id);
+                    self.finish_by_press(&state.id, screen);
                     return;
                 }
             }
@@ -156,7 +156,7 @@ impl DrawEngine {
             // matter to either.
             self.track_multi_linear(world, false);
             self.commit_multi_point();
-            self.finish_by_press(&state.id);
+            self.finish_by_press(&state.id, screen);
             return;
         }
 
@@ -164,13 +164,13 @@ impl DrawEngine {
         self.interaction = Some(Interaction::MultiLinearPress);
     }
 
-    /// Ends the path because a press said so, remembering which path it was: the press
-    /// may be the second half of a double click, whose `dblclick` arrives next and is
-    /// about this path, not about whatever lies under the pointer. The next press
-    /// forgets it (`begin_pointer`).
-    fn finish_by_press(&mut self, id: &str) {
-        self.finished_by_press = Some(id.to_string());
+    /// Ends the path because a press at `screen` said so, remembering which path it was:
+    /// the press may be either half of a double click, whose `dblclick` arrives next and
+    /// is about this path, not about whatever lies under the pointer. Remembered after
+    /// the finish, which settles the tool — and a tool change forgets it.
+    fn finish_by_press(&mut self, id: &str, screen: Point) {
         self.finish_linear();
+        self.finished_by_press = Some((id.to_string(), screen));
     }
 
     /// What the path's pending point would bind to at `world`: its own anchor and, when
@@ -362,6 +362,12 @@ impl DrawEngine {
     fn confirm_tolerance(&self) -> f64 {
         LINE_CONFIRM_THRESHOLD / self.camera.scale
     }
+}
+
+/// Whether a click at `(sx, sy)` on screen lands near enough to one at `at` to be the
+/// other half of its double click.
+pub(crate) fn is_double_tap(at: Point, sx: f64, sy: f64) -> bool {
+    (at.x - sx).hypot(at.y - sy) <= super::DOUBLE_TAP_PX
 }
 
 fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {

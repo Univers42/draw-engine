@@ -1,5 +1,7 @@
+use crate::engine::multi_linear::is_double_tap;
 use crate::engine::{DrawEngine, TextEditRequest};
 use crate::interaction::DrawTool;
+use crate::scene::binding::linear_endpoints;
 use crate::scene::{
     bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
     is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
@@ -139,6 +141,18 @@ impl DrawEngine {
         true
     }
 
+    /// Whether a double click at `world` types into `arrow`, the one container on offer:
+    /// when it is on the arrow, or within `TEXT_TO_CENTER_SNAP_THRESHOLD` (30 scene
+    /// units, `packages/common/src/constants.ts@1118751f:30`) of where its label sits —
+    /// `handleCanvasDoubleClick` and `getTextWysiwygSnappedToCenterPosition`
+    /// (`App.tsx@1118751f:7356-7392`, `:13800-13832`).
+    fn takes_double_click_text(&self, arrow: &DrawElement, world: crate::camera::Point) -> bool {
+        let (start, end) = linear_endpoints(arrow);
+        let middle = ((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+        crate::hit_test_element(arrow, world.x, world.y, self.collision_tolerance())
+            || (world.x - middle.0).hypot(world.y - middle.1) < 30.0
+    }
+
     /// Opens `container`'s label for editing, making it first if it has none.
     fn edit_label(&mut self, container: &DrawElement) {
         let bound = container
@@ -155,6 +169,11 @@ impl DrawEngine {
     }
 
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
+        // Any double click ends what the press that finished a path could be half of.
+        let finished = self
+            .finished_by_press
+            .take()
+            .filter(|(_, at)| is_double_tap(*at, sx, sy));
         // Only with the selection tools, as Excalidraw's `handleCanvasDoubleClick` has it
         // (`App.tsx:7200-7209`): a double click with the eraser, say, put an empty text
         // box on the board and opened an editor on it.
@@ -164,30 +183,44 @@ impl DrawEngine {
         ) {
             return;
         }
-        // The double click whose second press just ended a path — landing on the point
-        // its first press placed. Excalidraw's finished arrow is then its one selected
-        // element, and a double click labels the selected container
-        // (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`): the label
-        // goes on the arrow, never on the shape under the pointer (checked on
-        // excalidraw.com by element id). A path too short to keep was thrown away, and
-        // Excalidraw's double click does nothing while a path is open
-        // (`App.tsx@1118751f:7199-7201`), so neither does this one.
-        if let Some(id) = self.finished_by_press.take() {
-            match self.scene.get(&id).filter(|el| !el.is_deleted).cloned() {
-                Some(arrow) if arrow.kind == DrawElementType::Arrow => {
-                    self.edit_label(&arrow);
-                    return;
-                }
-                Some(_) => {}
-                None => return,
-            }
-        }
         let world = self.screen_to_world(sx, sy);
+        // The double click one of whose presses ended a path. Excalidraw's finished path
+        // is then its one selected element (checked on excalidraw.com), so it is the only
+        // container the double click can type into
+        // (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`) — never the
+        // shape under the pointer. A line opens its line editor instead
+        // (`App.tsx@1118751f:7222-7234`). An arrow takes a label when the double click
+        // is on it or near its middle (`:7356-7392`); otherwise the text is a free one at
+        // the pointer — which is where the second press of a double click that ended the
+        // arrow lands, but not always the first's: a click that binds in orbit moves the
+        // end onto the shape's outline, toward its centre. A path too short to keep was
+        // thrown away, and Excalidraw's double click does nothing while a path is open
+        // (`App.tsx@1118751f:7199-7201`), so neither does this one.
+        let finished = match finished {
+            Some((id, _)) => match self.scene.get(&id).filter(|el| !el.is_deleted).cloned() {
+                Some(path) => Some(path),
+                None => return,
+            },
+            None => None,
+        };
+        if let Some(path) = &finished {
+            if path.kind != DrawElementType::Arrow {
+                self.open_linear_points(path);
+                return;
+            }
+            if self.takes_double_click_text(path, world) {
+                self.edit_label(path);
+                return;
+            }
+            // Past it, nothing under the pointer is on offer but a text to edit
+            // (`startTextEditing`, `App.tsx@1118751f:6960-6965`): no group, no line's
+            // points, no container — hence the `finished.is_none()` below.
+        }
         // Stepping into a group comes first. A double click inside one means "show me
         // what is in here", and letting the text branch run first would put a label on
         // the shape instead — which is what happened, and why a group could not be
         // opened at all.
-        if self.step_into_group(sx, sy) {
+        if finished.is_none() && self.step_into_group(sx, sy) {
             return;
         }
         if let Some(hit) = crate::hit_test(
@@ -206,13 +239,15 @@ impl DrawEngine {
             // A path of more than two points selects to a box, because it is a shape.
             // Its corners are still there, behind this gesture — the same door
             // Excalidraw puts its line editor behind.
-            if self.open_linear_points(&hit) {
+            if finished.is_none() && self.open_linear_points(&hit) {
                 return;
             }
         }
-        if let Some(container) = self.label_target_at(world.x, world.y) {
-            self.edit_label(&container);
-            return;
+        if finished.is_none() {
+            if let Some(container) = self.label_target_at(world.x, world.y) {
+                self.edit_label(&container);
+                return;
+            }
         }
         let style = merge_style(&default_element_style(), &self.next_style);
         let mut element = create_element(

@@ -1,5 +1,6 @@
 use crate::camera::Point;
 use crate::edit::{expand_within, is_in_group};
+use crate::engine::multi_linear::is_double_tap;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
@@ -15,7 +16,15 @@ impl DrawEngine {
     }
 
     fn begin_pointer_step(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
-        self.finished_by_press = None;
+        // The press that lands where the finishing one did is the other half of its
+        // double click; any other forgets the finished path.
+        if !self
+            .finished_by_press
+            .as_ref()
+            .is_some_and(|(_, at)| is_double_tap(*at, sx, sy))
+        {
+            self.finished_by_press = None;
+        }
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
         let world = self.snap(self.screen_to_world(sx, sy));
@@ -27,7 +36,7 @@ impl DrawEngine {
             // Alt at the press, not as of the last move: with no button held, moves are
             // not reported, so that one can be long stale.
             self.alt_held = duplicate;
-            self.begin_linear(world);
+            self.begin_linear(world, Point { x: sx, y: sy });
             return;
         }
         match self.tool {
@@ -141,11 +150,11 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    fn begin_linear(&mut self, world: Point) {
+    fn begin_linear(&mut self, world: Point, screen: Point) {
         // A path is already being placed: this press extends or ends it rather than
         // starting a second one on top.
         if self.multi_linear.is_some() {
-            self.press_multi_linear(world);
+            self.press_multi_linear(world, screen);
             return;
         }
         let Some(kind) = crate::interaction::tool_to_element_type(self.tool) else {
@@ -231,6 +240,7 @@ impl DrawEngine {
     }
 
     pub fn begin_pan(&mut self, sx: f64, sy: f64) {
+        self.finished_by_press = None;
         self.interaction = Some(Interaction::Pan {
             last_x: sx,
             last_y: sy,

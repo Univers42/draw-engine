@@ -572,6 +572,141 @@ fn a_double_click_that_finishes_an_arrow_labels_the_arrow() {
     }
 }
 
+/// Double clicks whose **first** click already ends the arrow, because it lands beside a
+/// shape the arrow did not start from (`boundOutsideFromElsewhere`,
+/// `App.tsx@1118751f:10189-10215`), and what excalidraw.com typed into, by element id:
+/// the arrow (`true`) or a free text at the pointer (`false`). The finished arrow is
+/// still the one selected element when the `dblclick` arrives, so it is the only
+/// container on offer (`App.tsx@1118751f:6831-6838`), and it takes the text only when the
+/// double click is on it (`:7356-7392`). Where the orbit moved the end away from the
+/// pointer, along the line to the square's centre, it is not.
+const ORBIT_DOUBLE_CLICKS: [((f64, f64), bool); 5] = [
+    ((481.3, 227.7), false),
+    ((590.4, 340.7), false),
+    ((436.3, 305.7), true),
+    ((466.3, 335.7), true),
+    // Beside the lone square `T`.
+    ((1106.0, 550.0), false),
+];
+
+/// The pack, and a lone square `T` at (1000, 500) away from it.
+fn pack_and_lone_square() -> Vec<DrawElement> {
+    let mut scene = pack(CTRL_D);
+    let mut lone = box_at(1000.0, 500.0, 100.0, 100.0);
+    lone.id = "T".into();
+    scene.push(lone);
+    scene
+}
+
+/// An arrow from `FROM` whose first click, at `at`, ends it.
+fn finish_by_one_click(scene: &[DrawElement], at: (f64, f64)) -> DrawEngine {
+    let mut engine = arrow_engine(scene, 1.0);
+    click(&mut engine, 1.0, FROM);
+    glide(&mut engine, 1.0, FROM, at);
+    click(&mut engine, 1.0, at);
+    assert!(
+        engine.linear_in_progress().is_none(),
+        "the first click at {at:?} ends the arrow"
+    );
+    engine
+}
+
+/// The browser's sequence for a double click whose first click ended the arrow: that
+/// click, a second press and release on the same spot, then `dblclick`. It never labels
+/// a square — not the one the arrow bound, nor one the point is inside.
+#[test]
+fn a_double_click_whose_first_click_ends_the_arrow() {
+    let scene = pack_and_lone_square();
+    for (at, labels_arrow) in ORBIT_DOUBLE_CLICKS {
+        let mut engine = finish_by_one_click(&scene, at);
+        click(&mut engine, 1.0, at);
+        engine.handle_double_click(at.0, at.1);
+        let arrow = the_arrow(&engine);
+        let labels: Vec<Option<String>> =
+            texts(&engine).into_iter().map(|t| t.container_id).collect();
+        let expected = labels_arrow.then(|| arrow.id.clone());
+        assert_eq!(labels, vec![expected], "at {at:?}");
+    }
+}
+
+// The finished arrow is what the double click of the press that finished it is about —
+// not a later one elsewhere, nor one whose presses went to a pan or to a host tool, which
+// never reach the engine's press handling. Each starts from a first click that ends the
+// arrow where its end stays under the pointer, so the arrow would take a label.
+const ON_ITS_END: (f64, f64) = (436.3, 305.7);
+
+fn arrow_labelled(engine: &DrawEngine) -> bool {
+    let arrow = the_arrow(engine);
+    texts(engine)
+        .iter()
+        .any(|t| t.container_id.as_deref() == Some(arrow.id.as_str()))
+}
+
+/// Far away, with no press in between: a free text there, as on any empty spot.
+#[test]
+fn a_double_click_elsewhere_is_not_about_the_finished_arrow() {
+    let mut engine = finish_by_one_click(&pack_and_lone_square(), ON_ITS_END);
+    engine.handle_double_click(1200.0, 1000.0);
+    let made: Vec<(Option<String>, f64, f64)> = texts(&engine)
+        .into_iter()
+        .map(|t| (t.container_id, t.x, t.y))
+        .collect();
+    assert_eq!(made, vec![(None, 1200.0, 1000.0)]);
+}
+
+/// Both presses of the double click went to a pan (Space held).
+#[test]
+fn a_double_click_after_a_pan_is_not_about_the_finished_arrow() {
+    let at = ON_ITS_END;
+    let mut engine = finish_by_one_click(&pack_and_lone_square(), at);
+    for _ in 0..2 {
+        engine.begin_pan(at.0, at.1);
+        engine.end_pointer();
+    }
+    engine.handle_double_click(at.0, at.1);
+    assert!(!arrow_labelled(&engine));
+}
+
+/// With the tool locked the arrow tool stays on; the host's sticky tool then parks the
+/// engine on select and claims both presses itself.
+#[test]
+fn a_double_click_after_another_tool_is_not_about_the_finished_arrow() {
+    let at = ON_ITS_END;
+    let mut engine = arrow_engine(&pack_and_lone_square(), 1.0);
+    engine.set_tool_locked(true);
+    click(&mut engine, 1.0, FROM);
+    glide(&mut engine, 1.0, FROM, at);
+    click(&mut engine, 1.0, at);
+    assert!(engine.linear_in_progress().is_none());
+    engine.set_tool(DrawTool::Select);
+    engine.handle_double_click(at.0, at.1);
+    assert!(!arrow_labelled(&engine));
+}
+
+/// A double click that finishes a line types nothing — no label on the square it ends
+/// inside — and leaves the line selected. excalidraw.com opened its line editor on the
+/// new line, with no text anywhere (`App.tsx@1118751f:7222-7234`).
+#[test]
+fn a_double_click_that_finishes_a_line_types_nothing() {
+    let scene = pack(CTRL_D);
+    let at = (471.3, 270.7);
+    let mut engine = arrow_engine(&scene, 1.0);
+    engine.set_tool(DrawTool::Line);
+    click(&mut engine, 1.0, FROM);
+    glide(&mut engine, 1.0, FROM, at);
+    click(&mut engine, 1.0, at);
+    click(&mut engine, 1.0, at);
+    assert!(engine.linear_in_progress().is_none());
+    engine.handle_double_click(at.0, at.1);
+    assert!(texts(&engine).is_empty());
+    let selected: Vec<DrawElementType> = engine
+        .get_selected_elements()
+        .into_iter()
+        .map(|el| el.kind)
+        .collect();
+    assert_eq!(selected, vec![DrawElementType::Line]);
+}
+
 /// A double click on an empty board with the arrow tool places nothing: its path of one
 /// point is thrown away, and no text box is left in its place. Excalidraw's double click
 /// does nothing while a path is being placed (`App.tsx@1118751f:7197-7201`).
