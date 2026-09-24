@@ -24,6 +24,8 @@ impl DrawEngine {
     fn end_pointer_step(&mut self) {
         // The binding hint belongs to the drag, not to the document.
         self.binding_highlight = None;
+        self.binding_point = None;
+        self.bind_drag_origin = None;
         let Some(it) = self.interaction.take() else {
             return;
         };

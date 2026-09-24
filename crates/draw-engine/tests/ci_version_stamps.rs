@@ -145,7 +145,8 @@ fn an_arrow_that_follows_its_shape_is_bumped() {
     );
 
     engine.select(vec![right_id]);
-    drag(&mut engine, (400.0, 40.0), (400.0, 160.0));
+    // Grabbed clear of the arrow, whose end was let go inside the box and sits there.
+    drag(&mut engine, (430.0, 70.0), (430.0, 190.0));
 
     let after = get(&engine, &arrow.id);
     assert!(after.height.abs() > 60.0, "setup: the arrow followed");

@@ -158,11 +158,12 @@ impl DrawEngine {
             .collect();
         for (id, start, end) in released {
             self.scene.update(&id, |arrow| {
+                use crate::scene::binding::{set_anchor, End};
                 if start {
-                    arrow.start_binding = None;
+                    set_anchor(arrow, End::Start, None);
                 }
                 if end {
-                    arrow.end_binding = None;
+                    set_anchor(arrow, End::End, None);
                 }
             });
         }

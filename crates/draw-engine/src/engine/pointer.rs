@@ -2,7 +2,7 @@ use crate::camera::Point;
 use crate::edit::{expand_within, is_in_group};
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
-use crate::scene::binding::bindable_among;
+use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
     create_element, default_element_style, element_bounds, merge_style, DrawElementType, Geometry,
 };
@@ -153,25 +153,14 @@ impl DrawEngine {
             style,
             self.now_ms,
         );
-        // Same tolerance the far end gets, so both ends of an arrow attach on the same
-        // terms. A zero tolerance here meant the tail only bound when the gesture started
-        // strictly inside a shape.
-        let tolerance = self.binding_tolerance();
-        let anchor = crate::scene::binding::is_binding_element(&element)
-            .then(|| {
-                bindable_among(
-                    self.scene.iter_ordered().rev(),
-                    world.x,
-                    world.y,
-                    tolerance,
-                    None,
-                )
-                .map(|el| el.id.clone())
-            })
-            .flatten();
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
-        element.start_binding = anchor;
-        element.end_binding = None;
+        // The tail binds on the same terms the head will, as Excalidraw's initial binding
+        // does (`packages/excalidraw/components/App.tsx:10317-10339`): inside a shape it
+        // sits exactly where the press was, near one it orbits from there.
+        let (start, _) = self.drop_binding(&element, End::Start, world, false);
+        set_anchor(&mut element, End::Start, start);
+        set_anchor(&mut element, End::End, None);
+        self.bind_drag_origin = None;
         let id = element.id.clone();
         self.scene.add(element);
         self.interaction = Some(Interaction::Linear { id, start: world });

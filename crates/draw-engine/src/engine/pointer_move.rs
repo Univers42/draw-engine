@@ -360,6 +360,7 @@ impl DrawEngine {
             snap: super::MIDPOINT_SNAP_PX / self.camera.scale,
             exact: self.alt_held,
             angle_locked,
+            pixel: 1.0 / self.camera.scale,
         };
         let scene = &self.scene;
         anchor_for_drop(

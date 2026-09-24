@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::export::json::{elements_from_json, scene_to_json};
+use crate::scene::binding::{anchor, set_anchor, Anchor, End};
 use crate::scene::element::{new_element_id, DrawElement};
 
 pub fn expand_for_copy(elements: &[DrawElement], ids: &HashSet<String>) -> Vec<DrawElement> {
@@ -106,8 +107,16 @@ pub fn materialize(
                     .unwrap_or_else(new_element_id);
                 element.x += offset_x;
                 element.y += offset_y;
-                element.start_binding = remap_ref(element.start_binding.as_deref(), &id_map);
-                element.end_binding = remap_ref(element.end_binding.as_deref(), &id_map);
+                // An end whose shape was not copied lets go, anchor and all.
+                for end in [End::Start, End::End] {
+                    let copied = anchor(&element, end).and_then(|a| {
+                        Some(Anchor {
+                            element_id: id_map.get(&a.element_id)?.clone(),
+                            ..a
+                        })
+                    });
+                    set_anchor(&mut element, end, copied);
+                }
                 element.container_id = remap_ref(element.container_id.as_deref(), &id_map);
                 element.bound_text_id = remap_ref(element.bound_text_id.as_deref(), &id_map);
                 element.group_ids = group_ids;

@@ -20,7 +20,7 @@
 //! orbit, which is exactly how every such arrow was always drawn.
 
 use crate::camera::Point;
-use crate::scene::element::{Arrowhead, BindMode, DrawElement, DrawElementType};
+use crate::scene::element::{BindMode, DrawElement, DrawElementType};
 use crate::scene::geometry::{
     is_transparent, normalize_rect, rotation_center, to_element_local, within_shape,
 };
@@ -30,9 +30,6 @@ use crate::scene::geometry::{
 pub const BASE_BINDING_GAP: f64 = 5.0;
 /// The gap in front of a shape with the default 2px stroke. See [`binding_gap`].
 pub const BINDING_GAP: f64 = 6.0;
-/// Excalidraw's `BASE_ARROW_MIN_LENGTH` (`binding.ts:117`): an orbiting arrow shorter than
-/// this gives up on the outline and sits on its anchor instead, rather than inverting.
-pub const BASE_ARROW_MIN_LENGTH: f64 = 10.0;
 pub const LABEL_PADDING: f64 = 8.0;
 
 /// How much of a shape's shorter side the gap may take.
@@ -58,6 +55,13 @@ const DIAGONAL_INSET_SHARE: f64 = 0.1;
 /// How much of a shape's shorter side the midpoint snap may reach across. See
 /// [`midpoint_snap_radius`].
 const MIDPOINT_SNAP_SHARE_OF_SIDE: f64 = 0.25;
+
+/// An arrow narrower and shorter than this, in screen pixels, has no direction yet — it is
+/// the press that starts one. Its end anchors exactly where it is: no midpoint snap and no
+/// projection, both of which need a direction to mean anything. Excalidraw's is 3 scene
+/// units (`packages/element/src/utils.ts:706-708`); in pixels here so it means the same
+/// thing at every zoom.
+const DEGENERATE_ARROW_PX: f64 = 3.0;
 
 pub fn is_linear_element(element: &DrawElement) -> bool {
     matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow)
@@ -309,16 +313,6 @@ pub fn binding_gap(shape: &DrawElement) -> f64 {
     base.min(side * GAP_SHARE_OF_SIDE)
 }
 
-/// How much [`binding_gap`] was scaled down for this shape: 1 for anything drawn at an
-/// ordinary size. Distances that only make sense relative to the gap scale with it.
-fn gap_scale(shape: &DrawElement) -> f64 {
-    let base = BASE_BINDING_GAP + shape.stroke_width.max(0.0) / 2.0;
-    if base <= 0.0 {
-        return 1.0;
-    }
-    (binding_gap(shape) / base).clamp(0.0, 1.0)
-}
-
 /// How far from one of `shape`'s side midpoints a drop still snaps onto it.
 ///
 /// `radius` is the host's reach in world units; it is capped to a share of the shape so
@@ -342,6 +336,13 @@ pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
         at(rect.x, rect.y + rect.height / 2.0),
         at(rect.x + rect.width / 2.0, rect.y),
     ]
+}
+
+/// Whether `p` is inside `shape` itself, filled or not — the test that decides between an
+/// end bound [`BindMode::Inside`] and one in orbit. `isPointInElement`
+/// (`packages/element/src/collision.ts:775-810`).
+pub fn is_inside(shape: &DrawElement, p: Point) -> bool {
+    contains(shape, p, 0.0)
 }
 
 fn contains(shape: &DrawElement, p: Point, grow: f64) -> bool {
@@ -655,6 +656,8 @@ pub struct EndDrop {
     pub exact: bool,
     /// Shift: the segment is held to an angle, so a midpoint snap would break it.
     pub angle_locked: bool,
+    /// The world size of one screen pixel.
+    pub pixel: f64,
 }
 
 /// The side midpoint of `shape` a drop at `pointer` snaps to, if any.
@@ -723,7 +726,9 @@ fn projected_anchor<'a>(
 ///   since orbiting a shape from inside it has no side to arrive on;
 /// - inside the shape, or anywhere near it with Alt: exactly at the drop;
 /// - beside it: in orbit, anchored at the side midpoint it is near, or else where the
-///   arrow's line through the drop meets the shape's projection lines, or else the drop.
+///   arrow's line through the drop meets the shape's projection lines, or else the drop —
+///   the drop itself, always, for an arrow with no length yet;
+/// - with Shift held, the far end's orbit anchor also moves onto the held angle.
 pub fn anchor_for_drop<'a>(
     candidates: impl Iterator<Item = &'a DrawElement>,
     lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
@@ -759,23 +764,53 @@ pub fn anchor_for_drop<'a>(
     if drop.exact || contains(hit, pointer, 0.0) {
         return (Some(at(BindMode::Inside, pointer)), None);
     }
-    let focus = (!drop.angle_locked)
-        .then(|| snapped_midpoint(hit, pointer, drop.snap))
+    let reach = DEGENERATE_ARROW_PX * drop.pixel;
+    let directed = arrow.width.abs() >= reach || arrow.height.abs() >= reach;
+    let focus = directed
+        .then(|| {
+            (!drop.angle_locked)
+                .then(|| snapped_midpoint(hit, pointer, drop.snap))
+                .flatten()
+                .or_else(|| projected_anchor(arrow, end, hit, pointer, lookup))
+        })
         .flatten()
-        .or_else(|| projected_anchor(arrow, end, hit, pointer, lookup))
         .unwrap_or(pointer);
-    (Some(at(BindMode::Orbit, focus)), None)
+    let other = drop
+        .angle_locked
+        .then(|| reprojected_other(arrow, end, lookup))
+        .flatten();
+    (Some(at(BindMode::Orbit, focus)), other)
+}
+
+/// The far end's orbit anchor moved onto the arrow's held angle.
+///
+/// With Shift held the dragged end is placed on an angle from the far end — but an
+/// orbiting far end is drawn toward its anchor, not toward where it happens to be, so an
+/// anchor off that line bends the arrow off the angle it was held to. Re-projecting it
+/// from the far end's current point puts it back on the line. Excalidraw's `angleLocked`
+/// branch (`packages/element/src/binding.ts:933-950`). An end sitting inside its shape is
+/// exactly where it was put, and stays.
+fn reprojected_other<'a>(
+    arrow: &DrawElement,
+    end: End,
+    lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
+) -> Option<Anchor> {
+    let far = end.other();
+    let other = anchor(arrow, far).filter(|a| a.mode == BindMode::Orbit)?;
+    let shape = lookup(&other.element_id).filter(|s| !s.is_deleted)?;
+    let points = crate::selection::linear::world_points(arrow);
+    let endpoint = *match far {
+        End::Start => points.first(),
+        End::End => points.last(),
+    }?;
+    let focus = projected_anchor(arrow, far, shape, endpoint, lookup).unwrap_or(endpoint);
+    Some(Anchor {
+        fixed_point: fixed_point_at(shape, focus),
+        ..other
+    })
 }
 
 // ------------------------------------------------------------------------- resolving
-
-fn has_head(arrow: &DrawElement, end: End) -> bool {
-    let which = match end {
-        End::Start => "start",
-        End::End => "end",
-    };
-    crate::render::default_arrowhead(arrow, which) != Arrowhead::None
-}
 
 /// One bound end: its anchor and the live shape it is anchored to.
 struct Bound<'a> {
@@ -793,85 +828,67 @@ fn bound<'a>(
     Some(Bound { anchor, shape })
 }
 
-/// Where one bound end is drawn. `updateBoundPoint` (`binding.ts:1938-2094`).
-///
-/// An inside end is its anchor. An orbiting end runs from its anchor toward whatever the
-/// arrow comes from — the far anchor for a straight arrow, the neighbouring point of a
-/// bent one — and stops where that line leaves the outline, a gap clear of it. Excalidraw's
-/// escape hatches keep an arrow from turning itself inside out when the shapes crowd each
-/// other: when this end's outline point falls inside a similar-sized far shape, or the
-/// arrow would be shorter than [`BASE_ARROW_MIN_LENGTH`], the end drops onto its anchor
-/// (or keeps the outline point, for the end without a head, so the arrow still reads).
-fn resolve_end(
-    arrow: &DrawElement,
-    points: &[Point],
-    end: End,
-    this: &Bound<'_>,
-    other: Option<&Bound<'_>>,
-) -> Point {
-    let focus = focus_point(this.shape, this.anchor.fixed_point);
-    if this.anchor.mode == BindMode::Inside {
-        return focus;
-    }
+/// Where the line an orbiting end is drawn along comes from: the far anchor for a
+/// straight arrow, the neighbouring point of a bent one.
+fn aim(points: &[Point], end: End, other: Option<&Bound<'_>>) -> Point {
     let last = points.len() - 1;
     let neighbour = match end {
         End::Start => points[1.min(last)],
         End::End => points[last.saturating_sub(1)],
     };
-    let other_focus = other.map(|o| focus_point(o.shape, o.anchor.fixed_point));
-    let aim = if points.len() == 2 {
-        other_focus.unwrap_or(neighbour)
-    } else {
-        neighbour
-    };
-
-    let gap = binding_gap(this.shape);
-    let outline = nearest_to(outline_crossings(this.shape, focus, aim, gap), aim);
-    let other_outline = other.and_then(|o| {
-        nearest_to(
-            outline_crossings(o.shape, focus, aim, binding_gap(o.shape)),
-            focus,
-        )
-    });
-
-    let (start_head, end_head) = (has_head(arrow, End::Start), has_head(arrow, End::End));
-    let this_head = match end {
-        End::Start => start_head,
-        End::End => end_head,
-    };
-    let fallback = if (!start_head && !end_head) || this_head {
-        focus
-    } else {
-        outline.unwrap_or(focus)
-    };
-
-    if let (Some(o), Some(p)) = (other, outline) {
-        let area = |s: &DrawElement| (s.width * s.height).abs();
-        if area(o.shape) < area(this.shape) * 2.0 && contains(o.shape, p, binding_gap(o.shape)) {
-            return fallback;
-        }
+    match other {
+        Some(o) if points.len() == 2 => focus_point(o.shape, o.anchor.fixed_point),
+        _ => neighbour,
     }
+}
 
-    let other_target = match other {
-        Some(_) => other_outline.or(other_focus).unwrap_or(neighbour),
-        None => neighbour,
-    };
-    let too_short = distance(other_target, outline.unwrap_or(focus))
-        <= BASE_ARROW_MIN_LENGTH * gap_scale(this.shape);
-    if other.is_none() {
-        return if too_short {
-            focus
-        } else {
-            outline.unwrap_or(focus)
-        };
+/// Where one bound end is drawn. `updateBoundPoint` (`binding.ts:1938-2094`).
+///
+/// An inside end is its anchor. An orbiting end runs from its anchor toward [`aim`] and
+/// stops where that line leaves the outline, a gap clear of it — or stays on its anchor
+/// when the line never leaves, which is an anchor the person put outside the shape.
+///
+/// Excalidraw also sends an orbiting end *onto* its anchor when the arrow gets short or
+/// its outline point falls inside the far shape (`binding.ts:2026-2083`). Its anchors
+/// mostly sit on the outline, so there that is a small step; an anchor at a shape's
+/// centre — every arrow bound before anchors existed — made it a jump deep into the
+/// shape. Here an orbiting end never goes inside its shape, and the one thing those rules
+/// guard against, an arrow turning inside out, is handled by [`resolve_endpoints`].
+///
+/// Also says whether an orbiting end found its outline.
+fn resolve_end(
+    points: &[Point],
+    end: End,
+    this: &Bound<'_>,
+    other: Option<&Bound<'_>>,
+) -> (Point, bool) {
+    let focus = focus_point(this.shape, this.anchor.fixed_point);
+    if this.anchor.mode == BindMode::Inside {
+        return (focus, false);
     }
-    if too_short {
-        return fallback;
+    let aim = aim(points, end, other);
+    match nearest_to(
+        outline_crossings(this.shape, focus, aim, binding_gap(this.shape)),
+        aim,
+    ) {
+        Some(outline) => (outline, true),
+        None => (focus, false),
     }
-    outline.unwrap_or(focus)
 }
 
 /// Both ends of `element` as its bindings put them, or `None` when neither end is bound.
+///
+/// # Never inside out
+///
+/// Each orbiting end sits on its shape's outline, facing the other. That is right while
+/// the shapes are apart. Once they close on each other the two outline points cross over:
+/// the tail sits beyond the head and the arrow runs **backwards**, through both shapes.
+/// Measured on excalidraw.com with one rectangle slid onto another, the arrow went 228
+/// long, 128, 48, then 0 and stayed 0 — never entering either shape. So a straight arrow
+/// orbiting at both ends collapses onto its tail when it would run against the line
+/// between its anchors, or when neither end can leave its shape — each anchor inside the
+/// other shape, where no arrow fits at all. One end leaving is a shape nested inside a
+/// larger one, and draws.
 fn resolve_endpoints<'a>(
     element: &DrawElement,
     lookup: &dyn Fn(&str) -> Option<&'a DrawElement>,
@@ -887,14 +904,28 @@ fn resolve_endpoints<'a>(
     }
     let first = points[0];
     let last = points[points.len() - 1];
-    let next_start = start
+    let (next_start, start_left) = start
         .as_ref()
-        .map(|b| resolve_end(element, &points, End::Start, b, end.as_ref()))
-        .unwrap_or(first);
-    let next_end = end
+        .map(|b| resolve_end(&points, End::Start, b, end.as_ref()))
+        .unwrap_or((first, false));
+    let (next_end, end_left) = end
         .as_ref()
-        .map(|b| resolve_end(element, &points, End::End, b, start.as_ref()))
-        .unwrap_or(last);
+        .map(|b| resolve_end(&points, End::End, b, start.as_ref()))
+        .unwrap_or((last, false));
+    if let (Some(s), Some(e)) = (&start, &end) {
+        let orbit = |b: &Bound<'_>| b.anchor.mode == BindMode::Orbit;
+        if points.len() == 2 && orbit(s) && orbit(e) {
+            let (fs, fe) = (
+                focus_point(s.shape, s.anchor.fixed_point),
+                focus_point(e.shape, e.anchor.fixed_point),
+            );
+            let run = (next_end.x - next_start.x) * (fe.x - fs.x)
+                + (next_end.y - next_start.y) * (fe.y - fs.y);
+            if run < 0.0 || (!start_left && !end_left) {
+                return Some((next_start, next_start));
+            }
+        }
+    }
     Some((next_start, next_end))
 }
 

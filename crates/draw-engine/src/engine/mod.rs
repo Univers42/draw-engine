@@ -456,6 +456,9 @@ impl DrawEngine {
         }
         self.tool = tool;
         self.events.tool = Some(tool);
+        // The arrow tool's hover suggestion goes with it.
+        self.binding_highlight = None;
+        self.binding_point = None;
         // Picking any tool but select puts down whatever was being held.
         // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
         // style panel: it offers the union of what the active tool can style and what the
