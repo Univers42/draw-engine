@@ -262,6 +262,128 @@ mod unbind {
     }
 }
 
+/// The height a bind remembers for an unbind to give back lives only as long as the oracle's
+/// `originalContainerCache` entry does: a resize forgets it (`handleBindTextResize`,
+/// `packages/element/src/textElement.ts@1118751f:174`), and a label that grows its shape
+/// taller makes the new height the one remembered (`redrawTextBoundingBox`, `:119-127`).
+mod remembered_height {
+    use super::*;
+
+    /// A 60 × 30 box a two-line label has grown taller, selected.
+    fn grown() -> DrawEngine {
+        let mut engine = selected(
+            vec![
+                with_id(box_at(0.0, 0.0, 60.0, 30.0), "box"),
+                words("t", 400.0, 300.0, "one two three four five"),
+                with_id(box_at(300.0, 0.0, 50.0, 50.0), "other"),
+            ],
+            &["box", "t"],
+        );
+        engine.bind_text();
+        assert!(element(&engine, "box").height > 30.0, "grown to hold it");
+        engine
+    }
+
+    /// Presses at `from` (world, which is screen at the test camera) and drags by `by`.
+    fn drag(engine: &mut DrawEngine, from: (f64, f64), by: (f64, f64)) {
+        engine.begin_pointer(from.0, from.1, false, false);
+        for step in 1..=4 {
+            let t = f64::from(step) / 4.0;
+            engine.move_pointer(from.0 + by.0 * t, from.1 + by.1 * t, false, false);
+        }
+        engine.end_pointer();
+    }
+
+    fn unbound_height(mut engine: DrawEngine) -> f64 {
+        engine.select(vec!["box".into()]);
+        engine.unbind_text();
+        assert_eq!(element(&engine, "t").container_id, None);
+        element(&engine, "box").height
+    }
+
+    #[test]
+    fn a_shape_resized_by_its_handle_keeps_its_new_height() {
+        let mut engine = grown();
+        let shape = element(&engine, "box");
+        // The south-east handle, drawn the selection's padding out from the corner.
+        let corner = (shape.x + shape.width + 8.0, shape.y + shape.height + 8.0);
+        drag(&mut engine, corner, (100.0, 200.0));
+        let resized = element(&engine, "box").height;
+        assert!(resized > shape.height + 100.0, "resized to {resized}");
+
+        assert_close(unbound_height(engine), resized);
+    }
+
+    #[test]
+    fn a_shape_resized_with_others_keeps_its_new_height() {
+        let mut engine = grown();
+        engine.select(vec!["box".into(), "other".into()]);
+        let shape = element(&engine, "box");
+        let bottom = shape.y + shape.height.max(50.0);
+        drag(&mut engine, (350.0 + 8.0, bottom + 8.0), (0.0, 200.0));
+        let resized = element(&engine, "box").height;
+        assert!(resized > shape.height + 100.0, "resized to {resized}");
+
+        assert_close(unbound_height(engine), resized);
+    }
+
+    /// The oracle's flip is a resize (`resizeMultipleElements`, `actionFlip.ts@1118751f:131-148`).
+    #[test]
+    fn a_flipped_shape_keeps_its_height() {
+        let mut engine = grown();
+        engine.select(vec!["box".into()]);
+        let height = element(&engine, "box").height;
+        engine.flip_selection(FlipAxis::Vertical);
+
+        assert_close(unbound_height(engine), height);
+    }
+
+    #[test]
+    fn a_shape_its_label_grew_later_keeps_that_height() {
+        let mut engine = grown();
+        let bound = element(&engine, "box").height;
+        engine.select(vec!["box".into()]);
+        engine.step_font_size(true);
+        let taller = element(&engine, "box").height;
+        assert!(taller > bound, "the bigger label grows it");
+
+        assert_close(unbound_height(engine), taller);
+    }
+
+    /// Moved, it is the same shape: the height from before the bind still comes back.
+    #[test]
+    fn a_moved_shape_still_takes_its_height_back() {
+        let mut engine = grown();
+        engine.select(vec!["box".into()]);
+        engine.nudge_selection(40.0, 40.0);
+
+        assert_close(unbound_height(engine), 30.0);
+    }
+
+    /// Resizing through an edge leaves a negative extent; growth makes it upright again,
+    /// from its top edge, and the height given back keeps it there.
+    #[test]
+    fn a_mirrored_shape_is_given_back_where_it_stood() {
+        let mut engine = selected(
+            vec![
+                // y = 100 upwards: it covers 80..100.
+                with_id(box_at(0.0, 100.0, 200.0, -20.0), "box"),
+                words("t", 400.0, 300.0, "one two three four five"),
+            ],
+            &["box", "t"],
+        );
+        engine.bind_text();
+        assert!(element(&engine, "box").height > 20.0, "grown to hold it");
+
+        engine.unbind_text();
+
+        let shape = element(&engine, "box");
+        let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
+        assert_close(rect.y, 80.0);
+        assert_close(rect.y + rect.height, 100.0);
+    }
+}
+
 mod wrap {
     use super::*;
 

@@ -225,10 +225,7 @@ impl DrawEngine {
                     laid.text.y = at.y;
                 }
             }
-            if let Some(container) = laid.container {
-                self.scene.put(container);
-            }
-            self.scene.put(laid.text);
+            self.put_laid(laid);
         }
         self.apply_bindings();
         if drafting {

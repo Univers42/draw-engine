@@ -668,10 +668,7 @@ impl DrawEngine {
                 // A new size or font is a new box, and a label that no longer fits grows
                 // its shape: `redrawTextBoundingBox(newTextElement, container)` (`:174`).
                 let laid = self.laid_out(&element);
-                if let Some(container) = laid.container {
-                    self.scene.put(container);
-                }
-                self.scene.put(laid.text);
+                self.put_laid(laid);
             } else {
                 self.scene.put(element);
             }

@@ -15,7 +15,7 @@ use crate::scene::{
     create_element, is_bindable_element, is_linear_element, resolved_line_height, source_text,
     DrawElement, DrawElementType, Geometry, TextAlign, VerticalAlign,
 };
-use crate::text::layout;
+use crate::text::layout::{self, Laid};
 
 /// `isTextBindableContainer` (`packages/element/src/typeChecks.ts@1118751f:240-253`): the
 /// three shapes and the arrow — the oracle's sticky note is a kind this engine does not
@@ -79,16 +79,15 @@ impl DrawEngine {
         };
         let mut container = container;
         container.bound_text_id = Some(text.id.clone());
-        self.original_container_heights
-            .insert(container.id.clone(), container.height);
+        let original_height = container.height.abs();
         let label = as_label(text, &container.id);
         let (label_id, container_id) = (label.id.clone(), container.id.clone());
         self.scene.put(container);
         let laid = self.laid_out(&label);
-        if let Some(grown) = laid.container {
-            self.scene.put(grown);
-        }
-        self.scene.put(laid.text);
+        self.put_laid(laid);
+        // Over what growing it wrote: the height from before the bind (`:204-208`).
+        self.original_container_heights
+            .insert(container_id.clone(), original_height);
         // `pushTextAboveContainer` (`:218-236`).
         self.scene
             .place_above(std::slice::from_ref(&label_id), &container_id);
@@ -100,8 +99,8 @@ impl DrawEngine {
 
     /// "Unbind text" (`actionUnbindText.perform`, `:69-121`): each selected shape's label
     /// is free text again — its typed lines, measured as they are, where it stood — and
-    /// the shape takes back the height it had before a text was bound into it this
-    /// session, or keeps the one it has.
+    /// the shape takes back the height it remembers ([`Self::put_laid`],
+    /// [`Self::forget_original_heights`]), or keeps the one it has.
     ///
     /// Divergence: an arrow keeps its geometry. The oracle writes the remembered height
     /// onto any container, and an arrow's extent is its points, which would contradict it.
@@ -137,10 +136,13 @@ impl DrawEngine {
             text.x = at.x;
             text.y = at.y;
             container.bound_text_id = None;
-            // `resetOriginalContainerCache` whatever the shape.
+            // `resetOriginalContainerCache` whatever the shape. The height is remembered
+            // upright and given back with the sign the shape has now: one growth turned
+            // upright stays on the edge it grew from. The oracle's shapes are never
+            // mirrored, so it never meets the case.
             if let Some(height) = self.original_container_heights.remove(&container.id) {
                 if !is_linear_element(&container) {
-                    container.height = height;
+                    container.height = height.copysign(container.height);
                 }
             }
             self.scene.put(container);
@@ -223,15 +225,46 @@ impl DrawEngine {
             self.scene
                 .place_above(std::slice::from_ref(&text_id), &container_id);
             let laid = self.laid_out(&as_label(text, &container_id));
-            if let Some(grown) = laid.container {
-                self.scene.put(grown);
-            }
-            self.scene.put(laid.text);
+            self.put_laid(laid);
             containers.push(container_id);
         }
         self.apply_bindings();
         self.set_selection(containers);
         self.push_history();
         self.request_draw();
+    }
+
+    /// Writes a text [`layout::layout_text`] laid out, and the shape it grew. A shape its
+    /// label grew taller keeps that height when the label is let go: `redrawTextBoundingBox`
+    /// remembers it (`packages/element/src/textElement.ts@1118751f:119-127`).
+    ///
+    /// Not the text editor's growth, which the oracle's editor leaves unremembered
+    /// (`wysiwyg/textWysiwyg.tsx@1118751f:331-357`).
+    pub(super) fn put_laid(&mut self, laid: Laid) {
+        if let Some(container) = laid.container {
+            let taller = self
+                .scene
+                .get(&container.id)
+                .is_some_and(|before| container.height > before.height.abs());
+            if taller {
+                self.original_container_heights
+                    .insert(container.id.clone(), container.height);
+            }
+            self.scene.put(container);
+        }
+        self.scene.put(laid.text);
+    }
+
+    /// A shape resized — by a handle, with others, or flipped, which the oracle does by
+    /// resizing — keeps its new height when its label is let go: `handleBindTextResize`
+    /// forgets the remembered one (`packages/element/src/textElement.ts@1118751f:174`).
+    pub(super) fn forget_original_heights<I>(&mut self, ids: I)
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        for id in ids {
+            self.original_container_heights.remove(id.as_ref());
+        }
     }
 }

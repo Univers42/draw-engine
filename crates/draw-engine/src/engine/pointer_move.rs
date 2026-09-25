@@ -67,6 +67,7 @@ impl DrawEngine {
                 ) {
                     self.scene.put(next);
                 }
+                self.forget_original_heights(ids);
                 self.release_ends_outside(ids);
                 // Bound arrows have to keep up with the shapes they point at. Without
                 // this they held their old attachment for the whole gesture and jumped
@@ -645,6 +646,7 @@ impl DrawEngine {
             set_anchor(&mut element, End::End, None);
         }
         self.scene.put(element);
+        self.forget_original_heights([id]);
         self.apply_bindings();
         self.request_draw();
     }
