@@ -59,7 +59,7 @@ export interface KeyEngine {
 
 export interface KeySession {
   engine: KeyEngine;
-  callbacks: Pick<HostCallbacks, "onToolLockChange" | "onFlowchartReveal">;
+  callbacks: Pick<HostCallbacks, "onToolLockChange" | "onFlowchartReveal" | "onFlowchartCreatingChange">;
   spaceHeld: boolean;
 }
 
@@ -220,6 +220,7 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
   if (event.key === "Escape") {
     engine.cancelPointer();
     engine.flowchartCancel();
+    session.callbacks.onFlowchartCreatingChange?.(false);
     return "pass";
   }
   // Enter ends a path being placed, the way Excalidraw's does — both keys run their
@@ -241,6 +242,7 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
       // before Ctrl is ever released, so the host reveals the pending preview itself.
       engine.flowchartCreate(flowchartDirection);
       session.callbacks.onFlowchartReveal?.();
+      session.callbacks.onFlowchartCreatingChange?.(true);
       return "prevent";
     }
     if (event.altKey) {
@@ -272,5 +274,10 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
 export function dispatchKeyUp(session: KeySession, event: KeyEvent): void {
   const { engine } = session;
   if (!event.altKey) engine.flowchartNavigationEnd();
-  if (!(event.metaKey || event.ctrlKey)) engine.flowchartCommit();
+  if (!(event.metaKey || event.ctrlKey)) {
+    engine.flowchartCommit();
+    // Unconditional, like the commit call above: a no-op commit leaves isCreatingFlowchart
+    // already false, so telling the host "not creating" again is harmless.
+    session.callbacks.onFlowchartCreatingChange?.(false);
+  }
 }

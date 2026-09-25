@@ -90,9 +90,14 @@ function recording(
 describe("dispatchKeyDown", () => {
   it("cancels the pointer and any pending flowchart on Escape without preventDefault", () => {
     const { engine, calls } = recording();
-    const result = dispatchKeyDown(session(engine), event({ key: "Escape" }));
+    const notified: boolean[] = [];
+    const result = dispatchKeyDown(
+      session(engine, { callbacks: { onFlowchartCreatingChange: (creating) => notified.push(creating) } }),
+      event({ key: "Escape" }),
+    );
     assert.equal(result, "pass");
     assert.deepEqual(calls, ["cancelPointer", "flowchartCancel"]);
+    assert.deepEqual(notified, [false]);
   });
 
   /**
@@ -292,13 +297,20 @@ describe("dispatchKeyDown", () => {
     for (const [key, direction] of cases) {
       const { engine, calls } = recording();
       let revealed = 0;
+      const notified: boolean[] = [];
       const result = dispatchKeyDown(
-        session(engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
+        session(engine, {
+          callbacks: {
+            onFlowchartReveal: () => revealed++,
+            onFlowchartCreatingChange: (creating) => notified.push(creating),
+          },
+        }),
         event({ key, ctrlKey: true }),
       );
       assert.equal(result, "prevent");
       assert.deepEqual(calls, [`flowchartCreate:${direction}`]);
       assert.equal(revealed, 1);
+      assert.deepEqual(notified, [true]);
     }
   });
 
@@ -351,8 +363,13 @@ describe("dispatchKeyDown", () => {
 describe("dispatchKeyUp", () => {
   it("commits the pending flowchart once every modifier that could still be creating is up", () => {
     const { engine, calls } = recording();
-    dispatchKeyUp(session(engine), event({ key: "Control" }));
+    const notified: boolean[] = [];
+    dispatchKeyUp(
+      session(engine, { callbacks: { onFlowchartCreatingChange: (creating) => notified.push(creating) } }),
+      event({ key: "Control" }),
+    );
     assert.deepEqual(calls, ["flowchartNavigationEnd", "flowchartCommit"]);
+    assert.deepEqual(notified, [false]);
   });
 
   it("does not commit while Ctrl/Cmd is still held", () => {
