@@ -398,6 +398,38 @@ fn joining(c: &mut Criterion) {
     group.finish();
 }
 
+/// A peer's patch that moved the stack, as every shape a peer draws into a frame sends:
+/// the order of every live id, one of them moved. Should cost the board, once.
+fn remote(c: &mut Criterion) {
+    let mut group = c.benchmark_group("remote_patch");
+    group.sample_size(20);
+    for n in [1000usize, 5000, 20000] {
+        let setup = move || {
+            let mut engine = engine_of(n);
+            let mut order: Vec<String> = engine.get_scene().into_iter().map(|el| el.id).collect();
+            let moved = order.remove(0);
+            order.insert(n - 1, moved);
+            let patch = serde_json::json!({
+                "type": "osidraw",
+                "version": 1,
+                "elements": [],
+                "order": order,
+            })
+            .to_string();
+            let _ = engine.drain_events();
+            (engine, patch)
+        };
+        group.bench_function(format!("order_of_{n}"), |b| {
+            b.iter_batched_ref(
+                setup,
+                |(engine, patch)| black_box(engine.apply_remote_patch(patch)),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     duplicate,
@@ -405,6 +437,7 @@ criterion_group!(
     joining,
     moving,
     painting,
+    remote,
     reordering,
     selection_style
 );

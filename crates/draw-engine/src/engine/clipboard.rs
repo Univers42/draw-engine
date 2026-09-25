@@ -280,14 +280,16 @@ impl DrawEngine {
                         }
                     }
                 }
-                for element in self.scene.ordered_cloned() {
-                    if element.is_deleted {
-                        continue;
-                    }
-                    if !ids.iter().any(|id| *id == element.id) {
-                        live.push(element);
-                    }
-                }
+                // What the order leaves out stays on top. Told by a set: searched in the
+                // list once per element, a peer's order cost the board squared — 533ms on
+                // 20,000 shapes — and every shape a peer draws into a frame sends one.
+                let listed: HashSet<&str> = ids.iter().copied().collect();
+                live.extend(
+                    self.scene
+                        .iter_ordered()
+                        .filter(|element| !listed.contains(element.id.as_str()))
+                        .cloned(),
+                );
                 self.scene.set_order(live);
                 changed = true;
             }
