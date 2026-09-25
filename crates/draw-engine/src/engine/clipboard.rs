@@ -77,9 +77,12 @@ impl DrawEngine {
         // Only a step that changed something is recorded. A click that selected, or a
         // commit after a peer's patch and nothing of ours, used to push an entry anyway —
         // one that undid nothing and threw the redo stack away.
-        if let Some(step) = self.take_local_step() {
+        let selected = std::rc::Rc::new(self.selection_state());
+        if let Some(step) = self.take_local_step(&selected) {
             self.history.push(step);
         }
+        // The next step begins with what this one left selected.
+        self.settled_selection = selected;
         self.style_preview.clear();
         self.touch_style();
         self.emit_scene_change();
@@ -108,14 +111,15 @@ impl DrawEngine {
         let _ = self.scene.take_order_baseline();
         self.remote_refused.clear();
         self.history.reset(super::stamp::HistoryEntry::default());
+        self.settle_selection();
     }
 
-    fn after_history_step(&mut self) {
-        // Through `set_selection`, so the group being edited goes with what was held.
-        // The step may have taken that group away (the oracle then drops it,
-        // `packages/element/src/delta.ts:806-818`); cleared behind its back, it named a
-        // group nothing carried, and no click anywhere on the board expanded to a group.
-        self.set_selection(Vec::new());
+    fn after_history_step(&mut self, selected: &super::stamp::SelectionState) {
+        // What the step recorded as selected, through `set_selection`: the step may have
+        // taken the group being edited away (the oracle then drops it,
+        // `packages/element/src/delta.ts:806-818`); kept behind its back, it named a group
+        // nothing carried, and no click anywhere on the board expanded to a group.
+        self.restore_selection(selected);
         // A drag carries on over the scene the step left, and what it remembered of the
         // arrow under it — the far end's binding as it found it — is of the scene before.
         self.clear_binding_suggestion();
@@ -132,7 +136,7 @@ impl DrawEngine {
         let step = self.history.current().clone();
         self.history.undo();
         self.replay_step(&step, false);
-        self.after_history_step();
+        self.after_history_step(&step.selection.0);
     }
 
     pub fn redo(&mut self) {
@@ -140,7 +144,7 @@ impl DrawEngine {
             return;
         };
         self.replay_step(&step, true);
-        self.after_history_step();
+        self.after_history_step(&step.selection.1);
     }
 
     pub fn copy_selection(&mut self) -> Option<String> {

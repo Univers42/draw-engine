@@ -232,6 +232,11 @@ impl Scene {
         self.baseline.keys().cloned().collect()
     }
 
+    /// Whether anything — an element or the z-order — changed since the last commit.
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.baseline.is_empty() || self.order_baseline.is_some()
+    }
+
     /// Whether the element was created since the last commit — a draft, a label being
     /// typed — and so can be dropped without a trace, rather than deleted.
     pub(crate) fn created_since_commit(&self, id: &str) -> bool {

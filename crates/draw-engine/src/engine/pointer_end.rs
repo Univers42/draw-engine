@@ -18,6 +18,8 @@ const TEXT_BOX_MIN_DRAG: f64 = 12.0;
 impl DrawEngine {
     pub fn end_pointer(&mut self) {
         self.end_pointer_step();
+        self.pointer_open = false;
+        self.settle_selection();
         self.refresh_live();
     }
 
@@ -391,6 +393,8 @@ impl DrawEngine {
 
     pub fn cancel_pointer(&mut self) {
         self.cancel_pointer_step();
+        self.pointer_open = false;
+        self.settle_selection();
         self.refresh_live();
     }
 

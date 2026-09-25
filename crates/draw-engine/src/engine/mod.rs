@@ -208,6 +208,11 @@ pub struct DrawEngine {
     ctrl_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
+    /// The selection the next step of history begins with: as the last gesture or command
+    /// left it. See `stamp.rs`, "Undo puts the selection back".
+    settled_selection: std::rc::Rc<stamp::SelectionState>,
+    /// Between a press and its release, when what the press selects is not settled yet.
+    pointer_open: bool,
     /// A peer's copy of an element with an uncommitted local change, refused because a
     /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
     /// it if the gesture came to nothing. See `stamp.rs`.
@@ -279,6 +284,8 @@ impl DrawEngine {
             ctrl_held: false,
             history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
             history_seq: 0,
+            settled_selection: std::rc::Rc::default(),
+            pointer_open: false,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
             peers: Vec::new(),
@@ -534,8 +541,14 @@ impl DrawEngine {
         //
         // Going back to select is how a person picks up what they have just made, so that
         // one direction keeps it.
+        //
+        // What was held stays what the next step begins with: the oracle's `setActiveTool`
+        // captures nothing (`App.tsx@1118751f:6110-6256`), so undoing the shape the new tool
+        // draws selects again what the tool put down. See `stamp.rs`.
         if tool != DrawTool::Select {
+            let settled = std::rc::Rc::clone(&self.settled_selection);
             self.clear_selection();
+            self.settled_selection = settled;
         }
     }
 
@@ -609,6 +622,7 @@ impl DrawEngine {
             }
         }
         self.revalidate_editing();
+        self.settle_selection();
         self.touch_style();
         self.events.selection = Some(self.get_selection());
         self.request_draw();

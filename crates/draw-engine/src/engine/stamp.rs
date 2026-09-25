@@ -53,6 +53,27 @@
 //! follow any edit. Whole-scene snapshots carried every peer edit that had arrived before
 //! the commit, and restoring one reverted them — with fresh stamps, now, that revert
 //! would have been sent to everyone.
+//!
+//! # Undo puts the selection back
+//!
+//! A step also records what was selected, and the group being edited, when it began and
+//! when it was committed; undo selects the first again and redo the second, keeping what
+//! is still on the board. The oracle's entries carry the same in their app-state delta
+//! (`AppStateDelta`, `packages/element/src/delta.ts@1118751f:526-1015`). Every undo used to
+//! let go of everything, which put the properties panel away under the Ctrl+Z meant to
+//! check what it showed.
+//!
+//! "When it began" is the oracle's store snapshot: the selection as the last gesture or
+//! command left it (`store.ts@1118751f:376-385`, captured at pointer-up,
+//! `App.tsx@1118751f:12451-12464`), never as a press changes it. So a shape dragged from
+//! unselected comes back unselected, as on excalidraw.com. Settled here whenever the
+//! selection changes with no pointer down and nothing pending, at every release, and at
+//! every commit ([`DrawEngine::settle_selection`]).
+//!
+//! A divergence: the oracle also records a change of selection alone as a step
+//! (`history.ts@1118751f:117-137`), so its Ctrl+Z after a click reselects what the click
+//! let go of. Here a step is only recorded when it changed the board, and a click is not
+//! one — undo always undoes an edit.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -69,6 +90,13 @@ pub(crate) struct Change {
     pub after: Option<Rc<DrawElement>>,
 }
 
+/// What was selected, and the group being edited: see "Undo puts the selection back".
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SelectionState {
+    pub ids: HashSet<String>,
+    pub editing: Option<String>,
+}
+
 /// One step of undo history.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HistoryEntry {
@@ -78,6 +106,8 @@ pub(crate) struct HistoryEntry {
     pub changes: Rc<HashMap<String, Change>>,
     /// The z-order before and after, when the step reordered anything.
     pub order: Option<Rc<(Vec<String>, Vec<String>)>>,
+    /// The selection the step began with, and the one it left.
+    pub selection: (Rc<SelectionState>, Rc<SelectionState>),
 }
 
 /// Equal in everything but the stamp.
@@ -102,8 +132,12 @@ fn stamped(mut element: DrawElement, version: u32, now: f64) -> DrawElement {
 
 impl DrawEngine {
     /// Stamps what this commit changed, settles refused peer copies, and returns the
-    /// step to record — `None` when nothing changed.
-    pub(super) fn take_local_step(&mut self) -> Option<HistoryEntry> {
+    /// step to record — `None` when nothing changed. `selected` is what the step leaves
+    /// selected.
+    pub(super) fn take_local_step(
+        &mut self,
+        selected: &Rc<SelectionState>,
+    ) -> Option<HistoryEntry> {
         let baseline = self.scene.take_baseline();
         let order_before = self.scene.take_order_baseline();
         let refused = std::mem::take(&mut self.remote_refused);
@@ -161,7 +195,40 @@ impl DrawEngine {
             seq: self.history_seq,
             changes: Rc::new(changes),
             order: order.map(Rc::new),
+            selection: (Rc::clone(&self.settled_selection), Rc::clone(selected)),
         })
+    }
+
+    /// What is selected now, and the group being edited.
+    pub(super) fn selection_state(&self) -> SelectionState {
+        SelectionState {
+            ids: self.selected_ids.clone(),
+            editing: self.editing_group_id.clone(),
+        }
+    }
+
+    /// Takes the selection as the one the next step begins with — unless a pointer is down
+    /// or a change is pending, when it is still the gesture's or the command's own. See
+    /// "Undo puts the selection back".
+    pub(super) fn settle_selection(&mut self) {
+        if !self.pointer_open && !self.scene.has_pending() {
+            self.settled_selection = Rc::new(self.selection_state());
+        }
+    }
+
+    /// Selects what a step recorded: before it for undo, after it for redo — only what is
+    /// still on the board (`filterSelectedElements`, `delta.ts@1118751f:875-902`), and the
+    /// group being edited only while it holds (`set_selection`, which drops it once the step
+    /// took it away, `delta.ts@1118751f:806-818`).
+    pub(super) fn restore_selection(&mut self, recorded: &SelectionState) {
+        self.editing_group_id = recorded.editing.clone();
+        let live: Vec<String> = recorded
+            .ids
+            .iter()
+            .filter(|id| self.scene.get(id).is_some_and(|el| !el.is_deleted))
+            .cloned()
+            .collect();
+        self.set_selection(live);
     }
 
     /// Gives up this client's uncommitted change to `id`, as if it had not been made: the
