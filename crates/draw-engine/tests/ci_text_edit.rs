@@ -432,6 +432,21 @@ mod ending {
         );
     }
 
+    /// With the autoshape tool nothing is selected when an edit ends, by the keyboard
+    /// or not: the tool stays on through it (`App.tsx@1118751f:6446-6453`).
+    #[test]
+    fn the_autoshape_tool_selects_nothing() {
+        let mut engine = engine_with_measure(vec![box_at(100.0, 100.0, 200.0, 100.0)]);
+        engine.set_tool(DrawTool::AutoShape);
+        open_at(&mut engine, (500.0, 400.0));
+        engine.commit_text_edit("free", true);
+        assert!(engine.get_selection().is_empty(), "a free text");
+        let label = open_at(&mut engine, (200.0, 150.0));
+        assert!(element(&engine, &label).container_id.is_some());
+        engine.commit_text_edit("label", true);
+        assert!(engine.get_selection().is_empty(), "a label");
+    }
+
     /// A text deleted while open — by a host that ends an edit the old way, with
     /// `delete_selection` — ends its session: nothing is left to type into, and undo and
     /// redo work again.

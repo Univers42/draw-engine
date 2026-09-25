@@ -25,6 +25,7 @@
 //! it. Its selection frame and handles are not drawn.
 
 use crate::engine::DrawEngine;
+use crate::interaction::DrawTool;
 use crate::scene::{DrawElement, DrawElementType, TextAlign, VerticalAlign};
 use crate::text::layout::{self, Laid};
 
@@ -152,8 +153,9 @@ impl DrawEngine {
     ///
     /// `via_keyboard` — Escape or Ctrl/Cmd+Enter — leaves the label's shape selected, or
     /// the text, so the keyboard carries on from it (Enter opens it again); any other
-    /// ending lets go of it, as the oracle's selection is empty then. With the tool locked
-    /// nothing is selected either way.
+    /// ending lets go of it, as the oracle's selection is empty then. With the tool locked,
+    /// or the autoshape tool, which stays on through the edit, nothing is selected either
+    /// way (`App.tsx@1118751f:6446-6453`).
     pub fn commit_text_edit(&mut self, text: &str, via_keyboard: bool) {
         let Some(session) = self.text_session.take() else {
             return;
@@ -165,7 +167,7 @@ impl DrawEngine {
             self.request_draw();
             return;
         };
-        let keep = via_keyboard && !self.tool_locked;
+        let keep = via_keyboard && !self.tool_locked && self.tool != DrawTool::AutoShape;
         if text.trim().is_empty() {
             let container = element.container_id.clone();
             self.remove_emptied_text(&element);
