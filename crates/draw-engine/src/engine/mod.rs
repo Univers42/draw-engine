@@ -703,7 +703,7 @@ impl DrawEngine {
     /// the top rather than nesting a new level inside that group.
     pub fn select_all(&mut self) {
         self.editing_group_id = None;
-        let ids = self.scene.ordered_cloned().into_iter().map(|el| el.id);
+        let ids: Vec<String> = self.scene.iter_ordered().map(|el| el.id.clone()).collect();
         self.set_selection(ids);
     }
 
