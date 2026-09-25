@@ -13,7 +13,7 @@
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::arrow_target_among;
-use crate::selection::{hit_handle, selection_handles, HandleKind};
+use crate::selection::HandleKind;
 
 /// The cursor the host should show. Values are part of the JS contract — append only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,16 +176,8 @@ impl DrawEngine {
                     {
                         return HoverCursor::PointHandle;
                     }
-                } else {
-                    let layout = self.handle_layout();
-                    if let Some(kind) = hit_handle(
-                        &selection_handles(&single, layout),
-                        world.x,
-                        world.y,
-                        layout.hit,
-                    ) {
-                        return resize_cursor(kind, single.angle);
-                    }
+                } else if let Some(kind) = self.resize_handle_at(&single, world) {
+                    return resize_cursor(kind, single.angle);
                 }
             }
         } else if self.selected_ids.len() > 1 {

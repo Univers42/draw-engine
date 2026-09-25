@@ -9,7 +9,11 @@
 //! (:249-324) and `measureText` (`textMeasurements.ts@1118751f:12-27`). The anchors a
 //! free text keeps when its text or its font size changes are `getAdjustedDimensions`
 //! (`newElement.ts@1118751f:393-527`) and `offsetElementAfterFontResize`
-//! (`actionProperties.tsx@1118751f:273-292`).
+//! (`actionProperties.tsx@1118751f:273-292`). What a resize needs on top — the smallest
+//! a text or a shape holding one may become, and a label laid out again in a shape being
+//! resized — is `getMinTextElementWidth`, `getApproxMinLineWidth`,
+//! `getApproxMinLineHeight` (`textMeasurements.ts@1118751f:32-104`) and
+//! `handleBindTextResize` (`textElement.ts@1118751f:155-247`).
 //!
 //! Lines are always wrapped from what was typed ([`source_text`]), never from the lines
 //! drawn last time: re-wrapping drawn lines turns every soft break into a hard one.
@@ -463,4 +467,113 @@ pub fn auto_resize_anchor(prev: &DrawElement, next_width: f64, next_height: f64)
         x: prev.x + (prev.width - next_width) * ax,
         y: prev.y + (prev.height - next_height) * ay,
     }
+}
+
+/// `getMinTextElementWidth` (`textMeasurements.ts@1118751f:46-51`): the narrowest a text's
+/// side can make it — a space, and the padding either side.
+pub fn min_text_width(text: &DrawElement, measure: &Measure) -> f64 {
+    measure
+        .size("", font_of(text), resolved_line_height(text))
+        .0
+        + BOUND_TEXT_PADDING * 2.0
+}
+
+/// The chars `getApproxMinLineWidth` measures when it has none cached for the font
+/// (`textMeasurements.ts@1118751f:29`).
+const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+/// The smallest a shape holding `label` may be resized to, width by height: its widest
+/// char and one line, each with the padding either side (`getApproxMinLineWidth`,
+/// `getApproxMinLineHeight`, `textMeasurements.ts@1118751f:32-44`, `:99-104`).
+///
+/// The chars are measured through the char widths the wrap caches, so a resize, which
+/// asks this on every move, measures them once per font.
+///
+/// Divergence: the oracle's widest char is the widest it has measured in that font so
+/// far (its `charWidth` cache), and the alphabet above only when it has measured none;
+/// here it is always the alphabet's, so the minimum does not depend on what was typed
+/// before.
+pub fn min_container_size(label: &DrawElement, measure: &Measure) -> (f64, f64) {
+    use super::TextMetrics;
+    let font = font_of(label);
+    let line_width = |line: &str| (measure.line_width)(line, font);
+    let metrics = measure.cache.metrics(font, &line_width);
+    let widest = DUMMY_TEXT
+        .chars()
+        .map(|c| metrics.char_width(c))
+        .fold(0.0_f64, f64::max);
+    (
+        widest + BOUND_TEXT_PADDING * 2.0,
+        font.size() * resolved_line_height(label) + BOUND_TEXT_PADDING * 2.0,
+    )
+}
+
+/// Where a box that was `prev`, turned by `angle`, goes when it becomes `width` ×
+/// `height` and the point `keep` of it — fractions of its width and height from its
+/// top-left, turned with it — stays where it was: `getPositionAfterHeightChange`
+/// (`sizeHelpers.ts@1118751f:28-54`) for either axis, and `getResizedOrigin`
+/// (`resizeElements.ts@1118751f:621-727`) with the corner its anchor names. Extents
+/// positive.
+pub fn keep_point(
+    prev: &crate::selection::Geometry,
+    angle: f64,
+    width: f64,
+    height: f64,
+    keep: (f64, f64),
+) -> Point {
+    let (sin, cos) = angle.sin_cos();
+    // From the centre to the kept point, before and after, in the box's own frame.
+    let before = ((keep.0 - 0.5) * prev.width, (keep.1 - 0.5) * prev.height);
+    let after = ((keep.0 - 0.5) * width, (keep.1 - 0.5) * height);
+    let (dx, dy) = (before.0 - after.0, before.1 - after.1);
+    let centre = Point {
+        x: prev.x + prev.width / 2.0 + dx * cos - dy * sin,
+        y: prev.y + prev.height / 2.0 + dx * sin + dy * cos,
+    };
+    Point {
+        x: centre.x - width / 2.0,
+        y: centre.y - height / 2.0,
+    }
+}
+
+/// `handleBindTextResize` (`textElement.ts@1118751f:155-247`): `label` laid out again in
+/// `container`, which a resize has just changed — wrapped from what was typed at its new
+/// room, and the container grown back to hold it from the side the drag holds: `keep`
+/// is the point of it that stays, as [`keep_point`] reads it (the oracle's `"top"` is
+/// `(0.5, 0.0)`, its `"bottom"` `(0.5, 1.0)`).
+///
+/// Through [`layout_text`], so a resize and an edit agree on every line. It differs from
+/// the oracle's in two places:
+/// - lines are wrapped again on every handle, where the oracle keeps them for a plain
+///   north or south one. The room did not change there, so neither do the lines — the
+///   wrap memo answers;
+/// - a label wider than its room widens the container, as [`layout_text`] does — a label
+///   that does not wrap, or a char wider than a narrow ellipse's room. The oracle lets it
+///   hang out.
+pub fn bound_text_resize(
+    label: &DrawElement,
+    container: &DrawElement,
+    keep: (f64, f64),
+    measure: &Measure,
+) -> Laid {
+    let mut laid = layout_text(label, Some(container), measure);
+    let Some(grown) = laid.container.as_mut() else {
+        return laid;
+    };
+    // `layout_text` grows it from its top-left.
+    let rect =
+        crate::scene::normalize_rect(container.x, container.y, container.width, container.height);
+    let before = crate::selection::Geometry {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    };
+    let at = keep_point(&before, container.angle, grown.width, grown.height, keep);
+    grown.x = at.x;
+    grown.y = at.y;
+    let placed = bound_text_position(grown, &laid.text);
+    laid.text.x = placed.x;
+    laid.text.y = placed.y;
+    laid
 }

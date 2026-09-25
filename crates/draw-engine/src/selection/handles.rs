@@ -1,6 +1,6 @@
 use crate::camera::Point;
 use crate::scene::geometry::element_bounds;
-use crate::scene::DrawElement;
+use crate::scene::{DrawElement, DrawElementType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandleKind {
@@ -223,10 +223,17 @@ pub fn selection_corners(element: &DrawElement) -> [Point; 4] {
 /// disagree the user is left aiming at handles that are not drawn: the cardinal handles
 /// used to be hit-testable but never painted, so grabbing the middle of an edge to move a
 /// shape silently resized it instead.
+///
+/// A text shows its corners and its rotation handle only, as the oracle shows every
+/// element on a desktop (`DEFAULT_OMIT_SIDES`, `transformHandles.ts@1118751f:57-62`,
+/// `:112-131`): its sides are taken on the frame line instead ([`side_at`]). Other kinds
+/// keep their side handles above `min_side` — a divergence from the desktop oracle, whose
+/// sides are all taken by the line (`docs/reference/resize.md` › Text and labels).
 pub fn selection_handles(element: &DrawElement, layout: HandleLayout) -> Vec<HandlePoint> {
     let (cx, cy, hw, hh) = world_box(element);
-    let wide = hw * 2.0 > layout.min_side;
-    let tall = hh * 2.0 > layout.min_side;
+    let sides = element.kind != DrawElementType::Text;
+    let wide = sides && hw * 2.0 > layout.min_side;
+    let tall = sides && hh * 2.0 > layout.min_side;
     let hw = hw + layout.handle_offset;
     let hh = hh + layout.handle_offset;
 
@@ -259,6 +266,48 @@ pub fn selection_handles(element: &DrawElement, layout: HandleLayout) -> Vec<Han
 
 pub fn selection_handle_points(element: &DrawElement, rotate_gap: f64) -> Vec<HandlePoint> {
     selection_handles(element, HandleLayout::bare(rotate_gap))
+}
+
+/// The oracle's `SIDE_RESIZING_THRESHOLD` (`packages/common/src/constants.ts@1118751f:276`),
+/// in screen pixels: how far out a text's frame line is drawn, and how near it a press has
+/// to be to take that side.
+pub const SIDE_RESIZING_PX: f64 = 4.0;
+
+/// The point on the element's own outline that `kind` moves, in world space: a corner, or
+/// the middle of a side — where `getResizeOffsetXY` measures a grab from
+/// (`resizeElements.ts@1118751f:497-554`). `None` for the rotation handle, which moves no
+/// edge.
+pub fn handle_edge_point(element: &DrawElement, kind: HandleKind) -> Option<Point> {
+    if kind == HandleKind::Rotate {
+        return None;
+    }
+    let (cx, cy, hw, hh) = world_box(element);
+    let local = handle_local_point(kind, hw, hh);
+    let turned = rotate_point(local.x, local.y, element.angle);
+    Some(Point {
+        x: cx + turned.x,
+        y: cy + turned.y,
+    })
+}
+
+/// Which side of `element` a press at `(wx, wy)` takes by its frame line, for a kind whose
+/// sides have no handle: `resizeTest` (`resizeTest.ts@1118751f:96-121`). The line runs
+/// `reach` outside the box, turned with it, and a press nearer to it than `reach` takes
+/// that side — tested north, east, south, west, as the oracle walks them.
+pub fn side_at(element: &DrawElement, wx: f64, wy: f64, reach: f64) -> Option<HandleKind> {
+    let [nw, ne, se, sw] = selection_corners_padded(element, reach);
+    [
+        (HandleKind::N, nw, ne),
+        (HandleKind::E, ne, se),
+        (HandleKind::S, se, sw),
+        (HandleKind::W, sw, nw),
+    ]
+    .into_iter()
+    .find(|&(_, a, b)| {
+        let distance = crate::scene::geometry::distance_to_segment(wx, wy, a.x, a.y, b.x, b.y);
+        distance == 0.0 || distance < reach
+    })
+    .map(|(kind, _, _)| kind)
 }
 
 /// Which handle, if any, is within `tolerance` of the pointer.

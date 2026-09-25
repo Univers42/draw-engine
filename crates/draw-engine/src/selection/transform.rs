@@ -32,6 +32,22 @@ pub fn resize_element(
     min_size: f64,
     aspect: Option<f64>,
 ) -> Geometry {
+    resize_element_within(element, handle, wx, wy, (min_size, min_size), aspect)
+}
+
+/// [`resize_element`] with a minimum per axis, `(width, height)`: the smallest a shape
+/// holding a label may become (`resizeSingleElement`, `resizeElements.ts@1118751f:778-803`).
+/// A minimum bounds the size, not the side the pointer is on, so the shape still turns
+/// through its anchor.
+pub fn resize_element_within(
+    element: &DrawElement,
+    handle: HandleKind,
+    wx: f64,
+    wy: f64,
+    min_size: (f64, f64),
+    aspect: Option<f64>,
+) -> Geometry {
+    let (min_width, min_height) = min_size;
     if handle == HandleKind::Rotate {
         return Geometry {
             x: element.x,
@@ -84,20 +100,20 @@ pub fn resize_element(
     let reach_y = sign_y * rel.y;
 
     let mut width = if controls_x {
-        reach_x.abs().max(min_size)
+        reach_x.abs().max(min_width)
     } else {
         element.width.abs()
     };
     let mut height = if controls_y {
-        reach_y.abs().max(min_size)
+        reach_y.abs().max(min_height)
     } else {
         element.height.abs()
     };
     if let Some(aspect) = aspect.filter(|value| value.is_finite() && *value > 0.0) {
         if !controls_y || (controls_x && width / aspect >= height) {
-            height = (width / aspect).max(min_size);
+            height = (width / aspect).max(min_height);
         } else {
-            width = (height * aspect).max(min_size);
+            width = (height * aspect).max(min_width);
         }
     }
 
@@ -141,6 +157,65 @@ pub fn resize_element(
         y,
         width: out_width,
         height: out_height,
+    }
+}
+
+/// Excalidraw's `MIN_FONT_SIZE` (`packages/common/src/constants.ts@1118751f:219`): a resize
+/// that would take a text below it changes nothing.
+pub const MIN_FONT_SIZE: f64 = 1.0;
+
+/// The width and height a drag of `handle` to `(wx, wy)` asks of a box that was `origin`,
+/// turned by `angle`, when the drag began: `getNextSingleWidthAndHeightFromPointer`
+/// (`resizeElements.ts@1118751f:988-1080`) for a box with positive extents. Signed: a
+/// pointer past the far side asks for a negative size. An axis the handle does not move
+/// keeps its size. With `keep_aspect` (Shift) a side handle scales the other axis with it
+/// and a corner takes the larger of its two scales.
+pub fn next_box_size(
+    origin: &Geometry,
+    angle: f64,
+    handle: HandleKind,
+    wx: f64,
+    wy: f64,
+    keep_aspect: bool,
+) -> (f64, f64) {
+    let (cx, cy) = (
+        origin.x + origin.width / 2.0,
+        origin.y + origin.height / 2.0,
+    );
+    let turned = rotate_point(wx - cx, wy - cy, -angle);
+    let (px, py) = (cx + turned.x, cy + turned.y);
+    let (x2, y2) = (origin.x + origin.width, origin.y + origin.height);
+    let mut width = match handle {
+        HandleKind::E | HandleKind::Ne | HandleKind::Se => px - origin.x,
+        HandleKind::W | HandleKind::Nw | HandleKind::Sw => x2 - px,
+        _ => origin.width,
+    };
+    let mut height = match handle {
+        HandleKind::S | HandleKind::Se | HandleKind::Sw => py - origin.y,
+        HandleKind::N | HandleKind::Ne | HandleKind::Nw => y2 - py,
+        _ => origin.height,
+    };
+    if keep_aspect && origin.width != 0.0 && origin.height != 0.0 {
+        let width_ratio = width.abs() / origin.width;
+        let height_ratio = height.abs() / origin.height;
+        if handle.has_ew() && handle.has_ns() {
+            let ratio = width_ratio.max(height_ratio);
+            width = origin.width * ratio * sign(width);
+            height = origin.height * ratio * sign(height);
+        } else {
+            height *= width_ratio;
+            width *= height_ratio;
+        }
+    }
+    (width, height)
+}
+
+/// `Math.sign`, which is 0 at 0 where `f64::signum` is 1.
+fn sign(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value.signum()
     }
 }
 

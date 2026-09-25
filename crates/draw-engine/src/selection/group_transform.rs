@@ -12,6 +12,15 @@
 //! selection up should not thicken every line in it, and Excalidraw does not do that
 //! either. Font size *does*, because text that stays the same size while its box grows
 //! stops fitting.
+//!
+//! # When it scales as one
+//!
+//! As `resizeMultipleElements` (`packages/element/src/resizeElements.ts@1118751f:
+//! 1370-1382`): the selection keeps its proportions — both axes take the larger scale —
+//! with Shift, or when any element in it is turned, is a text, or is in a group. A text's
+//! font scales with it (`:1491-1497`). A label is not scaled with the rest: its font
+//! scales with the selection only when the selection keeps its proportions, and the
+//! engine lays it out again in its resized shape (`:1499-1514`, `:1571-1589`).
 
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::DrawElement;
@@ -190,7 +199,34 @@ fn scale_for(handle: HandleKind, frame: &GroupFrame, pointer: Point, uniform: bo
     )
 }
 
+/// Whether a drag of `handle` to `pointer` turns the selection through its anchor, on
+/// each axis (`flipByX`, `flipByY`: `resizeElements.ts@1118751f:1177-1198`).
+pub fn resize_group_flips(handle: HandleKind, frame: &GroupFrame, pointer: Point) -> (bool, bool) {
+    let (sx, sy) = scale_for(handle, frame, pointer, false);
+    (sx < 0.0, sy < 0.0)
+}
+
+/// Whether a resize of `elements` keeps its proportions without Shift: any of them
+/// turned, a text, or in a group (`keepAspectRatio`, `resizeElements.ts@1118751f:
+/// 1370-1377`). Labels are not asked: the oracle resizes the selection without them.
+pub fn resize_keeps_aspect(elements: &[DrawElement]) -> bool {
+    elements
+        .iter()
+        .filter(|e| e.container_id.is_none())
+        .any(|e| {
+            e.angle != 0.0
+                || e.kind == crate::scene::DrawElementType::Text
+                || !e.group_ids.is_empty()
+        })
+}
+
 /// Scales every member of the group within the frame.
+///
+/// A label whose shape is in `elements` comes back with only its font changed — scaled
+/// when the selection keeps its proportions, as it started otherwise — for the caller to
+/// lay out in the resized shape. Nothing comes back when a font would drop below
+/// [`crate::selection::MIN_FONT_SIZE`]: the oracle leaves the selection as it was
+/// (`resizeElements.ts@1118751f:1491-1514`).
 pub fn resize_group(
     elements: &[DrawElement],
     frame: &GroupFrame,
@@ -198,10 +234,17 @@ pub fn resize_group(
     pointer: Point,
     uniform: bool,
 ) -> Vec<DrawElement> {
-    let (sx, sy) = scale_for(handle, frame, pointer, uniform);
+    let keep_aspect = uniform || resize_keeps_aspect(elements);
+    let (sx, sy) = scale_for(handle, frame, pointer, keep_aspect);
     let (ax, ay) = anchor_for(handle, &frame.bounds);
+    let containers: std::collections::HashSet<&str> = elements
+        .iter()
+        .filter(|e| e.container_id.is_none())
+        .map(|e| e.id.as_str())
+        .collect();
+    let font_below_minimum = std::cell::Cell::new(false);
 
-    elements
+    let out = elements
         .iter()
         .filter_map(|element| {
             let origin = frame
@@ -209,6 +252,25 @@ pub fn resize_group(
                 .iter()
                 .find(|(id, _)| id == &element.id)
                 .map(|(_, o)| o)?;
+
+            if element
+                .container_id
+                .as_deref()
+                .is_some_and(|id| containers.contains(id))
+            {
+                let mut label = element.clone();
+                label.font_size =
+                    origin
+                        .font_size
+                        .map(|size| if keep_aspect { size * sx.abs() } else { size });
+                if label
+                    .font_size
+                    .is_some_and(|size| size < super::MIN_FONT_SIZE)
+                {
+                    font_below_minimum.set(true);
+                }
+                return Some(label);
+            }
 
             // Scaled from `origin` — the geometry as it was when the drag began — and
             // never from the live element, which every earlier move of this gesture has
@@ -239,16 +301,25 @@ pub fn resize_group(
                 next
             };
 
-            // Text has to grow with its box or it stops fitting. Stroke width
-            // deliberately does not: scaling a selection up should not thicken every
-            // line in it.
+            // Text has to grow with its box or it stops fitting — by its width, which with
+            // a text in the selection is the scale of both axes (`measureFontSizeFromWidth`,
+            // `resizeElements.ts@1118751f:292-315`). Stroke width deliberately does not:
+            // scaling a selection up should not thicken every line in it.
             if let Some(size) = origin.font_size {
-                next.font_size = Some(size * ((sx.abs() + sy.abs()) / 2.0));
+                let size = size * sx.abs();
+                if size < super::MIN_FONT_SIZE {
+                    font_below_minimum.set(true);
+                }
+                next.font_size = Some(size);
             }
 
             Some(next)
         })
-        .collect()
+        .collect();
+    if font_below_minimum.get() {
+        return Vec::new();
+    }
+    out
 }
 
 /// Rotates every member about the group's centre.

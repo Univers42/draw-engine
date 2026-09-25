@@ -3,8 +3,8 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
-use crate::scene::{scene_bounds, DrawElement};
-use crate::selection::{resize_element, rotate_element, HandleKind};
+use crate::scene::{scene_bounds, DrawElement, DrawElementType};
+use crate::selection::{resize_element_within, rotate_element, HandleKind};
 
 impl DrawEngine {
     /// `invert_snap` is the host's Ctrl/Cmd: it flips object snapping for this move, on
@@ -57,15 +57,26 @@ impl DrawEngine {
                 ref ids,
                 handle,
                 ref frame,
+                grab,
             } => {
+                let at = self.resize_pointer(sx, sy, grab);
                 let elements: Vec<DrawElement> = ids
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
-                for next in crate::selection::group_transform::resize_group(
-                    &elements, frame, handle, world, square,
-                ) {
+                let resized = crate::selection::group_transform::resize_group(
+                    &elements, frame, handle, at, square,
+                );
+                let (labels, members): (Vec<DrawElement>, Vec<DrawElement>) = resized
+                    .into_iter()
+                    .partition(|el| el.container_id.is_some() && el.kind == DrawElementType::Text);
+                for next in members {
                     self.scene.put(next);
+                }
+                let flips =
+                    crate::selection::group_transform::resize_group_flips(handle, frame, at);
+                for label in labels {
+                    self.relay_resized_label(label, handle, flips);
                 }
                 self.release_ends_outside(ids);
                 // Bound arrows have to keep up with the shapes they point at. Without
@@ -172,17 +183,21 @@ impl DrawEngine {
                 ratio,
                 origin,
                 ref origin_points,
+                grab,
+                ref label_font,
             } => {
                 let points = origin_points.clone();
+                let at = self.resize_pointer(sx, sy, grab);
                 self.move_resize(
                     id,
-                    world,
+                    at,
                     square,
                     ResizeDrag {
                         handle,
                         ratio,
                         origin,
                         origin_points: points.as_deref(),
+                        label_font: label_font.as_ref(),
                     },
                 );
                 Some(it)
@@ -598,16 +613,32 @@ impl DrawEngine {
         }
     }
 
+    /// Where a resize puts the edge it moves: the pointer, less where in the handle it was
+    /// taken, snapped (`App.tsx@1118751f:13578-13582` — the grab first, then the grid).
+    fn resize_pointer(&self, sx: f64, sy: f64, grab: Point) -> Point {
+        let raw = self.screen_to_world(sx, sy);
+        self.snap(Point {
+            x: raw.x - grab.x,
+            y: raw.y - grab.y,
+        })
+    }
+
     fn move_resize(&mut self, id: &str, world: Point, square: bool, drag: ResizeDrag<'_>) {
         let ResizeDrag {
             handle,
             ratio,
             origin,
             origin_points,
+            label_font,
         } = drag;
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
+        if element.kind == DrawElementType::Text && element.container_id.is_none() {
+            self.resize_text(element, world, square, handle, &origin);
+            return;
+        }
+        let latest = element.clone();
         // Measured from where the element was when the drag started, so the anchor is
         // fixed for the whole gesture. Reading the live element instead let the anchor
         // follow the pointer the moment the element turned through it.
@@ -616,16 +647,45 @@ impl DrawEngine {
         from.y = origin.y;
         from.width = origin.width;
         from.height = origin.height;
+        // A path's `x`, `y` is its first point, which need not be a corner of its box: it
+        // is resized from the box its handles are drawn on, as the oracle's is
+        // (`previousOrigin`, `resizeElements.ts@1118751f:848-851`). From its first point,
+        // a handle taken where it is drawn flattened a line whose first point was not its
+        // top-left.
+        if let Some(points) = origin_points.filter(|points| !points.is_empty()) {
+            let ring = ring_box(points);
+            (from.x, from.y, from.width, from.height) = (
+                origin.x + ring.x,
+                origin.y + ring.y,
+                ring.width,
+                ring.height,
+            );
+        }
         // Images hold their proportions unless Shift is held; every other shape is the
         // other way round. A photograph stretched by accident is a mistake you often do
         // not notice until much later.
         let lock = crate::scene::locks_aspect_ratio(&from, square);
-        let geom = resize_element(
+        let label = element
+            .bound_text_id
+            .as_deref()
+            .and_then(|label| self.scene.get(label))
+            .filter(|label| !label.is_deleted && label.kind == DrawElementType::Text)
+            .cloned();
+        // A shape holding a label is never made smaller than one line of it
+        // (`resizeSingleElement`, `resizeElements.ts@1118751f:778-803`) — unless it keeps
+        // its proportions, when the label's font scales instead.
+        let min_size = match &label {
+            Some(label) if !lock => {
+                self.with_measure(|measure| crate::text::layout::min_container_size(label, measure))
+            }
+            _ => (1.0, 1.0),
+        };
+        let geom = resize_element_within(
             &from,
             handle,
             world.x,
             world.y,
-            1.0,
+            min_size,
             if lock { ratio } else { None },
         );
         element.x = geom.x;
@@ -644,9 +704,152 @@ impl DrawEngine {
             set_anchor(&mut element, End::Start, None);
             set_anchor(&mut element, End::End, None);
         }
+        let Some(mut label) = label else {
+            self.scene.put(element);
+            self.apply_bindings();
+            self.request_draw();
+            return;
+        };
+        if lock {
+            // The label's font follows its room (`:815-833`), or an arrow's width
+            // (`:904-915`), from where the last move left them.
+            let size = crate::text::layout::font_size_of(&label);
+            let scale = if crate::scene::is_linear_element(&element) {
+                element.width.abs() / latest.width.abs()
+            } else {
+                crate::text::layout::bound_text_max_width(&element, size)
+                    / crate::text::layout::bound_text_max_width(&latest, size)
+            };
+            let next = size * scale;
+            if !(next.is_finite() && next >= crate::selection::MIN_FONT_SIZE) {
+                return;
+            }
+            label.font_size = Some(next);
+        } else if let Some((_, font)) = label_font.filter(|(id, _)| *id == label.id) {
+            // Every other move starts from the font the label had at the press (`:805-814`),
+            // so letting go of Shift gives it back.
+            label.font_size = *font;
+        }
+        let flips = (
+            (geom.width < 0.0) != (from.width < 0.0),
+            (geom.height < 0.0) != (from.height < 0.0),
+        );
         self.scene.put(element);
+        self.relay_resized_label(label, handle, flips);
         self.apply_bindings();
         self.request_draw();
+    }
+
+    /// `label` laid out again in the shape a resize just changed, and the shape grown back
+    /// to hold it from the side the drag holds (`handleBindTextResize`,
+    /// `textElement.ts@1118751f:155-247`): a north handle holds the bottom, the others the
+    /// top — and the other way round once the drag has turned the shape through its
+    /// anchor. A label too wide for its room widens the shape the same way from the side a
+    /// west handle holds.
+    fn relay_resized_label(&mut self, label: DrawElement, handle: HandleKind, flips: (bool, bool)) {
+        if label.is_deleted {
+            return;
+        }
+        let Some(container) = label
+            .container_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|container| !container.is_deleted)
+            .cloned()
+        else {
+            return;
+        };
+        let north = matches!(handle, HandleKind::N | HandleKind::Ne | HandleKind::Nw);
+        let west = matches!(handle, HandleKind::W | HandleKind::Nw | HandleKind::Sw);
+        let keep = (
+            if west != flips.0 { 1.0 } else { 0.0 },
+            if north != flips.1 { 1.0 } else { 0.0 },
+        );
+        let laid = self.with_measure(|measure| {
+            crate::text::layout::bound_text_resize(&label, &container, keep, measure)
+        });
+        if let Some(grown) = laid.container {
+            self.scene.put(grown);
+        }
+        if self.scene.get(&laid.text.id) != Some(&laid.text) {
+            self.scene.put(laid.text);
+        }
+    }
+
+    /// A free text resized (`resizeSingleTextElement`, `resizeElements.ts@1118751f:
+    /// 317-409`):
+    ///
+    /// - a corner, the top or the bottom scales the font and the box by the height asked
+    ///   for (`:328-358`) — the lines are the same lines, scaled. A drag that would take
+    ///   the font below [`MIN_FONT_SIZE`](crate::selection::MIN_FONT_SIZE), past the
+    ///   anchor included, leaves the text as the last move had it, so it never turns
+    ///   inside out;
+    /// - a side fixes the width and wraps what was typed at it (`:360-408`), never
+    ///   narrower than a space and the padding. The width is the one the lines were
+    ///   wrapped at, so laying them out again gives the same lines; a glyph wider than
+    ///   that hangs out of the box, as it does in the oracle.
+    ///
+    /// The corner opposite the handle stays put, turned or not (`getResizedOrigin`).
+    fn resize_text(
+        &mut self,
+        latest: DrawElement,
+        world: Point,
+        square: bool,
+        handle: HandleKind,
+        origin: &crate::selection::Geometry,
+    ) {
+        use crate::selection::{next_box_size, MIN_FONT_SIZE};
+        use crate::text::layout::keep_point;
+        let (next_width, next_height) =
+            next_box_size(origin, latest.angle, handle, world.x, world.y, square);
+        let keep = text_resize_anchor(handle);
+        let mut next = latest.clone();
+        if matches!(handle, HandleKind::E | HandleKind::W) {
+            let laid = self.with_measure(|measure| {
+                let min_width = crate::text::layout::min_text_width(&latest, measure);
+                let mut fixed = latest.clone();
+                fixed.auto_resize = Some(false);
+                fixed.width = next_width.max(min_width);
+                crate::text::layout::layout_text(&fixed, None, measure).text
+            });
+            let at = keep_point(origin, latest.angle, laid.width, laid.height, keep);
+            next = laid;
+            next.x = at.x;
+            next.y = at.y;
+        } else {
+            if !(latest.height > 0.0 && latest.width.is_finite()) {
+                return;
+            }
+            let ratio = next_height / latest.height;
+            let size = crate::text::layout::font_size_of(&latest) * ratio;
+            if !(size.is_finite() && size >= MIN_FONT_SIZE) {
+                return;
+            }
+            let width = latest.width * ratio;
+            let at = keep_point(origin, latest.angle, width, next_height, keep);
+            next.font_size = Some(size);
+            next.width = width;
+            next.height = next_height;
+            next.x = at.x;
+            next.y = at.y;
+        }
+        self.scene.put(next);
+        self.apply_bindings();
+        self.request_draw();
+    }
+}
+
+/// The point of a text's box that a resize by `handle` keeps where it is, as fractions of
+/// its width and height: the corner opposite the handle, and for a side the corner that
+/// `getResizeAnchor` gives it (`resizeElements.ts@1118751f:580-619`) — the top-left for
+/// the east, the bottom-right for the west, so a text wrapped from its west side grows
+/// upward.
+fn text_resize_anchor(handle: HandleKind) -> (f64, f64) {
+    match handle {
+        HandleKind::N | HandleKind::Nw | HandleKind::W => (1.0, 1.0),
+        HandleKind::Ne => (0.0, 1.0),
+        HandleKind::Sw => (1.0, 0.0),
+        HandleKind::E | HandleKind::Se | HandleKind::S | HandleKind::Rotate => (0.0, 0.0),
     }
 }
 
@@ -660,6 +863,7 @@ struct ResizeDrag<'a> {
     ratio: Option<f64>,
     origin: crate::selection::Geometry,
     origin_points: Option<&'a [[f64; 2]]>,
+    label_font: Option<&'a (String, Option<f64>)>,
 }
 
 /// Scale a path's points so its ring follows the box the handle just dragged.
