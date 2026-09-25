@@ -501,7 +501,16 @@ impl DrawEngine {
                 if element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE) != size {
                     element.font_size = Some(size);
                 }
-                element.font_family = from.font_family.filter(|_| from_text);
+                // `sourceText.fontFamily || DEFAULT_FONT_FAMILY` (`:143`): a text's own
+                // family, or the one new text is written in. Every text of the oracle's
+                // has a family; one of ours with none is drawn in the system stack, which
+                // is its family and crosses as it is — so the twin of a legacy text is
+                // not moved to the default.
+                element.font_family = if from_text {
+                    from.font_family
+                } else {
+                    Some(crate::text::font::DEFAULT_FONT_FAMILY)
+                };
                 let align = if from_text {
                     resolved_text_align(from)
                 } else {
