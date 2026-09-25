@@ -164,6 +164,31 @@ impl DrawEngine {
         })
     }
 
+    /// Gives up this client's uncommitted change to `id`, as if it had not been made: the
+    /// element goes back to what it was, a peer's copy refused meanwhile is taken if it is
+    /// the newer — as a commit takes one for a gesture that came to nothing — and the id
+    /// is no longer pending, so the next copy a peer sends is taken as it comes.
+    pub(super) fn drop_local_change(&mut self, id: &str) {
+        let Some((_, Some(before))) = self
+            .scene
+            .baseline()
+            .into_iter()
+            .find(|(pending, _)| pending == id)
+        else {
+            return;
+        };
+        let mut settled = (*before).clone();
+        if let Some(peer) = self.remote_refused.remove(id) {
+            if super::clipboard::remote_wins(&peer, &settled) {
+                let mut taken = peer;
+                super::clipboard::inherit_picture(&mut taken, &settled);
+                settled = taken;
+            }
+        }
+        self.scene.put(settled);
+        self.scene.retain_baseline(|pending| pending != id);
+    }
+
     /// Replays one step backwards (`forward == false`) or forwards, as a new edit.
     ///
     /// Every element the step changed is made what it was before it (or after), and

@@ -69,6 +69,22 @@ impl DrawEngine {
         self.peers = peers;
         self.held = held;
 
+        // A style preview — the opacity slider mid-drag — changes elements with no gesture
+        // in progress, and its release commits them. What someone else takes of it is
+        // given back now, as it was, and what they send is taken as it comes. Committed
+        // with the rest instead, it was stamped above their copy: the words they had typed
+        // into a label went back to the old ones on every screen.
+        let taken: Vec<String> = self
+            .style_preview
+            .iter()
+            .filter(|id| self.held.contains_key(*id))
+            .cloned()
+            .collect();
+        for id in &taken {
+            self.style_preview.remove(id);
+            self.drop_local_change(id);
+        }
+
         // What someone else now holds is no longer ours. A gesture on it is abandoned —
         // put back as it was — rather than committed over their work.
         let lost: Vec<String> = self

@@ -221,6 +221,9 @@ pub struct DrawEngine {
     style_revision: u32,
     /// What Copy styles took: an element, and the label it carried. See `selection_style.rs`.
     copied_styles: Option<Vec<DrawElement>>,
+    /// What the style preview in progress — the opacity slider mid-drag — has changed and
+    /// not committed. Emptied by the commit. See `selection_style.rs` and `peers.rs`.
+    style_preview: HashSet<String>,
 }
 
 impl Default for DrawEngine {
@@ -282,6 +285,7 @@ impl DrawEngine {
             held: HashMap::new(),
             style_revision: 0,
             copied_styles: None,
+            style_preview: HashSet::new(),
         }
     }
 

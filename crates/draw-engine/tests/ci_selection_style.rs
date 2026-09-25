@@ -474,6 +474,96 @@ mod preview {
             .expect("the commit is sent");
         assert_eq!(delta.updated.len(), 1);
     }
+
+    fn ben_holds(ids: &[&str]) -> Vec<Peer> {
+        vec![Peer {
+            id: "ben".into(),
+            name: "Ben".into(),
+            color: "#e03131".into(),
+            holds: ids.iter().map(|id| (*id).to_string()).collect(),
+            preview: Vec::new(),
+        }]
+    }
+
+    /// Ben's commit of the label: new words, at the next version.
+    fn bens_label(engine: &DrawEngine) -> DrawElement {
+        let mut theirs = element(engine, "l");
+        theirs.text = Some("typed by Ben".into());
+        theirs.original_text = theirs.text.clone();
+        theirs.opacity = 100.0;
+        theirs.version += 1;
+        theirs
+    }
+
+    /// A slider drag previews the shape and its label. Ben takes the label mid-drag, to
+    /// type into it: the preview lets go of it there and then, and what he commits is
+    /// taken as it comes. Committed by the release instead, the preview was stamped above
+    /// his copy and the label went back to its old words for everyone.
+    #[test]
+    fn a_label_a_peer_takes_mid_drag_keeps_what_they_typed() {
+        let mut engine = engine_with_measure(labelled(box_at(0.0, 0.0, 200.0, 100.0), "box", "l"));
+        engine.select(vec!["box".into()]);
+        engine.preview_style(opacity(30.0));
+
+        engine.set_peers(ben_holds(&["l"]));
+        assert_eq!(
+            element(&engine, "l").opacity,
+            100.0,
+            "the preview let go of it"
+        );
+        let theirs = bens_label(&engine);
+        assert!(engine.apply_remote_patch(&scene_to_json(std::slice::from_ref(&theirs))));
+        engine.apply_style(opacity(30.0));
+
+        let label = element(&engine, "l");
+        assert_eq!(
+            (label.text.as_deref(), label.version, label.opacity),
+            (theirs.text.as_deref(), theirs.version, 100.0),
+            "his words, his stamp"
+        );
+        assert_eq!(element(&engine, "box").opacity, 30.0);
+    }
+
+    /// He lets go before the drag ends: the label is the drag's again, his words in it.
+    #[test]
+    fn a_label_given_back_mid_drag_is_styled_with_their_words() {
+        let mut engine = engine_with_measure(labelled(box_at(0.0, 0.0, 200.0, 100.0), "box", "l"));
+        engine.select(vec!["box".into()]);
+        engine.preview_style(opacity(30.0));
+        engine.set_peers(ben_holds(&["l"]));
+        let theirs = bens_label(&engine);
+        engine.apply_remote_patch(&scene_to_json(std::slice::from_ref(&theirs)));
+        engine.set_peers(Vec::new());
+
+        engine.preview_style(opacity(20.0));
+        engine.apply_style(opacity(20.0));
+
+        let label = element(&engine, "l");
+        assert_eq!(label.text.as_deref(), Some("typed by Ben"));
+        assert_eq!(label.opacity, 20.0);
+        assert!(label.version > theirs.version);
+    }
+
+    /// Taken whole, the shape goes back as it was and is his: nothing of the drag is
+    /// committed on it, at the release or at the next edit of anything else.
+    #[test]
+    fn a_shape_a_peer_takes_mid_drag_is_put_back_and_never_committed() {
+        let mut engine = engine_with_measure(vec![
+            with_id(box_at(0.0, 0.0, 50.0, 50.0), "a"),
+            with_id(box_at(100.0, 0.0, 50.0, 50.0), "b"),
+        ]);
+        let before = element(&engine, "a");
+        engine.select(vec!["a".into()]);
+        engine.preview_style(opacity(30.0));
+
+        engine.set_peers(ben_holds(&["a"]));
+        engine.apply_style(opacity(30.0));
+        engine.set_peers(Vec::new());
+        engine.select(vec!["b".into()]);
+        engine.apply_style(stroke_patch("#2f9e44"));
+
+        assert_eq!(element(&engine, "a"), before);
+    }
 }
 
 /// `actionCopyStyles` / `actionPasteStyles` (`actions/actionStyles.ts@1118751f:51-236`).

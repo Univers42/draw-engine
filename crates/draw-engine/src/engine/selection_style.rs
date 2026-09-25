@@ -415,11 +415,16 @@ impl DrawEngine {
     /// Shows a style on the canvas without committing it: nothing stamped, nothing sent,
     /// no step of undo. The opacity slider previews on every move and commits once with
     /// [`Self::apply_style`] on release; the commit compares against what was there
-    /// before the first preview, so the whole drag is one step.
+    /// before the first preview, so the whole drag is one step. What a peer takes in the
+    /// meantime is given back to them (`peers.rs`).
     pub fn preview_style(&mut self, patch: DrawElementStylePatch) {
         let mut changed = false;
         for (element, patch) in self.style_targets(&patch) {
-            changed |= self.put_styled(element, &patch);
+            let id = element.id.clone();
+            if self.put_styled(element, &patch) {
+                self.style_preview.insert(id);
+                changed = true;
+            }
         }
         if changed {
             self.touch_style();

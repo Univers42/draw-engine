@@ -80,6 +80,7 @@ impl DrawEngine {
         if let Some(step) = self.take_local_step() {
             self.history.push(step);
         }
+        self.style_preview.clear();
         self.touch_style();
         self.emit_scene_change();
     }
