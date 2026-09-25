@@ -3,8 +3,8 @@ use crate::engine::{DrawEngine, TextEditRequest};
 use crate::interaction::DrawTool;
 use crate::scene::binding::linear_endpoints;
 use crate::scene::{
-    bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
-    is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
+    bindable_at, create_element, default_element_style, is_bindable_element, is_linear_element,
+    merge_style, DrawElement, DrawElementType, Geometry,
 };
 use crate::text::layout::{self, Laid, Measure};
 use crate::text::FontKey;
@@ -356,46 +356,19 @@ impl DrawEngine {
         self.refresh_live();
     }
 
+    /// The one-shot write: what the session's commit does, with no floor for the shape to
+    /// shrink to and the selection let go of when the text goes.
     fn set_element_text_step(&mut self, id: &str, text: &str) {
         let Some(element) = self.scene.get(id).cloned() else {
             return;
         };
         if text.trim().is_empty() {
-            if let Some(container_id) = &element.container_id {
-                if let Some(mut container) = self.scene.get(container_id).cloned() {
-                    container.bound_text_id = None;
-                    self.scene.put(container);
-                }
-            }
-            if self.scene.created_since_commit(id) {
-                self.scene.discard(id);
-            } else {
-                // A committed text emptied is a deletion, and a deletion is a tombstone:
-                // the server and the peers have to be told, and undo has to be able to
-                // stamp the text back above it.
-                self.scene.remove(id, self.now_ms);
-            }
             self.clear_selection();
-            // Settled here, although it usually changes nothing: a label abandoned before
-            // anything was typed leaves its container exactly as committed, and without
-            // a commit the container stayed pending — refusing every peer's edit of it.
-            // Removing a committed text records its deletion.
+            self.remove_emptied_text(&element);
+        } else {
+            self.type_into(&element, text, None);
             self.push_history();
-            self.request_draw();
-            return;
         }
-        let Laid {
-            text: next,
-            container,
-        } = self.with_text(&element, text);
-        self.scene.put(bump_version(next, self.now_ms));
-        // A shape a peer took while its label was being typed stays as they have it.
-        // ponytail: the label may overflow it until it is next laid out.
-        if let Some(container) = container.filter(|container| !self.untouchable(container)) {
-            self.scene.put(container);
-        }
-        self.apply_bindings();
-        self.push_history();
         self.request_draw();
     }
 

@@ -160,6 +160,19 @@ mod one_step {
         assert!(engine.drain_events().scene_delta.is_some());
         assert_eq!(element(&engine, &id).text.as_deref(), Some("whole"));
     }
+
+    /// Emptied through the one-shot write, a new label goes as it goes from the session:
+    /// its shape back as it was, one-line growth included.
+    #[test]
+    fn the_one_shot_write_empties_a_new_label_as_the_session_does() {
+        let shape = filled(box_at(100.0, 100.0, 10.0, 10.0));
+        let before = shape.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let label = open_at(&mut engine, (105.0, 105.0));
+        engine.set_element_text(&label, "");
+        assert!(find(&engine, &label).is_none(), "no tombstone");
+        assert_eq!(element(&engine, &before.id), before);
+    }
 }
 
 /// The editor is the only copy of the text being typed (`Renderer.ts@1118751f:259-267`),
@@ -380,6 +393,43 @@ mod ending {
         assert!(find(&engine, &free).is_none());
         engine.undo();
         assert_eq!(engine.get_scene(), vec![before], "no step to undo");
+    }
+
+    /// Emptied, a new label puts back everything its shape moved when it grew to hold
+    /// one line: the arrows bound to the shape and their own labels too — no step.
+    #[test]
+    fn a_new_label_left_empty_puts_back_the_arrows_labels() {
+        let shape = filled(box_at(100.0, 100.0, 10.0, 10.0));
+        let shape_id = shape.id.clone();
+        let mut arrow = connector(300.0, 105.0, 112.5, 105.0, DrawElementType::Arrow);
+        arrow.end_binding = Some(shape_id.clone());
+        let arrow_id = arrow.id.clone();
+        let mut engine = engine_with_measure(vec![shape, arrow]);
+        engine.select(vec![arrow_id.clone()]);
+        assert!(engine.edit_selected_text());
+        let arrow_label = engine.text_edit_session().unwrap().id.clone();
+        engine.update_text_edit("arrow label");
+        engine.commit_text_edit("arrow label", false);
+        engine.drain_events();
+        let before = engine.get_scene();
+
+        engine.select(vec![shape_id.clone()]);
+        assert!(engine.edit_selected_text());
+        let placed = before.iter().find(|el| el.id == arrow_label).unwrap();
+        assert_ne!(
+            &element(&engine, &arrow_label),
+            placed,
+            "the grown shape moved it"
+        );
+        engine.update_text_edit("");
+        engine.commit_text_edit("", true);
+        assert_eq!(engine.get_scene(), before, "everything as it was");
+
+        engine.undo();
+        assert!(
+            find(&engine, &arrow_label).is_none_or(|label| label.is_deleted),
+            "the undo reached the arrow's label: the empty edit recorded no step"
+        );
     }
 
     /// An existing text emptied is deleted: a tombstone, one step, its shape unbound.

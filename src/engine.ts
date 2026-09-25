@@ -623,7 +623,10 @@ export class DrawEngine {
     this.inner.finishLinear();
   }
 
-  /** Writes `text` into the text `id` and commits it, in one call. See `updateTextEdit`. */
+  /**
+   * Writes `text` into the text `id` and commits it, in one call, ending a session open
+   * on it; emptied, the text goes as `commitTextEdit` removes it. See `updateTextEdit`.
+   */
   setElementText(id: string, text: string): void {
     this.inner.setElementText(id, text);
   }

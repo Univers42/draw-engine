@@ -135,7 +135,7 @@ impl DrawEngine {
         let Some(element) = self.live_element(&session.id) else {
             return false;
         };
-        self.type_into(&session, &element, text);
+        self.type_into(&element, text, session.original_container_height);
         self.refresh_live();
         self.request_draw();
         true
@@ -165,7 +165,7 @@ impl DrawEngine {
         let keep = via_keyboard && !self.tool_locked;
         if text.trim().is_empty() {
             let container = element.container_id.clone();
-            self.empty_session(&session, &element);
+            self.remove_emptied_text(&element);
             match container.filter(|_| keep) {
                 // The shape stays selected even though its label is gone.
                 Some(container) => self.set_selection(vec![container]),
@@ -175,7 +175,7 @@ impl DrawEngine {
             self.request_draw();
             return;
         }
-        self.type_into(&session, &element, text);
+        self.type_into(&element, text, session.original_container_height);
         if keep {
             let id = element.container_id.clone().unwrap_or(element.id);
             self.set_selection(vec![id]);
@@ -243,9 +243,11 @@ impl DrawEngine {
         self.scene.get(id).filter(|el| !el.is_deleted).cloned()
     }
 
-    /// Writes `text` into the open element: laid out as every writer lays text out, and
-    /// its shape resized to hold it.
-    fn type_into(&mut self, session: &TextEditSession, element: &DrawElement, text: &str) {
+    /// Writes `text` into `element`: laid out as every writer lays text out, its shape
+    /// resized to hold it — shrunk back no lower than `floor`, the session's
+    /// [`TextEditSession::original_container_height`] — and the arrows bound to that shape
+    /// following. Unstamped: the commit stamps it.
+    pub(crate) fn type_into(&mut self, element: &DrawElement, text: &str, floor: Option<f64>) {
         let Laid {
             text: mut next,
             container,
@@ -256,11 +258,7 @@ impl DrawEngine {
             let shape = if self.untouchable(&current) {
                 current
             } else {
-                let shape = shrunk(
-                    container.unwrap_or_else(|| current.clone()),
-                    &next,
-                    session.original_container_height,
-                );
+                let shape = shrunk(container.unwrap_or_else(|| current.clone()), &next, floor);
                 if shape != current {
                     self.scene.put(shape.clone());
                 }
@@ -276,28 +274,27 @@ impl DrawEngine {
         self.apply_bindings();
     }
 
-    /// An open text emptied: gone, as if never made when it was made for this edit.
-    fn empty_session(&mut self, session: &TextEditSession, element: &DrawElement) {
-        if session.is_new && self.scene.created_since_commit(&element.id) {
-            // The label, its shape told of it and resized for it, and the arrows that
-            // followed the shape all go back as they were. Divergence: the oracle leaves a
-            // new label's shape grown to one line (`App.tsx@1118751f:6974-7006`),
-            // uncaptured until the next step.
+    /// A text emptied, as one step: gone. One made since the last commit — for this edit —
+    /// was never there: no tombstone, and no step. The session's commit and the one-shot
+    /// [`Self::set_element_text`] both empty a text through here.
+    pub(crate) fn remove_emptied_text(&mut self, element: &DrawElement) {
+        if self.scene.created_since_commit(&element.id) {
+            // Everything made or moved for it goes back as it was, as an abandoned gesture
+            // puts back what it changed: the label, its shape told of it and grown to one
+            // line, the arrows that followed the shape and their own labels. Divergence:
+            // the oracle leaves a new label's shape grown to one line
+            // (`App.tsx@1118751f:6974-7006`), uncaptured until the next step.
             self.scene.discard(&element.id);
-            if let Some(container_id) = element.container_id.as_deref() {
-                let followers: Vec<String> = self
-                    .scene
-                    .iter_ordered()
-                    .filter(|el| {
-                        el.start_binding.as_deref() == Some(container_id)
-                            || el.end_binding.as_deref() == Some(container_id)
-                    })
-                    .map(|el| el.id.clone())
-                    .collect();
-                self.drop_local_change(container_id);
-                for id in followers {
-                    self.drop_local_change(&id);
-                }
+            for (id, _) in self.scene.baseline() {
+                self.drop_local_change(&id);
+            }
+            // Its place above its shape was the only reorder, and it went with it.
+            let before = self.scene.order_baseline().map(|mut order| {
+                order.retain(|id| *id != element.id);
+                order
+            });
+            if before.is_some_and(|before| before == self.scene.ids()) {
+                self.scene.set_order_baseline(None);
             }
             self.push_history();
             return;
