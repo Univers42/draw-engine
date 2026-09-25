@@ -372,13 +372,14 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    /// A text element as it would be with `text` in it, uncommitted — what peers are
-    /// shown while it is being typed, so a word appears on their screens as it is
-    /// written rather than all at once when the editor closes. `None` for an id that is
-    /// not a text in the scene.
+    /// A text element as it would be with `text` in it, uncommitted — for a host on the
+    /// one-shot [`Self::set_element_text`] to show peers while it is typed. A host on the
+    /// typing session (`text_session.rs`) streams [`Self::gesture_elements`] instead,
+    /// which carries the shape the text grows too. `None` for an id that is not a text in
+    /// the scene.
     ///
-    /// ponytail: the label only — a shape the text would grow is sent grown on commit;
-    /// streaming it too means a preview of two elements.
+    /// ponytail: the label only, the shape it grows arriving with the one-shot commit;
+    /// the session is the upgrade.
     pub fn text_preview(&self, id: &str, text: &str) -> Option<DrawElement> {
         let element = self.scene.get(id)?;
         if element.kind != DrawElementType::Text {

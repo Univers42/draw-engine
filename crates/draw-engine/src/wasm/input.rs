@@ -669,7 +669,8 @@ impl WasmEngine {
     }
 
     /// The text element `id` as it would be with `text` in it, uncommitted, as JSON —
-    /// empty when `id` is not a text. What the host streams to peers while typing.
+    /// empty when `id` is not a text. What a host on the one-shot `setElementText` shows
+    /// peers while typing; on the session, `gestureElementsJson` carries it.
     #[wasm_bindgen(js_name = textPreviewJson)]
     pub fn text_preview_json(&self, id: &str, text: &str) -> String {
         let Ok(state) = self.cell.try_borrow() else {

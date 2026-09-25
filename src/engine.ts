@@ -655,8 +655,9 @@ export class DrawEngine {
 
   /**
    * The text element `id` as it would be with `text` in it, without committing it —
-   * what a host streams to peers while someone types, so the words appear on their
-   * screens as they are written. Null when `id` is not a text.
+   * for a host writing text whole (`setElementText`) to show peers while someone types.
+   * A host on the typing session streams `gestureElements()`, which carries the shape the
+   * text grows too. Null when `id` is not a text.
    */
   textPreview(id: string, text: string): DrawElement | null {
     return parseJson<DrawElement | null>(this.inner.textPreviewJson(id, text), null);
