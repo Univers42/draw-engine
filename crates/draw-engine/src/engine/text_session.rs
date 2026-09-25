@@ -157,10 +157,17 @@ impl DrawEngine {
     /// ending lets go of it, as the oracle's selection is empty then. With the tool locked,
     /// or the autoshape tool, which stays on through the edit, nothing is selected either
     /// way (`App.tsx@1118751f:6446-6453`).
+    ///
+    /// A preview still showing is given back first: a family only hovered in the font
+    /// list is not what the edit commits. A press on the board ends the edit before the
+    /// list closes, where the oracle's picker puts back the text it cached when it opened
+    /// (`actionProperties.tsx@1118751f:1483-1500`); committed with the edit instead, the
+    /// hovered family was stamped and sent, and the list closing had nothing to give back.
     pub fn commit_text_edit(&mut self, text: &str, via_keyboard: bool) {
         let Some(session) = self.text_session.take() else {
             return;
         };
+        self.give_back_style_preview();
         let Some(element) = self.live_element(&session.id) else {
             // Deleted meanwhile, here: nothing is left to write into.
             self.push_history();

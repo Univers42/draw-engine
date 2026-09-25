@@ -315,6 +315,43 @@ mod style_while_typing {
             );
         }
     }
+
+    /// A family only hovered, never picked, is not what the edit commits. A press on the
+    /// board ends the edit before the list closes, so the commit gives the hover back
+    /// first, as the oracle's picker puts back what it cached when it closes
+    /// (`actionProperties.tsx@1118751f:1483-1500`). Committed instead, the hovered family
+    /// was stamped and sent, and the list closing afterwards had nothing to give back.
+    #[test]
+    fn a_family_hovered_and_never_picked_is_not_committed() {
+        for existing in [false, true] {
+            let mut engine = engine_with_measure(Vec::new());
+            let id = open_at(&mut engine, (300.0, 200.0));
+            if existing {
+                engine.commit_text_edit("mine", true);
+                engine.select(vec![id.clone()]);
+                assert!(engine.edit_selected_text());
+            }
+            engine.update_text_edit("abc");
+            let before = element(&engine, &id);
+            let look = |el: &DrawElement| (el.font_family, el.line_height);
+            engine.preview_font_family(Some(7));
+            assert_eq!(element(&engine, &id).font_family, Some(7));
+            engine.drain_events();
+
+            engine.commit_text_edit("abc", false);
+            let delta = engine
+                .drain_events()
+                .scene_delta
+                .expect("the commit is sent");
+            let sent = delta.updated.iter().find(|el| el.id == id).expect("sent");
+            assert_eq!(look(sent), look(&before), "sent, existing: {existing}");
+            // The list closing afterwards finds nothing left to give back.
+            engine.preview_font_family(None);
+            let now = element(&engine, &id);
+            assert_eq!(look(&now), look(&before), "existing: {existing}");
+            assert_eq!(now.original_text.as_deref(), Some("abc"));
+        }
+    }
 }
 
 /// A label typed into a shape and then let go gives the shape back the height it had

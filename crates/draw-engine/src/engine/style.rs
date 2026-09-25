@@ -263,14 +263,7 @@ impl DrawEngine {
     ///
     /// The host loads the face first, as for [`Self::set_font_family`].
     pub fn preview_font_family(&mut self, family: Option<u8>) {
-        let previewed: Vec<(String, Option<DrawElement>)> = self.style_preview.drain().collect();
-        let gave_back = !previewed.is_empty();
-        for (id, found) in previewed {
-            match found {
-                Some(found) => self.scene.put(found),
-                None => self.drop_local_change(&id),
-            }
-        }
+        let gave_back = self.give_back_style_preview();
         let line_height = family
             .and_then(crate::text::font::family)
             .map(|font| font.line_height);
@@ -299,6 +292,21 @@ impl DrawEngine {
             self.touch_style();
             self.request_draw();
         }
+    }
+
+    /// Gives back what the style preview in progress changed — a font hovered, the opacity
+    /// slider mid-drag — as it was before it: a copy a font preview found as a change of
+    /// ours is put back, anything else is no longer changed. Says whether there was any.
+    pub(super) fn give_back_style_preview(&mut self) -> bool {
+        let previewed: Vec<(String, Option<DrawElement>)> = self.style_preview.drain().collect();
+        let gave_back = !previewed.is_empty();
+        for (id, found) in previewed {
+            match found {
+                Some(found) => self.scene.put(found),
+                None => self.drop_local_change(&id),
+            }
+        }
+        gave_back
     }
 
     /// Puts what a font preview changed, remembering what it found when that was already
