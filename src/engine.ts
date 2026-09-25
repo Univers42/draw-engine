@@ -424,10 +424,11 @@ export class DrawEngine {
 
   /**
    * The command palette's "Add rectangle / diamond / ellipse": a default-sized shape
-   * centred on `center`, selected, as one step of undo. `null` for any other kind.
+   * centred on the **screen** point `(screenX, screenY)`, selected, as one step of undo —
+   * `insertImage`/`insertEmbed`'s own convention. `null` for any other kind.
    */
-  insertDefaultShape(kind: FlowchartShape, center: { x: number; y: number }): string | null {
-    return this.inner.insertDefaultShape(kind, center.x, center.y) ?? null;
+  insertDefaultShape(kind: FlowchartShape, screenX: number, screenY: number): string | null {
+    return this.inner.insertDefaultShape(kind, screenX, screenY) ?? null;
   }
 
   duplicateSelection(): void {

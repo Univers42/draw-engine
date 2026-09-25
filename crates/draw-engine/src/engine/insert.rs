@@ -11,16 +11,19 @@ use crate::scene::{create_element, DrawElementType, Geometry};
 const DEFAULT_SHAPE_SIZE: (f64, f64) = (120.0, 60.0);
 
 impl DrawEngine {
-    /// Inserts a default-sized rectangle/diamond/ellipse centred at `(center_x, center_y)`
-    /// in world space, in the current default style ([`DrawEngine::get_next_style`] — the
-    /// same style a hand-drawn shape would start with), selected, as one step of history —
-    /// `paste_json`'s own shape (`clipboard.rs`). `None` for any other kind, with nothing
-    /// added.
+    /// Inserts a default-sized rectangle/diamond/ellipse centred at `(sx, sy)`, in the
+    /// current default style ([`DrawEngine::get_next_style`] — the same style a hand-drawn
+    /// shape would start with), selected, as one step of history — `paste_json`'s own shape
+    /// (`clipboard.rs`). `None` for any other kind, with nothing added.
+    ///
+    /// `sx`/`sy` are **screen** coordinates, like every other pointer-driven entry point
+    /// (`insert_image`, `insert_embed` — `image.rs`): a toolbar/palette insert reports the
+    /// middle of the viewport, which is a screen rectangle, not a world one.
     pub fn insert_default_shape(
         &mut self,
         kind: DrawElementType,
-        center_x: f64,
-        center_y: f64,
+        sx: f64,
+        sy: f64,
     ) -> Option<String> {
         if !matches!(
             kind,
@@ -28,12 +31,13 @@ impl DrawEngine {
         ) {
             return None;
         }
+        let centre = self.screen_to_world(sx, sy);
         let (width, height) = DEFAULT_SHAPE_SIZE;
         let element = create_element(
             kind,
             Geometry {
-                x: center_x - width / 2.0,
-                y: center_y - height / 2.0,
+                x: centre.x - width / 2.0,
+                y: centre.y - height / 2.0,
                 width,
                 height,
             },

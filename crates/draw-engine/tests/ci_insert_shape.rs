@@ -27,6 +27,26 @@ fn inserting_a_rectangle_centres_it_on_the_point_and_selects_it() {
     assert_eq!(engine.get_selection(), vec![id]);
 }
 
+/// `sx`/`sy` are screen coordinates, like `insert_image`/`insert_embed` — a panned,
+/// zoomed-in camera must not land the shape where it would under the identity camera the
+/// other tests use.
+#[test]
+fn the_point_is_read_in_screen_space_not_world_space() {
+    let mut engine = engine_with_scene(Vec::new());
+    engine.set_camera(Camera {
+        x: -100.0,
+        y: -50.0,
+        scale: 2.0,
+    });
+    // Screen (400, 300) under this camera is world ((400 - -100) / 2, (300 - -50) / 2).
+    let id = engine
+        .insert_default_shape(DrawElementType::Rectangle, 400.0, 300.0)
+        .expect("inserted");
+    let rect = element(&engine, &id);
+    assert_close(rect.x + rect.width / 2.0, 250.0);
+    assert_close(rect.y + rect.height / 2.0, 175.0);
+}
+
 #[test]
 fn diamond_and_ellipse_are_supported_too() {
     let mut engine = engine_with_scene(Vec::new());
