@@ -184,6 +184,7 @@ export function attachPointerInput(session: HostSession): () => void {
     event.stopPropagation();
     const { x, y } = localPoint(canvas, event);
     const hit = engine.hitTest(x, y, 4);
+    const onBox = engine.hitsSelectionBox(x, y);
     // A selected element keeps the selection it is in, so the menu can act on all of
     // it — binding a text to a shape takes both (`App.tsx@1118751f:13299-13319`). Nothing
     // under the point but still inside the padded box around a multi-selection is a
@@ -191,9 +192,15 @@ export function attachPointerInput(session: HostSession): () => void {
     // not the board's (`isHittingCommonBoundingBoxOfSelectedElements`,
     // `App.tsx@1118751f:13276-13279`); the selection is left exactly as it was, as the
     // oracle leaves `state` untouched for that case.
-    if (!hit && !engine.hitsSelectionBox(x, y)) engine.clearSelection();
-    else if (hit && !engine.getSelection().includes(hit.id)) engine.select([hit.id]);
-    callbacks.onContextMenu?.({ x, y });
+    //
+    // Nothing under the point at all, inside the box or out, never clears the selection
+    // either: a right-button press runs no selection-clearing path in the oracle at all
+    // (`openContextMenu`, `App.tsx@1118751f:13296-13326` only ever adds to `state`, never
+    // clears it). The menu kind is still the hit's, independent of what stays selected —
+    // "element" for the point or the box, "canvas" otherwise (`:13299`,
+    // `const type = element || isHittingCommonBoundBox ? "element" : "canvas"`).
+    if (hit && !engine.getSelection().includes(hit.id)) engine.select([hit.id]);
+    callbacks.onContextMenu?.({ x, y }, hit || onBox ? "element" : "canvas");
   };
 
   canvas.addEventListener("wheel", onWheel, { passive: false });

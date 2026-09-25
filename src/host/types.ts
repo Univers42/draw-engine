@@ -37,8 +37,11 @@ export interface DrawCanvasProps {
   /** Something the person should be told, as a stable code. The host picks the words. */
   onNotice?: (notice: DrawNotice) => void;
   /** Right-click at a canvas-local point, after the engine has selected whatever
-   *  sits under it — the host opens its context menu (e.g. arrowhead choice). */
-  onContextMenu?: (point: { x: number; y: number }) => void;
+   *  sits under it — the host opens its context menu (e.g. arrowhead choice). `kind` is
+   *  "element" when the point or the current selection's own box was hit, "canvas"
+   *  otherwise — decided by the hit alone, independent of what stays selected, since a
+   *  right-click never clears the selection (`App.tsx@1118751f:13296-13326`). */
+  onContextMenu?: (point: { x: number; y: number }, kind: "element" | "canvas") => void;
   /** The keep-tool padlock was toggled (Q) — hosts mirror it in the toolbar. */
   onToolLockChange?: (locked: boolean) => void;
   /** Pointer down on canvas. Return true to intercept and cancel engine pointer handling. */
