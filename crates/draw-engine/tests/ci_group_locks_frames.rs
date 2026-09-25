@@ -1056,6 +1056,59 @@ fn a_pasted_copy_belongs_to_the_frame_it_lands_in() {
     assert_eq!(frame_of(&engine, &near).as_deref(), Some(frame.as_str()));
 }
 
+/// Copying a frame copies what is in it: the oracle's copy takes the selection with
+/// `includeElementsInFrames` (`actionClipboard.tsx@1118751f:29-33`,
+/// `selection.ts@1118751f:196-209`), so the pasted frame arrives with its children in it.
+#[test]
+fn a_copied_frame_pastes_with_its_children_in_it() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    engine.select(vec![frame.clone()]);
+    let copied = engine.copy_selection();
+
+    assert!(engine.paste_json(copied.as_deref(), Some((700.0, 400.0))));
+
+    assert_frame_copied_whole(&engine, &frame, &child_id);
+}
+
+/// Ctrl+D on a frame alone copies its children with it, for the same reason
+/// (`actionDuplicateSelection.tsx@1118751f:63-71`, `duplicate.ts@1118751f:362-379`).
+#[test]
+fn a_duplicated_frame_takes_copies_of_its_children() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame = draw_frame(&mut engine, (20.0, 20.0), (300.0, 300.0));
+    engine.select(vec![frame.clone()]);
+
+    engine.duplicate_selection(10.0, 10.0);
+
+    assert_frame_copied_whole(&engine, &frame, &child_id);
+}
+
+/// Two frames and two children: the original child still in the original frame, and the
+/// copy of it in the copy of the frame.
+fn assert_frame_copied_whole(engine: &DrawEngine, frame: &str, child: &str) {
+    let live: Vec<DrawElement> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| !el.is_deleted)
+        .collect();
+    assert_eq!(live.len(), 4, "the frame and its child, twice");
+    let frame_copy = live
+        .iter()
+        .find(|el| el.kind == DrawElementType::Frame && el.id != frame)
+        .expect("a copy of the frame");
+    let child_copy = live
+        .iter()
+        .find(|el| el.kind != DrawElementType::Frame && el.id != child)
+        .expect("a copy of the child");
+    assert_eq!(child_copy.frame_id.as_deref(), Some(frame_copy.id.as_str()));
+    assert_eq!(frame_of(engine, child), Some(frame.to_string()));
+}
+
 /// A copy of a frame takes nothing it lands on: Ctrl+D puts the copy a few units over
 /// the original, wholly around its children, and judged as a moved frame is — the whole
 /// board over — the copy, on top, took them.

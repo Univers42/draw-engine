@@ -401,15 +401,8 @@ impl DrawEngine {
         // `packages/excalidraw/actions/actionDuplicateSelection.tsx:63-72` and by
         // `packages/excalidraw/components/App.duplicate.ts:195-199`.
         let editing = self.editing_group_id.as_deref();
-        // A selected frame that is itself a group member drags its own children along too,
-        // group id or not (`with_grouped_frame_children`) — grown before the copy is taken,
-        // so they are in it at all, not left behind with an empty frame.
-        let grown = crate::edit::with_grouped_frame_children(
-            self.scene.iter_ordered(),
-            &self.selected_ids,
-            editing,
-        );
-        let copied = crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &grown);
+        let copied =
+            crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
         // Where every copy belongs, worked out before the sources are consumed: a group, a
         // frame with its children, a container with its label, each one run; anything else
         // a run of one. See `duplicate_runs`.
