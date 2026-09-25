@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { dispatchKeyDown, type KeyEngine, type KeyEvent, type KeySession } from "./keys.ts";
+import { dispatchKeyDown, dispatchKeyUp, type KeyEngine, type KeyEvent, type KeySession } from "./keys.ts";
 import { localPoint } from "./session.ts";
 
 function event(partial: Partial<KeyEvent> & Pick<KeyEvent, "key">): KeyEvent {
@@ -27,10 +27,22 @@ function session(engine: KeyEngine, extras: Partial<KeySession> = {}): KeySessio
 function recording(
   selection: string[] = [],
   placingPath = false,
+  creatingFlowchart = false,
+  navigateTarget: string | null = null,
 ): { engine: KeyEngine; calls: string[] } {
   const calls: string[] = [];
   let locked = false;
   const engine = {
+    flowchartCreate: (direction: string) => calls.push(`flowchartCreate:${direction}`),
+    flowchartSetShape: (shape: string) => calls.push(`flowchartSetShape:${shape}`),
+    flowchartCommit: () => calls.push("flowchartCommit"),
+    flowchartCancel: () => calls.push("flowchartCancel"),
+    isCreatingFlowchart: () => creatingFlowchart,
+    flowchartNavigate: (direction: string) => {
+      calls.push(`flowchartNavigate:${direction}`);
+      return navigateTarget;
+    },
+    flowchartNavigationEnd: () => calls.push("flowchartNavigationEnd"),
     cancelPointer: () => calls.push("cancelPointer"),
     deleteSelection: () => calls.push("deleteSelection"),
     getSelection: () => selection,
@@ -76,11 +88,11 @@ function recording(
 }
 
 describe("dispatchKeyDown", () => {
-  it("cancels the pointer on Escape without preventDefault", () => {
+  it("cancels the pointer and any pending flowchart on Escape without preventDefault", () => {
     const { engine, calls } = recording();
     const result = dispatchKeyDown(session(engine), event({ key: "Escape" }));
     assert.equal(result, "pass");
-    assert.deepEqual(calls, ["cancelPointer"]);
+    assert.deepEqual(calls, ["cancelPointer", "flowchartCancel"]);
   });
 
   /**
@@ -268,6 +280,91 @@ describe("dispatchKeyDown", () => {
     const state = session(engine);
     assert.equal(dispatchKeyDown(state, event({ key: " " })), "prevent");
     assert.equal(state.spaceHeld, true);
+  });
+
+  it("creates a flowchart node on Ctrl/Cmd+Arrow, in any of the four directions, and asks for a reveal", () => {
+    const cases: [string, string][] = [
+      ["ArrowRight", "right"],
+      ["ArrowLeft", "left"],
+      ["ArrowUp", "up"],
+      ["ArrowDown", "down"],
+    ];
+    for (const [key, direction] of cases) {
+      const { engine, calls } = recording();
+      let revealed = 0;
+      const result = dispatchKeyDown(
+        session(engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
+        event({ key, ctrlKey: true }),
+      );
+      assert.equal(result, "prevent");
+      assert.deepEqual(calls, [`flowchartCreate:${direction}`]);
+      assert.equal(revealed, 1);
+    }
+  });
+
+  it("navigates the flowchart on Alt+Arrow instead of nudging, without asking the host to reveal", () => {
+    // Unlike Ctrl/Cmd+Arrow's still-pending preview, `flowchart_navigate` eases the
+    // camera itself (`DrawEngine::reveal`), so the host must not also pan — that would
+    // fight the engine's own in-flight animation every frame instead of cooperating.
+    const missed = recording(["id"], false, false, null);
+    let revealed = 0;
+    assert.equal(
+      dispatchKeyDown(
+        session(missed.engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
+        event({ key: "ArrowRight", altKey: true }),
+      ),
+      "prevent",
+    );
+    assert.deepEqual(missed.calls, ["flowchartNavigate:right"]);
+    assert.equal(revealed, 0);
+
+    const hit = recording(["id"], false, false, "sibling-id");
+    assert.equal(
+      dispatchKeyDown(
+        session(hit.engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
+        event({ key: "ArrowRight", altKey: true }),
+      ),
+      "prevent",
+    );
+    assert.deepEqual(hit.calls, ["flowchartNavigate:right"]);
+    assert.equal(revealed, 0, "the engine's own reveal covers a hit; the host must not double-pan");
+  });
+
+  it("picks the pending shape on Ctrl+1/2/3 only while a cluster is being created", () => {
+    const idle = recording([], false, false);
+    assert.equal(dispatchKeyDown(session(idle.engine), event({ key: "2", ctrlKey: true })), "pass");
+    assert.deepEqual(idle.calls, []);
+
+    const creating = recording([], false, true);
+    assert.equal(dispatchKeyDown(session(creating.engine), event({ key: "2", ctrlKey: true })), "prevent");
+    assert.deepEqual(creating.calls, ["flowchartSetShape:diamond"]);
+  });
+
+  it("leaves plain 1/2/3 to the tool shortcuts", () => {
+    const { engine, calls } = recording([], false, true);
+    const result = dispatchKeyDown(session(engine), event({ key: "2" }));
+    assert.equal(result, "prevent");
+    assert.deepEqual(calls, ["activateTool:rectangle"]);
+  });
+});
+
+describe("dispatchKeyUp", () => {
+  it("commits the pending flowchart once every modifier that could still be creating is up", () => {
+    const { engine, calls } = recording();
+    dispatchKeyUp(session(engine), event({ key: "Control" }));
+    assert.deepEqual(calls, ["flowchartNavigationEnd", "flowchartCommit"]);
+  });
+
+  it("does not commit while Ctrl/Cmd is still held", () => {
+    const { engine, calls } = recording();
+    dispatchKeyUp(session(engine), event({ key: "Shift", ctrlKey: true }));
+    assert.deepEqual(calls, ["flowchartNavigationEnd"]);
+  });
+
+  it("ends navigation once Alt is up, independently of the commit", () => {
+    const { engine, calls } = recording();
+    dispatchKeyUp(session(engine), event({ key: "ArrowRight", altKey: false, ctrlKey: true }));
+    assert.deepEqual(calls, ["flowchartNavigationEnd"]);
   });
 });
 

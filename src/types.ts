@@ -76,6 +76,12 @@ export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
 export type FlipAxis = "horizontal" | "vertical";
 
+/** Which way Ctrl/Cmd+Arrow grows the flowchart, or Alt+Arrow walks it. */
+export type FlowchartDirection = "up" | "down" | "left" | "right";
+
+/** The three shapes 1/2/3 chooses while a flowchart cluster is being created. */
+export type FlowchartShape = "rectangle" | "diamond" | "ellipse";
+
 export interface DrawElementStyle {
   strokeColor: string;
   backgroundColor: string;

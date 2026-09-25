@@ -3,7 +3,7 @@
  * focused container so the embedding page does not steal them.
  */
 
-import { dispatchKeyDown } from "./keys";
+import { dispatchKeyDown, dispatchKeyUp } from "./keys";
 import type { HostSession } from "./session";
 
 export function attachKeyboardInput(session: HostSession): () => void {
@@ -15,6 +15,7 @@ export function attachKeyboardInput(session: HostSession): () => void {
 
   const onKeyUp = (event: KeyboardEvent) => {
     if (event.key === " ") session.spaceHeld = false;
+    dispatchKeyUp(session, event);
   };
 
   const onPaste = (event: ClipboardEvent) => {

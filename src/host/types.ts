@@ -44,6 +44,12 @@ export interface DrawCanvasProps {
   onContextMenu?: (point: { x: number; y: number }, kind: "element" | "canvas") => void;
   /** The keep-tool padlock was toggled (Q) — hosts mirror it in the toolbar. */
   onToolLockChange?: (locked: boolean) => void;
+  /**
+   * A flowchart node was just created or navigated to and may be off-screen — the host
+   * scrolls it into view (a short ease, not a jump). No payload: the host already holds
+   * the engine and reads `pendingFlowchartElements()` / `getSelectedElements()` itself.
+   */
+  onFlowchartReveal?: () => void;
   /** Pointer down on canvas. Return true to intercept and cancel engine pointer handling. */
   onPointerDown?: (point: { x: number; y: number }, event: PointerEvent) => boolean | void;
   /** Pointer move on canvas. */
@@ -63,6 +69,7 @@ export type HostCallbacks = Pick<
   | "onNotice"
   | "onContextMenu"
   | "onToolLockChange"
+  | "onFlowchartReveal"
   | "onPointerDown"
   | "onPointerMove"
   | "onPointerUp"

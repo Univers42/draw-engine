@@ -15,6 +15,8 @@ import type {
   DrawTheme,
   DrawTool,
   FlipAxis,
+  FlowchartDirection,
+  FlowchartShape,
   GridSettings,
   SelectionStyle,
   TextAlign,
@@ -812,5 +814,44 @@ export class DrawEngine {
       this.inner.colorCountsJson(key === "backgroundColor"),
       [],
     );
+  }
+
+  /** Ctrl/Cmd+Arrow: preview a cluster of new nodes off the selected flowchart node. */
+  flowchartCreate(direction: FlowchartDirection): void {
+    this.inner.flowchartCreate(direction);
+  }
+
+  /** While Ctrl/Cmd is held, 1/2/3 picks the pending nodes' shape. */
+  flowchartSetShape(shape: FlowchartShape): void {
+    this.inner.flowchartSetShape(shape);
+  }
+
+  /** Releasing Ctrl/Cmd: commits the pending cluster as one step of history. */
+  flowchartCommit(): void {
+    this.inner.flowchartCommit();
+  }
+
+  /** Escape while creating: drops the pending cluster without a trace. */
+  flowchartCancel(): void {
+    this.inner.flowchartCancel();
+  }
+
+  isCreatingFlowchart(): boolean {
+    return this.inner.isCreatingFlowchart();
+  }
+
+  /** The pending cluster, for host UI that needs it outside the canvas painter. */
+  pendingFlowchartElements(): DrawElement[] {
+    return parseJson<DrawElement[]>(this.inner.pendingFlowchartElementsJson(), []);
+  }
+
+  /** Alt+Arrow: selects the connected node in that direction. Returns its id, if any. */
+  flowchartNavigate(direction: FlowchartDirection): string | null {
+    return this.inner.flowchartNavigate(direction) ?? null;
+  }
+
+  /** Alt released: ends the exploration. */
+  flowchartNavigationEnd(): void {
+    this.inner.flowchartNavigationEnd();
   }
 }
