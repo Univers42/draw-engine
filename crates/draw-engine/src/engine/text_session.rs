@@ -39,7 +39,8 @@ pub struct TextEditSession {
     pub is_new: bool,
     /// The height of the label's shape when the edit began: typing grows the shape, and
     /// deleting shrinks it back down to this and no further (`originalContainerCache`,
-    /// `textWysiwyg.tsx@1118751f:331-373`). `None` for free text.
+    /// `textWysiwyg.tsx@1118751f:331-373`). The commit leaves it for "Unbind text" to give
+    /// back, as the oracle's cache does (`engine/bound_text.rs`). `None` for free text.
     pub original_container_height: Option<f64>,
 }
 
@@ -181,6 +182,18 @@ impl DrawEngine {
             return;
         }
         self.type_into(&element, text, session.original_container_height);
+        // The shape's height when the editor opened is what "Unbind text" gives back,
+        // unless it remembers one already (`textWysiwyg.tsx@1118751f:326-345`). The oracle
+        // notes it at the editor's first layout; here at the commit, so an edit that
+        // leaves no trace leaves none here either.
+        if let (Some(container), Some(height)) = (
+            element.container_id.clone(),
+            session.original_container_height,
+        ) {
+            self.original_container_heights
+                .entry(container)
+                .or_insert(height);
+        }
         if keep {
             let id = element.container_id.clone().unwrap_or(element.id);
             self.set_selection(vec![id]);
@@ -304,6 +317,8 @@ impl DrawEngine {
             for (id, _) in self.scene.baseline() {
                 self.drop_local_change(&id);
             }
+            // Nor does the shape remember a height a style grew it to meanwhile.
+            self.forget_original_heights(element.container_id.as_slice());
             // Its place above its shape was the only reorder, and it went with it.
             let before = self.scene.order_baseline().map(|mut order| {
                 order.retain(|id| *id != element.id);

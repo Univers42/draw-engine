@@ -238,8 +238,9 @@ impl DrawEngine {
     /// label grew taller keeps that height when the label is let go: `redrawTextBoundingBox`
     /// remembers it (`packages/element/src/textElement.ts@1118751f:119-127`).
     ///
-    /// Not the text editor's growth, which the oracle's editor leaves unremembered
-    /// (`wysiwyg/textWysiwyg.tsx@1118751f:331-357`).
+    /// Not the text editor's growth, which the oracle's editor leaves unremembered: it
+    /// remembers the height the shape had when it opened (`wysiwyg/textWysiwyg.tsx@1118751f:
+    /// 326-357`, [`super::TextEditSession::original_container_height`]).
     pub(super) fn put_laid(&mut self, laid: Laid) {
         if let Some(container) = laid.container {
             let taller = self

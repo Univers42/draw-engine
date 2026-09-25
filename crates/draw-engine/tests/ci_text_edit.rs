@@ -317,6 +317,76 @@ mod style_while_typing {
     }
 }
 
+/// A label typed into a shape and then let go gives the shape back the height it had
+/// when the editor opened on it: the oracle's editor caches that height the first time it
+/// lays the label out (`textWysiwyg.tsx@1118751f:326-345`), after a new label's shape grew
+/// to hold one line (`App.tsx@1118751f:6974-7006`), and "Unbind text" writes it back
+/// (`actionBoundText.tsx@1118751f:80-83`, `:105-110`). What typing grew is not kept.
+mod unbind {
+    use super::*;
+
+    fn height(engine: &DrawEngine, id: &str) -> f64 {
+        element(engine, id).height
+    }
+
+    #[test]
+    fn a_new_label_gives_back_the_height_its_editor_opened_on() {
+        let shape = box_at(100.0, 100.0, 200.0, 10.0);
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        open_at(&mut engine, (200.0, 105.0));
+        let opened = height(&engine, &shape_id);
+        assert!(opened > 10.0, "grown to hold one line");
+        let typed = "one\ntwo\nthree\nfour\nfive";
+        engine.update_text_edit(typed);
+        engine.commit_text_edit(typed, true);
+        assert!(height(&engine, &shape_id) > opened, "typing grew it");
+        engine.select(vec![shape_id.clone()]);
+        engine.unbind_text();
+        assert_eq!(height(&engine, &shape_id), opened);
+    }
+
+    /// Reopened, a label keeps the height remembered the first time.
+    #[test]
+    fn a_label_typed_into_again_keeps_the_first_height() {
+        let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "a");
+        let first = height(&engine, &shape);
+        engine.select(vec![label.clone()]);
+        assert!(engine.edit_selected_text());
+        let typed = "a\nb\nc\nd\ne\nf\ng";
+        engine.update_text_edit(typed);
+        engine.commit_text_edit(typed, true);
+        assert!(height(&engine, &shape) > first);
+        engine.select(vec![shape.clone()]);
+        engine.unbind_text();
+        assert_eq!(height(&engine, &shape), first);
+    }
+
+    /// A new label left empty takes back what it grew its shape by — and what a size
+    /// stepped meanwhile made the shape remember: the next label typed there is the one
+    /// whose height counts.
+    #[test]
+    fn a_new_label_left_empty_is_not_remembered() {
+        let shape = box_at(100.0, 100.0, 200.0, 10.0);
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        open_at(&mut engine, (200.0, 105.0));
+        for _ in 0..6 {
+            engine.step_font_size(true);
+        }
+        engine.commit_text_edit("", true);
+        assert_eq!(height(&engine, &shape_id), 10.0, "given back");
+        open_at(&mut engine, (200.0, 105.0));
+        let opened = height(&engine, &shape_id);
+        let typed = "one\ntwo\nthree";
+        engine.update_text_edit(typed);
+        engine.commit_text_edit(typed, true);
+        engine.select(vec![shape_id.clone()]);
+        engine.unbind_text();
+        assert_eq!(height(&engine, &shape_id), opened);
+    }
+}
+
 /// The editor is the only copy of the text being typed (`Renderer.ts@1118751f:259-267`),
 /// and what moves with it is live.
 mod painting {
