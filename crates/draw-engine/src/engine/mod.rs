@@ -17,6 +17,7 @@ mod bucket;
 mod clipboard;
 mod debug;
 mod eraser;
+mod flowchart;
 mod frame;
 mod hover;
 mod image;
@@ -38,6 +39,7 @@ mod types;
 pub mod vectorize;
 
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
+pub use flowchart::LinkDirection;
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub use selection_style::{ArrowType, ColorDomain, Edges, SelectionStyle};
@@ -263,6 +265,11 @@ pub struct DrawEngine {
     style_preview: HashMap<String, Option<DrawElement>>,
     /// The text open in the host's editor. See `text_session.rs`.
     text_session: Option<TextEditSession>,
+    /// The node cluster being previewed while Ctrl/Cmd+Arrow is held. `None` between
+    /// gestures. See `flowchart.rs`.
+    flowchart_creator: Option<flowchart::FlowchartCreator>,
+    /// Alt+Arrow's same-level exploration state. See `flowchart.rs`.
+    flowchart_navigator: flowchart::FlowchartNavigator,
 }
 
 impl Default for DrawEngine {
@@ -335,6 +342,8 @@ impl DrawEngine {
             copied_styles: None,
             style_preview: HashMap::new(),
             text_session: None,
+            flowchart_creator: None,
+            flowchart_navigator: flowchart::FlowchartNavigator::default(),
         }
     }
 
