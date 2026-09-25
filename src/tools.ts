@@ -51,6 +51,8 @@ const HOTKEYS: Record<string, DrawTool> = {
   "shift+x": "autoshape",
   // Excalidraw's own key for the bucket.
   b: "bucketfill",
+  // A letter and no digit, as the oracle has it.
+  n: "stickynote",
   h: "hand",
 };
 

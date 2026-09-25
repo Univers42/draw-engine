@@ -77,6 +77,7 @@ impl DrawEngine {
                 self.request_draw();
             }
             DrawTool::Frame => self.begin_frame(world),
+            DrawTool::StickyNote => self.begin_sticky(self.screen_to_world(sx, sy), world),
             // Nothing to do with a pointer. The image arrives from a file picker, and
             // until it does there is nothing to place — clicking must not start a
             // marquee either, or the selection changes behind the open dialog.
@@ -127,7 +128,12 @@ impl DrawEngine {
         element.name = Some(crate::scene::default_frame_name(self.scene.iter_ordered()));
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::Draft { id, start: world });
+        self.interaction = Some(Interaction::Draft {
+            id,
+            start: world,
+            press: world,
+            shift: false,
+        });
         self.request_draw();
     }
 
@@ -149,7 +155,51 @@ impl DrawEngine {
         );
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::Draft { id, start: world });
+        self.interaction = Some(Interaction::Draft {
+            id,
+            start: world,
+            press: world,
+            shift: false,
+        });
+        self.request_draw();
+    }
+
+    /// A sticky note starts like a shape, 0×0 at the press, in the notes' own colours and
+    /// always solid (`createGenericElementOnPointerDown` and `newStickyNoteElement`,
+    /// `App.tsx@1118751f:10440-10486`, `newElement.ts@1118751f:230-243`). It is dated
+    /// now, by the wall clock: the engine's own clock counts from the page's start.
+    ///
+    /// Only a note is dated. Every element of the oracle's carries `created`; ours would
+    /// then change every element any board has ever sent, for a date only a note shows.
+    fn begin_sticky(&mut self, press: Point, world: Point) {
+        use crate::scene::sticky::{
+            normalize_sticky_background, normalize_sticky_stroke, wall_clock_ms,
+        };
+        let mut style = merge_style(&default_element_style(), &self.next_style);
+        style.stroke_color = normalize_sticky_stroke(&self.next_sticky_stroke);
+        style.background_color = normalize_sticky_background(&self.next_sticky_background);
+        style.fill_style = crate::scene::FillStyle::Solid;
+        let mut element = create_element(
+            DrawElementType::StickyNote,
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            style,
+            self.now_ms,
+        );
+        element.base_height = Some(0.0);
+        element.created = Some(wall_clock_ms());
+        let id = element.id.clone();
+        self.scene.add(element);
+        self.interaction = Some(Interaction::Draft {
+            id,
+            start: world,
+            press,
+            shift: false,
+        });
         self.request_draw();
     }
 
@@ -461,6 +511,13 @@ impl DrawEngine {
                     // pointer-down (`App.tsx@1118751f:9406-9416`).
                     let edge =
                         crate::selection::handle_edge_point(&single, handle).unwrap_or(press);
+                    let sticky = crate::scene::sticky::is_sticky_note(&single).then(|| {
+                        crate::scene::sticky::StickyOrigin::of(
+                            &single,
+                            self.live_label(&single)
+                                .filter(|label| label.kind == DrawElementType::Text),
+                        )
+                    });
                     self.interaction = Some(Interaction::Resize {
                         id: single.id,
                         handle,
@@ -479,6 +536,7 @@ impl DrawEngine {
                                 !label.is_deleted && label.kind == DrawElementType::Text
                             })
                             .map(|label| (label.id.clone(), label.font_size)),
+                        sticky,
                     });
                     return;
                 }

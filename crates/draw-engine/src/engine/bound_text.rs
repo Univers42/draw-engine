@@ -80,7 +80,26 @@ impl DrawEngine {
         let mut container = container;
         container.bound_text_id = Some(text.id.clone());
         let original_height = container.height.abs();
-        let label = as_label(text, &container.id);
+        let mut label = as_label(text, &container.id);
+        if crate::scene::sticky::is_sticky_note(&container) {
+            // A note and its label share one ink — the text's, unless it is transparent —
+            // and the size the text had becomes the ceiling its fit shrinks below
+            // (`actionBoundText.tsx@1118751f:171-202`).
+            let ink = crate::scene::sticky::normalize_sticky_stroke(
+                if crate::scene::is_transparent(&label.stroke_color) {
+                    &container.stroke_color
+                } else {
+                    &label.stroke_color
+                },
+            );
+            label.base_font_size = Some(crate::scene::sticky::normalize_sticky_font_size(
+                label
+                    .base_font_size
+                    .unwrap_or_else(|| layout::font_size_of(&label)),
+            ));
+            label.stroke_color.clone_from(&ink);
+            container.stroke_color = ink;
+        }
         let (label_id, container_id) = (label.id.clone(), container.id.clone());
         self.scene.put(container);
         let laid = self.laid_out(&label);
@@ -133,6 +152,8 @@ impl DrawEngine {
                 measure.size(&source, layout::font_of(&text), resolved_line_height(&text))
             });
             text.container_id = None;
+            // Only a note's label has a ceiling (`:95`).
+            text.base_font_size = None;
             text.frame_id.clone_from(&container.frame_id);
             // A label's own switch, which a free text says with `auto_resize`.
             text.wrap = None;
@@ -146,7 +167,20 @@ impl DrawEngine {
             // upright and given back with the sign the shape has now: one growth turned
             // upright stays on the edge it grew from. The oracle's shapes are never
             // mirrored, so it never meets the case.
-            if let Some(height) = self.original_container_heights.remove(&container.id) {
+            let height = self.original_container_heights.remove(&container.id);
+            if crate::scene::sticky::is_sticky_note(&container) {
+                // An empty note sits at its base height (`:103-107`).
+                container = self
+                    .with_measure(|measure| {
+                        layout::sticky_layout(
+                            &container,
+                            None,
+                            &crate::scene::sticky::StickyLayoutOpts::default(),
+                            measure,
+                        )
+                    })
+                    .container;
+            } else if let Some(height) = height {
                 if !is_linear_element(&container) {
                     container.height = height.copysign(container.height);
                 }

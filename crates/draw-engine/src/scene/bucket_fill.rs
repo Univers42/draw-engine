@@ -340,6 +340,7 @@ pub fn has_background(kind: DrawElementType) -> bool {
     matches!(
         kind,
         DrawElementType::Rectangle
+            | DrawElementType::StickyNote
             | DrawElementType::Ellipse
             | DrawElementType::Diamond
             | DrawElementType::Line

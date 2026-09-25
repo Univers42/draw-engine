@@ -122,6 +122,13 @@ const ORACLE: &[Shortcut] = &[
         shift: false,
         digit: None,
     },
+    // A letter and no digit: `stickynote` in `Tools.tsx@1118751f:121-124`.
+    Shortcut {
+        tool: DrawTool::StickyNote,
+        letters: &["n"],
+        shift: false,
+        digit: None,
+    },
 ];
 
 #[test]

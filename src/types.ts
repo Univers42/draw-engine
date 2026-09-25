@@ -27,7 +27,9 @@ export type DrawElementType =
   | "text"
   | "image"
   | "frame"
-  | "embed";
+  | "embed"
+  /** A note: a filled pad with a shadow, its creation date, and a label it fits. */
+  | "stickynote";
 
 export type FillStyle = "hachure" | "cross-hatch" | "solid" | "zigzag";
 export type StrokeStyle = "solid" | "dashed" | "dotted";
@@ -66,7 +68,9 @@ export type DrawTool =
   /** Draws freehand and converts the stroke into the shape it was meant to be. */
   | "autoshape"
   /** Fills the region under the pointer. The click is the whole gesture. */
-  | "bucketfill";
+  | "bucketfill"
+  /** Places a sticky note — a click, or a drag for its size — and opens its label. */
+  | "stickynote";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
@@ -173,6 +177,21 @@ export interface DrawElement extends DrawElementStyle {
    */
   groupIds?: string[];
   locked?: boolean;
+  /**
+   * A sticky note's: the height it was given, which it grows above to fit its label and
+   * never shrinks below. Absent on a note from before the field: its height is its base.
+   */
+  baseHeight?: number;
+  /**
+   * When a sticky note was drawn, in epoch ms: the date its footer shows. Absent or
+   * `null` when unknown, and then the footer is not drawn.
+   */
+  created?: number | null;
+  /**
+   * A sticky note label's: the size it was given, the ceiling its fit shrinks below.
+   * Absent means `fontSize` is the ceiling. Meaningless on a text no note holds.
+   */
+  baseFontSize?: number | null;
   version: number;
   versionNonce: number;
   updated: number;
@@ -514,7 +533,17 @@ export interface SelectionStyle {
   canBindText: boolean;
   /** "Unbind text" is offered: a selected shape carries a label. */
   canUnbindText: boolean;
+  /**
+   * Whose colours a stroke pick sets: sticky notes' (their own palette, no transparent,
+   * the row reads "Text color"), the other elements', or both.
+   */
+  strokeDomain: ColorDomain;
+  /** As `strokeDomain`, for a background pick. */
+  backgroundDomain: ColorDomain;
 }
+
+/** A colour pick's domain: sticky notes keep colours of their own. */
+export type ColorDomain = "regular" | "sticky" | "mixed";
 
 /** The arrow types the engine draws: Excalidraw's less `elbow`. */
 export type ArrowType = "sharp" | "round";
@@ -550,4 +579,6 @@ export const EMPTY_SELECTION_STYLE: SelectionStyle = {
   labelWrap: null,
   canBindText: false,
   canUnbindText: false,
+  strokeDomain: "regular",
+  backgroundDomain: "regular",
 };

@@ -81,6 +81,12 @@ pub(crate) enum Interaction {
     Draft {
         id: String,
         start: Point,
+        /// The press before the grid had it: a sticky note placed by a click is centred on
+        /// it, then snapped (`App.tsx@1118751f:11820-11836`).
+        press: Point,
+        /// Shift, as of the last move. A note is squared on release unless it was held
+        /// (`:11839-11850`), and the release carries no keys of its own.
+        shift: bool,
     },
     /// A text gesture in progress, before it is known to be a click or a drag.
     ///
@@ -150,6 +156,9 @@ pub(crate) enum Interaction {
         /// keep the proportions lays the label out at that font, whatever an earlier move
         /// with Shift made it (`resizeSingleElement`, `resizeElements.ts@1118751f:805-814`).
         label_font: Option<(String, Option<f64>)>,
+        /// A sticky note's width, base height and label ceiling when the drag began: every
+        /// move's layout is measured from them (`getStickyNoteResizeIntent`).
+        sticky: Option<crate::scene::sticky::StickyOrigin>,
     },
     Rotate {
         id: String,

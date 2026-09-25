@@ -137,6 +137,10 @@ pub fn materialize_within(
                 element.group_ids = group_ids;
                 element.version = 1;
                 element.updated = now;
+                // A copy is a new note, dated now (`duplicate.ts@1118751f:116-117`).
+                if crate::scene::sticky::is_sticky_note(&element) {
+                    element.created = Some(crate::scene::sticky::wall_clock_ms());
+                }
                 element.is_deleted = false;
                 element
             })

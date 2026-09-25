@@ -383,7 +383,13 @@ fn shrunk(mut shape: DrawElement, label: &DrawElement, floor: Option<f64>) -> Dr
     let Some(floor) = floor else {
         return shape;
     };
-    if crate::scene::is_linear_element(&shape) || shape.kind == DrawElementType::Text {
+    // A note's fit shrinks it back to its base height itself.
+    if crate::scene::is_linear_element(&shape)
+        || matches!(
+            shape.kind,
+            DrawElementType::Text | DrawElementType::StickyNote
+        )
+    {
         return shape;
     }
     let height = shape.height.abs();

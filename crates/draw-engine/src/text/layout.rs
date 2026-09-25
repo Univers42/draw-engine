@@ -27,6 +27,12 @@ use crate::scene::element::{
     resolved_vertical_align, source_text, DrawElement, DrawElementType, TextAlign, VerticalAlign,
 };
 
+use crate::scene::sticky::{
+    label_ceiling, normalize_sticky_font_size, position_after_height_change, StickyLayoutOpts,
+    STICKY_NOTE_BODY_INSET_Y, STICKY_NOTE_FONT_STEP, STICKY_NOTE_MIN_FONT_SIZE,
+    STICKY_NOTE_MIN_SIZE, STICKY_NOTE_PADDING,
+};
+
 use super::{FontKey, MeasureCache};
 
 /// Excalidraw's `BOUND_TEXT_PADDING` (`packages/common/src/constants.ts@1118751f:417`):
@@ -121,7 +127,12 @@ fn container_box(container: &DrawElement) -> (f64, f64, f64, f64) {
 /// `getContainerCoords`: the top-left corner of the box a label is laid out in.
 pub fn container_coords(container: &DrawElement) -> Point {
     let (x, y, width, height) = container_box(container);
-    let (mut dx, mut dy) = (BOUND_TEXT_PADDING, BOUND_TEXT_PADDING);
+    let padding = if container.kind == DrawElementType::StickyNote {
+        STICKY_NOTE_PADDING
+    } else {
+        BOUND_TEXT_PADDING
+    };
+    let (mut dx, mut dy) = (padding, padding);
     match container.kind {
         DrawElementType::Ellipse => {
             dx += width / 2.0 * (1.0 - std::f64::consts::SQRT_2 / 2.0);
@@ -151,6 +162,7 @@ pub fn bound_text_max_width(container: &DrawElement, font_size: f64) -> f64 {
             js_round(width / 2.0 * std::f64::consts::SQRT_2) - BOUND_TEXT_PADDING * 2.0
         }
         DrawElementType::Diamond => js_round(width / 2.0) - BOUND_TEXT_PADDING * 2.0,
+        DrawElementType::StickyNote => width - STICKY_NOTE_PADDING * 2.0,
         _ => width - BOUND_TEXT_PADDING * 2.0,
     }
 }
@@ -170,6 +182,8 @@ pub fn bound_text_max_height(container: &DrawElement, label_height: f64) -> f64 
             js_round(height / 2.0 * std::f64::consts::SQRT_2) - BOUND_TEXT_PADDING * 2.0
         }
         DrawElementType::Diamond => js_round(height / 2.0) - BOUND_TEXT_PADDING * 2.0,
+        // The label's body ends above the date's footer.
+        DrawElementType::StickyNote => (height - STICKY_NOTE_BODY_INSET_Y).max(0.0),
         _ => height - BOUND_TEXT_PADDING * 2.0,
     }
 }
@@ -228,9 +242,18 @@ pub fn bound_text_position(container: &DrawElement, label: &DrawElement) -> Poin
     let coords = container_coords(container);
     let max_height = bound_text_max_height(container, label.height);
     let max_width = bound_text_max_width(container, font_size_of(label));
+    let sticky = container.kind == DrawElementType::StickyNote;
     let y = match resolved_vertical_align(label) {
         VerticalAlign::Top => coords.y,
         VerticalAlign::Bottom => coords.y + (max_height - label.height),
+        // Centred in the body above the footer, a note's label sits visibly high: it is
+        // centred in the whole padded note while it stays clear of the footer, and pushed
+        // up against the body's bottom only once it would overlap
+        // (`textElement.ts@1118751f:271-283`).
+        VerticalAlign::Middle if sticky => {
+            let padded = container_box(container).3 - STICKY_NOTE_PADDING * 2.0;
+            coords.y + ((padded - label.height) / 2.0).min(max_height - label.height)
+        }
         VerticalAlign::Middle => coords.y + (max_height / 2.0 - label.height / 2.0),
     };
     let x = match resolved_text_align(label) {
@@ -241,10 +264,20 @@ pub fn bound_text_position(container: &DrawElement, label: &DrawElement) -> Poin
     if container.angle == 0.0 {
         return Point { x, y };
     }
-    // Turned about the middle of the content box, as the shape is turned about its own.
-    let content = Point {
-        x: coords.x + max_width / 2.0,
-        y: coords.y + max_height / 2.0,
+    // Turned about the middle of the content box, as the shape is turned about its own —
+    // a note's about its own centre: its footer makes the body lopsided
+    // (`textElement.ts@1118751f:297-310`).
+    let content = if sticky {
+        let (bx, by, bw, bh) = container_box(container);
+        Point {
+            x: bx + bw / 2.0,
+            y: by + bh / 2.0,
+        }
+    } else {
+        Point {
+            x: coords.x + max_width / 2.0,
+            y: coords.y + max_height / 2.0,
+        }
     };
     let (sin, cos) = container.angle.sin_cos();
     let (dx, dy) = (
@@ -293,6 +326,14 @@ pub struct Laid {
 /// A free text stays where it is: which edge it keeps as it grows is the caller's to say
 /// ([`edit_anchor`], [`font_resize_anchor`]).
 pub fn layout_text(text: &DrawElement, container: Option<&DrawElement>, measure: &Measure) -> Laid {
+    // A note's fit owns both halves: the label's size and the note's height.
+    if let Some(note) = container.filter(|c| c.kind == DrawElementType::StickyNote) {
+        let laid = sticky_layout(note, Some(text), &StickyLayoutOpts::default(), measure);
+        return Laid {
+            text: laid.text.unwrap_or_else(|| text.clone()),
+            container: (laid.container != *note).then_some(laid.container),
+        };
+    }
     let font = font_of(text);
     let line_height = resolved_line_height(text);
     let source = source_text(text);
@@ -557,6 +598,12 @@ pub fn bound_text_resize(
     keep: (f64, f64),
     measure: &Measure,
 ) -> Laid {
+    if container.kind == DrawElementType::StickyNote {
+        // A note is resized with its own intents (`engine/sticky.rs`); a caller that has
+        // none keeps its base height and ceiling, as the oracle's fallback does
+        // (`handleBindTextResize`, `textElement.ts@1118751f:163-168`).
+        return layout_text(label, Some(container), measure);
+    }
     let mut laid = layout_text(label, Some(container), measure);
     let Some(grown) = laid.container.as_mut() else {
         return laid;
@@ -577,4 +624,188 @@ pub fn bound_text_resize(
     laid.text.x = placed.x;
     laid.text.y = placed.y;
     laid
+}
+
+/// A note and its label laid out together.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StickyLaid {
+    pub container: DrawElement,
+    pub text: Option<DrawElement>,
+}
+
+/// One size tried by the fit: the lines at it and their box.
+#[derive(Clone, Debug)]
+struct FontFit {
+    text: String,
+    font_size: f64,
+    width: f64,
+    height: f64,
+}
+
+/// `fitStickyNoteFont` (`stickyNote.ts@1118751f:587-661`): the largest size on the grid
+/// `{ceiling − k·STEP} ∪ {min}` whose lines fit the note, `min` when none does (the note
+/// then grows). Anchored at the ceiling, so the answer never depends on earlier edits, and
+/// started from the size the label has now: a keystroke costs one or two measures, a cold
+/// search at most log2(steps) + 2.
+fn fit_sticky_font(
+    fit: &dyn Fn(f64) -> FontFit,
+    ceiling: f64,
+    min: f64,
+    (max_width, max_height): (f64, f64),
+    warm_start: f64,
+) -> FontFit {
+    let steps = ((ceiling - min) / STICKY_NOTE_FONT_STEP).ceil().max(0.0) as usize;
+    let size_at = |index: usize| {
+        if index >= steps {
+            min
+        } else {
+            ceiling - index as f64 * STICKY_NOTE_FONT_STEP
+        }
+    };
+    let fits = std::cell::RefCell::new(std::collections::HashMap::<usize, FontFit>::new());
+    let at = |index: usize| -> FontFit {
+        if let Some(found) = fits.borrow().get(&index) {
+            return found.clone();
+        }
+        let tried = fit(size_at(index));
+        fits.borrow_mut().insert(index, tried.clone());
+        tried
+    };
+    let does_fit = |index: usize| {
+        let tried = at(index);
+        tried.width <= max_width && tried.height <= max_height
+    };
+    if steps == 0 {
+        return at(0);
+    }
+    // The last size, snapped onto the grid and into the interval: a lowered ceiling must
+    // not keep the old, larger size.
+    let warm =
+        js_round((ceiling - warm_start) / STICKY_NOTE_FONT_STEP).clamp(0.0, steps as f64) as usize;
+    let (mut lo, mut hi);
+    if does_fit(warm) {
+        if warm == 0 || !does_fit(warm - 1) {
+            return at(warm);
+        }
+        lo = 0;
+        hi = warm - 1;
+    } else {
+        if warm == steps {
+            return at(steps);
+        }
+        lo = warm + 1;
+        hi = steps;
+    }
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if does_fit(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    at(lo)
+}
+
+/// `getStickyNoteLayout` (`stickyNote.ts@1118751f:669-762`), the one source of a note's
+/// geometry: its label wrapped at the note's width, its font fitted under the ceiling, the
+/// note grown past its base height only when the text still overflows at the smallest
+/// size, and the label placed in it. An empty note, or a blank label, sits at its base
+/// height with the label at its ceiling.
+pub fn sticky_layout(
+    note: &DrawElement,
+    label: Option<&DrawElement>,
+    opts: &StickyLayoutOpts,
+    measure: &Measure,
+) -> StickyLaid {
+    let base_width = note.width.abs().max(STICKY_NOTE_MIN_SIZE);
+    // `container.baseHeight || container.height`: a note from before the field — or one
+    // whose base is 0 — takes its height as its base.
+    let own_base = note
+        .base_height
+        .filter(|base| *base != 0.0)
+        .unwrap_or(note.height.abs());
+    let base_height = opts
+        .base_height
+        .unwrap_or(own_base)
+        .max(STICKY_NOTE_MIN_SIZE);
+    let place = |height: f64| {
+        let at = position_after_height_change(note, height, opts.anchor);
+        let mut next = note.clone();
+        next.x = at.x;
+        next.y = at.y;
+        next.width = base_width;
+        next.height = height;
+        next.base_height = Some(base_height);
+        next
+    };
+    let Some(label) = label else {
+        return StickyLaid {
+            container: place(base_height),
+            text: None,
+        };
+    };
+    let source = opts
+        .original_text
+        .clone()
+        .unwrap_or_else(|| source_text(label).to_owned());
+    let ceiling = normalize_sticky_font_size(
+        opts.base_font_size
+            .unwrap_or_else(|| label_ceiling(label, Some(note))),
+    );
+    let min = STICKY_NOTE_MIN_FONT_SIZE.min(ceiling);
+    let max_width = (base_width - STICKY_NOTE_PADDING * 2.0).max(1.0);
+    let max_height = (base_height - STICKY_NOTE_BODY_INSET_Y).max(0.0);
+    let family = resolved_font_family(label).unwrap_or(FontKey::LEGACY);
+    let line_height = resolved_line_height(label);
+    let fit = |size: f64| {
+        let font = FontKey::new(family, size);
+        let text = measure.wrap(&source, max_width, font);
+        let (width, height) = measure.size(&text, font, line_height);
+        FontFit {
+            text,
+            font_size: size,
+            width,
+            height,
+        }
+    };
+    let blank = source.trim().is_empty();
+    let fitted = if blank {
+        let (width, height) = measure.size("", FontKey::new(family, ceiling), line_height);
+        FontFit {
+            text: String::new(),
+            font_size: ceiling,
+            width,
+            height,
+        }
+    } else {
+        fit_sticky_font(
+            &fit,
+            ceiling,
+            min,
+            (max_width, max_height),
+            font_size_of(label),
+        )
+    };
+    let height = if blank {
+        base_height
+    } else {
+        base_height.max(fitted.height + STICKY_NOTE_BODY_INSET_Y)
+    };
+    let container = place(height);
+    let mut text = label.clone();
+    text.original_text = Some(source);
+    text.text = Some(fitted.text);
+    text.font_size = Some(fitted.font_size);
+    text.base_font_size = Some(ceiling);
+    text.width = fitted.width;
+    text.height = fitted.height;
+    text.angle = container.angle;
+    let at = bound_text_position(&container, &text);
+    text.x = at.x;
+    text.y = at.y;
+    StickyLaid {
+        container,
+        text: Some(text),
+    }
 }

@@ -155,7 +155,11 @@ impl DrawEngine {
         // Through `selected_texts` rather than the raw selection, so resizing works with
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
-        self.relayout_selected_texts(|text| text.font_size = Some(size), true);
+        let sticky = self.sticky_labels();
+        self.relayout_selected_texts(
+            |text| set_user_font_size(text, size, sticky.contains(&text.id)),
+            true,
+        );
         self.refloor_text_session();
     }
 
@@ -178,7 +182,7 @@ impl DrawEngine {
         let sizes: Vec<f64> = self
             .selected_texts()
             .iter()
-            .map(|text| step(crate::text::layout::font_size_of(text)))
+            .map(|text| step(self.user_font_size(text)))
             .collect();
         let Some(&first) = sizes.first() else {
             return;
@@ -187,8 +191,20 @@ impl DrawEngine {
             self.next_font_size = first;
         }
         self.touch_style();
+        // Read before the loop writes: a note's label steps from its ceiling
+        // (`getBaseFontSize`, `actionProperties.tsx@1118751f:1105`, `:1128`).
+        let sticky = self.sticky_labels();
         self.relayout_selected_texts(
-            |text| text.font_size = Some(step(crate::text::layout::font_size_of(text))),
+            |text| {
+                let sticky = sticky.contains(&text.id);
+                let from = if sticky {
+                    text.base_font_size
+                        .unwrap_or(crate::text::layout::font_size_of(text))
+                } else {
+                    crate::text::layout::font_size_of(text)
+                };
+                set_user_font_size(text, step(from), sticky);
+            },
             true,
         );
         self.refloor_text_session();
@@ -409,10 +425,28 @@ impl DrawEngine {
 
     pub fn get_font_size(&self) -> f64 {
         self.selected_texts()
+            .first()
+            .filter(|el| el.font_size.is_some())
+            .map_or(self.next_font_size, |el| self.user_font_size(el))
+    }
+
+    /// The size a text was given: a note's label's ceiling, which its fit shrinks below
+    /// and the panel shows, or any other text's own size (`getBaseFontSize`,
+    /// `packages/element/src/stickyNote.ts@1118751f:405-413`).
+    pub(super) fn user_font_size(&self, text: &DrawElement) -> f64 {
+        crate::scene::sticky::label_ceiling(text, self.container_of(text))
+    }
+
+    /// The selected texts that are notes' labels, whose picked size is their ceiling.
+    fn sticky_labels(&self) -> HashSet<String> {
+        self.selected_texts()
             .into_iter()
-            .next()
-            .and_then(|el| el.font_size)
-            .unwrap_or(self.next_font_size)
+            .filter(|text| {
+                self.container_of(text)
+                    .is_some_and(crate::scene::sticky::is_sticky_note)
+            })
+            .map(|text| text.id)
+            .collect()
     }
 
     /// Every text the alignment controls should act on, for the current selection.
@@ -583,5 +617,16 @@ impl DrawEngine {
             && bounds.max_x >= view.min_x
             && bounds.min_y <= view.max_y
             && bounds.max_y >= view.min_y
+    }
+}
+
+/// A picked size, written where it means something (`getBaseFontSizeUpdate`,
+/// `packages/element/src/stickyNote.ts@1118751f:415-423`): a note's label takes it as the
+/// ceiling its fit shrinks below, clamped; any other text as its size.
+fn set_user_font_size(text: &mut DrawElement, size: f64, sticky: bool) {
+    if sticky {
+        text.base_font_size = Some(crate::scene::sticky::normalize_sticky_font_size(size));
+    } else {
+        text.font_size = Some(size);
     }
 }

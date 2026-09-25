@@ -11,7 +11,7 @@
 //! change it, and the host asks again only then — once per revision, not once per row
 //! and not once per frame.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -162,6 +162,52 @@ pub struct SelectionStyle {
     pub can_bind_text: bool,
     /// "Unbind text": a selected shape carries a label a style may change (`:64-68`).
     pub can_unbind_text: bool,
+    /// Whose colours a stroke pick sets: the notes', the other shapes', or both — which
+    /// palette the panel offers and what it calls the row (`resolveColorTarget`,
+    /// `actions/colorTargets.ts@1118751f:89-176`).
+    pub stroke_domain: ColorDomain,
+    /// As `stroke_domain`, for a background pick.
+    pub background_domain: ColorDomain,
+}
+
+/// A colour pick's domain (`ColorTargetKind`, `actions/colorTargets.ts@1118751f:33-37`):
+/// sticky notes keep colours of their own — defaults, top picks, and never transparent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorDomain {
+    Regular,
+    Sticky,
+    Mixed,
+}
+
+/// `hasStrokeColor` (`packages/element/src/comparisons.ts@1118751f:19-29`).
+fn has_stroke_color(kind: DrawElementType) -> bool {
+    matches!(
+        kind,
+        DrawElementType::Rectangle
+            | DrawElementType::StickyNote
+            | DrawElementType::Ellipse
+            | DrawElementType::Diamond
+            | DrawElementType::Freedraw
+            | DrawElementType::Arrow
+            | DrawElementType::Line
+            | DrawElementType::Text
+            | DrawElementType::Embed
+    )
+}
+
+/// `hasBackground` (`comparisons.ts@1118751f:3-14`).
+fn has_background(kind: DrawElementType) -> bool {
+    matches!(
+        kind,
+        DrawElementType::Rectangle
+            | DrawElementType::StickyNote
+            | DrawElementType::Embed
+            | DrawElementType::Ellipse
+            | DrawElementType::Diamond
+            | DrawElementType::Line
+            | DrawElementType::Freedraw
+    )
 }
 
 /// `hasFillStyle` (`packages/element/src/comparisons.ts@1118751f:16-17`).
@@ -185,6 +231,7 @@ fn takes_roundness(kind: DrawElementType) -> bool {
     matches!(
         kind,
         DrawElementType::Rectangle
+            | DrawElementType::StickyNote
             | DrawElementType::Embed
             | DrawElementType::Image
             | DrawElementType::Line
@@ -353,7 +400,13 @@ impl DrawEngine {
                 label
             };
             if let Some(text) = text {
-                font_size.add(text.font_size.unwrap_or(super::DEFAULT_FONT_SIZE));
+                // A note's label shows its ceiling, the size picked, never the size its
+                // fit shrank it to (`getBaseFontSize`, `actionProperties.tsx@1118751f:1057`).
+                font_size.add(if text.font_size.is_some() {
+                    self.user_font_size(text)
+                } else {
+                    super::DEFAULT_FONT_SIZE
+                });
                 font_family.add(resolved_font_family(text).unwrap_or(crate::text::FontKey::LEGACY));
                 if text.container_id.is_some() {
                     has_label = true;
@@ -408,12 +461,25 @@ impl DrawEngine {
             label_wrap: label_wrap.get(),
             can_bind_text: self.bind_pair(&selected, &carried).is_some(),
             can_unbind_text,
+            stroke_domain: self.color_domain(false),
+            background_domain: self.color_domain(true),
         }
     }
 
     /// With nothing selected the panel sets up the next element, so it shows that.
     fn next_selection_style(&self) -> SelectionStyle {
-        let next = self.get_next_style();
+        let mut next = self.get_next_style();
+        let sticky = self.tool == crate::interaction::DrawTool::StickyNote;
+        if sticky {
+            next.stroke_color.clone_from(&self.next_sticky_stroke);
+            next.background_color
+                .clone_from(&self.next_sticky_background);
+        }
+        let domain = if sticky {
+            ColorDomain::Sticky
+        } else {
+            ColorDomain::Regular
+        };
         SelectionStyle {
             count: 0,
             kinds: Vec::new(),
@@ -445,6 +511,148 @@ impl DrawEngine {
             label_wrap: None,
             can_bind_text: false,
             can_unbind_text: false,
+            stroke_domain: domain,
+            background_domain: domain,
+        }
+    }
+
+    /// Whether `element` takes a note's colours: a note, or a note's label.
+    fn is_sticky_color_target(&self, element: &DrawElement) -> bool {
+        crate::scene::sticky::is_sticky_note(element)
+            || (element.kind == DrawElementType::Text
+                && self
+                    .container_of(element)
+                    .is_some_and(crate::scene::sticky::is_sticky_note))
+    }
+
+    /// Whose colours a pick sets (`resolveColorTarget`, `actions/colorTargets.ts@1118751f:89-176`):
+    /// the elements a style may change that take the property — for a stroke, the labels
+    /// selected shapes carry too, since a note's visible text is its label; for a
+    /// background, a note's label passes the pick on to its note. With none, the tool
+    /// being drawn with decides.
+    fn color_domain(&self, background: bool) -> ColorDomain {
+        let carried = std::cell::OnceCell::new();
+        let (mut sticky, mut regular) = (false, false);
+        let mut count = |element: &DrawElement| {
+            let supported = if background {
+                has_background(element.kind)
+            } else {
+                has_stroke_color(element.kind)
+            };
+            if supported {
+                if self.is_sticky_color_target(element) {
+                    sticky = true;
+                } else {
+                    regular = true;
+                }
+            }
+        };
+        for element in self.panel_selection() {
+            if !self.restylable(element, &carried) {
+                continue;
+            }
+            match self.color_target(element, background) {
+                Some(target) => count(target),
+                None => count(element),
+            }
+            if !background {
+                if let Some(label) = self.label_of(element, &carried) {
+                    count(label);
+                }
+            }
+        }
+        match (sticky, regular) {
+            (true, false) => ColorDomain::Sticky,
+            (true, true) => ColorDomain::Mixed,
+            (false, true) => ColorDomain::Regular,
+            (false, false) if self.tool == crate::interaction::DrawTool::StickyNote => {
+                ColorDomain::Sticky
+            }
+            (false, false) => ColorDomain::Regular,
+        }
+    }
+
+    /// Where a colour pick on `element` lands when that is somewhere else
+    /// (`getColorTargetElement`, `stickyNote.ts@1118751f:95-108`): a note's label has no
+    /// fill of its own, so a background pick on it goes to its note.
+    fn color_target(&self, element: &DrawElement, background: bool) -> Option<&DrawElement> {
+        if !background || element.kind != DrawElementType::Text {
+            return None;
+        }
+        self.container_of(element)
+            .filter(|container| crate::scene::sticky::is_sticky_note(container))
+    }
+
+    /// Writes a pick into the next element's colours, in the domain it targets
+    /// (`getColorTargetAppStateUpdates`, `colorTargets.ts@1118751f:178-192`): a note's
+    /// never transparent. Returns the patch left for the regular next style.
+    fn write_next_colors(
+        &mut self,
+        mut patch: DrawElementStylePatch,
+        stroke: ColorDomain,
+        background: ColorDomain,
+    ) -> DrawElementStylePatch {
+        use crate::scene::sticky::{normalize_sticky_background, normalize_sticky_stroke};
+        if let Some(color) = patch.stroke_color.as_deref() {
+            if stroke != ColorDomain::Regular {
+                self.next_sticky_stroke = normalize_sticky_stroke(color);
+            }
+            if stroke == ColorDomain::Sticky {
+                patch.stroke_color = None;
+            }
+        }
+        if let Some(color) = patch.background_color.as_deref() {
+            if background != ColorDomain::Regular {
+                self.next_sticky_background = normalize_sticky_background(color);
+            }
+            if background == ColorDomain::Sticky {
+                patch.background_color = None;
+            }
+        }
+        patch
+    }
+
+    /// `syncStickyNoteInk` (`stickyNote.ts@1118751f:146-190`) after a write: a note and
+    /// its label end with one ink. `before` is each written element's stroke as it was.
+    pub(super) fn sync_sticky_ink(&mut self, before: &HashMap<String, String>) {
+        let mut notes: Vec<String> = Vec::new();
+        for id in before.keys() {
+            let Some(element) = self.scene.get(id).filter(|el| !el.is_deleted) else {
+                continue;
+            };
+            let note = if crate::scene::sticky::is_sticky_note(element) {
+                Some(element.id.clone())
+            } else {
+                self.container_of(element)
+                    .filter(|container| crate::scene::sticky::is_sticky_note(container))
+                    .map(|container| container.id.clone())
+            };
+            if let Some(note) = note.filter(|note| !notes.contains(note)) {
+                notes.push(note);
+            }
+        }
+        notes.sort();
+        for id in notes {
+            let Some(note) = self.scene.get(&id).cloned() else {
+                continue;
+            };
+            let Some(label) = self.live_label(&note).cloned() else {
+                continue;
+            };
+            let Some(ink) = crate::scene::sticky::synced_ink(
+                before.get(&note.id).map(String::as_str),
+                &note.stroke_color,
+                before.get(&label.id).map(String::as_str),
+                &label.stroke_color,
+            ) else {
+                continue;
+            };
+            for mut element in [note, label] {
+                if element.stroke_color != ink {
+                    element.stroke_color.clone_from(&ink);
+                    self.scene.put(element);
+                }
+            }
         }
     }
 
@@ -472,21 +680,43 @@ impl DrawEngine {
         selected.retain(|element| {
             !self.is_carried_label(element) && self.restylable(element, &carried)
         });
-        let ids: HashSet<&str> = selected.iter().map(|element| element.id.as_str()).collect();
+        let ids: HashSet<String> = selected.iter().map(|element| element.id.clone()).collect();
         let mut labels = Vec::new();
         if reaches_labels {
             for element in &selected {
                 if let Some(label) = self.label_of(element, &carried) {
-                    if !ids.contains(label.id.as_str()) {
+                    if !ids.contains(&label.id) {
                         labels.push((label.clone(), for_label.clone()));
                     }
                 }
             }
         }
+        // A background pick on a note's label is its note's (`getColorTargetElement`).
+        let mut redirected: Vec<(DrawElement, DrawElementStylePatch)> = Vec::new();
+        let selected: Vec<(DrawElement, DrawElementStylePatch)> = selected
+            .into_iter()
+            .map(|element| {
+                let mut own = patch.clone();
+                if let Some(note) = self.color_target(&element, own.background_color.is_some()) {
+                    if !ids.contains(&note.id) && !redirected.iter().any(|(el, _)| el.id == note.id)
+                    {
+                        redirected.push((
+                            note.clone(),
+                            DrawElementStylePatch {
+                                background_color: own.background_color.clone(),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    own.background_color = None;
+                }
+                (element, own)
+            })
+            .collect();
         selected
             .into_iter()
-            .map(|element| (element, patch.clone()))
             .chain(labels)
+            .chain(redirected)
             .collect()
     }
 
@@ -494,6 +724,9 @@ impl DrawEngine {
     fn put_styled(&mut self, mut element: DrawElement, patch: &DrawElementStylePatch) -> bool {
         let before = element.clone();
         apply_style_patch(&mut element, patch);
+        // A note keeps its invariants whatever was written: never transparent, always
+        // solid (`changeProperty`, `actionProperties.tsx@1118751f:218-223`).
+        normalize_sticky_style(&mut element);
         if element == before {
             return false;
         }
@@ -510,17 +743,28 @@ impl DrawEngine {
     /// The commit is still taken, because a preview may have moved the elements already
     /// — see [`Self::preview_style`].
     pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
+        // Resolved against the state the pick lands on, before it changes anything.
+        let (stroke, background) = (self.color_domain(false), self.color_domain(true));
         let targets = self.style_targets(&patch);
         if targets.is_empty() {
-            self.set_next_style(patch);
+            let rest = self.write_next_colors(patch, stroke, background);
+            self.set_next_style(rest);
             return;
         }
+        let before: HashMap<String, String> = targets
+            .iter()
+            .map(|(element, _)| (element.id.clone(), element.stroke_color.clone()))
+            .collect();
         for (element, patch) in targets {
             self.put_styled(element, &patch);
         }
+        if patch.stroke_color.is_some() {
+            self.sync_sticky_ink(&before);
+        }
         // The next element takes the style too, as the oracle's `currentItem*` do
         // (`actionProperties.tsx@1118751f:622`, `:971`; `colorTargets.ts@1118751f:178-192`).
-        self.next_style = super::merge_style_patch(&self.next_style, &patch);
+        let rest = self.write_next_colors(patch, stroke, background);
+        self.next_style = super::merge_style_patch(&self.next_style, &rest);
         self.commit_style();
         self.request_draw();
     }
@@ -602,6 +846,10 @@ impl DrawEngine {
         // Shapes before labels: a label is laid out in its shape as pasted, and a shape
         // its label grew must not then be put back from the copy taken here.
         targets.sort_by_key(|element| element.container_id.is_some());
+        let before: HashMap<String, String> = targets
+            .iter()
+            .map(|element| (element.id.clone(), element.stroke_color.clone()))
+            .collect();
 
         for mut element in targets {
             let is_label = element.kind == DrawElementType::Text && element.container_id.is_some();
@@ -630,11 +878,35 @@ impl DrawEngine {
                 // paste onto a text was an edit — the paste of its own style included.
                 // So those two are written only when they differ as read.
                 let from_text = from.kind == DrawElementType::Text;
-                let size = from
-                    .font_size
-                    .filter(|_| from_text)
-                    .unwrap_or(super::DEFAULT_FONT_SIZE);
-                if element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE) != size {
+                // A copied note's label gives its ceiling — decided by the copy, whose
+                // note may be gone from the board by now (`actionStyles.ts@1118751f:100-104`,
+                // `:139-142`).
+                let copied_container = from
+                    .container_id
+                    .as_deref()
+                    .and_then(|id| copied.iter().find(|el| el.id == id));
+                let size = if from_text && from.font_size.is_some() {
+                    crate::scene::sticky::label_ceiling(from, copied_container)
+                } else {
+                    super::DEFAULT_FONT_SIZE
+                };
+                let on_note = self
+                    .container_of(&element)
+                    .is_some_and(crate::scene::sticky::is_sticky_note);
+                if on_note {
+                    // A note's label takes the size as its ceiling (`getBaseFontSizeUpdate`),
+                    // and never goes transparent: its note's ink stands in (`:160-170`).
+                    let ceiling = crate::scene::sticky::normalize_sticky_font_size(size);
+                    if element.base_font_size != Some(ceiling) {
+                        element.base_font_size = Some(ceiling);
+                    }
+                    if is_transparent(&element.stroke_color) {
+                        element.stroke_color = crate::scene::sticky::normalize_sticky_stroke(
+                            self.container_of(&element)
+                                .map_or("", |note| note.stroke_color.as_str()),
+                        );
+                    }
+                } else if element.font_size.unwrap_or(super::DEFAULT_FONT_SIZE) != size {
                     element.font_size = Some(size);
                 }
                 // `sourceText.fontFamily || DEFAULT_FONT_FAMILY` (`:143`): a text's own
@@ -676,6 +948,7 @@ impl DrawEngine {
                 element.roundness = None;
                 element.background_color = "transparent".into();
             }
+            normalize_sticky_style(&mut element);
             if element == before {
                 continue;
             }
@@ -688,6 +961,9 @@ impl DrawEngine {
                 self.scene.put(element);
             }
         }
+        // A restyled note and its label end with one ink — the label's, when the copy
+        // carried two (`actionStyles.ts@1118751f:106-108`).
+        self.sync_sticky_ink(&before);
         self.apply_bindings();
         self.commit_style();
         self.request_draw();
@@ -716,4 +992,23 @@ impl DrawEngine {
         }
         counts
     }
+}
+
+/// `normalizeStickyNoteStyle` (`packages/element/src/newElement.ts@1118751f:186-197`): a
+/// note's colours are never transparent and its fill is always solid. Anything else is
+/// left as it is.
+pub(crate) fn normalize_sticky_style(element: &mut DrawElement) {
+    use crate::scene::sticky::{normalize_sticky_background, normalize_sticky_stroke};
+    if !crate::scene::sticky::is_sticky_note(element) {
+        return;
+    }
+    let stroke = normalize_sticky_stroke(&element.stroke_color);
+    if stroke != element.stroke_color {
+        element.stroke_color = stroke;
+    }
+    let background = normalize_sticky_background(&element.background_color);
+    if background != element.background_color {
+        element.background_color = background;
+    }
+    element.fill_style = FillStyle::Solid;
 }

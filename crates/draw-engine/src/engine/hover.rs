@@ -149,7 +149,7 @@ impl DrawEngine {
         match self.tool {
             DrawTool::Hand => return HoverCursor::Grab,
             DrawTool::Text => return HoverCursor::Text,
-            DrawTool::Eraser | DrawTool::Freedraw | DrawTool::Lasso => {
+            DrawTool::Eraser | DrawTool::Freedraw | DrawTool::Lasso | DrawTool::StickyNote => {
                 return HoverCursor::Crosshair
             }
             tool if is_shape_tool(tool) || is_linear_tool(tool) => {

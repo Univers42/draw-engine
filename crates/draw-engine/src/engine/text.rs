@@ -96,6 +96,14 @@ impl DrawEngine {
         label.width = width;
         label.height = height;
         label.container_id = Some(container.id.clone());
+        let sticky = crate::scene::sticky::is_sticky_note(container);
+        if sticky {
+            // A note's ink is its text's colour, and the size the label is given is the
+            // ceiling its fit shrinks below (`App.tsx@1118751f:7051-7068`).
+            label.stroke_color =
+                crate::scene::sticky::normalize_sticky_stroke(&container.stroke_color);
+            label.base_font_size = label.font_size;
+        }
         // The smallest a shape holding one line of it may be, which a resize stops at too.
         let min_line = self.with_measure(|measure| layout::min_container_size(&label, measure));
         // In its shape's groups and directly above it, as the oracle makes one
@@ -105,7 +113,8 @@ impl DrawEngine {
         label.group_ids = container.group_ids.clone();
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
-        if !is_linear_element(&container) {
+        // Not a note, which is laid out by its own fit (`App.tsx@1118751f:6974-6979`).
+        if !is_linear_element(&container) && !sticky {
             grow_to_one_line(&mut container, min_line);
         }
         self.scene.add(label.clone());
@@ -196,7 +205,7 @@ impl DrawEngine {
     }
 
     /// Opens `container`'s label for editing, making it first if it has none.
-    fn edit_label(&mut self, container: &DrawElement) {
+    pub(crate) fn edit_label(&mut self, container: &DrawElement) {
         let bound = container
             .bound_text_id
             .as_ref()

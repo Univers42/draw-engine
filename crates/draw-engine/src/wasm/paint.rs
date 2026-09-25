@@ -1414,8 +1414,75 @@ fn paint_element(
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
         DrawElementType::Text => paint_text(ctx, view, element),
+        DrawElementType::StickyNote => paint_sticky(ctx, view, element),
         _ => paint_shape(ctx, view, element),
     }
+}
+
+/// A sticky note, painted directly as the oracle paints one (`renderElement.ts@1118751f:
+/// 387-472`): its shadow, its paper, an edge shadow clipped to the paper, and the date in
+/// its ink. Never through rough.js.
+fn paint_sticky(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
+    use crate::scene::sticky::{
+        sticky_footer, sticky_path_commands, wall_clock_ms, STICKY_NOTE_EDGE_SHADOW_OPACITY,
+        STICKY_NOTE_EDGE_SHADOW_WIDTH, STICKY_NOTE_FOOTER_FONT_FAMILY,
+        STICKY_NOTE_FOOTER_FONT_SIZE, STICKY_NOTE_SHADOW_OPACITY,
+    };
+    if element.width == 0.0 && element.height == 0.0 {
+        return;
+    }
+    with_element_transform(ctx, view, element, || {
+        set_fill(ctx, &format!("rgba(0, 0, 0, {STICKY_NOTE_SHADOW_OPACITY})"));
+        sticky_path(ctx, &sticky_path_commands(element, true));
+        ctx.fill();
+        let paper = sticky_path_commands(element, false);
+        set_fill(ctx, &element.background_color);
+        sticky_path(ctx, &paper);
+        ctx.fill();
+        // Set raw inside the save: `restore` puts back what the caches believe is set.
+        ctx.save();
+        sticky_path(ctx, &paper);
+        ctx.clip();
+        ctx.set_line_width(STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0);
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+        let _ = js_sys::Reflect::set(
+            ctx.as_ref(),
+            &JsValue::from_str("strokeStyle"),
+            &JsValue::from_str(&format!("rgba(0, 0, 0, {STICKY_NOTE_EDGE_SHADOW_OPACITY})")),
+        );
+        sticky_path(ctx, &paper);
+        ctx.stroke();
+        ctx.restore();
+        if let Some(footer) = sticky_footer(element, wall_clock_ms()) {
+            ctx.set_font(&format!(
+                "{STICKY_NOTE_FOOTER_FONT_SIZE}px {STICKY_NOTE_FOOTER_FONT_FAMILY}"
+            ));
+            FONT.with(|f| *f.borrow_mut() = None);
+            ctx.set_text_align("right");
+            ctx.set_text_baseline("alphabetic");
+            set_fill(ctx, &element.stroke_color);
+            let _ = ctx.fill_text(&footer.text, footer.x, footer.y);
+        }
+    });
+}
+
+/// Traces a note's outline (`drawStickyNotePath`), closed.
+fn sticky_path(
+    ctx: &CanvasRenderingContext2d,
+    commands: &[crate::scene::sticky::StickyPathCommand],
+) {
+    use crate::scene::sticky::StickyPathCommand;
+    ctx.begin_path();
+    for command in commands {
+        match *command {
+            StickyPathCommand::Move(point) => ctx.move_to(point.x, point.y),
+            StickyPathCommand::Line(point) => ctx.line_to(point.x, point.y),
+            StickyPathCommand::Quadratic { control, point } => {
+                ctx.quadratic_curve_to(control.x, control.y, point.x, point.y);
+            }
+        }
+    }
+    ctx.close_path();
 }
 
 /// A line or arrow with its stroke cut away under its label, as the oracle clips it

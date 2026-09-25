@@ -136,8 +136,9 @@ pub fn generate_rough_options(element: &DrawElement, continuous_path: bool) -> O
                 options.filled = !is_transparent(&element.background_color);
             }
         }
-        // Arrows are never filled, whatever the background is set to.
-        DrawElementType::Arrow | DrawElementType::Text => {}
+        // Arrows are never filled, whatever the background is set to. A note is not
+        // drawn through rough at all (`shape::element_drawable`).
+        DrawElementType::Arrow | DrawElementType::Text | DrawElementType::StickyNote => {}
     }
 
     options
