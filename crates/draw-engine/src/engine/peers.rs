@@ -163,15 +163,10 @@ impl DrawEngine {
     }
 
     /// The peer holding the topmost element under a screen point, if one does — so a
-    /// click on something in use can say who is using it instead of doing nothing.
+    /// click on something in use can say who is using it instead of doing nothing. A label
+    /// stands for its shape, as it does for the press ([`Self::element_at`]).
     pub fn peer_at(&self, sx: f64, sy: f64) -> Option<&Peer> {
-        let world = self.screen_to_world(sx, sy);
-        let tolerance = self.collision_tolerance();
-        let topmost = self
-            .scene
-            .iter_ordered()
-            .rev()
-            .find(|el| crate::hit_test_element(el, world.x, world.y, tolerance))?;
+        let topmost = self.element_at(sx, sy, self.collision_tolerance(), |_| true)?;
         self.held_by(&topmost.id)
     }
 

@@ -115,6 +115,29 @@ fn a_click_on_it_can_say_who_has_it() {
     assert!(engine.peer_at(700.0, 500.0).is_none(), "nothing there");
 }
 
+/// `a` of [`two_shapes`] with a label on it, and the label's id.
+fn labelled_a() -> (DrawEngine, String, String, String) {
+    let mut a = filled(box_at(100.0, 100.0, 100.0, 80.0));
+    let mut label = text_at(110.0, 128.0, 80.0, 25.0);
+    a.bound_text_id = Some(label.id.clone());
+    label.container_id = Some(a.id.clone());
+    let b = filled(box_at(400.0, 100.0, 100.0, 80.0));
+    let ids = (a.id.clone(), b.id.clone(), label.id.clone());
+    (engine_with_scene(vec![a, label, b]), ids.0, ids.1, ids.2)
+}
+
+/// A click on the label of what they hold says who has the shape: a label stands for its
+/// shape, as the press reads it (`DrawEngine::element_at`).
+#[test]
+fn a_click_on_the_label_of_what_they_hold_says_who_has_it() {
+    let (mut engine, a, _, _) = labelled_a();
+    engine.set_peers(vec![peer("ana", &[&a])]);
+    assert_eq!(
+        engine.peer_at(150.0, 140.0).map(|p| p.id.as_str()),
+        Some("ana")
+    );
+}
+
 #[test]
 fn what_you_had_is_let_go_when_someone_else_takes_it() {
     let (mut engine, a, b) = two_shapes();

@@ -528,6 +528,33 @@ fn a_double_click_does_not_enter_a_group_of_one() {
     );
 }
 
+/// A label stands for its shape (`DrawEngine::element_at`): a double click on the label
+/// of a grouped shape steps into the group holding the shape, as a click there picks the
+/// shape up — never the label on its own, which moves only with its shape.
+#[test]
+fn a_double_click_on_a_label_steps_in_to_its_shape() {
+    let (mut shape, mut other) = (square(0.0), square(150.0));
+    let mut label = text_at(20.0, 28.0, 40.0, 25.0);
+    shape.bound_text_id = Some(label.id.clone());
+    label.container_id = Some(shape.id.clone());
+    for element in [&mut shape, &mut other, &mut label] {
+        element.group_ids = vec!["g".into()];
+    }
+    let (shape_id, label_id) = (shape.id.clone(), label.id.clone());
+    let mut engine = engine_with_scene(vec![shape, label, other]);
+    engine.set_tool(DrawTool::Select);
+    click(&mut engine, (40.0, 40.0), false);
+
+    engine.handle_double_click(40.0, 40.0);
+
+    assert_eq!(engine.editing_group_id().as_deref(), Some("g"));
+    assert!(
+        holds(&engine, &[&shape_id]),
+        "{:?}, the label is {label_id}",
+        selection(&engine)
+    );
+}
+
 /// Ungroup has no group to remove (`actionGroup.tsx:222-231` finds no selected group), so
 /// it changes nothing — not even the dead id.
 #[test]

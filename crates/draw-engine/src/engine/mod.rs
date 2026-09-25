@@ -475,9 +475,9 @@ impl DrawEngine {
     /// (`openContextMenu`, `App.tsx@1118751f:13276-13279`; `hitElementBoundText`,
     /// `packages/element/src/collision.ts@1118751f:252-278`).
     ///
-    /// By reference, like [`Self::selectable_hit`]: this is called from JS on hover and
-    /// on every click, and cloning the document to answer one question about one element
-    /// made the cost of a click scale with the size of the board.
+    /// By reference, like [`Self::element_at`]: this is called from JS on hover and on
+    /// every click, and cloning the document to answer one question about one element made
+    /// the cost of a click scale with the size of the board.
     pub fn hit_test(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
         self.element_at(sx, sy, tolerance, |_| true).cloned()
     }
@@ -519,23 +519,6 @@ impl DrawEngine {
             .filter(|el| !self.untouchable(el))
             .cloned()
             .collect()
-    }
-
-    /// Topmost unlocked element under the pointer.
-    ///
-    /// Walks the scene by reference. This used to clone every element in the document —
-    /// three `String`s and a point vector each — on every click and on every pointer move
-    /// while erasing, which made a single click cost more the larger the board got.
-    fn selectable_hit(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
-        let world = self.screen_to_world(sx, sy);
-        // Reversed: the topmost element in z-order wins.
-        self.scene
-            .iter_ordered()
-            .rev()
-            .find(|el| {
-                !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, tolerance)
-            })
-            .cloned()
     }
 
     /// How close a click has to be to count as landing on an element.

@@ -167,9 +167,16 @@ impl DrawEngine {
     /// what remains, repeating this walks inward exactly one level per double click —
     /// to any depth, with no special case for how deep the nesting goes.
     ///
-    /// Returns whether it descended, so the caller knows not to fall through to text.
+    /// Returns whether it descended, so the caller knows not to fall through to text. A
+    /// label stands for its shape, as it does for a click ([`Self::element_at`]): stepped
+    /// into from its label, a group held the label on its own, which moves only with its
+    /// shape.
     fn step_into_group(&mut self, sx: f64, sy: f64) -> bool {
-        let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) else {
+        let tolerance = self.collision_tolerance();
+        let Some(hit) = self
+            .element_at(sx, sy, tolerance, |element| !self.untouchable(element))
+            .cloned()
+        else {
             return false;
         };
         let editing = self.editing_group_id.clone();

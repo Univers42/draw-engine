@@ -157,6 +157,31 @@ fn a_locked_element_does_not_offer_a_move() {
     assert_eq!(engine.hover_cursor(550.0, 400.0), HoverCursor::Default);
 }
 
+/// A label stands for its shape, as a press reads it (`DrawEngine::element_at`): over the
+/// label of a hollow shape the cursor offers the shape's move, and over the label of a
+/// locked one nothing, since a press there picks nothing up.
+#[test]
+fn a_label_offers_what_its_shape_does() {
+    for locked in [false, true] {
+        let mut shape = box_at(400.0, 300.0, 300.0, 200.0);
+        let mut label = text_at(500.0, 388.0, 100.0, 25.0);
+        shape.bound_text_id = Some(label.id.clone());
+        label.container_id = Some(shape.id.clone());
+        shape.locked = Some(locked);
+        let engine = engine_with(vec![shape, label]);
+        let expected = if locked {
+            HoverCursor::Default
+        } else {
+            HoverCursor::Move
+        };
+        assert_eq!(
+            engine.hover_cursor(550.0, 400.0),
+            expected,
+            "locked: {locked}"
+        );
+    }
+}
+
 /// A drawing tool is about to create something, wherever the pointer is.
 #[test]
 fn a_drawing_tool_overrides_whatever_is_underneath() {

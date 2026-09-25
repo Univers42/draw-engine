@@ -194,15 +194,14 @@ impl DrawEngine {
             return HoverCursor::Move;
         }
 
+        // Anything grabbable under the pointer reads as movable, a label standing for its
+        // shape as a press reads it ([`Self::element_at`]). Locked elements deliberately
+        // do not: they are not draggable, so promising otherwise is worse than saying
+        // nothing — and neither does the label of one.
         let reach = self.collision_tolerance();
-        // Anything grabbable under the pointer reads as movable. Locked elements
-        // deliberately do not: they are not draggable, so promising otherwise is worse
-        // than saying nothing.
         if self
-            .scene
-            .iter_ordered()
-            .rev()
-            .any(|el| !self.untouchable(el) && crate::hit_test_element(el, world.x, world.y, reach))
+            .element_at(sx, sy, reach, |el| !self.untouchable(el))
+            .is_some()
         {
             return HoverCursor::Move;
         }
