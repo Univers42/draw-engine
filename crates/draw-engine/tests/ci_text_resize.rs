@@ -7,8 +7,8 @@
 //!   Only the height the drag asks for counts (`:328-358`), so a sideways pull on a
 //!   corner changes nothing.
 //! - Its left and right sides fix its width and wrap it there from what was typed
-//!   (`:360-408`), and it stops at the width of a space plus the padding — here also at
-//!   its widest glyph.
+//!   (`:360-408`), and it stops at the width of a space plus the padding; a glyph wider
+//!   than that hangs out of the box.
 //! - A shape with a label cannot be made smaller than one line of it (`:778-789`), and
 //!   the label is wrapped again on every move of the drag, the shape growing back from
 //!   the side the drag holds (`handleBindTextResize`).
@@ -235,11 +235,13 @@ mod free_text {
         assert!(after.height > 0.0);
     }
 
-    /// Where a glyph is wider than that minimum the oracle lets it hang out of its box;
-    /// here the box stops at the glyph (divergence, `docs/reference/resize.md`).
+    /// Where a glyph is wider than that minimum it hangs out of its box, as the oracle's
+    /// does: the width is the one the lines were wrapped at (`:398-405`), so laying them
+    /// out again — a font arriving, an edit — gives the same lines.
     #[test]
-    fn a_side_stops_at_the_widest_glyph() {
-        let text = free_text(100.0, 100.0, "WWW");
+    fn a_glyph_wider_than_the_box_hangs_out_of_it() {
+        let mut text = free_text(100.0, 100.0, "Wiiiii");
+        text.font_family = Some(5);
         let id = text.id.clone();
         let mut engine = engine_selecting(vec![text], &[&id]);
         // A W three font sizes wide, everything else half one.
@@ -254,9 +256,16 @@ mod free_text {
         drag(&mut engine, (right + SIDE, 112.5), (0.0, 112.5), 4, false);
 
         let after = element(&engine, &id);
-        assert_eq!(after.text.as_deref(), Some("W\nW\nW"));
-        assert_close(after.width, 60.0);
-        assert_close(after.height, 75.0);
+        // A space and the padding: 10 + 10.
+        assert_close(after.width, 20.0);
+        assert_eq!(after.text.as_deref(), Some("W\nii\nii\ni"));
+        assert_close(after.height, 100.0);
+
+        engine.fonts_loaded();
+        let again = element(&engine, &id);
+        assert_eq!(again.text, after.text, "the same lines, laid out again");
+        assert_close(again.width, 20.0);
+        assert_close(again.height, 100.0);
     }
 }
 

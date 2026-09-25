@@ -785,12 +785,11 @@ impl DrawEngine {
     ///   anchor included, leaves the text as the last move had it, so it never turns
     ///   inside out;
     /// - a side fixes the width and wraps what was typed at it (`:360-408`), never
-    ///   narrower than a space and the padding.
+    ///   narrower than a space and the padding. The width is the one the lines were
+    ///   wrapped at, so laying them out again gives the same lines; a glyph wider than
+    ///   that hangs out of the box, as it does in the oracle.
     ///
     /// The corner opposite the handle stays put, turned or not (`getResizedOrigin`).
-    ///
-    /// Divergence: a side also stops at the widest glyph the wrapped lines hold, where the
-    /// oracle lets a glyph wider than the box hang out of it.
     fn resize_text(
         &mut self,
         latest: DrawElement,
@@ -809,16 +808,7 @@ impl DrawEngine {
                 let mut fixed = latest.clone();
                 fixed.auto_resize = Some(false);
                 fixed.width = next_width.max(min_width);
-                let mut laid = crate::text::layout::layout_text(&fixed, None, measure).text;
-                let ink = measure
-                    .size(
-                        laid.text.as_deref().unwrap_or_default(),
-                        crate::text::layout::font_of(&laid),
-                        crate::scene::resolved_line_height(&laid),
-                    )
-                    .0;
-                laid.width = laid.width.max(ink);
-                laid
+                crate::text::layout::layout_text(&fixed, None, measure).text
             });
             let at = resized_origin(origin, laid.width, laid.height, latest.angle, handle);
             next = laid;
