@@ -245,6 +245,29 @@ fn reordering(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
+        // The same command on a board that has deleted as much as it holds. Tombstones stay
+        // in the scene, and `Scene::set_order` walked the new order once per tombstone.
+        group.bench_function(format!("one_to_front_of_{n}_over_{n}_deleted"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut elements = board_of(2 * n);
+                    for element in elements.iter_mut().skip(1).step_by(2) {
+                        element.is_deleted = true;
+                    }
+                    let first = elements[0].id.clone();
+                    let mut engine = DrawEngine::new();
+                    engine.set_viewport(1280.0, 800.0, 1.0);
+                    engine.set_scene(Scene::new(elements));
+                    engine.select(vec![first]);
+                    engine
+                },
+                |engine| {
+                    engine.reorder_selection(ZOrderMode::Front);
+                    black_box(engine.get_selection().len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
         // A child of each of n/50 frames brought to the front of its own frame: one pass
         // over the stack per frame, as the oracle's.
         group.bench_function(format!("a_child_of_each_frame_to_front_of_{n}"), |b| {

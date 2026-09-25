@@ -478,17 +478,27 @@ impl Scene {
     ///
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
+    ///
+    /// Tombstones are told from `live` by a set: searched in the list, once per tombstone,
+    /// a reorder on a board that had deleted as much as it held cost the product of the
+    /// two — 79ms for 5,000 over 5,000 against 4.7ms with none; 5.7ms with the set
+    /// (`cargo bench --bench editing -- reorder/one_to_front`). A board with no tombstone
+    /// builds no set.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
         self.record(Change::Rearranged);
         self.static_revision = next_revision();
         self.note_order();
-        let mut next: Vec<Rc<DrawElement>> = self
-            .elements
-            .iter()
-            .filter(|element| element.is_deleted)
-            .filter(|element| !live.iter().any(|l| l.id == element.id))
-            .cloned()
-            .collect();
+        let mut next: Vec<Rc<DrawElement>> = if !self.elements.iter().any(|e| e.is_deleted) {
+            Vec::with_capacity(live.len())
+        } else {
+            let listed: std::collections::HashSet<&str> =
+                live.iter().map(|l| l.id.as_str()).collect();
+            self.elements
+                .iter()
+                .filter(|element| element.is_deleted && !listed.contains(element.id.as_str()))
+                .cloned()
+                .collect()
+        };
         next.extend(live.into_iter().map(Rc::new));
         self.elements = next;
         self.reindex();
