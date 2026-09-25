@@ -338,10 +338,71 @@ fn selection_style(c: &mut Criterion) {
     group.finish();
 }
 
+/// One rectangle drawn, as a person draws it — press, drag, release, and what the host
+/// is handed — inside a frame and, for comparison, outside it. Inside, the shape goes
+/// directly below the frame (`stack_under_frame`), which moves it in the stack: that
+/// should cost the board's ids, not the board.
+fn joining(c: &mut Criterion) {
+    let mut group = c.benchmark_group("frame_join");
+    group.sample_size(20);
+    for n in [1000usize, 5000, 20000] {
+        let setup = move || {
+            let mut elements = board_of(n);
+            for element in &mut elements {
+                element.x += 10_000.0;
+            }
+            let mut frame = create_element_default(
+                DrawElementType::Frame,
+                Geometry {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 600.0,
+                    height: 400.0,
+                },
+            );
+            frame.name = Some("Frame 1".into());
+            let mut child = create_element_default(
+                DrawElementType::Rectangle,
+                Geometry {
+                    x: 20.0,
+                    y: 20.0,
+                    width: 40.0,
+                    height: 40.0,
+                },
+            );
+            child.frame_id = Some(frame.id.clone());
+            elements.insert(0, child);
+            elements.push(frame);
+            let mut engine = DrawEngine::new();
+            engine.set_viewport(1280.0, 800.0, 1.0);
+            engine.set_scene(Scene::new(elements));
+            let _ = engine.drain_events();
+            engine.set_tool(DrawTool::Rectangle);
+            engine
+        };
+        for (name, x) in [("inside", 100.0), ("outside", 700.0)] {
+            group.bench_function(format!("draw_{name}_of_{n}"), |b| {
+                b.iter_batched_ref(
+                    setup,
+                    |engine| {
+                        engine.begin_pointer(x, 100.0, false, false);
+                        engine.move_pointer(x + 40.0, 130.0, false, false);
+                        engine.end_pointer();
+                        black_box(engine.drain_events())
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     duplicate,
     erase,
+    joining,
     moving,
     painting,
     reordering,

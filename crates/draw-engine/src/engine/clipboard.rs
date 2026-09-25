@@ -95,9 +95,11 @@ impl DrawEngine {
     /// four dropped frames for the act of drawing one rectangle — and it got worse as
     /// the board filled up, which is exactly the shape of "it feels slow".
     ///
-    /// A delta covers the common path. The rare structural changes — a z-order command,
-    /// a discarded draft, a wholesale replace — still send everything, because there is
-    /// no smaller honest answer for them.
+    /// A delta covers the common path, including elements placed beside another — a
+    /// shape joining a frame goes below it, a new label above its shape — for which it
+    /// carries the order of the ids. The rare structural changes — a z-order command, a
+    /// discarded draft, a wholesale replace — still send everything, because there is no
+    /// smaller honest answer for them.
     pub(super) fn emit_scene_change(&mut self) {
         match self.scene.take_delta() {
             Some(delta) => self.events.scene_delta = Some(delta),

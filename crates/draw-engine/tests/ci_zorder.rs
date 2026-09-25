@@ -1001,3 +1001,46 @@ fn a_frame_resized_over_a_shape_puts_it_above_the_children_it_had() {
     assert_eq!(frame_of(&engine, &id(&cast, "X")), None);
     assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
 }
+
+/// Moving in the stack is not a whole scene for the host: the delta carries the order,
+/// every live id, and the shape. On a board of 20,000 the whole scene was 10.7MB for one
+/// shape drawn into a frame (`cargo bench --bench editing -- frame_join`).
+#[test]
+fn a_shape_drawn_into_a_frame_reaches_the_host_as_a_delta_with_the_order() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    let _ = engine.drain_events();
+    engine.set_tool(DrawTool::Rectangle);
+
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+    let events = engine.drain_events();
+
+    assert!(events.scene_json.is_none(), "not the whole scene");
+    let delta = events.scene_delta.expect("a delta");
+    assert_eq!(
+        delta
+            .updated
+            .iter()
+            .map(|el| el.id.clone())
+            .collect::<Vec<_>>(),
+        vec![id(&cast, "N")]
+    );
+    let order: Vec<String> = ["C1", "N", "F", "X"].iter().map(|n| id(&cast, n)).collect();
+    assert_eq!(delta.order, Some(order));
+}
+
+/// Its place is part of its creation, which undo takes away and redo gives back: the
+/// shape comes back directly below the frame, with no reorder recorded for it.
+#[test]
+fn undo_and_redo_of_a_shape_drawn_into_a_frame_keep_the_stack() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+
+    engine.undo();
+    assert_eq!(stack(&engine, &cast), vec!["C1", "F", "X"]);
+    engine.redo();
+    assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+}
