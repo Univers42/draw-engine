@@ -98,6 +98,7 @@ fn snapping_is_independent_of_zoom() {
     let at_100 = draw_at(&mut engine, 103.0, 97.0);
     engine.zoom_in();
     engine.zoom_in();
+    engine.set_now(1000.0); // past the zoom's ease (Track B: zoom_in now animates)
     assert!(engine.camera.scale > 1.0, "zoomed in");
 
     // The same *world* point, reached through a different camera.

@@ -200,10 +200,13 @@ fn opacity_style_patch() {
 fn engine_zoom_in_and_zoom_out() {
     let mut engine = DrawEngine::new();
     engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_now(0.0);
     let scale_init = engine.camera.scale;
     engine.zoom_in();
+    engine.set_now(250.0);
     assert!(engine.camera.scale > scale_init);
     engine.zoom_out();
+    engine.set_now(2.0 * 250.0);
     assert_close(engine.camera.scale, scale_init);
 }
 
@@ -211,10 +214,122 @@ fn engine_zoom_in_and_zoom_out() {
 fn engine_zoom_reset() {
     let mut engine = DrawEngine::new();
     engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_now(0.0);
     engine.zoom_in();
+    engine.set_now(250.0);
     engine.zoom_in();
+    engine.set_now(2.0 * 250.0);
     engine.zoom_reset();
+    engine.set_now(3.0 * 250.0);
     assert_close(engine.camera.scale, 1.0);
+}
+
+// ----------------------------------------------------------------- eased zoom/fit (Track B)
+
+/// Shift+1/Shift+2, the zoom in/out/reset keys and the zoom-bar buttons all land here
+/// (`DrawEngine::zoom_in`/`zoom_out`/`zoom_reset`/`fit`/`zoom_to_selection`), so one eased
+/// path covers keyboard and mouse alike. Mirrors `commit_eases_the_camera_to_an_offscreen_node`
+/// (`ci_flowchart.rs`), the existing precedent for `animate_camera_to`.
+#[test]
+fn zoom_in_eases_rather_than_jumps() {
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.zoom_in();
+    assert_eq!(
+        engine.camera, before,
+        "the call starts the ease; it does not jump"
+    );
+    assert!(engine.needs_frame(), "an eased zoom is now in flight");
+
+    engine.set_now(250.0 / 2.0);
+    assert!(
+        engine.camera.scale > before.scale && engine.camera.scale < before.scale * 1.2,
+        "midway through, the scale is between the start and the end"
+    );
+
+    engine.set_now(250.0);
+    // Lands exactly where the instant version would: `zoom_at` at the viewport centre.
+    let expected = zoom_at(before, 400.0, 300.0, 1.2);
+    assert_eq!(engine.camera, expected);
+    engine.take_dirty();
+    assert!(
+        !engine.needs_frame(),
+        "the ease is done: nothing left to animate"
+    );
+}
+
+#[test]
+fn fit_eases_to_the_same_camera_an_instant_fit_would_land_on() {
+    let rect = box_at(2000.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![rect]);
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.fit(96.0);
+    assert_eq!(engine.camera, before, "the ease has not started moving yet");
+
+    engine.set_now(250.0);
+    let expected = fit_bounds(
+        WorldBounds {
+            min_x: 2000.0,
+            min_y: 0.0,
+            max_x: 2100.0,
+            max_y: 60.0,
+        },
+        800.0,
+        600.0,
+        96.0,
+    );
+    assert_eq!(engine.camera, expected);
+}
+
+#[test]
+fn zoom_to_selection_eases_to_the_selection_bounds() {
+    let rect = box_at(2000.0, 0.0, 100.0, 60.0);
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id]);
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.zoom_to_selection(96.0);
+    assert_eq!(engine.camera, before);
+
+    engine.set_now(250.0);
+    let expected = fit_bounds(
+        WorldBounds {
+            min_x: 2000.0,
+            min_y: 0.0,
+            max_x: 2100.0,
+            max_y: 60.0,
+        },
+        800.0,
+        600.0,
+        96.0,
+    );
+    assert_eq!(engine.camera, expected);
+}
+
+#[test]
+fn reduced_motion_makes_zoom_land_at_once() {
+    let mut engine = DrawEngine::new();
+    engine.set_viewport(800.0, 600.0, 1.0);
+    engine.set_reduced_motion(true);
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.zoom_in();
+    let expected = zoom_at(before, 400.0, 300.0, 1.2);
+    assert_eq!(
+        engine.camera, expected,
+        "prefers-reduced-motion: lands at once, no animation in flight"
+    );
+    // `take_dirty` first: the set itself asked for a repaint, same as any camera change —
+    // what matters here is that no *animation* is left running behind it.
+    engine.take_dirty();
+    assert!(!engine.needs_frame());
 }
 
 #[test]

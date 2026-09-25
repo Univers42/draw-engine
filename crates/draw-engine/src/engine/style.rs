@@ -30,6 +30,13 @@ fn storable_font_size(size: f64) -> Option<f64> {
 /// `animation: { duration: 300 }` (`App.tsx@1118751f`, `revealIfHidden`).
 const CAMERA_REVEAL_MS: f64 = 300.0;
 
+/// How long a discrete zoom/fit move (Shift+1, Shift+2, zoom in/out/reset, the zoom-bar
+/// buttons) takes to ease — the oracle jumps for all of these (`actionCanvas.tsx@1118751f:
+/// 378-407` computes `zoomToFitBounds` and applies it in the same tick, no `animation`), so
+/// this is a deliberate divergence rather than a ported number; picked to read as brisk
+/// rather than sluggish, the way `CAMERA_REVEAL_MS` already does for the flowchart reveal.
+const CAMERA_ZOOM_MS: f64 = 250.0;
+
 /// An in-flight camera move: linear in `x`/`y`/`scale`, eased in time. `DrawEngine::set_now`
 /// ticks it; [`DrawEngine::reveal`] is the one place that starts one.
 #[derive(Clone, Copy, Debug)]
@@ -630,7 +637,8 @@ impl DrawEngine {
 
     pub fn fit(&mut self, padding: f64) {
         if let Some(bounds) = self.scene.bounds() {
-            self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
+            let target = crate::fit_bounds(bounds, self.width, self.height, padding);
+            self.animate_camera_to(target, CAMERA_ZOOM_MS);
         }
     }
 
@@ -648,7 +656,8 @@ impl DrawEngine {
         let Some(bounds) = crate::scene_bounds(selected.iter()) else {
             return;
         };
-        self.set_camera(crate::fit_bounds(bounds, self.width, self.height, padding));
+        let target = crate::fit_bounds(bounds, self.width, self.height, padding);
+        self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
     /// Move by a screenful, in units of pages.
@@ -667,16 +676,44 @@ impl DrawEngine {
         self.pan_by(-pages_x * step_x, -pages_y * step_y);
     }
 
+    /// Where the camera is headed: the in-flight animation's own end, or `self.camera`
+    /// when nothing is animating. A relative move (zoom in/out/reset) computed from
+    /// `self.camera` mid-flight would compound onto wherever the ease had *visually*
+    /// reached rather than onto the move already queued — a key held for repeat, or a
+    /// fast double-click on the zoom-bar button, would spend a step doing nothing.
+    fn camera_target(&self) -> Camera {
+        self.camera_anim.map(|anim| anim.to).unwrap_or(self.camera)
+    }
+
+    /// Eased, unlike [`Self::zoom_at`] itself: that one also anchors a pinch or a wheel
+    /// notch, which must land the instant the finger or the wheel does. `crate::zoom_at` —
+    /// the pure function `zoom_at` calls internally — computes the target from
+    /// [`Self::camera_target`] without touching `self.camera`, so the ease starts from
+    /// exactly where the jump would have.
     pub fn zoom_in(&mut self) {
-        self.zoom_at(self.width / 2.0, self.height / 2.0, 1.2);
+        let target = crate::zoom_at(
+            self.camera_target(),
+            self.width / 2.0,
+            self.height / 2.0,
+            1.2,
+        );
+        self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
     pub fn zoom_out(&mut self) {
-        self.zoom_at(self.width / 2.0, self.height / 2.0, 1.0 / 1.2);
+        let target = crate::zoom_at(
+            self.camera_target(),
+            self.width / 2.0,
+            self.height / 2.0,
+            1.0 / 1.2,
+        );
+        self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
     pub fn zoom_reset(&mut self) {
-        self.zoom_at(self.width / 2.0, self.height / 2.0, 1.0 / self.camera.scale);
+        let base = self.camera_target();
+        let target = crate::zoom_at(base, self.width / 2.0, self.height / 2.0, 1.0 / base.scale);
+        self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
     /// Pans (and, only if it would not otherwise fit, zooms out) so `bounds` is on screen,
@@ -709,6 +746,10 @@ impl DrawEngine {
 
     fn animate_camera_to(&mut self, target: Camera, duration_ms: f64) {
         if target == self.camera {
+            return;
+        }
+        if self.reduced_motion {
+            self.set_camera(target);
             return;
         }
         self.camera_anim = Some(CameraAnim {

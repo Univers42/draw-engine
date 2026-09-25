@@ -270,6 +270,13 @@ export class DrawEngine {
     return this.inner.getObjectsSnap();
   }
 
+  /** `prefers-reduced-motion`: an eased camera move (fit, zoom to selection, zoom
+   *  in/out/reset) lands at once rather than animating while this is set. Kept current by
+   *  `bindCanvas` — WASM has no `matchMedia` of its own. */
+  setReducedMotion(on: boolean): void {
+    this.inner.setReducedMotion(on);
+  }
+
   setTool(tool: DrawTool): void {
     this.inner.setTool(tool);
   }

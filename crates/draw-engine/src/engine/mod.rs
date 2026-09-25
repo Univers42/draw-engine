@@ -272,6 +272,10 @@ pub struct DrawEngine {
     flowchart_navigator: flowchart::FlowchartNavigator,
     /// An in-flight eased camera move, started by `reveal`. See `style.rs`.
     camera_anim: Option<style::CameraAnim>,
+    /// `prefers-reduced-motion`, set once by the host (`bindCanvas.ts`) and kept current on
+    /// change. An eased camera move lands at once rather than animating; see `style.rs` ›
+    /// `animate_camera_to`.
+    reduced_motion: bool,
 }
 
 impl Default for DrawEngine {
@@ -347,6 +351,7 @@ impl DrawEngine {
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
             camera_anim: None,
+            reduced_motion: false,
         }
     }
 
@@ -433,6 +438,12 @@ impl DrawEngine {
 
     pub fn objects_snap(&self) -> bool {
         self.objects_snap
+    }
+
+    /// `prefers-reduced-motion`: a preference like the grid and object-snap above, kept
+    /// current by the host rather than read from here — WASM has no `matchMedia`.
+    pub fn set_reduced_motion(&mut self, on: bool) {
+        self.reduced_motion = on;
     }
 
     /// A world point rounded onto the grid, or unchanged when the grid is not snapping.

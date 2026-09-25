@@ -63,6 +63,17 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
   const detachPointer = attachPointerInput(session);
   const detachKeyboard = attachKeyboardInput(session);
 
+  // `prefers-reduced-motion`: WASM has no `matchMedia`, so the host reads it and keeps the
+  // engine current — an eased camera move (fit, zoom to selection, zoom in/out/reset) then
+  // lands at once rather than animating. A standing OS setting, not something that changes
+  // mid-session for most people, but `change` is cheap to listen for and a jump straight to
+  // "off by default, matched live" beats a value read once at load and never revisited.
+  const reducedMotionQuery =
+    typeof window !== "undefined" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const applyReducedMotion = () => engine.setReducedMotion(reducedMotionQuery?.matches ?? false);
+  applyReducedMotion();
+  reducedMotionQuery?.addEventListener("change", applyReducedMotion);
+
   if (args.scene) engine.setScene(args.scene);
   if (args.theme) engine.setTheme(args.theme);
   if (args.defaultStroke) engine.setNextStyle({ strokeColor: args.defaultStroke });
@@ -75,6 +86,7 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     destroy: () => {
       detachPointer();
       detachKeyboard();
+      reducedMotionQuery?.removeEventListener("change", applyReducedMotion);
       observer.disconnect();
       engine.destroy();
       const debugHost = globalThis as unknown as { __osioDrawEngine?: DrawEngine };

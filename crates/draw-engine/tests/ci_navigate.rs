@@ -53,6 +53,7 @@ fn fitting_brings_the_whole_board_into_view() {
     let ids: Vec<String> = engine.get_scene().into_iter().map(|e| e.id).collect();
 
     engine.fit(96.0);
+    engine.set_now(1000.0); // past the fit's ease (Track B: fit now animates)
 
     for id in &ids {
         assert!(
@@ -76,9 +77,11 @@ fn zooming_to_the_selection_frames_the_selection_and_not_the_board() {
         .id;
     engine.select(vec![far.clone()]);
     engine.fit(96.0);
+    engine.set_now(1000.0); // past the fit's ease (Track B: fit now animates)
     let fitted_scale = engine.camera.scale;
 
     engine.zoom_to_selection(96.0);
+    engine.set_now(2000.0); // past zoom_to_selection's ease
 
     assert!(
         engine.camera.scale > fitted_scale,
@@ -109,6 +112,7 @@ fn zooming_to_a_selection_of_several_holds_all_of_them() {
     engine.select(ids.clone());
 
     engine.zoom_to_selection(96.0);
+    engine.set_now(1000.0); // past zoom_to_selection's ease (Track B: it now animates)
 
     for id in &ids {
         assert!(

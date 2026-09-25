@@ -488,6 +488,14 @@ impl WasmEngine {
         self.cell.borrow().engine.objects_snap()
     }
 
+    /// `prefers-reduced-motion`: the host reads `matchMedia` (WASM cannot) and keeps this
+    /// current. An eased camera move — Shift+1/2, zoom in/out/reset, fit — lands at once
+    /// rather than animating while it is set.
+    #[wasm_bindgen(js_name = setReducedMotion)]
+    pub fn set_reduced_motion(&self, on: bool) {
+        self.cell.borrow_mut().engine.set_reduced_motion(on);
+    }
+
     #[wasm_bindgen(js_name = zoomAt)]
     pub fn zoom_at(&self, sx: f64, sy: f64, factor: f64) {
         self.cell.borrow_mut().engine.zoom_at(sx, sy, factor);
