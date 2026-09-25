@@ -403,6 +403,10 @@ impl DrawEngine {
         // `packages/excalidraw/actions/actionDuplicateSelection.tsx:63-72` and by
         // `packages/excalidraw/components/App.duplicate.ts:195-199`.
         let editing = self.editing_group_id.as_deref();
+        // Where every copy belongs, worked out before the sources are consumed: a group, a
+        // frame with its children, a container with its label, each one run; anything else
+        // a run of one. See `duplicate_runs`.
+        let placement = crate::edit::duplicate_runs(&copied, editing);
         let Some(copies) =
             crate::edit::materialize_within(copied, offset_x, offset_y, self.now_ms, editing)
         else {
@@ -412,24 +416,27 @@ impl DrawEngine {
         for element in copies {
             self.scene.add(element);
         }
-        // A copy that stays in the group being edited goes directly above that group's
-        // top member, not on top of the board, which split the group in the stack with
-        // whatever lay between. The oracle puts each copy directly above its source
-        // (`packages/element/src/duplicate.ts:322-348`); above the group is the same run.
-        // Any other copy is in groups of its own and stays on top, where the host hears
-        // of it as a delta rather than as the whole reordered scene.
-        if let Some(editing) = self.editing_group_id.clone() {
-            let copied: HashSet<&str> = ids.iter().map(String::as_str).collect();
-            let top = self
+        // The oracle puts each copy directly above its original (`duplicate.ts@1118751f:
+        // 430-436`), a group or a frame's own run moving together as the block it already
+        // is. One call per run rather than per copy: each is an `O(board)` restack — the
+        // same cost `stack_under_frame` pays once per frame a shape joins
+        // (`docs/reference/zorder.md`) — so a run of one, the common Ctrl+D, pays it once.
+        //
+        // The anchor is resolved against the *live scene*, not the copied sources: a run
+        // key (its group, frame or container) can own an element that was never selected —
+        // stepped into a group and duplicated only one of its members, the anchor is the
+        // group's other, untouched member above it, not the member that was copied.
+        let new_copies: HashSet<&str> = ids.iter().map(String::as_str).collect();
+        for (key, run) in placement {
+            let run_ids: Vec<String> = run.iter().map(|&i| ids[i].clone()).collect();
+            let anchor = self
                 .scene
                 .iter_ordered()
                 .rev()
-                .find(|el| {
-                    !copied.contains(el.id.as_str()) && crate::edit::is_in_group(el, &editing)
-                })
+                .find(|el| !new_copies.contains(el.id.as_str()) && key.owns(el))
                 .map(|el| el.id.clone());
-            if let Some(top) = top {
-                self.scene.place_above(&ids, &top);
+            if let Some(anchor) = anchor {
+                self.scene.place_above(&run_ids, &anchor);
             }
         }
         self.set_selection(ids);

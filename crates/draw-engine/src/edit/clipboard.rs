@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::edit::group::with_labels;
+use crate::edit::group::{is_in_group, selected_group_for, with_labels};
 use crate::export::json::{elements_from_json, scene_to_json};
 use crate::scene::binding::{anchor, set_anchor, Anchor, End};
 use crate::scene::element::{new_element_id, DrawElement};
+use crate::scene::is_frame;
 
 pub fn expand_for_copy(elements: &[DrawElement], ids: &HashSet<String>) -> Vec<DrawElement> {
     expand_for_copy_among(elements.iter(), ids)
@@ -28,6 +29,111 @@ pub fn expand_for_copy_among<'a>(
         .into_iter()
         .filter(|element| !element.is_deleted && wanted.contains(&element.id))
         .cloned()
+        .collect()
+}
+
+/// What a duplicated run is placed beside: the id every member of it shares, and how to
+/// recognise the untouched original that anchors it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum DuplicateRun {
+    /// A group — the level `selected_group_for` names, or, with no sub-group of its own,
+    /// the group being edited itself: the copy stays in it, so the whole edited group is
+    /// where it lands (`duplicate_selection`'s prior, narrower rule, generalised here).
+    Group(String),
+    /// A frame, with the children of it also being duplicated.
+    Frame(String),
+    /// A container, with its bound label also being duplicated.
+    Container(String),
+    /// Nothing shared with anything else being duplicated: its own id.
+    Solo(String),
+}
+
+impl DuplicateRun {
+    /// Whether `element`, untouched in the scene, belongs to this run — so it can anchor
+    /// the copies of it.
+    pub fn owns(&self, element: &DrawElement) -> bool {
+        match self {
+            DuplicateRun::Group(group) => is_in_group(element, group),
+            DuplicateRun::Frame(frame) => {
+                element.id == *frame || element.frame_id.as_deref() == Some(frame.as_str())
+            }
+            DuplicateRun::Container(container) => {
+                element.id == *container
+                    || element.container_id.as_deref() == Some(container.as_str())
+            }
+            DuplicateRun::Solo(id) => element.id == *id,
+        }
+    }
+}
+
+/// Groups `source` (elements about to be duplicated, in scene order) into the runs a copy
+/// joins as one block — a group, a frame with the children of it also being duplicated, a
+/// container with its label. Transcribes the oracle's `insertBeforeOrAfterIndex`, which
+/// splices every copy of a run in together, found with `findLastIndex`
+/// (`duplicate.ts@1118751f:322-436`): a group by `el.groupIds?.includes(groupId)`
+/// (`:333-341`), a frame by `el.frameId === frameId || el.id === frameId` (`:364-372`), a
+/// container by `el.id === element.id || containerId === element.id` (`:381-389`). Anything
+/// else is a run of one, directly above itself (`:426-431`).
+///
+/// The anchor is not resolved here: [`DuplicateRun::owns`] is, so the caller can search the
+/// scene as it stands with the new copies already in it, where a run's untouched original
+/// can be an element that was never itself duplicated — the rest of a group entered but
+/// only partly copied.
+pub fn duplicate_runs(
+    source: &[DrawElement],
+    editing: Option<&str>,
+) -> Vec<(DuplicateRun, Vec<usize>)> {
+    let present: HashSet<&str> = source.iter().map(|el| el.id.as_str()).collect();
+    let frame_ids: HashSet<&str> = source
+        .iter()
+        .filter(|el| is_frame(el))
+        .map(|el| el.id.as_str())
+        .collect();
+    let mut seen: Vec<DuplicateRun> = Vec::new();
+    let mut runs: HashMap<DuplicateRun, Vec<usize>> = HashMap::new();
+    for (i, element) in source.iter().enumerate() {
+        let key = if let Some(group) = selected_group_for(element, editing) {
+            DuplicateRun::Group(group.clone())
+        } else if let Some(editing) = editing.filter(|editing| is_in_group(element, editing)) {
+            // No sub-group of its own, but still inside the group being edited: the copy
+            // stays there too, so the whole edited group is the run — not just this one
+            // element, which would split the group in the stack around it.
+            DuplicateRun::Group(editing.to_string())
+        } else if is_frame(element) {
+            DuplicateRun::Frame(element.id.clone())
+        } else if let Some(frame) = element
+            .frame_id
+            .as_deref()
+            .filter(|id| frame_ids.contains(id))
+        {
+            DuplicateRun::Frame(frame.to_string())
+        } else if element
+            .bound_text_id
+            .as_deref()
+            .is_some_and(|label| present.contains(label))
+        {
+            // The container itself: its own id is the run's key, so its label — checked
+            // below — joins the same run.
+            DuplicateRun::Container(element.id.clone())
+        } else if let Some(container) = element
+            .container_id
+            .as_deref()
+            .filter(|id| present.contains(id))
+        {
+            DuplicateRun::Container(container.to_string())
+        } else {
+            DuplicateRun::Solo(element.id.clone())
+        };
+        if !runs.contains_key(&key) {
+            seen.push(key.clone());
+        }
+        runs.entry(key).or_default().push(i);
+    }
+    seen.into_iter()
+        .map(|key| {
+            let members = runs.remove(&key).expect("just recorded");
+            (key, members)
+        })
         .collect()
 }
 
@@ -142,4 +248,124 @@ pub fn materialize_within(
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod duplicate_runs_tests {
+    use super::{duplicate_runs, DuplicateRun};
+    use crate::scene::element::{create_element_default, DrawElementType, Geometry};
+    use crate::scene::DrawElement;
+
+    fn el(id: &str, kind: DrawElementType) -> DrawElement {
+        let mut element = create_element_default(
+            kind,
+            Geometry {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+        );
+        element.id = id.to_string();
+        element
+    }
+
+    fn rect(id: &str) -> DrawElement {
+        el(id, DrawElementType::Rectangle)
+    }
+
+    /// Two elements with nothing in common are each their own run, anchored on themselves —
+    /// what makes a plain Ctrl+D land directly above its own source.
+    #[test]
+    fn ungrouped_elements_are_solo_runs() {
+        let source = vec![rect("a"), rect("b")];
+        let runs = duplicate_runs(&source, None);
+        assert_eq!(
+            runs,
+            vec![
+                (DuplicateRun::Solo("a".into()), vec![0]),
+                (DuplicateRun::Solo("b".into()), vec![1]),
+            ]
+        );
+    }
+
+    /// A whole group is one run, anchored on its topmost member — the oracle keeps a
+    /// group's copies as one consecutive block above the group (`duplicate.ts@1118751f:
+    /// 322-348`).
+    #[test]
+    fn a_group_is_one_run_anchored_on_its_top_member() {
+        let mut a = rect("a");
+        a.group_ids = vec!["g".into()];
+        let mut b = rect("b");
+        b.group_ids = vec!["g".into()];
+        let source = vec![a, rect("x"), b];
+        let runs = duplicate_runs(&source, None);
+        assert_eq!(
+            runs,
+            vec![
+                (DuplicateRun::Group("g".into()), vec![0, 2]),
+                (DuplicateRun::Solo("x".into()), vec![1]),
+            ]
+        );
+    }
+
+    /// Duplicating only the members of a group being edited, not the group itself, still
+    /// keeps them one run — `selected_group_for` returns nothing for a level the edit is
+    /// already inside, but the copy stays in the edited group all the same, so splitting
+    /// them into runs of one would break the group apart in the stack around it.
+    #[test]
+    fn members_of_the_group_being_edited_are_one_run() {
+        let mut a = rect("a");
+        a.group_ids = vec!["g".into()];
+        let mut b = rect("b");
+        b.group_ids = vec!["g".into()];
+        let source = vec![a, b];
+        let runs = duplicate_runs(&source, Some("g"));
+        assert_eq!(runs, vec![(DuplicateRun::Group("g".into()), vec![0, 1])]);
+    }
+
+    /// A frame duplicated with its children is one run, anchored on the topmost of the
+    /// two — the frame's own run stacks exactly as the shape-drawn-into-a-frame case does
+    /// (`duplicate.ts@1118751f:364-379`).
+    #[test]
+    fn a_frame_and_its_duplicated_children_are_one_run() {
+        let child = {
+            let mut c = rect("c");
+            c.frame_id = Some("f".into());
+            c
+        };
+        let frame = el("f", DrawElementType::Frame);
+        let source = vec![child, frame];
+        let runs = duplicate_runs(&source, None);
+        assert_eq!(runs, vec![(DuplicateRun::Frame("f".into()), vec![0, 1])]);
+    }
+
+    /// A frame's child duplicated alone, without the frame, is its own run: the oracle's
+    /// frame branch only triggers when the frame itself is also being duplicated
+    /// (`frameIdsToDuplicate.has(element.frameId)`, `duplicate.ts@1118751f:349-352`).
+    #[test]
+    fn a_lone_frame_child_is_a_solo_run() {
+        let mut child = rect("c");
+        child.frame_id = Some("f".into());
+        let source = vec![child];
+        let runs = duplicate_runs(&source, None);
+        assert_eq!(runs, vec![(DuplicateRun::Solo("c".into()), vec![0])]);
+    }
+
+    /// A container and its bound label are one run, keyed on the container — the label
+    /// sits above it, so that is where the oracle's `findLastIndex` lands
+    /// (`duplicate.ts@1118751f:381-397`).
+    #[test]
+    fn a_container_and_its_label_are_one_run() {
+        let mut container = rect("box");
+        container.bound_text_id = Some("lbl".into());
+        let mut label = el("lbl", DrawElementType::Text);
+        label.container_id = Some("box".into());
+        let source = vec![container, label];
+        let runs = duplicate_runs(&source, None);
+        assert_eq!(
+            runs,
+            vec![(DuplicateRun::Container("box".into()), vec![0, 1])]
+        );
+    }
 }
