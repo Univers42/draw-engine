@@ -320,7 +320,9 @@ impl DrawEngine {
         // edit had given it: nothing else re-routes it, since a commit re-routes only
         // what it touches. Stamped as the replay is, or it would hold other geometry
         // than the same version on a peer that re-routed it on receiving the shape.
-        crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &replayed);
+        let linear_labels =
+            crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &replayed);
+        self.rewrap_linear_labels(linear_labels);
         for id in self.scene.pending_ids() {
             if !pending.contains(&id) && !replayed.contains(&id) {
                 self.scene.update(&id, |element| {

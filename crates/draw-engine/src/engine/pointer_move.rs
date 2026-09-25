@@ -322,7 +322,8 @@ impl DrawEngine {
         let moved = self.rebind_endpoint(moved, handle, square);
 
         self.scene.put(moved);
-        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
+        let label = crate::scene::binding::refresh_binding_of(&mut self.scene, id);
+        self.rewrap_linear_labels(label);
         self.request_draw();
     }
 
@@ -524,7 +525,8 @@ impl DrawEngine {
             self.bind_dropped_end(&mut element, End::End, tip, square);
         }
         self.scene.put(element);
-        crate::scene::binding::refresh_binding_of(&mut self.scene, id);
+        let label = crate::scene::binding::refresh_binding_of(&mut self.scene, id);
+        self.rewrap_linear_labels(label);
         self.request_draw();
     }
 

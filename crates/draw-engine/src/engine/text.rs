@@ -538,6 +538,30 @@ impl DrawEngine {
         self.with_measure(|measure| layout::layout_text(text, self.container_of(text), measure))
     }
 
+    /// Rewraps and repositions each label in `ids` in its (linear) container, in one
+    /// [`layout::layout_text`] — the companion `crate::scene::binding::refresh_bindings_in_place`
+    /// and `refresh_binding_of` hand `ids` to, since neither has a font measurer of its
+    /// own. A no-op for an id no longer a label, or already laid out exactly this way.
+    pub(crate) fn rewrap_linear_labels(&mut self, ids: impl IntoIterator<Item = String>) {
+        let ids: Vec<String> = ids.into_iter().collect();
+        if ids.is_empty() {
+            return;
+        }
+        let relaid: Vec<DrawElement> = self.with_measure(|measure| {
+            ids.iter()
+                .filter_map(|id| {
+                    let label = self.scene.get(id)?.clone();
+                    let container = self.container_of(&label)?;
+                    let laid = layout::layout_text(&label, Some(container), measure).text;
+                    (laid != label).then_some(laid)
+                })
+                .collect()
+        });
+        for label in relaid {
+            self.scene.put(label);
+        }
+    }
+
     /// `element` with `text` typed into it: laid out, and — a free text — kept on the
     /// edge its alignment anchors (`getAdjustedDimensions`).
     pub(crate) fn with_text(&self, element: &DrawElement, text: &str) -> Laid {

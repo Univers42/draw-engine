@@ -763,14 +763,21 @@ impl DrawEngine {
 
     /// Open a longer path for point editing, if this element is one.
     ///
+    /// A line always does; a (simple, non-elbow — this engine has no other kind yet) arrow
+    /// only with Ctrl/Cmd held, or a double click would never reach an arrow's label at
+    /// all: `takes_double_click_text`/`label_target_at` both hit the very same points a
+    /// double click on a 3+-point arrow's own line lands on. Excalidraw's rule
+    /// (`App.tsx@1118751f:7218-7226`, `isSimpleArrow`, `typeChecks.ts@1118751f:139-141`).
+    ///
     /// Returns whether it did, so the double-click handler knows the gesture was spent.
     pub(crate) fn open_linear_points(&mut self, element: &DrawElement) -> bool {
-        let is_linear = matches!(
-            element.kind,
-            crate::scene::DrawElementType::Line | crate::scene::DrawElementType::Arrow
-        );
+        let opens = match element.kind {
+            crate::scene::DrawElementType::Line => true,
+            crate::scene::DrawElementType::Arrow => self.ctrl_held,
+            _ => false,
+        };
         let has_points = element.points.as_deref().is_some_and(|p| p.len() > 2);
-        if !is_linear || !has_points {
+        if !opens || !has_points {
             return false;
         }
         self.set_selection(vec![element.id.clone()]);
@@ -827,7 +834,9 @@ impl DrawEngine {
     /// patch's elements too, still pending when this runs.
     fn apply_bindings(&mut self) {
         let touched = self.scene.pending_ids();
-        crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &touched);
+        let linear_labels =
+            crate::scene::binding::refresh_bindings_in_place(&mut self.scene, &touched);
+        self.rewrap_linear_labels(linear_labels);
     }
 
     fn settle_tool(&mut self) {

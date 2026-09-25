@@ -1205,10 +1205,22 @@ pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElem
 /// board rewrote an arrow saved before its ends were anchored on the first unrelated
 /// edit — stamped as part of that edit, or, on a peer's patch, not stamped at all, so
 /// this engine and the server held two geometries under one version.
+///
+/// Returns the ids of labels bound to a **linear** container among those touched: this
+/// module has no font measurer, so it only repositions a shape's label here
+/// ([`layout_label`], position only — correct for a shape, which is resized through its
+/// own handles, laid out again by [`crate::text::layout::bound_text_resize`]). An arrow
+/// has no such handle: dragging a point *is* its resize, so its wrap width
+/// (`ARROW_LABEL_WIDTH_FRACTION * width`) changes on every move, direct or through a
+/// bound shape (`handleBindTextResize`, called from both
+/// `linearElementEditor.ts@1118751f:629-636` and `binding.ts@1118751f:1416-1418`). The
+/// caller — [`crate::engine::DrawEngine::rewrap_linear_labels`], which has a measurer —
+/// rewraps and repositions the ids returned here in one `layout_text`, so this leaves
+/// them exactly as it found them.
 pub fn refresh_bindings_in_place(
     scene: &mut crate::scene::store::Scene,
     touched: &std::collections::HashSet<String>,
-) {
+) -> Vec<String> {
     let touches = |id: Option<&str>| id.is_some_and(|id| touched.contains(id));
     // Pass 1: arrows with a bound end.
     //
@@ -1262,6 +1274,7 @@ pub fn refresh_bindings_in_place(
     // Pass 2: bound labels follow their container. Runs after the linear pass because a
     // label on an arrow has to follow the arrow's new endpoints.
     let mut relaid: Vec<DrawElement> = Vec::new();
+    let mut linear_labels: Vec<String> = Vec::new();
     for element in scene.iter_ordered() {
         if element.kind != DrawElementType::Text {
             continue;
@@ -1278,6 +1291,12 @@ pub fn refresh_bindings_in_place(
         let Some(container) = scene.get(container_id).filter(|c| !c.is_deleted) else {
             continue;
         };
+        if is_linear_element(container) {
+            // Rewrapped and repositioned together by the caller — see the doc comment
+            // above.
+            linear_labels.push(element.id.clone());
+            continue;
+        }
         let laid = layout_label(element.clone(), container);
         if &laid != element {
             relaid.push(laid);
@@ -1286,6 +1305,7 @@ pub fn refresh_bindings_in_place(
     for element in relaid {
         scene.put(element);
     }
+    linear_labels
 }
 
 /// Equal but for the rounding of a world ↔ local round trip.
@@ -1299,7 +1319,12 @@ fn same_point(a: Point, b: Point) -> bool {
 /// For a gesture that changes that arrow and nothing it is bound to — drawing it, or
 /// dragging one of its points — so nothing else on the board has anything to re-resolve.
 /// Refreshing the whole board there made each move cost every bound arrow on it.
-pub fn refresh_binding_of(scene: &mut crate::scene::store::Scene, id: &str) {
+///
+/// `id` is always the linear element itself, so its label — if it has one — is always a
+/// linear container's: returned for the caller to rewrap and reposition together
+/// ([`crate::engine::DrawEngine::rewrap_linear_labels`]), for the reason given on
+/// [`refresh_bindings_in_place`].
+pub fn refresh_binding_of(scene: &mut crate::scene::store::Scene, id: &str) -> Option<String> {
     let next = {
         let lookup = |id: &str| scene.get(id);
         scene
@@ -1314,16 +1339,11 @@ pub fn refresh_binding_of(scene: &mut crate::scene::store::Scene, id: &str) {
     if let Some(next) = next {
         scene.put(next);
     }
-    let relaid = scene.get(id).and_then(|container| {
-        let label = scene
-            .get(container.bound_text_id.as_deref()?)
-            .filter(|label| !label.is_deleted)?;
-        let laid = layout_label(label.clone(), container);
-        (&laid != label).then_some(laid)
-    });
-    if let Some(label) = relaid {
-        scene.put(label);
-    }
+    let label_id = scene.get(id)?.bound_text_id.clone()?;
+    scene
+        .get(&label_id)
+        .is_some_and(|label| !label.is_deleted)
+        .then_some(label_id)
 }
 
 /// Recomputes bound geometry over a detached element list.

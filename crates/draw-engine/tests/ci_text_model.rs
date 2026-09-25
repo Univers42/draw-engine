@@ -294,6 +294,155 @@ mod labels {
         assert_eq!(arrow.points, Some(vec![[0.0, 0.0], [400.0, 0.0]]));
     }
 
+    /// An arrow has no resize handle of its own — dragging an end *is* its resize — so
+    /// its label has to rewrap on every drag of a point, not only recentre on it: the
+    /// oracle rewraps from the same `LinearElementEditor` point-drag call that retargets
+    /// the arrow (`handleBindTextResize`, `linearElementEditor.ts@1118751f:629-636`).
+    /// Shortened, the floor (`ARROW_LABEL_FONT_SIZE_TO_MIN_WIDTH_RATIO * fontSize` = 220)
+    /// governs over `0.7 * width`, well under the label's unwrapped 304; lengthened again
+    /// past it, the label comes back to one line.
+    #[test]
+    fn dragging_an_end_rewraps_the_label_to_the_new_width() {
+        let mut arrow = connector(0.0, 0.0, 600.0, 0.0, DrawElementType::Arrow);
+        arrow.roundness = None;
+        let arrow_id = arrow.id.clone();
+        let mut engine = engine_with_measure(vec![arrow]);
+        engine.select(vec![arrow_id.clone()]);
+        assert!(engine.edit_selected_text());
+        let id = engine.drain_events().text_edit.unwrap().id;
+        // 30 chars measure 304 with the hook: under 420 (0.7 * 600), so it starts as one
+        // line, centred on the 600-long arrow's midpoint.
+        engine.set_element_text(&id, "the quick brown fox jumps over");
+        let label = element(&engine, &id);
+        assert_eq!(label.text.as_deref().unwrap().split('\n').count(), 1);
+        assert_close(label.x + label.width / 2.0, 300.0);
+
+        // Drag the far end from 600 to 150: 0.7 * 150 = 105 loses to the 220 floor, still
+        // well under the label's 304 — it must wrap.
+        engine.select(vec![arrow_id.clone()]);
+        engine.begin_pointer(600.0, 0.0, false, false);
+        engine.move_pointer(150.0, 0.0, false, false);
+        engine.end_pointer();
+
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(arrow.points, Some(vec![[0.0, 0.0], [150.0, 0.0]]));
+        let label = element(&engine, &id);
+        assert_lines_fit(&label, 220.0);
+        assert!(
+            label.text.as_deref().unwrap().contains('\n'),
+            "\"the quick brown fox jumps over\" (304 wide) must wrap at 220: {:?}",
+            label.text
+        );
+        assert_close(label.x + label.width / 2.0, 75.0);
+        assert_close(label.y + label.height / 2.0, 0.0);
+
+        // And back: past 434 (0.7 * width > 304) it fits one line again.
+        engine.select(vec![arrow_id.clone()]);
+        engine.begin_pointer(150.0, 0.0, false, false);
+        engine.move_pointer(700.0, 0.0, false, false);
+        engine.end_pointer();
+        let label = element(&engine, &id);
+        assert_eq!(
+            label.text.as_deref().unwrap().split('\n').count(),
+            1,
+            "wide enough again to come back to one line: {:?}",
+            label.text
+        );
+        assert_close(label.x + label.width / 2.0, 350.0);
+    }
+
+    /// The same rewrap, reached the other way an arrow's length changes: not a direct
+    /// point drag but a shape it is bound to moving, which retargets its end
+    /// (`updateBoundElements`, `binding.ts@1118751f:1416-1418`, also calls
+    /// `handleBindTextResize`).
+    #[test]
+    fn moving_a_bound_shape_rewraps_the_arrows_label() {
+        let left = filled(box_at(0.0, -40.0, 20.0, 80.0));
+        let right = filled(box_at(580.0, -40.0, 20.0, 80.0));
+        let (left_id, right_id) = (left.id.clone(), right.id.clone());
+        let mut engine = engine_with_measure(vec![left, right]);
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(10.0, 0.0, false, false);
+        engine.move_pointer(300.0, 0.0, false, false);
+        engine.move_pointer(590.0, 0.0, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        let arrow_id = arrow.id.clone();
+        assert_eq!(arrow.start_binding.as_deref(), Some(left_id.as_str()));
+        assert_eq!(arrow.end_binding.as_deref(), Some(right_id.as_str()));
+
+        engine.select(vec![arrow_id.clone()]);
+        assert!(engine.edit_selected_text());
+        let id = engine.drain_events().text_edit.unwrap().id;
+        engine.set_element_text(&id, "the quick brown fox jumps over");
+        assert_eq!(
+            element(&engine, &id)
+                .text
+                .as_deref()
+                .unwrap()
+                .split('\n')
+                .count(),
+            1
+        );
+
+        // Drag the right box in, off its own top edge so the grab does not land on the
+        // arrow's own endpoint handle instead.
+        engine.set_tool(DrawTool::Select);
+        engine.select(vec![right_id.clone()]);
+        engine.begin_pointer(590.0, -40.0, false, false);
+        engine.move_pointer(140.0, -40.0, false, false);
+        engine.end_pointer();
+
+        let label = element(&engine, &id);
+        assert_lines_fit(&label, 220.0);
+        assert!(
+            label.text.as_deref().unwrap().contains('\n'),
+            "the arrow shortened when its bound shape moved, so its label must rewrap: {:?}",
+            label.text
+        );
+    }
+
+    /// A double click on a 3+-point arrow's own line, later — not the click that finished
+    /// it — takes its label, exactly as a double click on a straight one does: only
+    /// Ctrl/Cmd held opens its point editor instead. Before this, `open_linear_points`
+    /// claimed every multi-point arrow regardless, so a double click on one could never
+    /// reach its label at all (`isSimpleArrow`, `App.tsx@1118751f:7218-7226`).
+    #[test]
+    fn a_multi_point_arrows_line_takes_a_label_not_the_point_editor() {
+        let mut engine = engine_with_measure(vec![]);
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(0.0, 0.0, false, false);
+        engine.end_pointer();
+        engine.move_pointer(150.0, -120.0, false, false);
+        engine.begin_pointer(150.0, -120.0, false, false);
+        engine.end_pointer();
+        engine.move_pointer(300.0, 0.0, false, false);
+        engine.begin_pointer(300.0, 0.0, false, false);
+        engine.end_pointer();
+        engine.finish_linear();
+
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        assert_eq!(arrow.points.as_ref().map(Vec::len), Some(3), "setup");
+        engine.set_tool(DrawTool::Select);
+
+        // On the first segment, off its own chord and off the vertex at either end.
+        engine.handle_double_click(40.0, -32.0);
+        let request = engine
+            .drain_events()
+            .text_edit
+            .expect("a double click on the line should open its label, not the point editor");
+        assert_eq!(request.container_id.as_deref(), Some(arrow.id.as_str()));
+        assert!(engine.linear_points().is_empty(), "not the point editor");
+    }
+
     /// A label told not to wrap keeps its typed lines, and its shape grows in width to
     /// hold the longest (`textElement.ts@1118751f:126-133`).
     #[test]
