@@ -456,10 +456,29 @@ export interface SelectionStyle {
   edges: "sharp" | "round" | null;
   startArrowhead: Arrowhead | null;
   endArrowhead: Arrowhead | null;
+  /** Read off arrows alone; `edges` reads everything else. */
+  arrowType: ArrowType | null;
   fontSize: number | null;
+  /** The family the texts share — 0 for the system stack a text with none is drawn in. */
+  fontFamily: number | null;
   textAlign: TextAlign | null;
   verticalAlign: VerticalAlign | null;
+  /** A free text is selected: auto-resize means something, and "Wrap text in a container" is offered. */
+  hasFreeText: boolean;
+  /** Whether the free texts size themselves to their text. */
+  autoResize: boolean | null;
+  /** A label is reached — selected, or carried by a selected shape. */
+  hasLabel: boolean;
+  /** Whether the labels wrap inside their shapes. */
+  labelWrap: boolean | null;
+  /** "Bind text to the container" is offered: a free text and one empty shape selected. */
+  canBindText: boolean;
+  /** "Unbind text" is offered: a selected shape carries a label. */
+  canUnbindText: boolean;
 }
+
+/** The arrow types the engine draws: Excalidraw's less `elbow`. */
+export type ArrowType = "sharp" | "round";
 
 /** What a panel shows before an engine exists: the default style, nothing selected. */
 export const EMPTY_SELECTION_STYLE: SelectionStyle = {
@@ -481,7 +500,15 @@ export const EMPTY_SELECTION_STYLE: SelectionStyle = {
   edges: DEFAULT_ELEMENT_STYLE.roundness == null ? "sharp" : "round",
   startArrowhead: "none",
   endArrowhead: "arrow",
+  arrowType: "round",
   fontSize: 20,
+  fontFamily: 5,
   textAlign: "left",
   verticalAlign: "middle",
+  hasFreeText: false,
+  autoResize: null,
+  hasLabel: false,
+  labelWrap: null,
+  canBindText: false,
+  canUnbindText: false,
 };

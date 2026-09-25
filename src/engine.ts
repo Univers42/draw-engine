@@ -5,6 +5,7 @@ import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
   Arrowhead,
+  ArrowType,
   Camera,
   DebugSnapshot,
   DrawElement,
@@ -635,8 +636,48 @@ export class DrawEngine {
     return parseJson<DrawElement | null>(this.inner.textPreviewJson(id, text), null);
   }
 
+  /** The heads of the selected lines and arrows, and always of the next arrow drawn. */
   setArrowheads(patch: { start?: Arrowhead; end?: Arrowhead }): void {
     this.inner.setArrowheadsJson(JSON.stringify(patch));
+  }
+
+  /** Curved or sharp, for the selected arrows and the next one. The engine draws no elbow arrows. */
+  setArrowType(type: ArrowType): void {
+    this.inner.setArrowType(type);
+  }
+
+  /** Ctrl/Cmd+Shift+> and <: the selected texts a tenth bigger or smaller, each from its own size. */
+  stepFontSize(increase: boolean): void {
+    this.inner.stepFontSize(increase);
+  }
+
+  /**
+   * The font picker's hover: `id` shown on the selected texts uncommitted, or — with none —
+   * what the last hover changed given back. `setFontFamily` commits; load the face first,
+   * as for it.
+   */
+  previewFontFamily(id?: number): void {
+    this.inner.previewFontFamily(id);
+  }
+
+  /** The families the board's texts use, each once: the font picker's "In this scene". */
+  sceneFontFamilies(): number[] {
+    return Array.from(this.inner.sceneFontFamilies());
+  }
+
+  /** "Bind text to the container": a free text and one empty shape selected (`selectionStyle().canBindText`). */
+  bindText(): void {
+    this.inner.bindText();
+  }
+
+  /** "Unbind text": each selected shape's label becomes free text (`selectionStyle().canUnbindText`). */
+  unbindText(): void {
+    this.inner.unbindText();
+  }
+
+  /** "Wrap text in a container": a rectangle around each selected free text (`selectionStyle().hasFreeText`). */
+  wrapTextInContainer(): void {
+    this.inner.wrapTextInContainer();
   }
 
   requestDraw(): void {
