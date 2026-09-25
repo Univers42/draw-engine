@@ -103,12 +103,13 @@ impl DrawEngine {
             self.abandon_gesture();
         }
 
-        // What someone else now holds is no longer ours. A gesture on it is abandoned —
-        // put back as it was — rather than committed over their work.
+        // What someone else now holds is no longer ours — the label of a shape they took
+        // included, which a Delete would otherwise unbind from it. A gesture on it is
+        // abandoned — put back as it was — rather than committed over their work.
         let lost: Vec<String> = self
             .selected_ids
             .iter()
-            .filter(|id| self.held.contains_key(*id))
+            .filter(|id| self.is_held(id))
             .cloned()
             .collect();
         if !lost.is_empty() {
@@ -119,12 +120,7 @@ impl DrawEngine {
             {
                 self.abandon_gesture();
             }
-            let kept: Vec<String> = self
-                .selected_ids
-                .iter()
-                .filter(|id| !self.held.contains_key(*id))
-                .cloned()
-                .collect();
+            let kept: Vec<String> = self.selected_ids.iter().cloned().collect();
             self.set_selection(kept);
         }
         self.refresh_live();
@@ -155,6 +151,18 @@ impl DrawEngine {
     /// The peer holding `id`, if anyone does.
     pub fn held_by(&self, id: &str) -> Option<&Peer> {
         self.held.get(id).and_then(|&index| self.peers.get(index))
+    }
+
+    /// Whether someone else holds `id`, or the shape it is the label of: a label stands for
+    /// its shape wherever a press reaches it ([`Self::element_at`]), so it is theirs too.
+    /// What the selection lets in ([`Self::set_selection`]).
+    pub(crate) fn is_held(&self, id: &str) -> bool {
+        self.held.contains_key(id)
+            || self
+                .scene
+                .get(id)
+                .and_then(|element| element.container_id.as_deref())
+                .is_some_and(|container| self.held.contains_key(container))
     }
 
     /// Whether an element may not be touched here: locked, or held by someone else.

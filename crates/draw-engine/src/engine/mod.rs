@@ -656,10 +656,7 @@ impl DrawEngine {
         // The one door every selection goes through — a click, a marquee, a lasso, select
         // all, a group expanding — so what someone else holds can never be let in, and
         // nothing that acts on the selection can touch it. See `peers.rs`.
-        self.selected_ids = ids
-            .into_iter()
-            .filter(|id| !self.held.contains_key(id))
-            .collect();
+        self.selected_ids = ids.into_iter().filter(|id| !self.is_held(id)).collect();
         // The point editor belongs to one element, and closes the moment that element
         // stops being the only thing held. Without this it survives onto whatever is
         // picked up next, which shows a stranger's corners over the new selection.

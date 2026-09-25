@@ -161,6 +161,32 @@ fn a_drag_in_progress_is_abandoned_not_committed_over_them() {
     assert!(selected(&engine).is_empty());
 }
 
+/// The label of what they hold is theirs as well: select all leaves it out, and one
+/// selected before they took the shape is let go — so a Delete reaches neither the label
+/// nor the shape it would unbind.
+#[test]
+fn the_label_of_what_they_hold_is_theirs_too() {
+    let (mut engine, a, b, label) = labelled_a();
+    engine.set_peers(vec![peer("ana", &[&a])]);
+    engine.select_all();
+    assert_eq!(
+        selected(&engine),
+        vec![b.clone()],
+        "select all took the label"
+    );
+
+    engine.set_peers(Vec::new());
+    engine.select(vec![label.clone()]);
+    engine.set_peers(vec![peer("ana", &[&a])]);
+    assert!(selected(&engine).is_empty(), "the label is still selected");
+    engine.delete_selection();
+    assert!(!element(&engine, &label).is_deleted);
+    assert_eq!(
+        element(&engine, &a).bound_text_id.as_deref(),
+        Some(label.as_str())
+    );
+}
+
 #[test]
 fn undo_leaves_what_they_hold_as_it_is() {
     let (mut engine, a, _) = two_shapes();

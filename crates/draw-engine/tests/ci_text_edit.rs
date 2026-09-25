@@ -885,6 +885,30 @@ mod peers {
         assert_eq!((element(&engine, &shape), element(&engine, &label)), before);
     }
 
+    /// The label of a shape a peer takes is theirs as well: the edit ends with nothing
+    /// selected, so the Delete that follows reaches neither the label nor its shape.
+    #[test]
+    fn a_peer_taking_the_shape_takes_its_label_out_of_the_selection() {
+        let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "hello");
+        engine.select(vec![label.clone()]);
+        assert!(engine.edit_selected_text());
+        engine.update_text_edit("hello world");
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![shape.clone()],
+            preview: Vec::new(),
+        }]);
+        assert!(engine.get_selection().is_empty(), "still selected");
+        engine.delete_selection();
+        assert!(!element(&engine, &label).is_deleted);
+        assert_eq!(
+            element(&engine, &shape).bound_text_id.as_deref(),
+            Some(label.as_str())
+        );
+    }
+
     /// A shape a peer takes while its label is typed ends the edit, and a style written
     /// after it reaches neither: the label of a held shape is out of every style's reach
     /// (`style.rs` › `restylable`), the text being typed or not.

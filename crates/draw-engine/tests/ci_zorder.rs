@@ -664,12 +664,13 @@ fn select_all_leaves_a_locked_shapes_label_on_it() {
     }
 }
 
-/// The same for a shape a peer holds: the selection cannot take it, but took its label.
+/// The same for a shape a peer holds: the selection takes neither it nor its label
+/// (`peers.rs` › `is_held`).
 #[test]
 fn select_all_leaves_a_held_shapes_label_on_it() {
     for mode in [Back, Backward] {
         let (mut engine, cast) = labelled_under_select_all(peer_holds_r);
-        assert_eq!(engine.get_selection().len(), 2, "setup: T and X");
+        assert_eq!(engine.get_selection(), vec![id(&cast, "X")], "setup: X");
 
         engine.reorder_selection(mode);
 
