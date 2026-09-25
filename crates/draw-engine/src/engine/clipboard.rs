@@ -488,7 +488,16 @@ impl DrawEngine {
             }
         }
         for id in doomed {
-            self.scene.remove(&id, now);
+            // One made since the last commit — a text never typed into, left selected
+            // while its session was ended the old way — was never there: dropped, not
+            // tombstoned, as `remove_emptied_text` drops one abandoned through the editor
+            // (`engine/text_session.rs`). A tombstone for it would be a step undo could
+            // never make visible, because nothing had ever shown it.
+            if self.scene.created_since_commit(&id) {
+                self.scene.discard(&id);
+            } else {
+                self.scene.remove(&id, now);
+            }
         }
         for id in &kept {
             self.scene.update(id, |child| child.frame_id = None);

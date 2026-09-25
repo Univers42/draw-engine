@@ -814,6 +814,11 @@ mod ending {
         engine.delete_selection();
         assert!(engine.text_edit_session().is_none(), "a new one");
         assert!(!engine.update_text_edit("x"));
+        assert!(engine.get_scene().is_empty(), "no tombstone for a draft");
+        assert!(
+            !engine.debug_state().scene.can_undo,
+            "no step for a text never committed"
+        );
 
         let id = open_at(&mut engine, (100.0, 100.0));
         engine.commit_text_edit("keep", true);
@@ -825,6 +830,30 @@ mod ending {
         let back = element(&engine, &id);
         assert!(!back.is_deleted, "undo works again");
         assert_eq!(back.text.as_deref(), Some("keep"));
+    }
+
+    /// A label made for a click that never typed into it, deleted through the context
+    /// menu while its session is still open — the same `delete_selection` a host used to
+    /// end an edit with before the session existed — leaves the shape it was on exactly
+    /// as it was: no tombstone, no step, nothing to undo.
+    #[test]
+    fn a_never_typed_labels_deletion_leaves_no_trace() {
+        let shape = filled(box_at(100.0, 100.0, 200.0, 100.0));
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let before = element(&engine, &shape_id);
+        open_at(&mut engine, middle(&before));
+        engine.delete_selection();
+        assert!(engine.text_edit_session().is_none());
+        assert_eq!(
+            element(&engine, &shape_id),
+            before,
+            "the shape is untouched"
+        );
+        assert!(
+            !engine.debug_state().scene.can_undo,
+            "no step for a label never typed"
+        );
     }
 
     /// An existing text emptied is deleted: a tombstone, one step, its shape unbound.
