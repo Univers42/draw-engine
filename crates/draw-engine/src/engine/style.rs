@@ -225,9 +225,26 @@ impl DrawEngine {
         change: impl Fn(&mut DrawElement),
         anchor_font_resize: bool,
     ) {
+        if !self.write_relayout_selected_texts(change, anchor_font_resize) {
+            return;
+        }
+        self.apply_bindings();
+        self.commit_style();
+        self.request_draw();
+    }
+
+    /// [`Self::relayout_selected_texts`]'s write, without the bindings pass or the
+    /// commit — shared with [`Self::set_text_wrap`], which writes this and
+    /// [`Self::write_text_auto_resize`] as one step. Says whether there was a selected
+    /// text to lay out.
+    fn write_relayout_selected_texts(
+        &mut self,
+        change: impl Fn(&mut DrawElement),
+        anchor_font_resize: bool,
+    ) -> bool {
         let texts = self.selected_texts();
         if texts.is_empty() {
-            return;
+            return false;
         }
         for prev in texts {
             let mut next = prev.clone();
@@ -241,9 +258,7 @@ impl DrawEngine {
             }
             self.put_laid(laid);
         }
-        self.apply_bindings();
-        self.commit_style();
-        self.request_draw();
+        true
     }
 
     /// The family for the selected text, or for the next text written when nothing is
@@ -374,6 +389,18 @@ impl DrawEngine {
     /// arrows bound to it are re-routed to its new box (`updateBoundElements` there). To
     /// fixed, it keeps the width it has. Labels are left alone: their shape decides.
     pub fn set_text_auto_resize(&mut self, auto_resize: bool) {
+        if !self.write_text_auto_resize(auto_resize) {
+            return;
+        }
+        self.apply_bindings();
+        self.commit_style();
+        self.request_draw();
+    }
+
+    /// [`Self::set_text_auto_resize`]'s write, without the bindings pass or the commit —
+    /// shared with [`Self::set_text_wrap`]. Says whether there was a selected free text
+    /// to write.
+    fn write_text_auto_resize(&mut self, auto_resize: bool) -> bool {
         let texts: Vec<DrawElement> = self
             .selected_texts()
             .into_iter()
@@ -381,7 +408,7 @@ impl DrawEngine {
             .filter(|text| crate::scene::is_auto_resize(text) != auto_resize)
             .collect();
         if texts.is_empty() {
-            return;
+            return false;
         }
         for prev in texts {
             let mut next = prev.clone();
@@ -398,9 +425,7 @@ impl DrawEngine {
             }
             self.scene.put(laid.text);
         }
-        self.apply_bindings();
-        self.commit_style();
-        self.request_draw();
+        true
     }
 
     /// Whether the selected labels wrap inside their shapes (`true`, the oracle's only
@@ -421,6 +446,35 @@ impl DrawEngine {
             },
             false,
         );
+    }
+
+    /// [`Self::set_text_auto_resize`] and [`Self::set_label_wrap`] together, as one step
+    /// of undo: the wrap row's own sense — `true` keeps a free text at its width and
+    /// wraps a label in its shape ("Wrap"), `false` sizes a free text to its glyphs and
+    /// widens a label's shape to hold its lines ("Grow", `TEXT_WRAPS`, `inspector.ts`).
+    /// Before this, a selection holding both a free text and a label took two separate
+    /// engine calls from the row's picker, and so two steps.
+    pub fn set_text_wrap(&mut self, wrap: bool) {
+        let wrote_text = self.write_text_auto_resize(!wrap);
+        let any_label = self
+            .selected_texts()
+            .iter()
+            .any(|text| text.container_id.is_some());
+        let wrote_label = any_label
+            && self.write_relayout_selected_texts(
+                |text| {
+                    if text.container_id.is_some() {
+                        text.wrap = Some(wrap);
+                    }
+                },
+                false,
+            );
+        if !wrote_text && !wrote_label {
+            return;
+        }
+        self.apply_bindings();
+        self.commit_style();
+        self.request_draw();
     }
 
     pub fn get_font_size(&self) -> f64 {

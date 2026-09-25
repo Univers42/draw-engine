@@ -524,6 +524,15 @@ export class DrawEngine {
     this.inner.setLabelWrap(wrap);
   }
 
+  /**
+   * `setTextAutoResize` and `setLabelWrap` together, as one step of undo — the wrap
+   * row's own sense: `true` keeps a free text at its width and wraps a label in its
+   * shape, `false` the reverse.
+   */
+  setTextWrap(wrap: boolean): void {
+    this.inner.setTextWrap(wrap);
+  }
+
   /** Re-widths a dragged-out text column and re-wraps it. Auto-sizing text is ignored. */
   setTextBoxWidth(id: string, width: number): void {
     this.inner.setTextBoxWidth(id, width);

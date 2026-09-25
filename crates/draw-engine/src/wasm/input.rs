@@ -742,6 +742,15 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// [`setTextAutoResize`](Self::set_text_auto_resize) and
+    /// [`setLabelWrap`](Self::set_label_wrap) together, as one step of undo: the wrap
+    /// row's own sense, `true` for "Wrap", `false` for "Grow".
+    #[wasm_bindgen(js_name = setTextWrap)]
+    pub fn set_text_wrap(&self, wrap: bool) {
+        self.cell.borrow_mut().engine.set_text_wrap(wrap);
+        self.flush();
+    }
+
     /// `"left"`, `"center"` or `"right"`. Anything else is ignored rather than coerced,
     /// so a typo in the host is a control that does nothing instead of a scene holding a
     /// value the engine will not read back.

@@ -638,6 +638,43 @@ mod style {
             before.stroke_color
         );
     }
+
+    /// The wrap row's combined write ([`DrawEngine::set_text_wrap`]): a selection holding
+    /// both a free text and a label takes the free text's width and the label's wrap
+    /// together, in one step of undo — not the two separate engine calls
+    /// (`setTextAutoResize`, `setLabelWrap`) the row used before
+    /// (`inspector.ts` › `wrapWrites`).
+    #[test]
+    fn a_free_text_and_a_labels_wrap_change_together_as_one_step() {
+        let rect = box_at(0.0, 0.0, 200.0, 100.0);
+        let rect_id = rect.id.clone();
+        let (mut engine, label_id) = labelled(rect, "the quick brown fox");
+        engine.handle_double_click(500.0, 500.0);
+        let text_id = engine
+            .drain_events()
+            .text_edit
+            .expect("a double click on empty canvas opens a free text")
+            .id;
+        engine.set_element_text(&text_id, "jumps over");
+
+        engine.select(vec![rect_id.clone(), text_id.clone()]);
+        engine.set_text_wrap(true);
+        assert_eq!(
+            element(&engine, &text_id).auto_resize,
+            Some(false),
+            "the free text keeps its width"
+        );
+        assert_eq!(
+            element(&engine, &label_id).wrap,
+            Some(true),
+            "the label wraps in its shape"
+        );
+
+        // One edit: one undo puts both back to how they were made.
+        engine.undo();
+        assert_eq!(element(&engine, &text_id).auto_resize, None);
+        assert_eq!(element(&engine, &label_id).wrap, None);
+    }
 }
 
 /// What a peer holds is untouchable (`engine/peers.rs`), and a change that changes
