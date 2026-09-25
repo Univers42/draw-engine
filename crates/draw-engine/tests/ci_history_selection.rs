@@ -258,3 +258,28 @@ fn select_all_after_an_abandoned_draft_is_undone_to_everything_selected() {
     engine.undo();
     assert_eq!(selection(&engine), set(&[&a, &b]));
 }
+
+/// OBSERVED (excalidraw.com, `scratchpad/review-hf/oracle-pencil.cjs`): click A, pick the
+/// pencil, draw a stroke, Ctrl+Z → the stroke is gone, the pencil still in hand, and
+/// nothing selected. Picking the pencil records the selection it lets go of
+/// (`App.tsx@1118751f:6204-6206`; "should create entry when selecting freedraw",
+/// `history.test.tsx@1118751f:1249`), so the next colour picked for the pencil does not
+/// restyle A. A shape tool records nothing: see
+/// `undoing_a_new_shape_gives_back_the_selection_it_replaced`.
+#[test]
+fn undoing_a_pencil_stroke_selects_nothing() {
+    let (mut engine, _, _) = two_boxes();
+    click(&mut engine, ON_A);
+    engine.set_tool(DrawTool::Freedraw);
+    drag(&mut engine, (500.0, 300.0), (650.0, 400.0));
+    let stroke = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Freedraw)
+        .expect("setup: a stroke");
+
+    engine.undo();
+    assert!(element(&engine, &stroke.id).is_deleted);
+    assert_eq!(engine.get_tool(), DrawTool::Freedraw);
+    assert!(selection(&engine).is_empty());
+}

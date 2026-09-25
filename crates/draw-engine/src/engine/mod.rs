@@ -543,9 +543,20 @@ impl DrawEngine {
         // one direction keeps it.
         //
         // What was held stays what the next step begins with: the oracle's `setActiveTool`
-        // captures nothing (`App.tsx@1118751f:6110-6256`), so undoing the shape the new tool
-        // draws selects again what the tool put down. See `stamp.rs`.
-        if tool != DrawTool::Select {
+        // captures nothing for a shape tool (`App.tsx@1118751f:6110-6256`), so undoing the
+        // shape it draws selects again what the tool put down. See `stamp.rs`.
+        //
+        // The pencil is the exception: picking it records the selection it lets go of
+        // (`App.tsx@1118751f:6204-6206`; "should create entry when selecting freedraw",
+        // `history.test.tsx@1118751f:1249`), so undoing a stroke leaves nothing selected
+        // and the colour then picked for the pencil restyles nothing. Settled even when
+        // nothing was held: a shape tool picked before it may have kept an older one.
+        // Auto-shape, which the oracle lacks, goes with the shape tools — like them, it
+        // leaves what it made selected.
+        if tool == DrawTool::Freedraw {
+            self.clear_selection();
+            self.settle_selection();
+        } else if tool != DrawTool::Select {
             let settled = std::rc::Rc::clone(&self.settled_selection);
             self.clear_selection();
             self.settled_selection = settled;
