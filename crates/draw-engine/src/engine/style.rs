@@ -156,6 +156,7 @@ impl DrawEngine {
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
         self.relayout_selected_texts(|text| text.font_size = Some(size), true);
+        self.refloor_text_session();
     }
 
     /// Ctrl/Cmd+Shift+> and <: `actionIncreaseFontSize` / `actionDecreaseFontSize`
@@ -190,6 +191,7 @@ impl DrawEngine {
             |text| text.font_size = Some(step(crate::text::layout::font_size_of(text))),
             true,
         );
+        self.refloor_text_session();
     }
 
     /// Writes `change` into every selected text, lays each out again from its source
@@ -245,6 +247,7 @@ impl DrawEngine {
             },
             false,
         );
+        self.refloor_text_session();
     }
 
     /// Shows `family` on the selected texts without committing it — the font picker's

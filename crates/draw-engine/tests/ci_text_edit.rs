@@ -552,6 +552,44 @@ mod growth {
         grows_and_shrinks_back(diamond_at(100.0, 100.0, 240.0, 160.0));
     }
 
+    /// A size or a family written while the label is typed makes the height its shape has
+    /// then the floor it shrinks back to, as the oracle's editor caches the height again
+    /// whenever either changes (`textPropertiesUpdated`, `textWysiwyg.tsx@1118751f:246-265`,
+    /// `:326-335`) and shrinks only a shape taller than that (`:359-373`) — a size stepped
+    /// up keeps what it grew, a family keeps what the typing grew.
+    #[test]
+    fn a_size_or_family_written_while_typing_is_the_new_floor() {
+        for pick_family in [false, true] {
+            let (mut engine, id, label) = labelled(box_at(100.0, 100.0, 200.0, 60.0), "a");
+            engine.select(vec![label.clone()]);
+            assert!(engine.edit_selected_text());
+            engine.update_text_edit("a\nb\nc");
+            let typed = element(&engine, &id).height;
+            if pick_family {
+                engine.set_font_family(7);
+            } else {
+                for _ in 0..4 {
+                    engine.step_font_size(true);
+                }
+                assert!(element(&engine, &id).height > typed, "grown by the size");
+            }
+            let styled = element(&engine, &id).height;
+            assert!(styled > 60.0);
+            engine.update_text_edit("a");
+            assert_eq!(
+                element(&engine, &id).height,
+                styled,
+                "family: {pick_family}"
+            );
+            engine.commit_text_edit("a", false);
+            assert_eq!(
+                element(&engine, &id).height,
+                styled,
+                "family: {pick_family}"
+            );
+        }
+    }
+
     /// A new label's shape too small for one line grows to hold one, from its top-left
     /// (`App.tsx@1118751f:6974-7006`): the widest capital or digit and a line, each with
     /// the padding either side. With the test measure a one-letter line is

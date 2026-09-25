@@ -240,6 +240,22 @@ impl DrawEngine {
         })
     }
 
+    /// A size or a family written into the label being typed: the height its shape has
+    /// now is the floor it shrinks back to from here, as the oracle's editor caches the
+    /// height again whenever either changes (`textPropertiesUpdated`,
+    /// `textWysiwyg.tsx@1118751f:246-265`, `:326-335`) — so deleting lines keeps what a
+    /// bigger size grew. A colour or an alignment leaves the floor where it was, as there.
+    pub(crate) fn refloor_text_session(&mut self) {
+        let height = self
+            .editing_text_id()
+            .and_then(|id| self.scene.get(id))
+            .and_then(|text| self.container_of(text))
+            .map(|container| container.height.abs());
+        if let (Some(session), Some(height)) = (self.text_session.as_mut(), height) {
+            session.original_container_height = Some(height);
+        }
+    }
+
     /// The id of the text open for typing, which the painter leaves out.
     pub(crate) fn editing_text_id(&self) -> Option<&str> {
         self.text_session
