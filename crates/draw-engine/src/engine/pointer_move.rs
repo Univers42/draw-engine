@@ -41,7 +41,7 @@ impl DrawEngine {
     ) -> Option<Interaction> {
         match it {
             // Same rubber-band as a shape: the box you drag out is the column you get.
-            Interaction::TextDraft { ref id, start } | Interaction::Draft { ref id, start } => {
+            Interaction::TextDraft { ref id, start, .. } | Interaction::Draft { ref id, start } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     let rect = rect_from_drag(start.x, start.y, world.x, world.y, square);
                     element.x = rect.x;
@@ -565,6 +565,7 @@ impl DrawEngine {
         // the oracle's `drag.hasOccurred` (`App.tsx:10918-10921`). Judged by where the
         // elements ended, a drag home — or one shorter than a grid cell — read as a click.
         self.narrow_on_click = None;
+        self.reopen_text_on_click = None;
         let mut dx = world.x - start.x;
         let mut dy = world.y - start.y;
         self.snap_guides.clear();

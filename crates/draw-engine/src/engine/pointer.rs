@@ -5,7 +5,8 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
-    create_element, default_element_style, element_bounds, merge_style, DrawElementType, Geometry,
+    create_element, default_element_style, element_bounds, merge_style, DrawElement,
+    DrawElementType, Geometry,
 };
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
@@ -222,7 +223,7 @@ impl DrawEngine {
     /// the width you dragged. Which one it was is only knowable on release, so the
     /// editor cannot open here the way it used to — `end_text` opens it, once the
     /// gesture has said how wide the thing is.
-    fn begin_text(&mut self, _sx: f64, _sy: f64, world: Point) {
+    fn begin_text(&mut self, sx: f64, sy: f64, world: Point) {
         let element = self.new_text_element(Geometry {
             x: world.x,
             y: world.y,
@@ -231,7 +232,12 @@ impl DrawEngine {
         });
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::TextDraft { id, start: world });
+        let press = self.screen_to_world(sx, sy);
+        self.interaction = Some(Interaction::TextDraft {
+            id,
+            start: world,
+            press,
+        });
         self.request_draw();
     }
 
@@ -400,6 +406,7 @@ impl DrawEngine {
 
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         self.narrow_on_click = None;
+        self.reopen_text_on_click = None;
         // Handles are hit where the pointer is, as the hover cursor reads them and as the
         // oracle does (`pointerDownState.origin`, `App.tsx@1118751f:9220`, `:9366-9404`):
         // hit where the grid put the press, a handle a few pixels off a grid line could not
@@ -495,6 +502,20 @@ impl DrawEngine {
         let tolerance = self.collision_tolerance();
         let pressed = self.element_at(sx, sy, tolerance, |element| !self.untouchable(element));
         if let Some(hit) = pressed.cloned() {
+            // A press on a text, or the shape of a label, that was *already* the sole
+            // selection reopens it for typing at the click if the release turns out to be
+            // one — `wasAddedToSelection` (`App.tsx@1118751f:12402-12428`). Read from the
+            // selection as it is here, before anything below changes it: a hit this press
+            // is about to select for the first time was added *by* it, not already there.
+            if !additive
+                && !duplicate
+                && self.selected_ids.len() == 1
+                && self.selected_ids.contains(&hit.id)
+            {
+                if let Some(id) = self.text_reopen_target(&hit, press) {
+                    self.reopen_text_on_click = Some((id, world));
+                }
+            }
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
@@ -710,5 +731,30 @@ impl DrawEngine {
             static_bounds,
         });
         self.request_draw();
+    }
+
+    /// The text a click at `press` on `hit` reopens for typing: `hit` itself if it
+    /// already is one, else its shape's label, but only when the label — not merely the
+    /// shape — is what the press landed on: `getSelectedTextEditingContainerAtPosition`
+    /// requires `getTextElementAtPosition` (`getElementAtPosition` with
+    /// `includeBoundTextElement`) to resolve to that same label
+    /// (`App.tsx@1118751f:6551-6582`), i.e. the topmost thing under the press, labels
+    /// counted, must be the label itself — a text is hit on its box, like
+    /// [`Self::element_at`] hits one. A click elsewhere on the shape (its outline, a
+    /// corner) selects it and stops there; only a second click on the label reopens it.
+    /// Filtered exactly as [`Self::edit_selected_text`] filters otherwise (deleted,
+    /// locked, held by a peer, or a label of a shape that is).
+    fn text_reopen_target(&self, hit: &DrawElement, press: Point) -> Option<String> {
+        let text = if hit.kind == DrawElementType::Text {
+            hit.clone()
+        } else {
+            let text = self.scene.get(hit.bound_text_id.as_deref()?)?.clone();
+            if !crate::hit_test_element(&text, press.x, press.y, self.collision_tolerance()) {
+                return None;
+            }
+            text
+        };
+        (!text.is_deleted && !self.untouchable(&text) && !self.in_untouchable_shape(&text))
+            .then_some(text.id)
     }
 }

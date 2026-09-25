@@ -32,7 +32,7 @@ impl DrawEngine {
         self.snap_guides.clear();
         match it {
             Interaction::Draft { id, .. } => self.end_draft(&id),
-            Interaction::TextDraft { id, start } => self.end_text(&id, start),
+            Interaction::TextDraft { id, press, .. } => self.end_text(&id, press),
             Interaction::Linear { id, start, pointer } => self.end_linear(&id, start, pointer),
             // The release is what places a point. Committing on the press instead would
             // freeze it where the button went down, so it could never be nudged before
@@ -95,6 +95,9 @@ impl DrawEngine {
                 self.settle_gesture();
                 if let Some(ids) = self.narrow_on_click.take() {
                     self.set_selection(ids);
+                }
+                if let Some((id, at)) = self.reopen_text_on_click.take() {
+                    self.reopen_text_at(&id, at);
                 }
             }
             _ => self.settle_gesture(),
@@ -410,7 +413,7 @@ impl DrawEngine {
     /// two-pixel wobble would produce a two-pixel column that wraps every character onto
     /// its own line — indistinguishable from a click to the person who made it, and the
     /// worst of the available outcomes.
-    fn end_text(&mut self, id: &str, start: Point) {
+    fn end_text(&mut self, id: &str, press: Point) {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
@@ -423,16 +426,20 @@ impl DrawEngine {
             element.height = crate::text::layout::font_size_of(&element)
                 * crate::scene::resolved_line_height(&element);
         } else {
-            // Put back the click-sized box `begin_text` could not commit to, its first
-            // line centred on the click.
-            element.x = start.x;
-            element.y = self.first_line_top(&element, start.y);
+            // Put back the click-sized box `begin_text` could not commit to — its first
+            // line centred on the click, or, with the grid on, its top-left grid point
+            // (`text_creation_point`). From `press`, the unsnapped position, not `start`:
+            // the oracle floors the raw scene point, and `start` is already rounded to
+            // the grid by the per-gesture snap every gesture shares.
+            let at = self.text_creation_point(&element, press);
+            element.x = at.x;
+            element.y = at.y;
             element.width = 4.0;
             element.height = crate::text::layout::font_size_of(&element);
         }
         self.scene.put(element.clone());
         self.set_selection(vec![id.to_string()]);
-        self.request_text_edit(&element);
+        self.request_text_edit(&element, None);
         self.settle_tool();
     }
 
@@ -523,6 +530,7 @@ impl DrawEngine {
         // A press Escape interrupted is no click, and what it would have narrowed to was
         // worked out at a level Escape may be about to leave.
         self.narrow_on_click = None;
+        self.reopen_text_on_click = None;
         // Escape ends an open path rather than throwing it away, which is Excalidraw's
         // binding too: both Escape and Enter run `actionFinalize`. A path of six points
         // lost to a reflexive Escape is six points of work gone, and undo is the thing

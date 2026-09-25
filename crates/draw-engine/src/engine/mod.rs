@@ -157,6 +157,14 @@ pub struct DrawEngine {
     /// and a click selects what it hit — `App.tsx:12183-12190`, `:12322-12345`. Without
     /// it, a click on one member of a multi-selection could never narrow it.
     narrow_on_click: Option<HashSet<String>>,
+    /// A text (or the label of a shape) the press hit while it was already the sole
+    /// selection — so a release with no drag reopens it for typing at the click, rather
+    /// than the whole-text selection every other entry point opens with
+    /// (`App.tsx@1118751f:12402-12428`, `wasAddedToSelection`). Carries the world point
+    /// the press landed at, to place the caret from. Cleared by any real move, the same
+    /// way [`Self::narrow_on_click`] is (`App.tsx:10918-10921`, "even one that comes back
+    /// to where it started").
+    reopen_text_on_click: Option<(String, Point)>,
     /// The path being placed point by point, if one is.
     ///
     /// Distinct from [`Self::interaction`] because this is the one gesture that spans
@@ -291,6 +299,7 @@ impl DrawEngine {
             editing_linear: None,
             editing_group_id: None,
             narrow_on_click: None,
+            reopen_text_on_click: None,
             multi_linear: None,
             finished_by_press: None,
             selected_ids: HashSet::new(),

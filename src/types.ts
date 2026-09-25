@@ -263,6 +263,12 @@ export interface TextEditRequest {
   fontFamily: number;
   /** Unitless: the overlay's lines must be as far apart as the canvas's. */
   lineHeight: number;
+  /**
+   * Where the caret goes on open, a UTF-16 code unit offset into `text` — a click on a
+   * text that was already the sole selection, at the click. Absent selects the whole
+   * text instead, as every other entry point opens it.
+   */
+  caret?: number;
 }
 
 /**
