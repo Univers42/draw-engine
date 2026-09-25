@@ -454,18 +454,23 @@ impl DrawEngine {
         crate::screen_to_world(self.camera, sx, sy)
     }
 
-    /// Topmost element under the pointer, locked ones included.
+    /// Topmost element under the pointer, locked ones included — what a right click
+    /// opens the menu on. A label is part of its shape: a point on it hits the shape, as
+    /// the oracle's menu hit leaves bound text out and counts its box as the container's
+    /// (`getElementsAtPosition`, `components/App.tsx@1118751f:6725-6735`;
+    /// `hitElementBoundText`, `packages/element/src/collision.ts@1118751f:252-278`).
     ///
     /// By reference, like [`Self::selectable_hit`]: this is called from JS on hover and
     /// on every click, and cloning the document to answer one question about one element
     /// made the cost of a click scale with the size of the board.
     pub fn hit_test(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
         let world = self.screen_to_world(sx, sy);
-        self.scene
+        let hit = self
+            .scene
             .iter_ordered()
             .rev()
-            .find(|el| crate::hit_test_element(el, world.x, world.y, tolerance))
-            .cloned()
+            .find(|el| crate::hit_test_element(el, world.x, world.y, tolerance))?;
+        Some(self.container_of(hit).unwrap_or(hit).clone())
     }
 
     fn selectable(&self) -> Vec<DrawElement> {

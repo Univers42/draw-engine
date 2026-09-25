@@ -384,6 +384,32 @@ mod remembered_height {
     }
 }
 
+/// The context menu's hit (`getElementAtPosition`, `App.tsx@1118751f:13276-13279`) leaves
+/// bound text out and counts a point on a label as one on its shape
+/// (`getElementsAtPosition`, `:6725-6735`; `hitElementBoundText`,
+/// `packages/element/src/collision.ts@1118751f:252-278`) — so "Unbind text" is offered
+/// where the words are.
+mod context_menu {
+    use super::*;
+
+    #[test]
+    fn a_right_click_on_a_label_hits_its_shape() {
+        let mut engine = selected(
+            vec![
+                with_id(box_at(0.0, 0.0, 200.0, 100.0), "box"),
+                words("t", 400.0, 300.0, "hello"),
+            ],
+            &["box", "t"],
+        );
+        engine.bind_text();
+        let (x, y) = centre(&element(&engine, "t"));
+        assert_eq!(
+            engine.hit_test(x, y, 4.0).map(|hit| hit.id).as_deref(),
+            Some("box")
+        );
+    }
+}
+
 mod wrap {
     use super::*;
 
