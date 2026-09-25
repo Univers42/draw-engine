@@ -261,6 +261,23 @@ pub fn selection_handle_points(element: &DrawElement, rotate_gap: f64) -> Vec<Ha
     selection_handles(element, HandleLayout::bare(rotate_gap))
 }
 
+/// The point on the element's own outline that `kind` moves, in world space: a corner, or
+/// the middle of a side — where `getResizeOffsetXY` measures a grab from
+/// (`resizeElements.ts@1118751f:497-554`). `None` for the rotation handle, which moves no
+/// edge.
+pub fn handle_edge_point(element: &DrawElement, kind: HandleKind) -> Option<Point> {
+    if kind == HandleKind::Rotate {
+        return None;
+    }
+    let (cx, cy, hw, hh) = world_box(element);
+    let local = handle_local_point(kind, hw, hh);
+    let turned = rotate_point(local.x, local.y, element.angle);
+    Some(Point {
+        x: cx + turned.x,
+        y: cy + turned.y,
+    })
+}
+
 /// Which handle, if any, is within `tolerance` of the pointer.
 ///
 /// The reach is **radial**. It used to be a box aligned to the world axes, which is only

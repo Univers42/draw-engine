@@ -569,8 +569,79 @@ fn a_ring_keeps_up_with_the_box_across_a_whole_drag() {
     // The ring and the box agree — the property this test exists for.
     assert_close(span(0), after.width.abs());
     assert_close(span(1), after.height.abs());
-    // And they agree on the right number: the dragged corner ends under the pointer, and
-    // the pointer started on the handle, which sits `handle_offset` beyond the corner.
-    assert_close(after.width, 200.0 + l.handle_offset + 100.0);
-    assert_close(after.height, 150.0 + l.handle_offset + 80.0);
+    // And they agree on the right number: the corner moved exactly as far as the pointer
+    // did, wherever in the handle the pointer took hold of it.
+    assert_close(after.width, 200.0 + 100.0);
+    assert_close(after.height, 150.0 + 80.0);
+}
+
+// -----------------------------------------------------------------------------
+// where in the handle it was taken
+// -----------------------------------------------------------------------------
+//
+// A handle is drawn `handle_offset` outside the edge it moves. The oracle records where
+// the press landed relative to that edge (`getResizeOffsetXY`,
+// `packages/element/src/resizeElements.ts@1118751f:497-554`, taken at pointer-down in
+// `App.tsx@1118751f:9406-9416`) and takes it off every move (`:13580-13581`), so the edge
+// moves by exactly what the pointer does. Put at the raw pointer instead, the edge leapt
+// the eight pixels to the handle the moment it was pulled.
+
+/// Presses `handle` of the only selected element where it is drawn, moves by `by` in two
+/// steps, and returns the element as the drag leaves it.
+fn pull(element: DrawElement, handle: HandleKind, by: (f64, f64)) -> DrawElement {
+    let id = element.id.clone();
+    let at = selection_handles(&element, layout())
+        .into_iter()
+        .find(|h| h.kind == handle)
+        .expect("the handle is drawn");
+    let mut engine = engine_with_scene(vec![element]);
+    engine.select(vec![id.clone()]);
+    engine.begin_pointer(at.x, at.y, false, false);
+    engine.move_pointer(at.x + by.0 / 2.0, at.y + by.1 / 2.0, false, false);
+    engine.move_pointer(at.x + by.0, at.y + by.1, false, false);
+    engine.end_pointer();
+    engine.get_scene().into_iter().find(|e| e.id == id).unwrap()
+}
+
+#[test]
+fn a_handle_taken_where_it_is_drawn_does_not_jump() {
+    for handle in [HandleKind::Se, HandleKind::E, HandleKind::Nw, HandleKind::N] {
+        let after = pull(box_at(100.0, 100.0, 200.0, 150.0), handle, (0.0, 0.0));
+        assert_close(after.x, 100.0);
+        assert_close(after.y, 100.0);
+        assert_close(after.width, 200.0);
+        assert_close(after.height, 150.0);
+    }
+}
+
+#[test]
+fn the_edge_moves_as_far_as_the_pointer() {
+    let after = pull(
+        box_at(100.0, 100.0, 200.0, 150.0),
+        HandleKind::Se,
+        (30.0, 20.0),
+    );
+    assert_close(after.width, 230.0);
+    assert_close(after.height, 170.0);
+    let after = pull(
+        box_at(100.0, 100.0, 200.0, 150.0),
+        HandleKind::W,
+        (-30.0, 50.0),
+    );
+    assert_close(after.x, 70.0);
+    assert_close(after.width, 230.0);
+    assert_close(after.height, 150.0);
+}
+
+/// The grab is measured in the element's own frame, so a turned element's handle does
+/// not jump either.
+#[test]
+fn a_turned_elements_handle_does_not_jump() {
+    let mut element = box_at(100.0, 100.0, 200.0, 150.0);
+    element.angle = std::f64::consts::FRAC_PI_2;
+    let after = pull(element, HandleKind::Se, (0.0, 0.0));
+    assert_close(after.x, 100.0);
+    assert_close(after.y, 100.0);
+    assert_close(after.width, 200.0);
+    assert_close(after.height, 150.0);
 }

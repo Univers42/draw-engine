@@ -57,13 +57,15 @@ impl DrawEngine {
                 ref ids,
                 handle,
                 ref frame,
+                grab,
             } => {
+                let at = self.resize_pointer(sx, sy, grab);
                 let elements: Vec<DrawElement> = ids
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
                 for next in crate::selection::group_transform::resize_group(
-                    &elements, frame, handle, world, square,
+                    &elements, frame, handle, at, square,
                 ) {
                     self.scene.put(next);
                 }
@@ -172,11 +174,13 @@ impl DrawEngine {
                 ratio,
                 origin,
                 ref origin_points,
+                grab,
             } => {
                 let points = origin_points.clone();
+                let at = self.resize_pointer(sx, sy, grab);
                 self.move_resize(
                     id,
-                    world,
+                    at,
                     square,
                     ResizeDrag {
                         handle,
@@ -596,6 +600,16 @@ impl DrawEngine {
             origins,
             static_bounds,
         }
+    }
+
+    /// Where a resize puts the edge it moves: the pointer, less where in the handle it was
+    /// taken, snapped (`App.tsx@1118751f:13578-13582` — the grab first, then the grid).
+    fn resize_pointer(&self, sx: f64, sy: f64, grab: Point) -> Point {
+        let raw = self.screen_to_world(sx, sy);
+        self.snap(Point {
+            x: raw.x - grab.x,
+            y: raw.y - grab.y,
+        })
     }
 
     fn move_resize(&mut self, id: &str, world: Point, square: bool, drag: ResizeDrag<'_>) {

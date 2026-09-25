@@ -141,6 +141,11 @@ pub(crate) enum Interaction {
         /// live points every move would compound, and a drag that passes through zero
         /// would collapse the ring and never recover it.
         origin_points: Option<Vec<[f64; 2]>>,
+        /// Where in the handle the press landed, from the edge it moves: taken off every
+        /// move, so the edge goes as far as the pointer does and never leaps out to the
+        /// handle drawn beyond it (`getResizeOffsetXY`,
+        /// `packages/element/src/resizeElements.ts@1118751f:497-554`).
+        grab: Point,
     },
     Rotate {
         id: String,
@@ -154,6 +159,8 @@ pub(crate) enum Interaction {
         ids: Vec<String>,
         handle: HandleKind,
         frame: crate::selection::GroupFrame,
+        /// As [`Interaction::Resize`]'s, from the frame's corner.
+        grab: Point,
     },
     /// Rotating a multi-element selection about its centre.
     RotateGroup {

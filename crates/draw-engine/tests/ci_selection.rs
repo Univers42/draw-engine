@@ -267,7 +267,9 @@ fn the_anchor_holds_still_across_a_drag_that_turns_the_element_through() {
     let mut engine = engine_with_scene(vec![element]);
     engine.select(vec!["r".to_string()]);
 
-    // Grab the south-east handle; the anchor is the north-west corner at (400, 300).
+    // Grab the south-east handle where it is drawn, 8px out from the corner; the anchor
+    // is the north-west corner at (400, 300). The pointer stays on the handle, so the
+    // corner is at `x`.
     engine.begin_pointer(608.0, 458.0, false, false);
 
     let visible = |engine: &DrawEngine| {
@@ -283,7 +285,7 @@ fn the_anchor_holds_still_across_a_drag_that_turns_the_element_through() {
     let mut previous = f64::INFINITY;
     let mut x = 600.0;
     while x >= 160.0 {
-        engine.move_pointer(x, 458.0, false, false);
+        engine.move_pointer(x + 8.0, 458.0, false, false);
         let (lo, hi) = visible(&engine);
 
         assert!(

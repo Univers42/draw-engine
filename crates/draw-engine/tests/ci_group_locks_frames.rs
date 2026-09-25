@@ -153,11 +153,12 @@ fn a_locked_member_is_scaled_with_its_group() {
     click(&mut engine, 40.0, 40.0);
 
     // The south-east handle's centre sits 8px out from the union's corner (380, 80);
-    // dragged to (760, 160) it doubles the group about its north-west corner.
+    // the corner dragged to (760, 160) — the pointer kept on the handle, 8px beyond it —
+    // doubles the group about its north-west corner.
     engine.begin_pointer(388.0, 88.0, false, false);
     for step in 1..=4 {
         let t = f64::from(step) / 4.0;
-        engine.move_pointer(380.0 + 380.0 * t, 80.0 + 80.0 * t, false, false);
+        engine.move_pointer(388.0 + 380.0 * t, 88.0 + 80.0 * t, false, false);
     }
     engine.end_pointer();
 

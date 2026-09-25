@@ -79,24 +79,20 @@ fn find<'a>(scene: &'a [DrawElement], id: &str) -> &'a DrawElement {
 
 /// Drags the group's south-east handle so the union's corner lands on `to`.
 ///
-/// The **press** is offset by `handle_offset` — four pixels of frame margin plus half an
-/// eight-pixel handle — because that is where the handle's centre sits. Aiming at the
-/// corner itself misses by more than the handle's reach, falls through to the hit test,
-/// and moves the group instead: a drag that looks like a resize and changes no widths.
-///
-/// The **moves** are not offset. `scale_for` takes the raw pointer and puts the corner
-/// there, with no compensation for where within the handle it was grabbed — so offsetting
-/// the target too would ask for a corner eight pixels further out than intended and make
-/// every expected width wrong by a few percent. (The grab offset is why a handle appears
-/// to jump slightly when you first pull it; Excalidraw's does the same.)
+/// The pointer goes down on the handle where it is drawn — `handle_offset` beyond the
+/// corner, four pixels of frame margin plus half an eight-pixel handle — and every move
+/// is offset the same, because a resize takes off where in the handle it was grabbed
+/// (`getResizeOffsetXY`, `packages/element/src/resizeElements.ts@1118751f:497-554`): the
+/// corner goes exactly as far as the pointer. Aiming at the corner itself misses by more
+/// than the handle's reach, falls through to the hit test, and moves the group instead.
 fn drag_se_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
     const HANDLE_OFFSET: f64 = 8.0;
     engine.begin_pointer(from.0 + HANDLE_OFFSET, from.1 + HANDLE_OFFSET, false, false);
     for step in 1..=steps {
         let t = step as f64 / steps as f64;
         engine.move_pointer(
-            from.0 + (to.0 - from.0) * t,
-            from.1 + (to.1 - from.1) * t,
+            from.0 + (to.0 - from.0) * t + HANDLE_OFFSET,
+            from.1 + (to.1 - from.1) * t + HANDLE_OFFSET,
             false,
             // Snapping to objects stays off (the default): alignment guides pull toward
             // other elements and would make this a test of the guides, not of the scale.
@@ -233,4 +229,19 @@ fn a_plain_shape_still_scales_with_the_group() {
     let scene = engine.get_scene();
     assert_close(find(&scene, &anchor_id).width, 200.0);
     assert_close(find(&scene, &other_id).width, 200.0);
+}
+
+/// A group's handle taken where it is drawn does not jump the frame the eight pixels out
+/// to it: pressed and released without moving, nothing is resized.
+#[test]
+fn a_groups_handle_taken_where_it_is_drawn_does_not_jump() {
+    let (mut engine, id) = group_with_drawing(stroke_at(200.0, 0.0, 100.0, 100.0));
+
+    drag_se_handle(&mut engine, (300.0, 100.0), (300.0, 100.0), 3);
+
+    let scene = engine.get_scene();
+    let drawing = find(&scene, &id);
+    assert_close(drawing.width, 100.0);
+    assert_close(drawing.height, 100.0);
+    assert_close(drawing.x, 200.0);
 }

@@ -312,17 +312,33 @@ impl DrawEngine {
     /// Without this a group could only be moved: dragging its corner fell through to
     /// the hit test and started a marquee instead, so a multi-selection could never be
     /// scaled or turned.
-    fn begin_group_transform(&self, world: Point) -> Option<Interaction> {
+    fn begin_group_transform(&self, world: Point, press: Point) -> Option<Interaction> {
         let kind = self.group_handle_at(world)?;
         let (ids, frame) = self.group_frame()?;
-        Some(if kind == HandleKind::Rotate {
-            Interaction::RotateGroup { ids, frame }
-        } else {
-            Interaction::ResizeGroup {
-                ids,
-                handle: kind,
-                frame,
-            }
+        if kind == HandleKind::Rotate {
+            return Some(Interaction::RotateGroup { ids, frame });
+        }
+        let b = &frame.bounds;
+        let corner = Point {
+            x: if matches!(kind, HandleKind::Nw | HandleKind::Sw) {
+                b.min_x
+            } else {
+                b.max_x
+            },
+            y: if matches!(kind, HandleKind::Nw | HandleKind::Ne) {
+                b.min_y
+            } else {
+                b.max_y
+            },
+        };
+        Some(Interaction::ResizeGroup {
+            ids,
+            handle: kind,
+            frame,
+            grab: Point {
+                x: press.x - corner.x,
+                y: press.y - corner.y,
+            },
         })
     }
 
@@ -386,12 +402,21 @@ impl DrawEngine {
                         width: single.width,
                         height: single.height,
                     };
+                    // From the unsnapped press, as the oracle measures it from the raw
+                    // pointer-down (`App.tsx@1118751f:9406-9416`).
+                    let press = self.screen_to_world(sx, sy);
+                    let edge =
+                        crate::selection::handle_edge_point(&single, handle).unwrap_or(press);
                     self.interaction = Some(Interaction::Resize {
                         id: single.id,
                         handle,
                         ratio,
                         origin,
                         origin_points: single.points.clone(),
+                        grab: Point {
+                            x: press.x - edge.x,
+                            y: press.y - edge.y,
+                        },
                     });
                     return;
                 }
@@ -399,7 +424,9 @@ impl DrawEngine {
         }
         // More than one element selected: the handles belong to the group's frame.
         if self.selected_ids.len() > 1 {
-            if let Some(interaction) = self.begin_group_transform(world) {
+            if let Some(interaction) =
+                self.begin_group_transform(world, self.screen_to_world(sx, sy))
+            {
                 self.interaction = Some(interaction);
                 return;
             }
