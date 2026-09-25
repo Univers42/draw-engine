@@ -111,6 +111,20 @@ pub struct PaintView<'a> {
     pub active_radius_handle: Option<usize>,
     /// Who else is here and what they hold: outlined in their colour, with their name.
     pub peer_marks: Vec<PeerMark<'a>>,
+    /// What peers are doing right now, by id: painted in place of the scene's element.
+    pub previews: std::collections::HashMap<&'a str, &'a DrawElement>,
+}
+
+impl<'a> PaintView<'a> {
+    /// A line or arrow's label as it is painted — a peer's preview of it when there is
+    /// one — when it has one: what its stroke is cut away under, so the cut follows a
+    /// label being typed or dragged on another screen.
+    pub fn linear_label(&self, linear: &DrawElement) -> Option<&'a DrawElement> {
+        let (scene, previews) = (self.scene, &self.previews);
+        crate::render::linear_label(linear, |id| {
+            previews.get(id).copied().or_else(|| scene.get(id))
+        })
+    }
 }
 
 /// One peer's hold, as the painter draws it. See `peers.rs`.
@@ -363,6 +377,7 @@ impl DrawEngine {
             radius_handles,
             active_radius_handle,
             peer_marks,
+            previews,
         }
     }
 

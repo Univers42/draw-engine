@@ -217,22 +217,12 @@ impl DrawEngine {
     /// editor cannot open here the way it used to — `end_text` opens it, once the
     /// gesture has said how wide the thing is.
     fn begin_text(&mut self, _sx: f64, _sy: f64, world: Point) {
-        let style = merge_style(&default_element_style(), &self.next_style);
-        let mut element = create_element(
-            DrawElementType::Text,
-            Geometry {
-                x: world.x,
-                y: world.y,
-                width: 0.0,
-                height: 0.0,
-            },
-            style,
-            self.now_ms,
-        );
-        element.text = Some(String::new());
-        element.font_size = Some(self.next_font_size);
-        element.text_align = self.next_text_align;
-        element.vertical_align = self.next_vertical_align;
+        let element = self.new_text_element(Geometry {
+            x: world.x,
+            y: world.y,
+            width: 0.0,
+            height: 0.0,
+        });
         let id = element.id.clone();
         self.scene.add(element);
         self.interaction = Some(Interaction::TextDraft { id, start: world });

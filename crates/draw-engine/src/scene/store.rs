@@ -371,6 +371,20 @@ impl Scene {
         }
     }
 
+    /// Replaces an element already in the scene as a change to the picture only — not an
+    /// edit: nothing becomes pending for the host and the next commit does not stamp it.
+    /// For what every client derives for itself, like a text laid out again once its
+    /// font has loaded. Returns whether the element was there to replace.
+    pub(crate) fn replace_unrecorded(&mut self, element: DrawElement) -> bool {
+        let Some(&i) = self.index.get(&element.id) else {
+            return false;
+        };
+        self.record(Change::Touched(element.id.clone()));
+        self.touch_static(&element.id);
+        self.elements[i] = Rc::new(element);
+        true
+    }
+
     /// Soft delete: the element stays, marked, so a later merge can distinguish a
     /// deletion from an element it has simply never seen.
     pub fn remove(&mut self, id: &str, now: f64) {

@@ -51,6 +51,15 @@ impl FontKey {
     pub fn legacy(size: f64) -> Self {
         Self::new(Self::LEGACY, size)
     }
+
+    /// The family id, [`FontKey::LEGACY`] for the system stack.
+    pub fn family(self) -> u8 {
+        self.family
+    }
+
+    pub fn size(self) -> f64 {
+        f64::from_bits(self.size_bits)
+    }
 }
 
 /// How many wrapped hard lines the memo holds before it starts over.
@@ -69,15 +78,23 @@ pub const MEMO_BYTES: usize = 1 << 20;
 
 type Memo = HashMap<(FontKey, u64), HashMap<String, Vec<WrappedLine>>>;
 
-/// Char widths and wrapped hard lines, for ONE measurer: a cache outlives no change of
-/// the function it caches — [`clear`](Self::clear) it when that changes, or when a font
-/// finishes loading and the same string starts measuring differently.
+/// Char widths, wrapped hard lines and the widths of laid-out lines, for ONE measurer: a
+/// cache outlives no change of the function it caches — [`clear`](Self::clear) it when
+/// that changes, or when a font finishes loading and the same string starts measuring
+/// differently.
 #[derive(Default)]
 pub struct MeasureCache {
     chars: RefCell<HashMap<(FontKey, char), f64>>,
     lines: RefCell<Memo>,
     memo_len: Cell<usize>,
     memo_bytes: Cell<usize>,
+    /// The widths of lines as laid out — each rendered line of a text, measured whole
+    /// for its box (`measureText`, `textMeasurements.ts:12-27`). Only final lines go in,
+    /// never the candidates the wrapper tries, so it holds what is on the board. Bounded
+    /// by [`MEMO_BYTES`] of text like the wrap memo, and cleared wholesale when full.
+    widths: RefCell<HashMap<FontKey, HashMap<Box<str>, f64>>>,
+    widths_len: Cell<usize>,
+    widths_bytes: Cell<usize>,
 }
 
 impl MeasureCache {
@@ -90,6 +107,38 @@ impl MeasureCache {
         self.lines.borrow_mut().clear();
         self.memo_len.set(0);
         self.memo_bytes.set(0);
+        self.widths.borrow_mut().clear();
+        self.widths_len.set(0);
+        self.widths_bytes.set(0);
+    }
+
+    /// The width of one laid-out line (never holding `\n`) in `font`, measured whole —
+    /// kerning included — once and then remembered, so laying the same text out again
+    /// (a drag, a relayout of every label) crosses to the measurer for nothing.
+    pub fn line_width(&self, font: FontKey, line: &str, line_width: &dyn Fn(&str) -> f64) -> f64 {
+        let hit = self
+            .widths
+            .borrow()
+            .get(&font)
+            .and_then(|widths| widths.get(line).copied());
+        if let Some(width) = hit {
+            return width;
+        }
+        let width = line_width(line);
+        let bytes = line.len() + std::mem::size_of::<(Box<str>, f64)>();
+        let mut widths = self.widths.borrow_mut();
+        if self.widths_len.get() >= MEMO_LIMIT * 4 || self.widths_bytes.get() + bytes > MEMO_BYTES {
+            widths.clear();
+            self.widths_len.set(0);
+            self.widths_bytes.set(0);
+        }
+        widths
+            .entry(font)
+            .or_default()
+            .insert(Box::from(line), width);
+        self.widths_len.set(self.widths_len.get() + 1);
+        self.widths_bytes.set(self.widths_bytes.get() + bytes);
+        width
     }
 
     /// `line_width` for `font`, with char widths cached per full char. The oracle keys its
@@ -107,32 +156,9 @@ impl MeasureCache {
         }
     }
 
-    /// [`wrap::wrap_lines`], each hard line looked up before it is wrapped.
-    pub fn wrap_lines(
-        &self,
-        text: &str,
-        max_width: f64,
-        font: FontKey,
-        line_width: &dyn Fn(&str) -> f64,
-    ) -> Vec<WrappedLine> {
-        let metrics = self.metrics(font, line_width);
-        let key = (font, max_width.to_bits());
-        wrap::wrap_lines_with(text, max_width, |line| {
-            let hit = self
-                .lines
-                .borrow()
-                .get(&key)
-                .and_then(|lines| lines.get(line))
-                .cloned();
-            hit.unwrap_or_else(|| {
-                let wrapped = wrap::wrap_hard_line(line, max_width, &metrics);
-                self.remember(key, line, &wrapped);
-                wrapped
-            })
-        })
-    }
-
-    /// [`wrap::wrap_text`] through the memo.
+    /// [`wrap::wrap_text`] through the memo. A hard line found there is joined straight
+    /// out of it, not copied line by line first: laying out a board of labels is mostly
+    /// hits.
     pub fn wrap_text(
         &self,
         text: &str,
@@ -140,7 +166,31 @@ impl MeasureCache {
         font: FontKey,
         line_width: &dyn Fn(&str) -> f64,
     ) -> String {
-        wrap::join(&self.wrap_lines(text, max_width, font, line_width))
+        // An invalid width keeps the hard lines (`wrap::wrap_lines`): the text as is.
+        if !(max_width.is_finite() && max_width >= 0.0) {
+            return text.to_owned();
+        }
+        let key = (font, max_width.to_bits());
+        let metrics = self.metrics(font, line_width);
+        let mut out = String::with_capacity(text.len() + 8);
+        for (i, line) in text.split('\n').enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            let hit = self
+                .lines
+                .borrow()
+                .get(&key)
+                .and_then(|lines| lines.get(line))
+                .map(|wrapped| wrap::push_joined(&mut out, wrapped))
+                .is_some();
+            if !hit {
+                let wrapped = wrap::wrap_hard_line(line, max_width, &metrics);
+                self.remember(key, line, &wrapped);
+                wrap::push_joined(&mut out, &wrapped);
+            }
+        }
+        out
     }
 
     fn remember(&self, key: (FontKey, u64), line: &str, wrapped: &[WrappedLine]) {

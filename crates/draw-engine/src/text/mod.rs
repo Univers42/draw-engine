@@ -16,13 +16,21 @@
 //!   [`FontKey`]) and bounded in entries and in bytes, so a keystroke re-wraps only the
 //!   line it touched.
 //!
+//! - [`layout`] — [`layout::layout_text`], the one function every writer lays a text out
+//!   with: wrap from the source, measure, place a label in its shape and grow the shape
+//!   (`redrawTextBoundingBox`), plus the anchors a free text keeps as it changes.
+//! - [`font`] — the families: their CSS stacks, line heights and baseline metrics.
+//!
 //! Parity is asserted, not assumed: `tests/ci_text_wrap_oracle.rs` replays
 //! `tests/fixtures/text-wrap.oracle.json`, which `tools/text-oracle/generate.mjs` produces by
 //! running the oracle's unmodified TypeScript under three width models.
 
+pub mod font;
+pub mod layout;
 pub mod measure;
 mod unicode;
 pub mod wrap;
 
+pub use layout::{layout_text, Laid, Measure};
 pub use measure::{CachedMetrics, FontKey, MeasureCache, TextMetrics, MEMO_BYTES, MEMO_LIMIT};
 pub use wrap::{parse_tokens, wrap_lines, wrap_text, WrappedLine};

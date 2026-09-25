@@ -1,5 +1,4 @@
-use crate::scene::binding::LABEL_PADDING;
-use crate::scene::element::{DrawElementType, TextAlign, VerticalAlign};
+use crate::scene::element::{DrawElement, DrawElementType, TextAlign};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -137,22 +136,15 @@ impl GridSettings {
 
 pub const TEXT_LINE_HEIGHT: f64 = 1.25;
 
-/// The font stack every piece of text is drawn and measured with.
-///
-/// One definition, because measuring with a different font from the one you draw with is
-/// how a text element ends up the wrong size. The painter, the measurer, the SVG exporter
-/// and the host's editing overlay all resolve their font through [`font_string`].
-///
-/// Excalidraw ships Excalifont, Nunito and Comic Shanns and lets each element choose.
-/// That needs the faces vendored, their licences checked individually, and measurement
-/// gated on `document.fonts.ready` — measure before a webfont loads and every text
-/// element is permanently mis-sized. Until then this is a single system stack, which at
-/// least measures and draws identically.
-pub const FONT_FAMILY: &str = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+/// The font stack a text with no family is drawn and measured with — every text saved
+/// before families existed. A text with one uses its family's stack
+/// ([`crate::text::font`]); both go through [`crate::text::font::font_string`], so the
+/// measurer, the painter, the SVG exporter and the editor resolve the same face.
+pub const FONT_FAMILY: &str = crate::text::font::LEGACY_CSS;
 
-/// The CSS font shorthand for a given size, as Canvas2D wants it.
+/// The CSS font shorthand for a given size in the legacy stack, as Canvas2D wants it.
 pub fn font_string(size: f64) -> String {
-    format!("{size}px {FONT_FAMILY}")
+    crate::text::font::font_string(crate::text::FontKey::legacy(size))
 }
 
 /// What Canvas2D's `textAlign` must be set to for a given alignment.
@@ -181,18 +173,72 @@ pub fn text_anchor_x(align: TextAlign, width: f64) -> f64 {
     }
 }
 
-/// Where a label's top edge goes inside its container, in the container's own box.
+/// Where the first line's baseline sits below the top of a text's box, and how far apart
+/// its lines are — both in scene units, for [`text_baseline`]'s baseline setting.
 ///
-/// `height` is the container's, `label_height` the label's. A label taller than the
-/// space it has cannot honour top and bottom at once, and this clamps to the top:
-/// overflowing downward still shows the first line, overflowing upward hides it.
-pub fn label_offset_y(align: VerticalAlign, height: f64, label_height: f64) -> f64 {
-    let offset = match align {
-        VerticalAlign::Top => LABEL_PADDING,
-        VerticalAlign::Middle => height / 2.0 - label_height / 2.0,
-        VerticalAlign::Bottom => height - label_height - LABEL_PADDING,
-    };
-    offset.max(0.0)
+/// A text in a family is placed as the oracle places it: `alphabetic`, the first
+/// baseline half the line gap below the ascender (`getVerticalOffset`,
+/// [`crate::text::font::vertical_offset`]). A text with none keeps the placement it has
+/// always had — the top of the line on the top of the box — so a board saved before
+/// families existed draws exactly as it did.
+pub fn text_line_placement(element: &DrawElement) -> (f64, f64) {
+    let font_size = crate::text::layout::font_size_of(element);
+    let line_height = font_size * crate::scene::resolved_line_height(element);
+    let first = crate::scene::resolved_font_family(element).map_or(0.0, |family| {
+        crate::text::font::vertical_offset(family, font_size, line_height)
+    });
+    (first, line_height)
+}
+
+/// The Canvas2D `textBaseline` [`text_line_placement`] measures from.
+pub fn text_baseline(element: &DrawElement) -> &'static str {
+    if crate::scene::resolved_font_family(element).is_some() {
+        "alphabetic"
+    } else {
+        "top"
+    }
+}
+
+/// A line or arrow's label, when it has one: its stroke is cut away underneath it.
+pub fn linear_label<'a>(
+    linear: &DrawElement,
+    lookup: impl Fn(&str) -> Option<&'a DrawElement>,
+) -> Option<&'a DrawElement> {
+    if !crate::scene::is_linear_element(linear) {
+        return None;
+    }
+    lookup(linear.bound_text_id.as_deref()?)
+        .filter(|label| !label.is_deleted && label.kind == DrawElementType::Text)
+}
+
+/// The hole an arrow's stroke leaves under its label: the label's box and
+/// `BOUND_TEXT_PADDING` around it, as the oracle clips it out of the canvas
+/// (`renderElement.ts@1118751f:784-812`) and masks it out of an SVG
+/// (`staticSvgScene.ts@1118751f:404-470`). In scene units; an arrow's label never turns.
+pub fn label_hole(label: &DrawElement) -> crate::scene::geometry::Rect {
+    let pad = crate::text::layout::BOUND_TEXT_PADDING;
+    crate::scene::geometry::Rect {
+        x: label.x - pad,
+        y: label.y - pad,
+        width: label.width + pad * 2.0,
+        height: label.height + pad * 2.0,
+    }
+}
+
+/// The region [`label_hole`] is cut out of: a box that generously covers the line and its
+/// heads at any size — its largest extent, plus 100, plus ten stroke widths, on every side
+/// — as the oracle's clip and mask do (`renderElement.ts@1118751f:784-812`,
+/// `staticSvgScene.ts@1118751f:404-470`).
+pub fn label_cut_reach(linear: &DrawElement) -> crate::scene::geometry::Rect {
+    let bounds = crate::scene::element_bounds(linear);
+    let (width, height) = (bounds.max_x - bounds.min_x, bounds.max_y - bounds.min_y);
+    let reach = width.max(height) + 100.0 + linear.stroke_width * 10.0;
+    crate::scene::geometry::Rect {
+        x: bounds.min_x - reach,
+        y: bounds.min_y - reach,
+        width: width + reach * 2.0,
+        height: height + reach * 2.0,
+    }
 }
 
 pub fn is_roughable(kind: DrawElementType) -> bool {

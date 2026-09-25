@@ -57,3 +57,7 @@ harness = false
 [[bench]]
 name = "editing"
 harness = false
+
+[[bench]]
+name = "text"
+harness = false
