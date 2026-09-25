@@ -31,7 +31,22 @@ impl DrawEngine {
         };
         self.snap_guides.clear();
         match it {
-            Interaction::Draft { id, .. } => self.end_draft(&id),
+            Interaction::Draft {
+                id,
+                start,
+                press,
+                shift,
+            } => {
+                if self
+                    .scene
+                    .get(&id)
+                    .is_some_and(crate::scene::sticky::is_sticky_note)
+                {
+                    self.end_sticky(&id, start, press, shift);
+                } else {
+                    self.end_draft(&id);
+                }
+            }
             Interaction::TextDraft { id, press, .. } => self.end_text(&id, press),
             Interaction::Linear { id, start, pointer } => self.end_linear(&id, start, pointer),
             // The release is what places a point. Committing on the press instead would
@@ -402,6 +417,68 @@ impl DrawEngine {
         self.settle_tool();
         self.set_selection(vec![id.to_string()]);
         self.push_history();
+    }
+
+    /// Settles a new sticky note (`App.tsx@1118751f:11812-11890`). A gesture under the drag
+    /// threshold is a click: the default square, centred on the press and then snapped. A
+    /// drag keeps its size, grown to the least that holds one line at the next text's size
+    /// — or the note would grow on the first keystroke — and squared unless Shift was
+    /// held, growing away from the far edge the drag left where it was.
+    ///
+    /// Then the note is its own step of undo, and the tool, unless it is locked, gives way
+    /// to typing into it. Its label is not made here: `edit_label` makes it, and a label
+    /// left empty is thrown away with no trace.
+    fn end_sticky(&mut self, id: &str, start: Point, press: Point, shift: bool) {
+        use crate::scene::sticky::{sticky_min_size, DEFAULT_STICKY_NOTE_SIZE};
+        let Some(mut note) = self.scene.get(id).cloned() else {
+            return;
+        };
+        let zoom = self.camera.scale;
+        let click = note.width * zoom < super::DRAGGING_THRESHOLD_PX
+            && note.height * zoom < super::DRAGGING_THRESHOLD_PX;
+        if click {
+            let size = DEFAULT_STICKY_NOTE_SIZE;
+            let at = self.snap(Point {
+                x: press.x - size / 2.0,
+                y: press.y - size / 2.0,
+            });
+            (note.x, note.y, note.width, note.height) = (at.x, at.y, size, size);
+        } else {
+            let line_height = crate::text::font::family(self.next_font_family)
+                .map_or(crate::render::TEXT_LINE_HEIGHT, |family| family.line_height);
+            let (min_width, min_height) = sticky_min_size(self.next_font_size, line_height);
+            let mut width = note.width.max(min_width);
+            let mut height = note.height.max(min_height);
+            if !shift {
+                width = width.max(height);
+                height = width;
+            }
+            note.x = if note.x < start.x {
+                start.x - width
+            } else {
+                note.x
+            };
+            note.y = if note.y < start.y {
+                start.y - height
+            } else {
+                note.y
+            };
+            note.width = width;
+            note.height = height;
+        }
+        note.base_height = Some(note.height);
+        self.scene.put(note.clone());
+        if self.tool_locked {
+            self.clear_selection();
+            self.push_history();
+            self.request_draw();
+            return;
+        }
+        self.settle_tool();
+        self.set_selection(vec![id.to_string()]);
+        self.push_history();
+        self.edit_label(&note);
+        self.request_draw();
     }
 
     /// Decides which text gesture just happened, and opens the editor for it.

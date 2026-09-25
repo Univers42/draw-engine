@@ -31,6 +31,9 @@ pub enum DrawTool {
     /// Fills the region under the pointer. Nothing is dragged: the click *is* the
     /// gesture, and what it leaves behind is a polygon derived from the strokes around it.
     BucketFill,
+    /// Places a sticky note: a click drops the default square, a drag sizes it — square
+    /// unless Shift frees it — and its label opens for typing.
+    StickyNote,
 }
 
 impl DrawTool {
@@ -53,6 +56,7 @@ impl DrawTool {
             Self::Embed => "embed",
             Self::AutoShape => "autoshape",
             Self::BucketFill => "bucketfill",
+            Self::StickyNote => "stickynote",
         }
     }
 }
@@ -114,6 +118,8 @@ pub fn tool_for_chord(key: &str, shift: bool) -> Option<DrawTool> {
         // A digit and no letter, which is the oracle's choice rather than an oversight.
         "9" => Some(DrawTool::Image),
         "b" => Some(DrawTool::BucketFill),
+        // A letter and no digit (`Tools.tsx@1118751f:121-124`).
+        "n" => Some(DrawTool::StickyNote),
         "h" => Some(DrawTool::Hand),
         // Two tools Excalidraw gives no key at all: it reaches the lasso through a mode
         // of the selection tool and the embed through a menu. Ours are toolbar entries in
@@ -132,7 +138,7 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 17] = [
+pub const ALL_TOOLS: [DrawTool; 18] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
@@ -143,6 +149,7 @@ pub const ALL_TOOLS: [DrawTool; 17] = [
     DrawTool::Arrow,
     DrawTool::Freedraw,
     DrawTool::Text,
+    DrawTool::StickyNote,
     DrawTool::Eraser,
     DrawTool::Laser,
     DrawTool::Frame,
@@ -164,6 +171,7 @@ pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementT
         DrawTool::Arrow => Some(DrawElementType::Arrow),
         DrawTool::Freedraw => Some(DrawElementType::Freedraw),
         DrawTool::Text => Some(DrawElementType::Text),
+        DrawTool::StickyNote => Some(DrawElementType::StickyNote),
         _ => None,
     }
 }

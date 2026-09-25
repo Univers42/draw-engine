@@ -41,9 +41,12 @@ impl DrawEngine {
     ) -> Option<Interaction> {
         match it {
             // Same rubber-band as a shape: the box you drag out is the column you get.
-            Interaction::TextDraft { ref id, start, .. } | Interaction::Draft { ref id, start } => {
+            Interaction::TextDraft { ref id, start, .. } | Interaction::Draft { ref id, start, .. } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
-                    let rect = rect_from_drag(start.x, start.y, world.x, world.y, square);
+                    // A note is square unless Shift frees it, where a shape is free unless
+                    // Shift squares it (`App.tsx@1118751f:13419-13425`).
+                    let sticky = element.kind == DrawElementType::StickyNote;
+                    let rect = rect_from_drag(start.x, start.y, world.x, world.y, square != sticky);
                     element.x = rect.x;
                     element.y = rect.y;
                     element.width = rect.width;
@@ -51,7 +54,17 @@ impl DrawEngine {
                     self.scene.put(element);
                     self.request_draw();
                 }
-                Some(it)
+                match it {
+                    Interaction::Draft {
+                        id, start, press, ..
+                    } => Some(Interaction::Draft {
+                        id,
+                        start,
+                        press,
+                        shift: square,
+                    }),
+                    other => Some(other),
+                }
             }
             Interaction::ResizeGroup {
                 ref ids,
@@ -67,9 +80,16 @@ impl DrawEngine {
                 let resized = crate::selection::group_transform::resize_group(
                     &elements, frame, handle, at, square,
                 );
+                let keep_aspect =
+                    square || crate::selection::group_transform::resize_keeps_aspect(&elements);
                 let (labels, members): (Vec<DrawElement>, Vec<DrawElement>) = resized
                     .into_iter()
                     .partition(|el| el.container_id.is_some() && el.kind == DrawElementType::Text);
+                let notes: Vec<String> = members
+                    .iter()
+                    .filter(|el| crate::scene::sticky::is_sticky_note(el))
+                    .map(|el| el.id.clone())
+                    .collect();
                 for next in members {
                     self.scene.put(next);
                 }
@@ -79,7 +99,18 @@ impl DrawEngine {
                 let flips =
                     crate::selection::group_transform::resize_group_flips(handle, frame, at);
                 for label in labels {
+                    // A note lays its label out itself, below.
+                    if label
+                        .container_id
+                        .as_ref()
+                        .is_some_and(|container| notes.contains(container))
+                    {
+                        continue;
+                    }
                     self.relay_resized_label(label, handle, flips);
+                }
+                for note in &notes {
+                    self.relay_group_resized_note(note, frame, handle, keep_aspect, flips);
                 }
                 self.release_ends_outside(ids);
                 // Bound arrows have to keep up with the shapes they point at. Without
@@ -188,6 +219,7 @@ impl DrawEngine {
                 ref origin_points,
                 grab,
                 ref label_font,
+                sticky,
             } => {
                 let points = origin_points.clone();
                 let at = self.resize_pointer(sx, sy, grab);
@@ -201,6 +233,7 @@ impl DrawEngine {
                         origin,
                         origin_points: points.as_deref(),
                         label_font: label_font.as_ref(),
+                        sticky,
                     },
                 );
                 Some(it)
@@ -634,12 +667,17 @@ impl DrawEngine {
             origin,
             origin_points,
             label_font,
+            sticky,
         } = drag;
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
         if element.kind == DrawElementType::Text && element.container_id.is_none() {
             self.resize_text(element, world, square, handle, &origin);
+            return;
+        }
+        if let Some(sticky) = sticky.filter(|_| crate::scene::sticky::is_sticky_note(&element)) {
+            self.resize_sticky(element, world, square, handle, &origin, &sticky);
             return;
         }
         let latest = element.clone();
@@ -743,6 +781,147 @@ impl DrawEngine {
         );
         self.scene.put(element);
         self.relay_resized_label(label, handle, flips);
+        self.apply_bindings();
+        self.request_draw();
+    }
+
+    /// A note a multi-selection resize just scaled, laid out again as the oracle's
+    /// `resizeMultipleElements` does (`resizeElements.ts@1118751f:1536-1550`): with the
+    /// intent of the gesture, measured from the note as the frame captured it — a flip
+    /// keeps its base height and ceiling.
+    fn relay_group_resized_note(
+        &mut self,
+        id: &str,
+        frame: &crate::selection::GroupFrame,
+        handle: HandleKind,
+        keep_aspect: bool,
+        flips: (bool, bool),
+    ) {
+        use crate::scene::sticky::{sticky_resize_intent, StickyOrigin};
+        let Some(note) = self.scene.get(id).filter(|el| !el.is_deleted).cloned() else {
+            return;
+        };
+        let origin_of = |id: &str| {
+            frame
+                .origins
+                .iter()
+                .find(|(origin, _)| origin == id)
+                .map(|(_, origin)| origin)
+        };
+        let Some(from) = origin_of(id) else {
+            return;
+        };
+        let label = self
+            .live_label(&note)
+            .filter(|label| label.kind == DrawElementType::Text)
+            .cloned();
+        let origin = StickyOrigin {
+            width: from.width.abs(),
+            base_height: from.base_height.unwrap_or(from.height.abs()),
+            ceiling: label.as_ref().map(|label| {
+                origin_of(&label.id)
+                    .and_then(|at| at.base_font_size.or(at.font_size))
+                    .unwrap_or_else(|| crate::scene::sticky::label_ceiling(label, Some(&note)))
+            }),
+        };
+        let intent = sticky_resize_intent(
+            &note,
+            &origin,
+            sticky_handle(handle),
+            keep_aspect,
+            false,
+            flips.0 || flips.1,
+        );
+        let laid = self.with_measure(|measure| {
+            crate::text::layout::sticky_layout(&note, label.as_ref(), &intent, measure)
+        });
+        self.scene.put(laid.container);
+        if let Some(text) = laid.text {
+            self.scene.put(text);
+        }
+    }
+
+    /// A single note resized by a handle (`resizeSingleElement`,
+    /// `resizeElements.ts@1118751f:758-806`, `:951-966`).
+    ///
+    /// A corner keeps the note's proportions unless Shift is held — its label's ceiling
+    /// scales with it — and a side is free unless Shift is (`App.tsx@1118751f:13642-13650`).
+    /// It never goes below one line at its label's ceiling, or the floor without a label,
+    /// and a proportional minimum scales both sides alike. Turned through its anchor it
+    /// comes out the right way round, its box moved rather than negative. Then its layout
+    /// runs with what the gesture asks it to keep, and its arrows follow.
+    fn resize_sticky(
+        &mut self,
+        mut note: DrawElement,
+        world: Point,
+        shift: bool,
+        handle: HandleKind,
+        origin: &crate::selection::Geometry,
+        sticky: &crate::scene::sticky::StickyOrigin,
+    ) {
+        use crate::scene::sticky::{sticky_min_size, sticky_resize_intent, STICKY_NOTE_MIN_SIZE};
+        let corner = matches!(
+            handle,
+            HandleKind::Ne | HandleKind::Nw | HandleKind::Se | HandleKind::Sw
+        );
+        let proportional = shift != corner;
+        let mut from = note.clone();
+        (from.x, from.y, from.width, from.height) =
+            (origin.x, origin.y, origin.width, origin.height);
+        let label = self
+            .live_label(&note)
+            .filter(|label| label.kind == DrawElementType::Text)
+            .cloned();
+        // One line at the ceiling the gesture began with. The oracle reads the live
+        // label's (`resizeElements.ts@1118751f:770-778`), which a proportional move has
+        // already scaled — so each move of an inward drag lowered the floor for the next,
+        // and the note stopped where the pointer's step count left it.
+        let (min_width, min_height) = match &label {
+            Some(label) => sticky_min_size(
+                sticky
+                    .ceiling
+                    .unwrap_or_else(|| crate::scene::sticky::label_ceiling(label, Some(&note))),
+                crate::scene::resolved_line_height(label),
+            ),
+            None => (STICKY_NOTE_MIN_SIZE, STICKY_NOTE_MIN_SIZE),
+        };
+        let (origin_width, origin_height) = (origin.width.abs(), origin.height.abs());
+        let aspect = (proportional && origin_width > 0.0 && origin_height > 0.0)
+            .then(|| origin_width / origin_height);
+        let min_size = match aspect {
+            Some(_) => {
+                let scale = (min_width / origin_width).max(min_height / origin_height);
+                (origin_width * scale, origin_height * scale)
+            }
+            None => (min_width, min_height),
+        };
+        let geom = resize_element_within(&from, handle, world.x, world.y, min_size, aspect);
+        (note.x, note.width) = if geom.width < 0.0 {
+            (geom.x + geom.width, -geom.width)
+        } else {
+            (geom.x, geom.width)
+        };
+        (note.y, note.height) = if geom.height < 0.0 {
+            (geom.y + geom.height, -geom.height)
+        } else {
+            (geom.y, geom.height)
+        };
+        let intent = sticky_resize_intent(
+            &note,
+            sticky,
+            sticky_handle(handle),
+            proportional,
+            false,
+            false,
+        );
+        self.forget_original_heights([note.id.as_str()]);
+        let laid = self.with_measure(|measure| {
+            crate::text::layout::sticky_layout(&note, label.as_ref(), &intent, measure)
+        });
+        self.scene.put(laid.container);
+        if let Some(text) = laid.text {
+            self.scene.put(text);
+        }
         self.apply_bindings();
         self.request_draw();
     }
@@ -871,6 +1050,16 @@ struct ResizeDrag<'a> {
     origin: crate::selection::Geometry,
     origin_points: Option<&'a [[f64; 2]]>,
     label_font: Option<&'a (String, Option<f64>)>,
+    sticky: Option<crate::scene::sticky::StickyOrigin>,
+}
+
+/// The handle a resize holds, as far as a note's layout cares.
+fn sticky_handle(handle: HandleKind) -> crate::scene::sticky::StickyHandle {
+    crate::scene::sticky::StickyHandle {
+        north: matches!(handle, HandleKind::N | HandleKind::Ne | HandleKind::Nw),
+        south: matches!(handle, HandleKind::S | HandleKind::Se | HandleKind::Sw),
+        east_or_west_side: matches!(handle, HandleKind::E | HandleKind::W),
+    }
 }
 
 /// Scale a path's points so its ring follows the box the handle just dragged.

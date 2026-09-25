@@ -171,6 +171,9 @@ fn element_svg<'a>(
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
         return linear_svg(element, crate::render::linear_label(element, lookup));
     }
+    if element.kind == DrawElementType::StickyNote {
+        return sticky_svg(element, crate::scene::sticky::wall_clock_ms());
+    }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
     let fill = if element.background_color.is_empty() || element.background_color == "transparent" {
         "none"
@@ -260,6 +263,51 @@ fn element_svg<'a>(
             )
         }
     }
+}
+
+/// A sticky note as the oracle exports one (`staticSvgScene.ts@1118751f:158-266`): its
+/// shadow, its paper, an edge shadow clipped to the paper, and the date — in a group
+/// placed at the note and turned about its centre. The date is absolute, so an export
+/// never goes stale; `now` only decides whether it shows the year.
+pub(crate) fn sticky_svg(element: &DrawElement, now: f64) -> String {
+    use crate::scene::sticky::{
+        sticky_footer, sticky_path_commands, sticky_path_data, STICKY_NOTE_EDGE_SHADOW_OPACITY,
+        STICKY_NOTE_EDGE_SHADOW_WIDTH, STICKY_NOTE_FOOTER_FONT_FAMILY,
+        STICKY_NOTE_FOOTER_FONT_SIZE, STICKY_NOTE_FOOTER_OPACITY, STICKY_NOTE_SHADOW_OPACITY,
+    };
+    let opacity = element.opacity / 100.0;
+    let opacity = if opacity == 1.0 {
+        String::new()
+    } else {
+        format!(" opacity=\"{opacity}\"")
+    };
+    let shadow = sticky_path_data(&sticky_path_commands(element, true));
+    let paper = sticky_path_data(&sticky_path_commands(element, false));
+    let clip = format!("sticky-note-clipPath-{}", escape_xml(&element.id));
+    let footer = sticky_footer(element, now).map_or(String::new(), |footer| {
+        format!(
+            "<text x=\"{}\" y=\"{}\" font-family=\"{STICKY_NOTE_FOOTER_FONT_FAMILY}\" font-size=\"{STICKY_NOTE_FOOTER_FONT_SIZE}px\" text-anchor=\"end\" direction=\"ltr\" fill=\"{}\" fill-opacity=\"{STICKY_NOTE_FOOTER_OPACITY}\">{}</text>",
+            footer.x,
+            footer.y,
+            escape_xml(&element.stroke_color),
+            escape_xml(&footer.text)
+        )
+    });
+    format!(
+        "<clipPath id=\"{clip}\" clipPathUnits=\"userSpaceOnUse\"><path d=\"{paper}\" fill=\"#000\" stroke=\"none\"/></clipPath>\
+<g transform=\"translate({} {}) rotate({} {} {})\"{opacity}>\
+<path d=\"{shadow}\" fill=\"#000\" fill-opacity=\"{STICKY_NOTE_SHADOW_OPACITY}\" stroke=\"none\"/>\
+<path d=\"{paper}\" fill=\"{}\" stroke=\"none\"/>\
+<path d=\"{paper}\" fill=\"none\" stroke=\"#000\" stroke-opacity=\"{STICKY_NOTE_EDGE_SHADOW_OPACITY}\" stroke-width=\"{}\" clip-path=\"url(#{clip})\"/>\
+{footer}</g>",
+        element.x,
+        element.y,
+        (element.angle * 180.0) / std::f64::consts::PI,
+        element.width / 2.0,
+        element.height / 2.0,
+        escape_xml(&element.background_color),
+        STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0,
+    )
 }
 
 /// A text, one `<text>` per line, placed as the canvas places it

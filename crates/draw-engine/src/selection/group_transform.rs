@@ -62,6 +62,10 @@ pub struct GroupOrigin {
     ///
     /// `None` for a shape, which is generated into its box and has no ring to keep up.
     pub points: Option<Vec<[f64; 2]>>,
+    /// A sticky note's base height, and a note label's ceiling: what a resize of a note
+    /// is measured from, so a flip or a let-go Shift gives them back.
+    pub base_height: Option<f64>,
+    pub base_font_size: Option<f64>,
 }
 
 impl GroupOrigin {
@@ -107,6 +111,8 @@ impl GroupFrame {
                         angle: e.angle,
                         font_size: e.font_size,
                         points: e.points.clone(),
+                        base_height: e.base_height,
+                        base_font_size: e.base_font_size,
                     },
                 )
             })

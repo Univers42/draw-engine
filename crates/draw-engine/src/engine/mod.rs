@@ -40,7 +40,7 @@ pub mod vectorize;
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
-pub use selection_style::{ArrowType, Edges, SelectionStyle};
+pub use selection_style::{ArrowType, ColorDomain, Edges, SelectionStyle};
 pub use text_session::{TextEditLayout, TextEditSession};
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
@@ -111,6 +111,11 @@ pub struct DrawEngine {
     tool_before_toggle: DrawTool,
     tool_locked: bool,
     next_style: DrawElementStylePatch,
+    /// A sticky note's colours are a domain of their own, with their own defaults and no
+    /// transparent (`currentItemStickynote*Color`, `actions/colorTargets.ts@1118751f`):
+    /// what the next note is made with, never the next shape.
+    next_sticky_stroke: String,
+    next_sticky_background: String,
     next_font_size: f64,
     /// The family the next text is written in — Excalifont unless another was chosen
     /// with nothing selected.
@@ -287,6 +292,8 @@ impl DrawEngine {
             tool_before_toggle: DrawTool::Select,
             tool_locked: false,
             next_style: DrawElementStylePatch::default(),
+            next_sticky_stroke: crate::scene::sticky::DEFAULT_STICKY_NOTE_STROKE.to_owned(),
+            next_sticky_background: crate::scene::sticky::DEFAULT_STICKY_NOTE_BG.to_owned(),
             next_font_size: DEFAULT_FONT_SIZE,
             next_font_family: crate::text::font::DEFAULT_FONT_FAMILY,
             next_text_align: None,

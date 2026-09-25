@@ -172,8 +172,44 @@ thread_local! {
     static FREEHAND_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
 
+    /// One `Path2D` per sticky note outline — a paper or a shadow — keyed by
+    /// [`crate::scene::sticky::sticky_fingerprint`].
+    ///
+    /// `paint_sticky` used to rebuild `sticky_path_commands` (two `Vec`s) and replay it as
+    /// `move_to`/`line_to`/`quadratic_curve_to` calls straight onto the context, three
+    /// times per note (fill, clip, stroke) — on every paint, panning included, since
+    /// nothing about the note's shape had changed. Mirrors `PATHS` for rough shapes and
+    /// `FREEHAND` for strokes, kept apart because a note's geometry comes from neither of
+    /// theirs.
+    static STICKY_PATHS: std::cell::RefCell<HashMap<u64, Option<Path2d>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static STICKY_PATHS_USED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
     /// The detail level of the frame being painted. See `PaintView::detail_scale`.
     static DETAIL_LEVEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+
+    /// This frame's clock, read at most once and shared by every sticky note painted in
+    /// it.
+    ///
+    /// `sticky_footer` compares a note's `created` year against "now"'s, and each note
+    /// used to call `wall_clock_ms` for its own copy of "now" — one `js_sys::Date`
+    /// allocation per note per paint on top of the one its own `created` already cost.
+    /// Reset to "not read yet" at the top of every frame in `paint_elements`.
+    static FRAME_NOW: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+
+/// This frame's wall clock, computed once from [`crate::scene::sticky::wall_clock_ms`] and
+/// shared by every sticky note painted after the first. See `FRAME_NOW`.
+fn frame_now() -> f64 {
+    FRAME_NOW.with(|cell| {
+        if let Some(now) = cell.get() {
+            return now;
+        }
+        let now = crate::scene::sticky::wall_clock_ms();
+        cell.set(Some(now));
+        now
+    })
 }
 
 /// The paths built for one piece of geometry.
@@ -286,6 +322,14 @@ fn evict_paths(live: &[&DrawElement]) {
     FREEHAND.with(|cache| {
         let mut cache = cache.borrow_mut();
         let used = FREEHAND_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
+        if cache.len() <= budget {
+            return;
+        }
+        cache.retain(|fingerprint, _| used.contains(fingerprint));
+    });
+    STICKY_PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let used = STICKY_PATHS_USED.with(|used| std::mem::take(&mut *used.borrow_mut()));
         if cache.len() <= budget {
             return;
         }
@@ -950,6 +994,7 @@ fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[
     DETAIL_LEVEL.with(|level| {
         level.set(crate::render::path_data::lod_level(view.detail_scale));
     });
+    FRAME_NOW.with(|now| now.set(None));
     // Device pixel ratio and camera, folded into one matrix and combined with each
     // element's own transform rather than pushed and popped around every element.
     let s = view.camera.scale;
@@ -1414,8 +1459,97 @@ fn paint_element(
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
         DrawElementType::Text => paint_text(ctx, view, element),
+        DrawElementType::StickyNote => paint_sticky(ctx, view, element),
         _ => paint_shape(ctx, view, element),
     }
+}
+
+/// A sticky note, painted directly as the oracle paints one (`renderElement.ts@1118751f:
+/// 387-472`): its shadow, its paper, an edge shadow clipped to the paper, and the date in
+/// its ink. Never through rough.js.
+fn paint_sticky(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
+    use crate::scene::sticky::{
+        sticky_footer, STICKY_NOTE_EDGE_SHADOW_OPACITY, STICKY_NOTE_EDGE_SHADOW_WIDTH,
+        STICKY_NOTE_FOOTER_FONT_FAMILY, STICKY_NOTE_FOOTER_FONT_SIZE, STICKY_NOTE_SHADOW_OPACITY,
+    };
+    if element.width == 0.0 && element.height == 0.0 {
+        return;
+    }
+    with_element_transform(ctx, view, element, || {
+        let Some(shadow) = sticky_outline(element, true) else {
+            return;
+        };
+        set_fill(ctx, &format!("rgba(0, 0, 0, {STICKY_NOTE_SHADOW_OPACITY})"));
+        ctx.fill_with_path_2d(&shadow);
+
+        let Some(paper) = sticky_outline(element, false) else {
+            return;
+        };
+        set_fill(ctx, &element.background_color);
+        ctx.fill_with_path_2d(&paper);
+
+        // Set raw inside the save: `restore` puts back what the caches believe is set.
+        ctx.save();
+        ctx.clip_with_path_2d(&paper);
+        ctx.set_line_width(STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0);
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+        let _ = js_sys::Reflect::set(
+            ctx.as_ref(),
+            &JsValue::from_str("strokeStyle"),
+            &JsValue::from_str(&format!("rgba(0, 0, 0, {STICKY_NOTE_EDGE_SHADOW_OPACITY})")),
+        );
+        ctx.stroke_with_path(&paper);
+        ctx.restore();
+
+        if let Some(footer) = sticky_footer(element, frame_now()) {
+            ctx.set_font(&format!(
+                "{STICKY_NOTE_FOOTER_FONT_SIZE}px {STICKY_NOTE_FOOTER_FONT_FAMILY}"
+            ));
+            FONT.with(|f| *f.borrow_mut() = None);
+            ctx.set_text_align("right");
+            ctx.set_text_baseline("alphabetic");
+            set_fill(ctx, &element.stroke_color);
+            let _ = ctx.fill_text(&footer.text, footer.x, footer.y);
+        }
+    });
+}
+
+/// The cached outline for `element`'s paper (`shadow = false`) or its shadow, built once
+/// per distinct [`crate::scene::sticky::sticky_fingerprint`] and reused every later frame.
+///
+/// Mirrors `replay`'s `PATHS` for rough shapes and `paint_freedraw`'s `FREEHAND` for
+/// strokes — see `STICKY_PATHS`.
+fn sticky_outline(element: &DrawElement, shadow: bool) -> Option<Path2d> {
+    let fingerprint = crate::scene::sticky::sticky_fingerprint(element, shadow);
+    STICKY_PATHS_USED.with(|used| used.borrow_mut().insert(fingerprint));
+    STICKY_PATHS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let std::collections::hash_map::Entry::Vacant(slot) = cache.entry(fingerprint) {
+            count_path_lookup(false);
+            let commands = crate::scene::sticky::sticky_path_commands(element, shadow);
+            slot.insert(build_sticky_path(&commands));
+        } else {
+            count_path_lookup(true);
+        }
+        cache.get(&fingerprint).cloned().flatten()
+    })
+}
+
+/// Traces a note's outline (`drawStickyNotePath`) into a fresh `Path2D`, closed.
+fn build_sticky_path(commands: &[crate::scene::sticky::StickyPathCommand]) -> Option<Path2d> {
+    use crate::scene::sticky::StickyPathCommand;
+    let path = Path2d::new().ok()?;
+    for command in commands {
+        match *command {
+            StickyPathCommand::Move(point) => path.move_to(point.x, point.y),
+            StickyPathCommand::Line(point) => path.line_to(point.x, point.y),
+            StickyPathCommand::Quadratic { control, point } => {
+                path.quadratic_curve_to(control.x, control.y, point.x, point.y);
+            }
+        }
+    }
+    path.close_path();
+    Some(path)
 }
 
 /// A line or arrow with its stroke cut away under its label, as the oracle clips it

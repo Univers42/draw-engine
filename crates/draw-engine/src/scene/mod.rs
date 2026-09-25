@@ -7,6 +7,7 @@ pub mod geometry;
 pub mod image;
 pub mod outline_distance;
 pub mod recognize;
+pub mod sticky;
 pub mod store;
 
 pub use binding::*;

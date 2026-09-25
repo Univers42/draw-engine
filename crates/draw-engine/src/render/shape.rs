@@ -35,6 +35,11 @@ pub fn corner_radius(x: f64, element: &DrawElement) -> f64 {
     if element.roundness.is_none() {
         return 0.0;
     }
+    // A note has a rule of its own, from its short side (`getStickyNoteCornerRadius`,
+    // `utils.ts@1118751f:256-258`), and no corner handle to give it another.
+    if element.kind == DrawElementType::StickyNote {
+        return crate::scene::sticky::sticky_corner_radius(element);
+    }
     // An explicit radius, from a corner-radius handle. Clamped to half the span, which is
     // a pill: any more and opposite corners would overlap.
     //
@@ -152,6 +157,8 @@ pub fn element_drawable(element: &DrawElement) -> Option<Drawable> {
     let h = element.height.abs();
 
     match element.kind {
+        // Painted directly, canvas and SVG alike, never through rough.js (`shape.ts@1118751f:996-999`).
+        DrawElementType::StickyNote => None,
         DrawElementType::Rectangle
         | DrawElementType::Image
         | DrawElementType::Frame

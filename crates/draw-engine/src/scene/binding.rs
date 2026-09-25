@@ -91,7 +91,10 @@ pub fn is_binding_element(element: &DrawElement) -> bool {
 pub fn is_bindable_element(element: &DrawElement) -> bool {
     matches!(
         element.kind,
-        DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse
+        DrawElementType::Rectangle
+            | DrawElementType::StickyNote
+            | DrawElementType::Diamond
+            | DrawElementType::Ellipse
     )
 }
 
@@ -105,6 +108,7 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
 fn is_target_kind(element: &DrawElement) -> bool {
     match element.kind {
         DrawElementType::Rectangle
+        | DrawElementType::StickyNote
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
         | DrawElementType::Image
@@ -122,7 +126,8 @@ fn is_target_kind(element: &DrawElement) -> bool {
 /// on top of it, never to a shape it cannot see.
 fn occludes(element: &DrawElement) -> bool {
     match element.kind {
-        DrawElementType::Image => true,
+        // A note's paper is never transparent.
+        DrawElementType::Image | DrawElementType::StickyNote => true,
         DrawElementType::Rectangle
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
@@ -542,7 +547,7 @@ fn projection_lines(shape: &DrawElement) -> [(Point, Point); 2] {
     } else {
         [(at(mx, t), at(mx, b)), (at(l, my), at(r, my))]
     };
-    if shape.kind != DrawElementType::Rectangle {
+    if !shape.kind.is_rect_like() {
         return lines;
     }
     lines.map(|(p, q)| {

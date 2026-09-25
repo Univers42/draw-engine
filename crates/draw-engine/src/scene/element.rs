@@ -13,6 +13,20 @@ pub enum DrawElementType {
     Image,
     Frame,
     Embed,
+    /// A sticky note (Excalidraw's `stickynote`): a filled pad painted with its shadow and
+    /// the date it was made, holding a label that shrinks to fit before the note grows.
+    /// See `scene/sticky.rs`.
+    #[serde(rename = "stickynote")]
+    StickyNote,
+}
+
+impl DrawElementType {
+    /// Whether this kind is a box to the geometry: hit, bounded, bound to, snapped,
+    /// flipped and exported as a rectangle is. A sticky note is one with its own paint
+    /// (`_isRectanguloidElement`, `packages/element/src/utils.ts@1118751f:253-266`).
+    pub fn is_rect_like(self) -> bool {
+        matches!(self, Self::Rectangle | Self::StickyNote)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,6 +410,21 @@ pub struct DrawElement {
     pub embed_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
+    /// A sticky note's height as the user set it (`baseHeight`): the note grows above it
+    /// to hold its label and never shrinks below it. `None` on anything else, and on a
+    /// note from before the field, whose height is then its base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_height: Option<f64>,
+    /// When a sticky note was made, in epoch ms — the date its footer shows. `None` is
+    /// unknown (the oracle's `null`), and no footer. The oracle stamps it on every element;
+    /// here only a note carries it, so no other element's JSON changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<f64>,
+    /// A sticky note label's size as the user set it (`baseFontSize`): the ceiling its fit
+    /// shrinks below. Read it through `scene::sticky::label_ceiling`, which asks the
+    /// container: a label unbound from its note keeps a stale one, meaningless there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_font_size: Option<f64>,
     pub version: u32,
     pub version_nonce: u32,
     pub updated: f64,
@@ -493,6 +522,9 @@ pub fn create_element(
         data_url: None,
         embed_url: None,
         locked: None,
+        base_height: None,
+        created: None,
+        base_font_size: None,
         version: 1,
         version_nonce: rand_int(),
         updated: now,

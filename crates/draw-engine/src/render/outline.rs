@@ -35,6 +35,7 @@ pub fn element_outline(element: &DrawElement) -> Option<Outline> {
     let h = element.height.abs();
     match element.kind {
         DrawElementType::Rectangle
+        | DrawElementType::StickyNote
         | DrawElementType::Image
         | DrawElementType::Frame
         | DrawElementType::Embed
