@@ -482,9 +482,10 @@ pub fn min_text_width(text: &DrawElement, measure: &Measure) -> f64 {
 /// (`textMeasurements.ts@1118751f:29`).
 const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-/// The smallest a shape holding `label` may be resized to, width by height: its widest
-/// char and one line, each with the padding either side (`getApproxMinLineWidth`,
-/// `getApproxMinLineHeight`, `textMeasurements.ts@1118751f:32-44`, `:99-104`).
+/// The smallest a shape holding `label` may be resized to, and what a new label's shape
+/// grows to (`App.tsx@1118751f:6974-7006`), width by height: its widest char and one line,
+/// each with the padding either side (`getApproxMinLineWidth`, `getApproxMinLineHeight`,
+/// `textMeasurements.ts@1118751f:32-44`, `:99-104`).
 ///
 /// The chars are measured through the char widths the wrap caches, so a resize, which
 /// asks this on every move, measures them once per font.

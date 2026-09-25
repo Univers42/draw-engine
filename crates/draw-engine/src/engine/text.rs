@@ -96,7 +96,8 @@ impl DrawEngine {
         label.width = width;
         label.height = height;
         label.container_id = Some(container.id.clone());
-        let min_line = self.one_line_box(&label);
+        // The smallest a shape holding one line of it may be, which a resize stops at too.
+        let min_line = self.with_measure(|measure| layout::min_container_size(&label, measure));
         // In its shape's groups and directly above it, as the oracle makes one
         // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
         // board instead, it was drawn over whatever covers its shape, and split the
@@ -113,28 +114,6 @@ impl DrawEngine {
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)
-    }
-
-    /// The smallest box a shape needs to hold one line of `label`: its widest capital or
-    /// digit and one line, each with the label's padding either side —
-    /// `getApproxMinLineWidth` and `getApproxMinLineHeight`
-    /// (`packages/element/src/textMeasurements.ts@1118751f:29-44`, `:99-104`).
-    ///
-    /// The oracle takes the widest character it happens to have measured so far, which
-    /// depends on what was typed before; this always takes its fallback, the capitals and
-    /// digits.
-    fn one_line_box(&self, label: &DrawElement) -> (f64, f64) {
-        const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let font = layout::font_of(label);
-        let line_height = crate::scene::resolved_line_height(label);
-        let column = DUMMY_TEXT
-            .chars()
-            .map(String::from)
-            .collect::<Vec<_>>()
-            .join("\n");
-        let (width, _) = self.with_measure(|measure| measure.size(&column, font, line_height));
-        let padding = 2.0 * layout::BOUND_TEXT_PADDING;
-        (width + padding, font.size() * line_height + padding)
     }
 
     /// Where a new free text's top goes for a press at `y`: its first line centred on the
