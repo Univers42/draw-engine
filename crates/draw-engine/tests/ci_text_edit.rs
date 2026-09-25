@@ -967,6 +967,59 @@ mod peers {
         });
         assert_eq!((element(&engine, &shape), element(&engine, &label)), before);
     }
+
+    /// A peer's patch landing while a new label is typed leaves it directly above its
+    /// shape, where the oracle's fractional index keeps it, and the commit tells the host
+    /// so: its copy of the board — the one saved and sent — is stacked as this one is. A
+    /// peer's order never lists the label, and the patch's own delta, thrown away, was
+    /// where its placement had been noted.
+    #[test]
+    fn a_new_label_keeps_its_place_through_a_peers_patch() {
+        for with_order in [true, false] {
+            let shape = box_at(100.0, 100.0, 200.0, 100.0);
+            let other = box_at(500.0, 100.0, 100.0, 100.0);
+            let (shape_id, other_id) = (shape.id.clone(), other.id.clone());
+            let at = middle(&shape);
+            let mut engine = engine_with_measure(vec![shape, other.clone()]);
+            let label = open_at(&mut engine, at);
+            engine.update_text_edit("typed");
+            engine.drain_events();
+
+            let mut theirs = other;
+            theirs.version += 1;
+            theirs.stroke_color = "#e03131".into();
+            let mut elements = vec![serde_json::to_value(&theirs).unwrap()];
+            let mut placed = vec![shape_id.clone(), label.clone(), other_id.clone()];
+            if with_order {
+                let new = box_at(700.0, 100.0, 50.0, 50.0);
+                placed.push(new.id.clone());
+                elements.push(serde_json::to_value(&new).unwrap());
+            }
+            let mut patch =
+                serde_json::json!({ "type": "osidraw", "version": 1, "elements": elements });
+            if with_order {
+                let listed: Vec<&String> = placed.iter().filter(|id| **id != label).collect();
+                patch["order"] = serde_json::json!(listed);
+            }
+            engine.apply_remote_patch(&patch.to_string());
+            let live = |engine: &DrawEngine| -> Vec<String> {
+                engine
+                    .get_scene()
+                    .into_iter()
+                    .filter(|el| !el.is_deleted)
+                    .map(|el| el.id)
+                    .collect()
+            };
+            assert_eq!(live(&engine), placed, "order: {with_order}");
+
+            engine.commit_text_edit("typed", false);
+            let delta = engine
+                .drain_events()
+                .scene_delta
+                .expect("the commit is sent");
+            assert_eq!(delta.order, Some(placed), "order: {with_order}");
+        }
+    }
 }
 
 /// Where a text starts and what a press on one reaches — only the old entry points, so

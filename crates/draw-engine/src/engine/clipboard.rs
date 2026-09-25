@@ -221,8 +221,10 @@ impl DrawEngine {
         // above the refused version instead, so the later edit — this one — wins.
         let pending = self.scene.pending_ids();
         let pending_order = self.scene.order_baseline();
+        let pending_placement = self.scene.placement();
 
         let mut changed = false;
+        let mut reordered = false;
         for mut element in incoming {
             if self
                 .scene
@@ -296,6 +298,7 @@ impl DrawEngine {
                         .cloned(),
                 );
                 self.scene.set_order(live);
+                reordered = true;
                 changed = true;
             }
         }
@@ -310,9 +313,15 @@ impl DrawEngine {
             // emitting them would send them straight back to the peer that sent them.
             let _ = self.scene.take_delta();
             // ...but not the local changes that were pending in it, which the host has
-            // not been told about yet.
+            // not been told about yet — nor where they put things in the stack: a new
+            // label above its shape, told as a delta without the order, went on top of
+            // the host's copy, and of the saved board.
             for id in &pending {
                 self.scene.mark_dirty(id);
+            }
+            self.scene.restore_placement(pending_placement);
+            if reordered {
+                self.put_back_new_labels(&pending);
             }
             self.request_draw();
         }
@@ -322,6 +331,22 @@ impl DrawEngine {
         self.scene.retain_baseline(|id| pending.contains(id));
         self.scene.set_order_baseline(pending_order);
         changed
+    }
+
+    /// Puts a label made for the edit in progress back directly above its shape, where
+    /// the oracle's fractional index keeps it, after a peer's order put it on top — they
+    /// have never seen it, and what an order leaves out stays on top. A placement of ours,
+    /// told to the host with the edit's commit.
+    fn put_back_new_labels(&mut self, pending: &HashSet<String>) {
+        let labels: Vec<(String, String)> = pending
+            .iter()
+            .filter(|id| self.scene.created_since_commit(id))
+            .filter_map(|id| self.scene.get(id))
+            .filter_map(|label| Some((label.id.clone(), label.container_id.clone()?)))
+            .collect();
+        for (label, container) in labels {
+            self.scene.place_above(&[label], &container);
+        }
     }
 
     pub fn paste_json(&mut self, json: Option<&str>, at: Option<(f64, f64)>) -> bool {

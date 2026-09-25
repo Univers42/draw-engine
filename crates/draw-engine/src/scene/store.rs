@@ -643,6 +643,21 @@ impl Scene {
         Some(delta)
     }
 
+    /// What the next delta has to say besides the elements: whether it must be the whole
+    /// scene, and whether it carries the order. Read before a delta is taken only to be
+    /// thrown away — a peer's patch, which the host already has — and given back after
+    /// with [`Self::restore_placement`], so what the local changes still pending did to
+    /// the stack reaches the host at their commit.
+    pub(crate) fn placement(&self) -> (bool, bool) {
+        (self.structural, self.reordered)
+    }
+
+    /// See [`Self::placement`].
+    pub(crate) fn restore_placement(&mut self, (structural, reordered): (bool, bool)) {
+        self.structural |= structural;
+        self.reordered |= reordered;
+    }
+
     /// Forgets any pending delta and demands a full sync next time.
     ///
     /// Used after the scene is replaced wholesale — a load, an undo, a paste.
