@@ -102,6 +102,11 @@ impl DrawEngine {
     /// the shape takes back the height it remembers ([`Self::put_laid`],
     /// [`Self::forget_original_heights`]), or keeps the one it has.
     ///
+    /// The text is in the shape's frame. The oracle's label carries its shape's `frameId`
+    /// (`addElementsToFrame`, `packages/element/src/frame.ts@1118751f:538-632`), which the
+    /// unbind leaves; here the shape carries membership for both (`scene/frame.rs`), so the
+    /// text takes the shape's. Left out, it stayed behind when the frame moved.
+    ///
     /// Divergence: an arrow keeps its geometry. The oracle writes the remembered height
     /// onto any container, and an arrow's extent is its points, which would contradict it.
     pub fn unbind_text(&mut self) {
@@ -128,6 +133,7 @@ impl DrawEngine {
                 measure.size(&source, layout::font_of(&text), resolved_line_height(&text))
             });
             text.container_id = None;
+            text.frame_id.clone_from(&container.frame_id);
             // A label's own switch, which a free text says with `auto_resize`.
             text.wrap = None;
             text.text = Some(source);
@@ -158,6 +164,11 @@ impl DrawEngine {
     /// a padding clear of it all round, in its groups and frame and at its angle,
     /// directly below it in the stack. The text is its label; the arrows bound to the
     /// text are bound to the rectangle instead. The rectangles are what is left selected.
+    ///
+    /// The frame is the text's even where the padding reaches past the frame's edge: the
+    /// oracle sets it and judges nothing (`frameId: textElement.frameId`, `:313`), where a
+    /// shape created here is otherwise judged where it lands. Judged, a text at a frame's
+    /// edge lost its frame with the rectangle, and was left behind when the frame moved.
     pub fn wrap_text_in_container(&mut self) {
         let carried = OnceCell::new();
         let texts: Vec<DrawElement> = self
@@ -229,8 +240,8 @@ impl DrawEngine {
             containers.push(container_id);
         }
         self.apply_bindings();
-        self.set_selection(containers);
-        self.push_history();
+        self.set_selection(containers.clone());
+        self.push_history_keeping_frames(&containers);
         self.request_draw();
     }
 

@@ -56,6 +56,18 @@ fn selected(elements: Vec<DrawElement>, ids: &[&str]) -> DrawEngine {
     engine
 }
 
+fn frame_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
+    create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x,
+            y,
+            width,
+            height,
+        },
+    )
+}
+
 fn centre(element: &DrawElement) -> (f64, f64) {
     (
         element.x + element.width / 2.0,
@@ -227,6 +239,20 @@ mod unbind {
         assert_close(text.x, label.x);
         assert_close(text.y, label.y);
         assert_eq!(element(&engine, "box").height, 100.0, "nothing remembered");
+    }
+
+    /// A label is in its shape's frame, as the oracle's carries its shape's `frameId`
+    /// (`addElementsToFrame`, `frame.ts@1118751f:538-632`) and keeps it when unbound
+    /// (`actionUnbindText` changes only `containerId` and the size, `:69-121`): the text
+    /// given back stays in the frame.
+    #[test]
+    fn the_text_given_back_stays_in_the_shapes_frame() {
+        let mut elements = vec![with_id(frame_at(-100.0, -100.0, 600.0, 400.0), "f")];
+        elements.extend(labelled(box_at(0.0, 0.0, 200.0, 100.0), "box", "l"));
+        elements[1].frame_id = Some("f".into());
+        let mut engine = selected(elements, &["box"]);
+        engine.unbind_text();
+        assert_eq!(element(&engine, "l").frame_id.as_deref(), Some("f"));
     }
 
     #[test]
@@ -494,6 +520,24 @@ mod wrap {
         assert_eq!(container.group_ids, ["g"]);
         assert_eq!(container.frame_id.as_deref(), Some("f"));
         assert_eq!(container.angle, 0.3);
+    }
+
+    /// The rectangle takes the text's frame, as the oracle's does (`frameId:
+    /// textElement.frameId`, `:313`), even where its padding reaches past the frame's
+    /// edge: a shape made that way is not judged where it lands.
+    #[test]
+    fn a_text_at_a_frames_edge_keeps_its_frame() {
+        let mut text = words("t", 2.0, 50.0, "hello");
+        text.frame_id = Some("f".into());
+        let mut engine = selected(
+            vec![with_id(frame_at(0.0, 0.0, 400.0, 300.0), "f"), text],
+            &["t"],
+        );
+        engine.wrap_text_in_container();
+        let id = element(&engine, "t").container_id.expect("wrapped");
+        let container = element(&engine, &id);
+        assert!(container.x < 0.0, "past the frame's edge");
+        assert_eq!(container.frame_id.as_deref(), Some("f"));
     }
 
     /// Every free text selected gets its own, in one step; a shape selected with them is

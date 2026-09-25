@@ -202,12 +202,15 @@ impl DrawEngine {
     /// frame adopts nothing it lands on, where a frame *drawn* over work does
     /// ([`Self::end_draft`]). Judged as a moved frame is, the whole board over, a frame
     /// duplicated a few units over its original took the original's children.
-    pub(super) fn judge_created_frame_membership(&mut self) {
+    ///
+    /// Except `given`, whose creator set the frame the oracle gives it
+    /// ([`Self::push_history_keeping_frames`]).
+    pub(super) fn judge_created_frame_membership(&mut self, given: &[String]) {
         let created: std::collections::HashSet<String> = self
             .scene
             .pending_ids()
             .into_iter()
-            .filter(|id| self.scene.created_since_commit(id))
+            .filter(|id| self.scene.created_since_commit(id) && !given.contains(id))
             .collect();
         if !created.is_empty() {
             self.judge_frame_membership(&created, false);

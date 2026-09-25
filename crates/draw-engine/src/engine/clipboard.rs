@@ -73,7 +73,14 @@ impl DrawEngine {
     /// autosave, the server's merge and every peer have — so an unstamped move was
     /// never saved and lost on reload. See `stamp.rs`.
     pub(super) fn push_history(&mut self) {
-        self.judge_created_frame_membership();
+        self.push_history_keeping_frames(&[]);
+    }
+
+    /// [`Self::push_history`], leaving the frame of `given`, created by this step, as it
+    /// was set rather than judged where it landed: the rectangle "Wrap text in a
+    /// container" makes takes its text's (`actionBoundText.tsx@1118751f:313`).
+    pub(super) fn push_history_keeping_frames(&mut self, given: &[String]) {
+        self.judge_created_frame_membership(given);
         // Only a step that changed something is recorded. A click that selected, or a
         // commit after a peer's patch and nothing of ours, used to push an entry anyway —
         // one that undid nothing and threw the redo stack away.
