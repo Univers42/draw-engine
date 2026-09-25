@@ -12,6 +12,7 @@ use crate::text::layout::DEFAULT_FONT_SIZE;
 
 mod arrange;
 mod autoshape;
+mod bound_text;
 mod bucket;
 mod clipboard;
 mod debug;
@@ -38,7 +39,7 @@ pub mod vectorize;
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
-pub use selection_style::{Edges, SelectionStyle};
+pub use selection_style::{ArrowType, Edges, SelectionStyle};
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
@@ -114,6 +115,16 @@ pub struct DrawEngine {
     /// the same as never touching the control.
     next_text_align: Option<TextAlign>,
     next_vertical_align: Option<VerticalAlign>,
+    /// The heads the next arrow is drawn with, once one was chosen — the oracle's
+    /// `currentItemStartArrowhead` / `currentItemEndArrowhead`. `None` until then, so a
+    /// new arrow stays unset and resolves to the defaults, as every arrow did before.
+    next_start_arrowhead: Option<crate::scene::Arrowhead>,
+    next_end_arrowhead: Option<crate::scene::Arrowhead>,
+    /// `currentItemArrowType`: curved until another is chosen. See `style.rs`.
+    next_arrow_type: ArrowType,
+    /// Each shape's height from before a text was bound into it, which unbinding gives
+    /// back — the oracle's `originalContainerCache`. Session state. See `bound_text.rs`.
+    original_container_heights: HashMap<String, f64>,
     interaction: Option<Interaction>,
     /// The linear element whose individual points are currently on offer.
     ///
@@ -257,6 +268,10 @@ impl DrawEngine {
             next_font_family: crate::text::font::DEFAULT_FONT_FAMILY,
             next_text_align: None,
             next_vertical_align: None,
+            next_start_arrowhead: None,
+            next_end_arrowhead: None,
+            next_arrow_type: ArrowType::Round,
+            original_container_heights: HashMap::new(),
             interaction: None,
             editing_linear: None,
             editing_group_id: None,

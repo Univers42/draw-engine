@@ -172,6 +172,9 @@ impl DrawEngine {
             style,
             self.now_ms,
         );
+        if kind == DrawElementType::Arrow {
+            self.style_new_arrow(&mut element);
+        }
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
         // The tail binds on the same terms the head will, as Excalidraw's initial binding
         // does (`packages/excalidraw/components/App.tsx:10317-10339`): inside a shape it

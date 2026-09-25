@@ -1,8 +1,27 @@
 use std::cell::OnceCell;
 use std::collections::HashSet;
 
+use super::ArrowType;
 use crate::engine::DrawEngine;
-use crate::scene::{bump_version, is_linear_element, DrawElement};
+use crate::scene::{is_linear_element, Arrowhead, DrawElement, DrawElementType};
+
+/// The font sizes the contract stores (`fontSize`, `packages/contract/src/element.ts`).
+/// The oracle has no ceiling; a size above this one would never save.
+const FONT_SIZES: std::ops::RangeInclusive<f64> = 1.0..=1000.0;
+
+/// `FONT_SIZE_RELATIVE_INCREASE_STEP` (`actions/actionProperties.tsx@1118751f:182`).
+const FONT_SIZE_STEP: f64 = 0.1;
+
+/// The oracle's hover preview skips a selection holding more texts, or more characters,
+/// than this: every hover lays all of it out again (`actionProperties.tsx@1118751f:1203-1225`).
+const PREVIEW_MAX_TEXTS: usize = 200;
+const PREVIEW_MAX_CHARS: usize = 5000;
+
+/// A size as the contract would store it, or `None` for one that is not a number.
+fn storable_font_size(size: f64) -> Option<f64> {
+    size.is_finite()
+        .then(|| size.clamp(*FONT_SIZES.start(), *FONT_SIZES.end()))
+}
 
 impl DrawEngine {
     /// The live label of `container` that a style reaching the shape may change too
@@ -55,40 +74,122 @@ impl DrawEngine {
         ours(element) && self.container_of(element).is_none_or(ours)
     }
 
-    pub fn set_arrowheads(
-        &mut self,
-        start: Option<crate::scene::Arrowhead>,
-        end: Option<crate::scene::Arrowhead>,
-    ) {
-        let linears: Vec<_> = self
+    /// The heads of the selected lines and arrows — `None` leaves that end as it is — and
+    /// always of the next arrow drawn: `actionChangeArrowhead` sets
+    /// `currentItemStartArrowhead` / `currentItemEndArrowhead` whatever is selected
+    /// (`actions/actionProperties.tsx@1118751f:1944-1982`), and a new arrow is drawn with
+    /// them (`components/App.tsx@1118751f:10251-10254`). What a style may not change is
+    /// passed by ([`Self::restylable`]), and an end that already has the head is no edit.
+    pub fn set_arrowheads(&mut self, start: Option<Arrowhead>, end: Option<Arrowhead>) {
+        self.next_start_arrowhead = start.or(self.next_start_arrowhead);
+        self.next_end_arrowhead = end.or(self.next_end_arrowhead);
+        self.touch_style();
+        let carried = OnceCell::new();
+        let changed: Vec<DrawElement> = self
             .get_selected_elements()
             .into_iter()
-            .filter(is_linear_element)
+            .filter(|element| is_linear_element(element) && self.restylable(element, &carried))
+            .filter_map(|mut element| {
+                let before = (element.start_arrowhead, element.end_arrowhead);
+                element.start_arrowhead = start.or(element.start_arrowhead);
+                element.end_arrowhead = end.or(element.end_arrowhead);
+                (before != (element.start_arrowhead, element.end_arrowhead)).then_some(element)
+            })
             .collect();
-        if linears.is_empty() {
+        if changed.is_empty() {
             return;
         }
-        let now = self.now_ms;
-        for mut element in linears {
-            if let Some(kind) = start {
-                element.start_arrowhead = Some(kind);
-            }
-            if let Some(kind) = end {
-                element.end_arrowhead = Some(kind);
-            }
-            self.scene.put(bump_version(element, now));
+        for element in changed {
+            self.scene.put(element);
         }
         self.push_history();
         self.request_draw();
     }
 
+    /// The Arrow type row for the selected arrows, and always the next arrow's type, as
+    /// `actionChangeArrowType` sets `currentItemArrowType` (`:2057-2242`, `:2229`). An
+    /// arrow already of the type keeps the roundness it has.
+    pub fn set_arrow_type(&mut self, arrow_type: ArrowType) {
+        self.next_arrow_type = arrow_type;
+        self.touch_style();
+        let carried = OnceCell::new();
+        let changed: Vec<DrawElement> = self
+            .get_selected_elements()
+            .into_iter()
+            .filter(|element| {
+                element.kind == DrawElementType::Arrow
+                    && ArrowType::of(element.roundness) != arrow_type
+                    && self.restylable(element, &carried)
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        for mut arrow in changed {
+            arrow.roundness = arrow_type.roundness();
+            self.scene.put(arrow);
+        }
+        self.apply_bindings();
+        self.push_history();
+        self.request_draw();
+    }
+
+    /// What a new arrow takes from the panel rather than from the next style: its type
+    /// (`currentItemArrowType`, where the Edges row's `currentItemRoundness` is only
+    /// for lines and shapes) and the heads chosen, if any — `App.tsx@1118751f:10251-10276`.
+    pub(super) fn style_new_arrow(&self, arrow: &mut DrawElement) {
+        arrow.roundness = self.next_arrow_type.roundness();
+        arrow.start_arrowhead = self.next_start_arrowhead;
+        arrow.end_arrowhead = self.next_end_arrowhead;
+    }
+
+    /// A size for the selected texts and the labels their shapes carry, or for the next
+    /// text when nothing is selected — within what the contract stores; a size that is
+    /// not a number is ignored.
     pub fn set_font_size(&mut self, size: f64) {
+        let Some(size) = storable_font_size(size) else {
+            return;
+        };
         self.next_font_size = size;
         self.touch_style();
         // Through `selected_texts` rather than the raw selection, so resizing works with
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
         self.relayout_selected_texts(|text| text.font_size = Some(size), true);
+    }
+
+    /// Ctrl/Cmd+Shift+> and <: `actionIncreaseFontSize` / `actionDecreaseFontSize`
+    /// (`actionProperties.tsx@1118751f:1095-1141`). Each selected text, and each label a
+    /// selected shape carries, a tenth bigger — or back by the same factor — from its own
+    /// size, rounded as `Math.round` rounds, and laid out again as a picked size is. The
+    /// next text's size follows only when they all end at the same one, and with nothing
+    /// selected nothing changes (`changeFontSize`, `:294-354`). Within what the contract
+    /// stores, where the oracle has no ceiling.
+    pub fn step_font_size(&mut self, increase: bool) {
+        let step = |size: f64| {
+            let next = if increase {
+                size * (1.0 + FONT_SIZE_STEP)
+            } else {
+                (1.0 / (1.0 + FONT_SIZE_STEP)) * size
+            };
+            storable_font_size(crate::text::layout::js_round(next)).unwrap_or(size)
+        };
+        let sizes: Vec<f64> = self
+            .selected_texts()
+            .iter()
+            .map(|text| step(crate::text::layout::font_size_of(text)))
+            .collect();
+        let Some(&first) = sizes.first() else {
+            return;
+        };
+        if sizes.iter().all(|&size| size == first) {
+            self.next_font_size = first;
+        }
+        self.touch_style();
+        self.relayout_selected_texts(
+            |text| text.font_size = Some(step(crate::text::layout::font_size_of(text))),
+            true,
+        );
     }
 
     /// Writes `change` into every selected text, lays each out again from its source
@@ -135,6 +236,7 @@ impl DrawEngine {
             return;
         };
         self.next_font_family = family;
+        self.touch_style();
         self.relayout_selected_texts(
             |text| {
                 text.font_family = Some(family);
@@ -142,6 +244,71 @@ impl DrawEngine {
             },
             false,
         );
+    }
+
+    /// Shows `family` on the selected texts without committing it — the font picker's
+    /// hover (`onHover`, `actionProperties.tsx@1118751f:1465-1471`) — and `None` gives
+    /// back what the last one changed (`onLeave`, `resetAll`, `:1472-1478`). Each hover
+    /// gives the last one back first, so none is laid out from another. Picking commits
+    /// with [`Self::set_font_family`], against what was there before the first hover: one
+    /// step of undo. As the oracle's, a selection of more than 200 texts or 5000
+    /// characters is not previewed. What a peer takes meanwhile is given back to them
+    /// (`peers.rs`), as for [`Self::preview_style`].
+    ///
+    /// The host loads the face first, as for [`Self::set_font_family`].
+    pub fn preview_font_family(&mut self, family: Option<u8>) {
+        let previewed: Vec<String> = self.style_preview.drain().collect();
+        for id in &previewed {
+            self.drop_local_change(id);
+        }
+        let line_height = family
+            .and_then(crate::text::font::family)
+            .map(|font| font.line_height);
+        if let (Some(family), Some(line_height)) = (family, line_height) {
+            let texts = self.selected_texts();
+            let chars: usize = texts
+                .iter()
+                .map(|text| crate::scene::source_text(text).chars().count())
+                .sum();
+            if texts.len() <= PREVIEW_MAX_TEXTS && chars <= PREVIEW_MAX_CHARS {
+                for prev in texts {
+                    let mut next = prev.clone();
+                    next.font_family = Some(family);
+                    next.line_height = Some(line_height);
+                    let laid = self.laid_out(&next);
+                    if let Some(container) = laid.container {
+                        self.style_preview.insert(container.id.clone());
+                        self.scene.put(container);
+                    }
+                    if laid.text != prev {
+                        self.style_preview.insert(prev.id.clone());
+                        self.scene.put(laid.text);
+                    }
+                }
+            }
+        }
+        if !previewed.is_empty() || !self.style_preview.is_empty() {
+            self.touch_style();
+            self.request_draw();
+        }
+    }
+
+    /// The families the board's texts are drawn in, each once — the font picker's "In
+    /// this scene" (`Fonts.getSceneFamilies`, `fonts/Fonts.ts@1118751f:94-96`). The system
+    /// stack a text with no family is drawn in is not one the picker offers.
+    pub fn scene_font_families(&self) -> Vec<u8> {
+        let mut families = Vec::new();
+        for element in self.scene.iter_ordered() {
+            if element.kind != DrawElementType::Text {
+                continue;
+            }
+            if let Some(family) = crate::scene::resolved_font_family(element) {
+                if !families.contains(&family) {
+                    families.push(family);
+                }
+            }
+        }
+        families
     }
 
     /// The family of the first selected text — `0` for the system stack a text with none
