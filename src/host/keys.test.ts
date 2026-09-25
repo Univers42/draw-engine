@@ -232,6 +232,28 @@ describe("dispatchKeyDown", () => {
     assert.deepEqual(paste.calls, []);
   });
 
+  it("reorders on Ctrl+[ / Ctrl+], to the end with Shift or Alt (actionZindex.tsx)", () => {
+    const chords: [Partial<KeyEvent> & Pick<KeyEvent, "key">, string][] = [
+      [{ key: "]", code: "BracketRight", ctrlKey: true }, "reorder:forward"],
+      [{ key: "[", code: "BracketLeft", ctrlKey: true }, "reorder:backward"],
+      // Windows and Linux. Shift prints a brace on a US layout: the physical key decides.
+      [{ key: "}", code: "BracketRight", ctrlKey: true, shiftKey: true }, "reorder:front"],
+      [{ key: "{", code: "BracketLeft", ctrlKey: true, shiftKey: true }, "reorder:back"],
+      // macOS, where Option prints a quote on the bracket keys.
+      [{ key: "‘", code: "BracketRight", metaKey: true, altKey: true }, "reorder:front"],
+      [{ key: "“", code: "BracketLeft", metaKey: true, altKey: true }, "reorder:back"],
+      // Unshifted, a layout that prints + on that key keeps it for zoom.
+      [{ key: "+", code: "BracketRight", ctrlKey: true }, "zoomIn"],
+      // Shifted too: Ctrl++ on US Dvorak, whose = / + key is BracketRight.
+      [{ key: "+", code: "BracketRight", ctrlKey: true, shiftKey: true }, "zoomIn"],
+    ];
+    for (const [chord, call] of chords) {
+      const { engine, calls } = recording(["id"]);
+      assert.equal(dispatchKeyDown(session(engine), event(chord)), "prevent", JSON.stringify(chord));
+      assert.deepEqual(calls, [call], JSON.stringify(chord));
+    }
+  });
+
   it("toggles the tool lock on Q", () => {
     const { engine, calls } = recording();
     const lockCalls: boolean[] = [];

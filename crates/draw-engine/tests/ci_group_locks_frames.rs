@@ -577,6 +577,28 @@ fn the_selection_box_is_drawn_where_its_handles_are_hit() {
     assert_close(drawn.max_x, 230.0);
 }
 
+/// Nor its label, which Select All takes too: a label goes only where its shape goes.
+/// Carried on its own, it stretched the box over the locked shape to frame its words.
+#[test]
+fn a_locked_shapes_label_is_not_carried_on_its_own() {
+    let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
+    let b = filled(box_at(150.0, 0.0, 80.0, 80.0));
+    let mut locked = filled(box_at(600.0, 0.0, 80.0, 80.0));
+    locked.locked = Some(true);
+    let mut label = text_at(620.0, 30.0, 40.0, 20.0);
+    label.text = Some("hi".into());
+    label.container_id = Some(locked.id.clone());
+    locked.bound_text_id = Some(label.id.clone());
+    let mut engine = engine_with_scene(vec![a, b, locked, label]);
+    engine.select_all();
+    assert_eq!(engine.get_selection().len(), 4, "setup");
+
+    let drawn = engine.paint_view().group_box.expect("a box around A and B");
+
+    assert_close(drawn.min_x, 0.0);
+    assert_close(drawn.max_x, 230.0);
+}
+
 // ---------------------------------------------------------------------------
 // Align and distribute carry what a drag carries
 // ---------------------------------------------------------------------------

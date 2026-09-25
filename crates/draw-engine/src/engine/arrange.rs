@@ -1,6 +1,6 @@
 use crate::edit::{
     align_elements, distribute_elements, flip_elements, gather, group_patches, is_single_group,
-    reorder_within, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    reorder_positions, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
 };
 use std::collections::HashMap;
 
@@ -31,16 +31,28 @@ impl DrawEngine {
         self.request_draw();
     }
 
+    /// Moves the selection through the stack: see [`crate::edit::zorder`].
+    ///
+    /// What the carried set holds moves, as a drag's: a locked group member comes with its
+    /// group, and a loose locked element — which only this engine's Select All can hold —
+    /// stays, as does a label whose shape stays. The labels of what moves and the children
+    /// of a moving frame come too, even one a peer holds: the stack is not stamped, so it
+    /// takes nothing from their edit.
     pub fn reorder_selection(&mut self, mode: ZOrderMode) {
-        if self.selected_ids.is_empty() {
+        let carried = self.carried_selection();
+        if carried.is_empty() {
             return;
         }
-        let next = reorder_within(
-            &self.scene.ordered_cloned(),
-            &self.selected_ids,
-            mode,
-            self.editing_group_id.as_deref(),
-        );
+        let next: Vec<DrawElement> = {
+            let live = self.scene.ordered_refs();
+            let order = reorder_positions(&live, &carried, mode, self.editing_group_id.as_deref());
+            // Nothing moved, so nothing to record or send: a reorder hands the host the
+            // whole scene, and the oracle's store records no step for unchanged elements.
+            if order.iter().enumerate().all(|(at, &was)| at == was) {
+                return;
+            }
+            order.into_iter().map(|i| live[i].clone()).collect()
+        };
         self.scene.set_order(next);
         self.push_history();
         self.request_draw();

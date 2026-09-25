@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use draw_engine::render::cache::ShapeCache;
 use draw_engine::scene::element::{create_element_default, DrawElement, DrawElementType, Geometry};
-use draw_engine::{DrawEngine, DrawTool, Scene};
+use draw_engine::{DrawEngine, DrawTool, Scene, ZOrderMode};
 
 /// `n` shapes in a grid, deterministic so a run measures the code and not the input.
 fn board_of(n: usize) -> Vec<DrawElement> {
@@ -207,7 +207,78 @@ fn moving(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, duplicate, erase, moving, painting);
+fn reordering(c: &mut Criterion) {
+    let mut group = c.benchmark_group("reorder");
+
+    // A z-order command as a person issues it, the whole of it: the restacking, the step
+    // of undo, and the whole scene handed to the host. Each should grow with the board
+    // and no faster — the oracle rebuilds the array once per run of the selection, and
+    // `every_other` cuts the selection into n/2 runs.
+    for n in [1000usize, 5000] {
+        group.bench_function(format!("one_to_front_of_{n}"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut engine = engine_of(n);
+                    let first = engine.get_scene()[0].id.clone();
+                    engine.select(vec![first]);
+                    engine
+                },
+                |engine| {
+                    engine.reorder_selection(ZOrderMode::Front);
+                    black_box(engine.get_selection().len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
+        group.bench_function(format!("every_other_forward_of_{n}"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut engine = engine_of(n);
+                    let ids = engine.get_scene().into_iter().step_by(2).map(|el| el.id);
+                    engine.select(ids.collect());
+                    engine
+                },
+                |engine| {
+                    engine.reorder_selection(ZOrderMode::Forward);
+                    black_box(engine.get_selection().len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
+        // A child of each of n/50 frames brought to the front of its own frame: one pass
+        // over the stack per frame, as the oracle's.
+        group.bench_function(format!("a_child_of_each_frame_to_front_of_{n}"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut elements = board_of(n);
+                    let mut firsts = Vec::new();
+                    for block in elements.chunks_mut(50) {
+                        let (frame, children) = block.split_last_mut().expect("50 a block");
+                        frame.kind = DrawElementType::Frame;
+                        for child in children.iter_mut() {
+                            child.frame_id = Some(frame.id.clone());
+                        }
+                        firsts.push(children[0].id.clone());
+                    }
+                    let mut engine = DrawEngine::new();
+                    engine.set_viewport(1280.0, 800.0, 1.0);
+                    engine.set_scene(Scene::new(elements));
+                    engine.select(firsts);
+                    engine
+                },
+                |engine| {
+                    engine.reorder_selection(ZOrderMode::Front);
+                    black_box(engine.get_selection().len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, duplicate, erase, moving, painting, reordering);
 criterion_main!(benches);
 
 /// Screen-sized shapes, hundreds of them, each a copy of the last.
