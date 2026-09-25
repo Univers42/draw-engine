@@ -14,7 +14,7 @@ impl DrawEngine {
         let Some(single) = self.single_selected() else {
             return false;
         };
-        if single.is_deleted || self.untouchable(&single) {
+        if single.is_deleted || self.untouchable(&single) || self.in_untouchable_shape(&single) {
             return false;
         }
         if single.kind == DrawElementType::Text {
@@ -248,7 +248,7 @@ impl DrawEngine {
         )
         .cloned()
         {
-            if hit.kind == DrawElementType::Text {
+            if hit.kind == DrawElementType::Text && !self.in_untouchable_shape(&hit) {
                 self.set_selection(vec![hit.id.clone()]);
                 self.request_text_edit(&hit);
                 return;
@@ -340,7 +340,9 @@ impl DrawEngine {
             container,
         } = self.with_text(&element, text);
         self.scene.put(bump_version(next, self.now_ms));
-        if let Some(container) = container {
+        // A shape a peer took while its label was being typed stays as they have it.
+        // ponytail: the label may overflow it until it is next laid out.
+        if let Some(container) = container.filter(|container| !self.untouchable(container)) {
             self.scene.put(container);
         }
         self.apply_bindings();
@@ -367,6 +369,16 @@ impl DrawEngine {
     /// [`layout::wrap_width`].
     fn wrap_width(&self, element: &DrawElement) -> Option<f64> {
         layout::wrap_width(element, self.container_of(element))
+    }
+
+    /// Whether `text` is the label of a shape that is not ours to change — locked, or held
+    /// by a peer. Its words are that shape's, and laying them out grows it, so it is not
+    /// typed into: the oracle locks a label with its shape (`actionToggleElementLock`,
+    /// `actions/actionElementLock.ts@1118751f:49-54`), and a double click does not hit a
+    /// locked one (`getTextElementAtPosition`, `App.tsx@1118751f:6588-6599`, `:6654-6677`).
+    fn in_untouchable_shape(&self, text: &DrawElement) -> bool {
+        self.container_of(text)
+            .is_some_and(|container| self.untouchable(container))
     }
 
     /// The live container of a label, if it is one.

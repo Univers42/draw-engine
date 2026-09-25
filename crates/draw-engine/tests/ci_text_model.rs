@@ -762,6 +762,36 @@ mod holds_and_no_ops {
         assert_eq!(element(&engine, &rect_id), shape);
         assert_eq!(element(&engine, &label_id), label);
     }
+
+    /// Nor is it typed into: its label opens no editor once they hold it, and one open
+    /// before they took it commits the words without growing the shape.
+    #[test]
+    fn a_shape_a_peer_holds_is_not_grown_by_typing_into_its_label() {
+        let rect = box_at(0.0, 0.0, 200.0, 100.0);
+        let rect_id = rect.id.clone();
+        let (mut engine, label_id) = labelled(rect, "hello");
+        let (x, y) = middle_of(&engine, &label_id);
+        engine.handle_double_click(x, y);
+        let request = engine.drain_events().text_edit.expect("opened before");
+        assert_eq!(request.id, label_id, "setup");
+
+        engine.set_peers(ana_holds(&rect_id));
+        let shape = element(&engine, &rect_id);
+        engine.set_element_text(
+            &label_id,
+            "a much longer text than the shape has room for, over several lines",
+        );
+        assert_eq!(element(&engine, &rect_id), shape);
+
+        engine.handle_double_click(x, y);
+        let opened = engine.drain_events().text_edit;
+        assert!(
+            opened.is_none_or(|request| request.id != label_id),
+            "its label opened"
+        );
+        engine.select(vec![label_id.clone()]);
+        assert!(!engine.edit_selected_text());
+    }
 }
 
 /// The cut in a line's stroke under its label follows the label as it is painted.
