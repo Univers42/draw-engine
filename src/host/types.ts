@@ -25,6 +25,12 @@ export interface DrawCanvasProps {
   onCameraChange?: (camera: Camera) => void;
   onToolChange?: (tool: DrawTool) => void;
   onSelectionChange?: (ids: string[]) => void;
+  /**
+   * A text is to be typed: the request opens a session on it (`updateTextEdit`), which
+   * the host ends with `commitTextEdit` — or `setElementText` on the same id. Until then
+   * undo and redo do nothing. Deleting the text, replacing the scene or a peer taking it
+   * ends the session too.
+   */
   onRequestTextEdit?: (request: TextEditRequest) => void;
   /** `.osidraw` JSON after every scene mutation — persist it. */
   onSceneChange?: (json: string) => void;

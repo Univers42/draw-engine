@@ -725,9 +725,11 @@ mod holds_and_no_ops {
     }
 
     /// A shape a peer holds holds its words. A label is laid out in its shape and grows
-    /// it, so one reached without the shape — clicked on its own, or taken by Select All,
-    /// both of which leave out what a peer holds — is neither restyled nor laid out
-    /// again: grown and stamped, the shape went to the server and to them.
+    /// it, so one reached without the shape — selected on its own by the host, or taken
+    /// by Select All, both of which leave out what a peer holds — is neither restyled nor
+    /// laid out again: grown and stamped, the shape went to the server and to them. A
+    /// click cannot reach it: a press on a label is a press on its shape
+    /// (`App.tsx@1118751f:6784-6829`), and the shape is theirs.
     #[test]
     fn a_shape_a_peer_holds_is_not_grown_through_its_label() {
         let rect = box_at(0.0, 0.0, 200.0, 100.0);
@@ -751,6 +753,8 @@ mod holds_and_no_ops {
         let (x, y) = middle_of(&engine, &label_id);
         engine.begin_pointer(x, y, false, false);
         engine.end_pointer();
+        assert!(engine.get_selection().is_empty(), "a click takes nothing");
+        engine.select(vec![label_id.clone()]);
         assert_eq!(engine.get_selection(), vec![label_id.clone()], "setup");
         assert_eq!(engine.selection_style().font_size, None, "no text rows");
         engine.set_font_size(80.0);

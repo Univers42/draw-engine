@@ -489,7 +489,9 @@ impl DrawEngine {
             }
         }
 
-        if let Some(hit) = self.selectable_hit(sx, sy, self.collision_tolerance()) {
+        let tolerance = self.collision_tolerance();
+        let pressed = self.element_at(sx, sy, tolerance, |element| !self.untouchable(element));
+        if let Some(hit) = pressed.cloned() {
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
@@ -551,7 +553,7 @@ impl DrawEngine {
         //
         // It matters because a shape with no fill is hit on its outline only, so the
         // middle of a selected empty rectangle is a hole, movable otherwise only by
-        // aiming at a two-pixel line. Checked *after* `selectable_hit` so a shape lying
+        // aiming at a two-pixel line. Checked *after* `element_at` so a shape lying
         // over the selection can still be clicked and selected in the normal way.
         if !additive && self.pointer_is_inside_selection(world) {
             if duplicate {

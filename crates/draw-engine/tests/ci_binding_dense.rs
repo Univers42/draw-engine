@@ -701,7 +701,9 @@ fn arrow_labelled(engine: &DrawEngine) -> bool {
         .any(|t| t.container_id.as_deref() == Some(arrow.id.as_str()))
 }
 
-/// Far away, with no press in between: a free text there, as on any empty spot.
+/// Far away, with no press in between: a free text there, as on any empty spot — its
+/// first line centred on the point (`App.tsx@1118751f:7019-7027`), 20px Excalifont lines
+/// being 25px tall.
 #[test]
 fn a_double_click_elsewhere_is_not_about_the_finished_arrow() {
     let mut engine = finish_by_one_click(&pack_and_lone_square(), ON_ITS_END);
@@ -710,7 +712,7 @@ fn a_double_click_elsewhere_is_not_about_the_finished_arrow() {
         .into_iter()
         .map(|t| (t.container_id, t.x, t.y))
         .collect();
-    assert_eq!(made, vec![(None, 1200.0, 1000.0)]);
+    assert_eq!(made, vec![(None, 1200.0, 1000.0 - 25.0 / 2.0)]);
 }
 
 /// Both presses of the double click went to a pan (Space held).

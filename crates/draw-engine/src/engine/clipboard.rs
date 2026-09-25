@@ -86,6 +86,7 @@ impl DrawEngine {
         self.style_preview.clear();
         self.touch_style();
         self.emit_scene_change();
+        self.keep_text_session_pending();
     }
 
     /// Tells the host what changed, as briefly as it can.
@@ -132,7 +133,8 @@ impl DrawEngine {
 
     /// Undo, as a new edit of only what the step changed: see `stamp.rs`.
     pub fn undo(&mut self) {
-        if !self.history.can_undo() {
+        // While a text is being typed, undo is its editor's own (`text_session.rs`).
+        if self.text_session.is_some() || !self.history.can_undo() {
             return;
         }
         let step = self.history.current().clone();
@@ -142,6 +144,9 @@ impl DrawEngine {
     }
 
     pub fn redo(&mut self) {
+        if self.text_session.is_some() {
+            return;
+        }
         let Some(step) = self.history.redo().cloned() else {
             return;
         };

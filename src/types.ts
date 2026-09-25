@@ -266,6 +266,39 @@ export interface TextEditRequest {
 }
 
 /**
+ * The text open in the host's editor, where it is and how it looks — what the editor
+ * reads to sit exactly over it (`engine/text_session.rs`). Re-read after every
+ * keystroke, camera change and style change.
+ */
+export interface TextEditLayout {
+  id: string;
+  /** Screen position of the text's unrotated top-left, canvas-relative. */
+  x: number;
+  y: number;
+  /** The text box in world units: the editor is scaled by `zoom`, not sized by it. */
+  width: number;
+  height: number;
+  fontSize: number;
+  /** Unitless. */
+  lineHeight: number;
+  /** An Excalidraw family id, `0` for the system stack of a text with none. */
+  fontFamily: number;
+  textAlign: TextAlign;
+  verticalAlign: VerticalAlign;
+  /** Radians. */
+  angle: number;
+  /** The camera scale. */
+  zoom: number;
+  /** As the painter fills the glyphs. */
+  color: string;
+  /** `0..1`. */
+  opacity: number;
+  /** Whether the lines wrap at `width` (`pre-wrap`) or keep their hard breaks (`pre`). */
+  wrap: boolean;
+  containerId?: string;
+}
+
+/**
  * Something the person should be told, as a stable code rather than a sentence.
  *
  * The motor knows *what* happened; the wording, the language and the room it has to fit
@@ -278,6 +311,12 @@ export interface DrawEngineOptions {
   onCameraChange?: (camera: Camera) => void;
   onToolChange?: (tool: DrawTool) => void;
   onSelectionChange?: (ids: string[]) => void;
+  /**
+   * A text is to be typed: the request opens a session on it (`updateTextEdit`), which
+   * the host ends with `commitTextEdit` — or `setElementText` on the same id. Until then
+   * undo and redo do nothing. Deleting the text, replacing the scene or a peer taking it
+   * ends the session too.
+   */
   onRequestTextEdit?: (request: TextEditRequest) => void;
   onSceneChange?: (json: string) => void;
   onNotice?: (notice: DrawNotice) => void;

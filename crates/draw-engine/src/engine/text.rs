@@ -3,8 +3,8 @@ use crate::engine::{DrawEngine, TextEditRequest};
 use crate::interaction::DrawTool;
 use crate::scene::binding::linear_endpoints;
 use crate::scene::{
-    bindable_at, bump_version, create_element, default_element_style, is_bindable_element,
-    is_linear_element, merge_style, DrawElement, DrawElementType, Geometry,
+    bindable_at, create_element, default_element_style, is_bindable_element, is_linear_element,
+    merge_style, DrawElement, DrawElementType, Geometry,
 };
 use crate::text::layout::{self, Laid, Measure};
 use crate::text::FontKey;
@@ -57,6 +57,7 @@ impl DrawEngine {
             font_family: family.unwrap_or(crate::text::FontKey::LEGACY),
             line_height: crate::scene::resolved_line_height(element),
         });
+        self.open_text_session(element);
     }
 
     /// A new, empty text in the next style: the family chosen last, Excalifont until one
@@ -95,6 +96,7 @@ impl DrawEngine {
         label.width = width;
         label.height = height;
         label.container_id = Some(container.id.clone());
+        let min_line = self.one_line_box(&label);
         // In its shape's groups and directly above it, as the oracle makes one
         // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
         // board instead, it was drawn over whatever covers its shape, and split the
@@ -102,12 +104,49 @@ impl DrawEngine {
         label.group_ids = container.group_ids.clone();
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
+        if !is_linear_element(&container) {
+            grow_to_one_line(&mut container, min_line);
+        }
         self.scene.add(label.clone());
         self.scene
             .place_above(std::slice::from_ref(&label.id), &container.id);
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)
+    }
+
+    /// The smallest box a shape needs to hold one line of `label`: its widest capital or
+    /// digit and one line, each with the label's padding either side —
+    /// `getApproxMinLineWidth` and `getApproxMinLineHeight`
+    /// (`packages/element/src/textMeasurements.ts@1118751f:29-44`, `:99-104`).
+    ///
+    /// The oracle takes the widest character it happens to have measured so far, which
+    /// depends on what was typed before; this always takes its fallback, the capitals and
+    /// digits.
+    fn one_line_box(&self, label: &DrawElement) -> (f64, f64) {
+        const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let font = layout::font_of(label);
+        let line_height = crate::scene::resolved_line_height(label);
+        let column = DUMMY_TEXT
+            .chars()
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (width, _) = self.with_measure(|measure| measure.size(&column, font, line_height));
+        let padding = 2.0 * layout::BOUND_TEXT_PADDING;
+        (width + padding, font.size() * line_height + padding)
+    }
+
+    /// Where a new free text's top goes for a press at `y`: its first line centred on the
+    /// pointer, as the oracle starts one from a point cursor (`App.tsx@1118751f:7019-7027`).
+    /// With the grid snapping, the oracle puts it on the nearest grid point instead
+    /// (`getTextCreationGridPoint`); ponytail: left on the point here, until text
+    /// creation snaps.
+    pub(crate) fn first_line_top(&self, text: &DrawElement, y: f64) -> f64 {
+        if self.grid.enabled && self.grid.snap {
+            return y;
+        }
+        y - layout::font_size_of(text) * crate::scene::resolved_line_height(text) / 2.0
     }
 
     fn label_target_at(&self, wx: f64, wy: f64) -> Option<DrawElement> {
@@ -267,12 +306,13 @@ impl DrawEngine {
             }
         }
         let font_size = self.next_font_size;
-        let element = self.new_text_element(Geometry {
+        let mut element = self.new_text_element(Geometry {
             x: world.x,
             y: world.y,
             width: 4.0,
             height: font_size,
         });
+        element.y = self.first_line_top(&element, world.y);
         let id = element.id.clone();
         self.scene.add(element.clone());
         self.set_selection(vec![id]);
@@ -307,56 +347,39 @@ impl DrawEngine {
         self.set_element_text(id, &text);
     }
 
+    /// Writes `text` into the text `id` and commits it, in one call — the edit before
+    /// the typing session (`text_session.rs`), kept for hosts that write text whole. It
+    /// ends a session open on the same text, with no layout of its own.
     pub fn set_element_text(&mut self, id: &str, text: &str) {
+        self.drop_text_session(Some(id));
+        self.set_element_text_step(id, text);
+        self.refresh_live();
+    }
+
+    /// The one-shot write: what the session's commit does, with no floor for the shape to
+    /// shrink to and the selection let go of when the text goes.
+    fn set_element_text_step(&mut self, id: &str, text: &str) {
         let Some(element) = self.scene.get(id).cloned() else {
             return;
         };
         if text.trim().is_empty() {
-            if let Some(container_id) = &element.container_id {
-                if let Some(mut container) = self.scene.get(container_id).cloned() {
-                    container.bound_text_id = None;
-                    self.scene.put(container);
-                }
-            }
-            if self.scene.created_since_commit(id) {
-                self.scene.discard(id);
-            } else {
-                // A committed text emptied is a deletion, and a deletion is a tombstone:
-                // the server and the peers have to be told, and undo has to be able to
-                // stamp the text back above it.
-                self.scene.remove(id, self.now_ms);
-            }
             self.clear_selection();
-            // Settled here, although it usually changes nothing: a label abandoned before
-            // anything was typed leaves its container exactly as committed, and without
-            // a commit the container stayed pending — refusing every peer's edit of it.
-            // Removing a committed text records its deletion.
+            self.remove_emptied_text(&element);
+        } else {
+            self.type_into(&element, text, None);
             self.push_history();
-            self.request_draw();
-            return;
         }
-        let Laid {
-            text: next,
-            container,
-        } = self.with_text(&element, text);
-        self.scene.put(bump_version(next, self.now_ms));
-        // A shape a peer took while its label was being typed stays as they have it.
-        // ponytail: the label may overflow it until it is next laid out.
-        if let Some(container) = container.filter(|container| !self.untouchable(container)) {
-            self.scene.put(container);
-        }
-        self.apply_bindings();
-        self.push_history();
         self.request_draw();
     }
 
-    /// A text element as it would be with `text` in it, uncommitted — what peers are
-    /// shown while it is being typed, so a word appears on their screens as it is
-    /// written rather than all at once when the editor closes. `None` for an id that is
-    /// not a text in the scene.
+    /// A text element as it would be with `text` in it, uncommitted — for a host on the
+    /// one-shot [`Self::set_element_text`] to show peers while it is typed. A host on the
+    /// typing session (`text_session.rs`) streams [`Self::gesture_elements`] instead,
+    /// which carries the shape the text grows too. `None` for an id that is not a text in
+    /// the scene.
     ///
-    /// ponytail: the label only — a shape the text would grow is sent grown on commit;
-    /// streaming it too means a preview of two elements.
+    /// ponytail: the label only, the shape it grows arriving with the one-shot commit;
+    /// the session is the upgrade.
     pub fn text_preview(&self, id: &str, text: &str) -> Option<DrawElement> {
         let element = self.scene.get(id)?;
         if element.kind != DrawElementType::Text {
@@ -411,7 +434,7 @@ impl DrawEngine {
 
     /// `element` with `text` typed into it: laid out, and — a free text — kept on the
     /// edge its alignment anchors (`getAdjustedDimensions`).
-    fn with_text(&self, element: &DrawElement, text: &str) -> Laid {
+    pub(crate) fn with_text(&self, element: &DrawElement, text: &str) -> Laid {
         let mut typed = element.clone();
         typed.original_text = Some(text.to_owned());
         let mut laid = self.laid_out(&typed);
@@ -479,4 +502,18 @@ impl DrawEngine {
             self.request_draw();
         }
     }
+}
+
+/// A shape too small for one line of the label it is being given grows to hold one, from
+/// its top-left corner (`startTextEditing`, `App.tsx@1118751f:6974-7006`).
+fn grow_to_one_line(container: &mut DrawElement, (min_width, min_height): (f64, f64)) {
+    let rect =
+        crate::scene::normalize_rect(container.x, container.y, container.width, container.height);
+    if rect.width >= min_width && rect.height >= min_height {
+        return;
+    }
+    container.x = rect.x;
+    container.y = rect.y;
+    container.width = rect.width.max(min_width);
+    container.height = rect.height.max(min_height);
 }

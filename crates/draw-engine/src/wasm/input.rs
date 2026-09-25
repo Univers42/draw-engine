@@ -634,8 +634,43 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// The open text with `text` typed into it, laid out and its shape grown, without a
+    /// step or a stamp. `false` when no text is open: the editor has nothing to type into.
+    #[wasm_bindgen(js_name = updateTextEdit)]
+    pub fn update_text_edit(&self, text: &str) -> bool {
+        let open = self.cell.borrow_mut().engine.update_text_edit(text);
+        self.flush();
+        open
+    }
+
+    /// Ends the edit with `text`, as one step. `viaKeyboard` (Escape, Ctrl/Cmd+Enter)
+    /// leaves the text — or a label's shape — selected.
+    #[wasm_bindgen(js_name = commitTextEdit)]
+    pub fn commit_text_edit(&self, text: &str, via_keyboard: bool) {
+        self.cell
+            .borrow_mut()
+            .engine
+            .commit_text_edit(text, via_keyboard);
+        self.flush();
+    }
+
+    /// Where the open text is and how it looks (`TextEditLayout`), as JSON — empty when
+    /// none is open.
+    #[wasm_bindgen(js_name = textEditLayoutJson)]
+    pub fn text_edit_layout_json(&self) -> String {
+        let Ok(state) = self.cell.try_borrow() else {
+            return String::new();
+        };
+        state
+            .engine
+            .text_edit_layout()
+            .and_then(|layout| serde_json::to_string(&layout).ok())
+            .unwrap_or_default()
+    }
+
     /// The text element `id` as it would be with `text` in it, uncommitted, as JSON —
-    /// empty when `id` is not a text. What the host streams to peers while typing.
+    /// empty when `id` is not a text. What a host on the one-shot `setElementText` shows
+    /// peers while typing; on the session, `gestureElementsJson` carries it.
     #[wasm_bindgen(js_name = textPreviewJson)]
     pub fn text_preview_json(&self, id: &str, text: &str) -> String {
         let Ok(state) = self.cell.try_borrow() else {
