@@ -11,6 +11,9 @@
 //! Painting needs no measurer either: the footer's text is chosen by width bucket, never
 //! measured, so the canvas, the SVG and a server would all draw the same one.
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+
 use crate::camera::Point;
 use crate::scene::element::{DrawElement, DrawElementType};
 use crate::scene::geometry::is_transparent;
@@ -256,6 +259,37 @@ pub fn sticky_path_commands(element: &DrawElement, shadow: bool) -> Vec<StickyPa
     commands
 }
 
+/// A note's outline geometry as a cache key for the painted `Path2D`: every field
+/// [`sticky_path_commands`] reads, plus `shadow` (the paper and its shadow trace
+/// different points — a different offset and half the jitter), and nothing else.
+///
+/// A separate hash from [`crate::render::cache::shape_fingerprint`], not a reuse of it:
+/// that one is keyed on rough.js's own field set (stroke width, stroke style, fill
+/// style, corner radius, background transparency), none of which `sticky_path_commands`
+/// reads, and reusing it would either miss a field that matters here or watch one that
+/// does not — either is wrong, per that module's own note on what a left-out field costs.
+pub fn sticky_fingerprint(element: &DrawElement, shadow: bool) -> u64 {
+    // FNV-1a, as `ShapeKey::of` uses — this crate's usual way to turn "same geometry" into
+    // one comparable, hashable number.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            h ^= u64::from(*byte);
+            h = h.wrapping_mul(0x1000_0000_01b3);
+        }
+    };
+    eat(&[u8::from(shadow)]);
+    eat(&element.width.abs().to_bits().to_le_bytes());
+    eat(&element.height.abs().to_bits().to_le_bytes());
+    eat(&element.roughness.to_bits().to_le_bytes());
+    eat(&element.seed.to_le_bytes());
+    // Only whether a note is rounded, not by how much: `sticky_corner_radius` ignores the
+    // stored value entirely and derives the radius from width and height, already in the
+    // key above.
+    eat(&[u8::from(element.roundness.is_some())]);
+    h
+}
+
 /// The outline as an SVG path's `d`, closed — as the oracle's SVG export writes it
 /// (`staticSvgScene.ts@1118751f:159-171`).
 pub fn sticky_path_data(commands: &[StickyPathCommand]) -> String {
@@ -309,6 +343,53 @@ fn calendar_day(ms: f64) -> (i64, usize, u32) {
     }
 }
 
+thread_local! {
+    /// [`calendar_day`] results already computed, by the exact millisecond.
+    ///
+    /// A note's `created` does not change except when it is edited, and every note
+    /// painted in the same frame is compared against the same "now"
+    /// (`wasm::paint::frame_now`), so after the first lookup of a given millisecond every
+    /// later one this session is a plain `HashMap` read rather than a `js_sys::Date`
+    /// allocation and a WASM↔JS crossing — on wasm32, where `calendar_day` is the only
+    /// thing here that costs more than arithmetic; off it this only saves the lookup.
+    /// Cleared rather than swept past a cap: simpler than tracking use per frame for a
+    /// cache this small, and no worse than the next note paying for itself again.
+    static CALENDAR_DAYS: RefCell<HashMap<u64, (i64, usize, u32)>> = RefCell::new(HashMap::new());
+    static CALENDAR_DAY_COMPUTATIONS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// However many distinct milliseconds a session plausibly asks about at once — notes made
+/// in one sitting, plus "now". Past this a re-ask is cheaper than remembering every one.
+const CALENDAR_DAY_CACHE_CAP: usize = 4096;
+
+/// [`calendar_day`], memoized by its exact input — see `CALENDAR_DAYS`.
+fn calendar_day_cached(ms: f64) -> (i64, usize, u32) {
+    let key = ms.to_bits();
+    CALENDAR_DAYS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(day) = cache.get(&key) {
+            return *day;
+        }
+        if cache.len() >= CALENDAR_DAY_CACHE_CAP {
+            cache.clear();
+        }
+        let day = calendar_day(ms);
+        CALENDAR_DAY_COMPUTATIONS.with(|count| count.set(count.get() + 1));
+        cache.insert(key, day);
+        day
+    })
+}
+
+/// How many times [`calendar_day_cached`] has actually called [`calendar_day`] rather than
+/// serving a cached result.
+///
+/// Test-only visibility into the cache: the thing it saves — a `js_sys::Date` allocation
+/// and a WASM↔JS crossing — does not exist off the browser to count directly, so this is
+/// how a native test proves the cache is doing its job.
+pub fn calendar_day_computations() -> u64 {
+    CALENDAR_DAY_COMPUTATIONS.with(Cell::get)
+}
+
 /// The wall clock, in epoch ms: what a note's `created` is stamped with. Not the engine's
 /// frame clock, which is the page's `performance.now()`.
 pub fn wall_clock_ms() -> f64 {
@@ -331,9 +412,9 @@ pub fn wall_clock_ms() -> f64 {
 /// Fixed English, as the oracle's is.
 pub fn sticky_date_label(created: Option<f64>, short: bool, now: f64) -> Option<String> {
     let created = created.filter(|ms| ms.is_finite() && ms.abs() <= MAX_DATE_MS)?;
-    let (year, month0, day) = calendar_day(created);
+    let (year, month0, day) = calendar_day_cached(created);
     let label = format!("{day} {}", MONTHS[month0]);
-    if short || year == calendar_day(now).0 {
+    if short || year == calendar_day_cached(now).0 {
         Some(label)
     } else {
         Some(format!("{label} {year}"))
@@ -551,5 +632,37 @@ mod tests {
         assert_eq!(calendar_day(1_788_868_800_000.0), (2026, 8, 8));
         // 1969-12-31T12:00:00Z
         assert_eq!(calendar_day(-43_200_000.0), (1969, 11, 31));
+    }
+
+    /// `calendar_day_cached` is what stands between a sticky note's footer and a
+    /// `js_sys::Date` allocation per note per paint (`wasm/paint.rs` › `paint_sticky`).
+    /// Off the browser that allocation does not exist to count, so this counts the one
+    /// thing that stands in for it: how many times the real, uncached `calendar_day` ran.
+    #[test]
+    fn a_repeated_millisecond_computes_once() {
+        // A cache shared across every test on this thread: start from wherever it is.
+        let before = calendar_day_computations();
+
+        let first = calendar_day_cached(1_800_000_000_123.0);
+        assert_eq!(
+            calendar_day_computations(),
+            before + 1,
+            "a millisecond never seen before must compute"
+        );
+
+        // The same note painted again — a pan, a zoom, an unrelated element redrawing —
+        // must not compute a second time.
+        let second = calendar_day_cached(1_800_000_000_123.0);
+        assert_eq!(second, first);
+        assert_eq!(
+            calendar_day_computations(),
+            before + 1,
+            "the same millisecond again must be a lookup, not a second allocation"
+        );
+
+        // A note with a different `created`, or "now" on a later day, is a different key
+        // and does compute.
+        calendar_day_cached(1_800_000_001_123.0);
+        assert_eq!(calendar_day_computations(), before + 2);
     }
 }
