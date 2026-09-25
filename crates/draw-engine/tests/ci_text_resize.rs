@@ -9,6 +9,9 @@
 //! - Its left and right sides fix its width and wrap it there from what was typed
 //!   (`:360-408`), and it stops at the width of a space plus the padding — here also at
 //!   its widest glyph.
+//! - A shape with a label cannot be made smaller than one line of it (`:778-789`), and
+//!   the label is wrapped again on every move of the drag, the shape growing back from
+//!   the side the drag holds (`handleBindTextResize`).
 //!
 //! Every drag goes in several steps: a resize has to be measured from where it started,
 //! and one step cannot tell.
@@ -59,6 +62,22 @@ fn drag(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: u32, s
         );
     }
     engine.end_pointer();
+}
+
+/// A shape with a label typed into it, the way a person makes one, and the shape
+/// selected. Returns the engine, the shape's id and the label's.
+fn labelled(shape: DrawElement, text: &str) -> (DrawEngine, String, String) {
+    let centre = (shape.x + shape.width / 2.0, shape.y + shape.height / 2.0);
+    let shape_id = shape.id.clone();
+    let mut engine = engine_with_measure(vec![shape]);
+    engine.handle_double_click(centre.0, centre.1);
+    let request = engine
+        .drain_events()
+        .text_edit
+        .expect("a double click on a shape opens its label");
+    engine.set_element_text(&request.id, text);
+    engine.select(vec![shape_id.clone()]);
+    (engine, shape_id, request.id)
 }
 
 /// The handle ring sits 8px out at 1:1 (4px frame margin + half an 8px handle), and a
@@ -236,5 +255,156 @@ mod free_text {
         assert_eq!(after.text.as_deref(), Some("W\nW\nW"));
         assert_close(after.width, 60.0);
         assert_close(after.height, 75.0);
+    }
+}
+
+mod labels {
+    use super::*;
+
+    /// `handleBindTextResize` on every move: narrowed by its east handle, the shape's
+    /// label is wrapped at its new room while the pointer is still down, and the shape
+    /// grows down to hold it — from its top, which the drag holds.
+    #[test]
+    fn narrowing_a_labelled_shape_wraps_its_label_as_the_drag_goes() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        assert_eq!(element(&engine, &label_id).text.as_deref(), Some(WORDS));
+
+        let grab = (400.0 + HANDLE, 125.0);
+        engine.begin_pointer(grab.0, grab.1, false, false);
+        for step in 1..=4 {
+            engine.move_pointer(grab.0 - 50.0 * f64::from(step), grab.1, false, false);
+        }
+        // Mid-drag: 100 wide, room for 90. "world foo" is 94.
+        let label = element(&engine, &label_id);
+        let shape = element(&engine, &shape_id);
+        assert_eq!(label.text.as_deref(), Some("hello\nworld\nfoo bar"));
+        assert_close(shape.width, 100.0);
+        assert_close(shape.height, 75.0 + 10.0);
+        assert_close(shape.y, 100.0);
+        engine.end_pointer();
+
+        let label = element(&engine, &label_id);
+        assert_eq!(label.text.as_deref(), Some("hello\nworld\nfoo bar"));
+        assert_eq!(label.original_text.as_deref(), Some(WORDS));
+        assert!(label.x >= shape.x && label.x + label.width <= shape.x + shape.width);
+        assert!(label.y >= shape.y && label.y + label.height <= shape.y + shape.height);
+    }
+
+    /// Widened again, the label goes back onto one line: it is wrapped from what was
+    /// typed.
+    #[test]
+    fn widening_it_again_unwraps_the_label() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        let grab = (400.0 + HANDLE, 125.0);
+        drag(&mut engine, grab, (grab.0 - 200.0, grab.1), 4, false);
+        let narrow = element(&engine, &shape_id);
+
+        let grab = (200.0 + HANDLE, narrow.y + narrow.height / 2.0);
+        drag(&mut engine, grab, (grab.0 + 300.0, grab.1), 4, false);
+
+        assert_eq!(element(&engine, &label_id).text.as_deref(), Some(WORDS));
+    }
+
+    /// `getApproxMinLineWidth` (`textMeasurements.ts@1118751f:32-44`): the widest char
+    /// and the padding either side — 14 + 10 — however far the side is pulled.
+    #[test]
+    fn a_labelled_shape_stops_at_one_char_of_its_label() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+
+        let grab = (400.0 + HANDLE, 125.0);
+        drag(&mut engine, grab, (110.0 + HANDLE, grab.1), 6, false);
+
+        let shape = element(&engine, &shape_id);
+        let label = element(&engine, &label_id);
+        assert_close(shape.width, 24.0);
+        for line in label.text.as_deref().unwrap().split('\n') {
+            assert!(measure_text(line, 20.0).0 <= 14.0, "{line:?} overflows");
+        }
+        assert!(label.y + label.height <= shape.y + shape.height);
+    }
+
+    /// `getApproxMinLineHeight` (`:99-104`): a line of the label and the padding — 25 + 10.
+    #[test]
+    fn a_labelled_shape_stops_at_one_line_of_its_label() {
+        let (mut engine, shape_id, _) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+
+        let grab = (250.0, 150.0 + HANDLE);
+        drag(&mut engine, grab, (grab.0, 110.0 + HANDLE), 4, false);
+
+        let shape = element(&engine, &shape_id);
+        assert_close(shape.height, 35.0);
+        assert_close(shape.y, 100.0);
+    }
+
+    /// A north-west handle holds the bottom-right, so a label that needs more lines
+    /// grows the shape upward (`handleBindTextResize`, `:209-229`).
+    #[test]
+    fn a_north_handle_grows_the_shape_from_its_bottom() {
+        let (mut engine, shape_id, _) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+
+        let grab = (100.0 - HANDLE, 100.0 - HANDLE);
+        drag(&mut engine, grab, (grab.0 + 200.0, grab.1), 4, false);
+
+        let shape = element(&engine, &shape_id);
+        assert_close(shape.width, 100.0);
+        assert_close(shape.x, 300.0);
+        assert_close(shape.height, 85.0);
+        assert_close(shape.y + shape.height, 150.0);
+    }
+
+    /// A label told not to wrap keeps its lines, and its shape cannot be made narrower
+    /// than they are (DECISIONS: `wrap == false`, the shape grows in width).
+    #[test]
+    fn an_unwrapped_label_keeps_its_lines() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        engine.set_label_wrap(false);
+        assert_eq!(element(&engine, &label_id).wrap, Some(false));
+
+        let grab = (400.0 + HANDLE, 125.0);
+        drag(&mut engine, grab, (grab.0 - 200.0, grab.1), 4, false);
+
+        let label = element(&engine, &label_id);
+        let shape = element(&engine, &shape_id);
+        assert_eq!(label.text.as_deref(), Some(WORDS));
+        assert_close(shape.width, 194.0 + 10.0);
+        assert_close(shape.x, 100.0);
+    }
+
+    /// With Shift the shape keeps its proportions, and its label's font scales with the
+    /// room it has (`resizeSingleElement`, `:815-833`): 20 × 590 / 290.
+    #[test]
+    fn shift_scales_the_labels_font_with_the_shape() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+
+        let grab = (400.0 + HANDLE, 150.0 + HANDLE);
+        drag(&mut engine, grab, (grab.0 + 300.0, grab.1 + 50.0), 4, true);
+
+        let shape = element(&engine, &shape_id);
+        let label = element(&engine, &label_id);
+        assert_close(shape.width, 600.0);
+        assert_close(shape.height, 100.0);
+        assert_close(label.font_size.unwrap(), 20.0 * 590.0 / 290.0);
+    }
+
+    /// A drag is one edit: nothing is stamped while it goes, and the shape and the label
+    /// it re-wrapped are stamped once, on release.
+    #[test]
+    fn a_drag_stamps_the_shape_and_its_label_once() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        let version = |engine: &DrawEngine, id: &str| element(engine, id).version;
+        let (shape_before, label_before) =
+            (version(&engine, &shape_id), version(&engine, &label_id));
+
+        let grab = (400.0 + HANDLE, 125.0);
+        engine.begin_pointer(grab.0, grab.1, false, false);
+        for step in 1..=5 {
+            engine.move_pointer(grab.0 - 40.0 * f64::from(step), grab.1, false, false);
+            assert_eq!(version(&engine, &shape_id), shape_before);
+            assert_eq!(version(&engine, &label_id), label_before);
+        }
+        engine.end_pointer();
+
+        assert_eq!(version(&engine, &shape_id), shape_before + 1);
+        assert_eq!(version(&engine, &label_id), label_before + 1);
     }
 }

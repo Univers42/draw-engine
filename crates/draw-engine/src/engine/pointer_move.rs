@@ -4,7 +4,7 @@ use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
 use crate::scene::{scene_bounds, DrawElement, DrawElementType};
-use crate::selection::{resize_element, rotate_element, HandleKind};
+use crate::selection::{resize_element_within, rotate_element, HandleKind};
 
 impl DrawEngine {
     /// `invert_snap` is the host's Ctrl/Cmd: it flips object snapping for this move, on
@@ -626,6 +626,7 @@ impl DrawEngine {
             self.resize_text(element, world, square, handle, &origin);
             return;
         }
+        let latest = element.clone();
         // Measured from where the element was when the drag started, so the anchor is
         // fixed for the whole gesture. Reading the live element instead let the anchor
         // follow the pointer the moment the element turned through it.
@@ -638,12 +639,27 @@ impl DrawEngine {
         // other way round. A photograph stretched by accident is a mistake you often do
         // not notice until much later.
         let lock = crate::scene::locks_aspect_ratio(&from, square);
-        let geom = resize_element(
+        let label = element
+            .bound_text_id
+            .as_deref()
+            .and_then(|label| self.scene.get(label))
+            .filter(|label| !label.is_deleted && label.kind == DrawElementType::Text)
+            .cloned();
+        // A shape holding a label is never made smaller than one line of it
+        // (`resizeSingleElement`, `resizeElements.ts@1118751f:778-803`) — unless it keeps
+        // its proportions, when the label's font scales instead.
+        let min_size = match &label {
+            Some(label) if !lock => {
+                self.with_measure(|measure| crate::text::layout::min_container_size(label, measure))
+            }
+            _ => (1.0, 1.0),
+        };
+        let geom = resize_element_within(
             &from,
             handle,
             world.x,
             world.y,
-            1.0,
+            min_size,
             if lock { ratio } else { None },
         );
         element.x = geom.x;
@@ -662,9 +678,69 @@ impl DrawEngine {
             set_anchor(&mut element, End::Start, None);
             set_anchor(&mut element, End::End, None);
         }
+        let Some(mut label) = label else {
+            self.scene.put(element);
+            self.apply_bindings();
+            self.request_draw();
+            return;
+        };
+        if lock {
+            // The label's font follows its room (`:815-833`), or an arrow's width
+            // (`:904-915`), from where the last move left them.
+            let size = crate::text::layout::font_size_of(&label);
+            let scale = if crate::scene::is_linear_element(&element) {
+                element.width.abs() / latest.width.abs()
+            } else {
+                crate::text::layout::bound_text_max_width(&element, size)
+                    / crate::text::layout::bound_text_max_width(&latest, size)
+            };
+            let next = size * scale;
+            if !(next.is_finite() && next >= crate::selection::MIN_FONT_SIZE) {
+                return;
+            }
+            label.font_size = Some(next);
+        }
+        let flips = (
+            (geom.width < 0.0) != (origin.width < 0.0),
+            (geom.height < 0.0) != (origin.height < 0.0),
+        );
         self.scene.put(element);
+        self.relay_resized_label(label, handle, flips);
         self.apply_bindings();
         self.request_draw();
+    }
+
+    /// `label` laid out again in the shape a resize just changed, and the shape grown back
+    /// to hold it from the side the drag holds (`handleBindTextResize`,
+    /// `textElement.ts@1118751f:155-247`): a north handle holds the bottom, the others the
+    /// top — and the other way round once the drag has turned the shape through its
+    /// anchor. A label too wide for its room widens the shape the same way from the side a
+    /// west handle holds.
+    fn relay_resized_label(&mut self, label: DrawElement, handle: HandleKind, flips: (bool, bool)) {
+        let Some(container) = label
+            .container_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|container| !container.is_deleted)
+            .cloned()
+        else {
+            return;
+        };
+        let north = matches!(handle, HandleKind::N | HandleKind::Ne | HandleKind::Nw);
+        let west = matches!(handle, HandleKind::W | HandleKind::Nw | HandleKind::Sw);
+        let keep = (
+            if west != flips.0 { 1.0 } else { 0.0 },
+            if north != flips.1 { 1.0 } else { 0.0 },
+        );
+        let laid = self.with_measure(|measure| {
+            crate::text::layout::bound_text_resize(&label, &container, keep, measure)
+        });
+        if let Some(grown) = laid.container {
+            self.scene.put(grown);
+        }
+        if self.scene.get(&laid.text.id) != Some(&laid.text) {
+            self.scene.put(laid.text);
+        }
     }
 
     /// A free text resized (`resizeSingleTextElement`, `resizeElements.ts@1118751f:

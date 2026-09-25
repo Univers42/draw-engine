@@ -32,6 +32,22 @@ pub fn resize_element(
     min_size: f64,
     aspect: Option<f64>,
 ) -> Geometry {
+    resize_element_within(element, handle, wx, wy, (min_size, min_size), aspect)
+}
+
+/// [`resize_element`] with a minimum per axis, `(width, height)`: the smallest a shape
+/// holding a label may become (`resizeSingleElement`, `resizeElements.ts@1118751f:778-803`).
+/// A minimum bounds the size, not the side the pointer is on, so the shape still turns
+/// through its anchor.
+pub fn resize_element_within(
+    element: &DrawElement,
+    handle: HandleKind,
+    wx: f64,
+    wy: f64,
+    min_size: (f64, f64),
+    aspect: Option<f64>,
+) -> Geometry {
+    let (min_width, min_height) = min_size;
     if handle == HandleKind::Rotate {
         return Geometry {
             x: element.x,
@@ -84,20 +100,20 @@ pub fn resize_element(
     let reach_y = sign_y * rel.y;
 
     let mut width = if controls_x {
-        reach_x.abs().max(min_size)
+        reach_x.abs().max(min_width)
     } else {
         element.width.abs()
     };
     let mut height = if controls_y {
-        reach_y.abs().max(min_size)
+        reach_y.abs().max(min_height)
     } else {
         element.height.abs()
     };
     if let Some(aspect) = aspect.filter(|value| value.is_finite() && *value > 0.0) {
         if !controls_y || (controls_x && width / aspect >= height) {
-            height = (width / aspect).max(min_size);
+            height = (width / aspect).max(min_height);
         } else {
-            width = (height * aspect).max(min_size);
+            width = (height * aspect).max(min_width);
         }
     }
 
