@@ -76,7 +76,7 @@ impl DrawEngine {
         // into a label went back to the old ones on every screen.
         let taken: Vec<String> = self
             .style_preview
-            .iter()
+            .keys()
             .filter(|id| self.held.contains_key(*id))
             .cloned()
             .collect();

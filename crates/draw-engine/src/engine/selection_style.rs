@@ -205,6 +205,21 @@ impl DrawEngine {
         self.style_revision = self.style_revision.wrapping_add(1);
     }
 
+    /// Ends a style write: one step of undo — or, while a text is being typed, part of
+    /// that edit. The session's commit records the typing and every style written
+    /// meanwhile as one step, and nothing is stamped or sent before it; the host's editor
+    /// reads the text's new look back at once, through the revision this moves
+    /// (`text_session.rs`).
+    pub(super) fn commit_style(&mut self) {
+        if self.text_session.is_none() {
+            self.push_history();
+            return;
+        }
+        // What a preview changed is the edit's now, as a commit would have made it.
+        self.style_preview.clear();
+        self.touch_style();
+    }
+
     /// Changes whenever [`Self::selection_style`] may have. See the module comment.
     pub fn style_revision(&self) -> u32 {
         self.style_revision
@@ -506,7 +521,7 @@ impl DrawEngine {
         // The next element takes the style too, as the oracle's `currentItem*` do
         // (`actionProperties.tsx@1118751f:622`, `:971`; `colorTargets.ts@1118751f:178-192`).
         self.next_style = super::merge_style_patch(&self.next_style, &patch);
-        self.push_history();
+        self.commit_style();
         self.request_draw();
     }
 
@@ -520,7 +535,7 @@ impl DrawEngine {
         for (element, patch) in self.style_targets(&patch) {
             let id = element.id.clone();
             if self.put_styled(element, &patch) {
-                self.style_preview.insert(id);
+                self.style_preview.entry(id).or_insert(None);
                 changed = true;
             }
         }
@@ -674,7 +689,7 @@ impl DrawEngine {
             }
         }
         self.apply_bindings();
-        self.push_history();
+        self.commit_style();
         self.request_draw();
     }
 

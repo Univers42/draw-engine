@@ -175,6 +175,148 @@ mod one_step {
     }
 }
 
+/// A style written while a text is typed — a font size chord, a family, any panel row —
+/// is written into the text being typed and read back by its editor at once, and stays
+/// with the edit: nothing stamped or sent before the commit, which records it all as one
+/// step (DECISIONS, wave 3).
+mod style_while_typing {
+    use super::*;
+
+    /// Nothing leaves the engine and nothing is stamped: the text is as it was committed.
+    fn assert_unsent(engine: &mut DrawEngine, id: &str, committed: Option<&DrawElement>) {
+        let events = engine.drain_events();
+        assert!(
+            events.scene_delta.is_none() && events.scene_json.is_none(),
+            "nothing is sent before the commit"
+        );
+        if let Some(committed) = committed {
+            let now = element(engine, id);
+            assert_eq!(
+                (now.version, now.version_nonce),
+                (committed.version, committed.version_nonce),
+                "nothing is stamped before the commit"
+            );
+        }
+    }
+
+    /// The size stepped twice, a family picked and a colour set: each lands on the text
+    /// being typed and in the editor's layout, width included.
+    fn restyle(engine: &mut DrawEngine, id: &str, committed: Option<&DrawElement>) {
+        let before = element(engine, id);
+        for size in [22.0, 24.0] {
+            engine.step_font_size(true);
+            assert_unsent(engine, id, committed);
+            let now = element(engine, id);
+            let layout = engine.text_edit_layout().expect("still open");
+            assert_eq!(now.font_size, Some(size));
+            assert_eq!((layout.font_size, layout.width), (size, now.width));
+        }
+        assert!(element(engine, id).width > before.width, "wider as it grew");
+        engine.set_font_family(8);
+        assert_unsent(engine, id, committed);
+        let layout = engine.text_edit_layout().expect("still open");
+        assert_eq!(
+            (layout.font_family, layout.width),
+            (8, element(engine, id).width)
+        );
+        engine.apply_style(DrawElementStylePatch {
+            stroke_color: Some("#e03131".into()),
+            ..Default::default()
+        });
+        assert_unsent(engine, id, committed);
+        assert_eq!(
+            engine.text_edit_layout().expect("still open").color,
+            "#e03131"
+        );
+        assert!(engine.text_edit_session().is_some(), "the edit carries on");
+    }
+
+    #[test]
+    fn a_new_text_restyled_as_it_is_typed_is_one_step() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.update_text_edit("hello");
+        restyle(&mut engine, &id, None);
+        engine.update_text_edit("hello there");
+        engine.commit_text_edit("hello there", true);
+        let made = element(&engine, &id);
+        assert_eq!(
+            (made.font_size, made.font_family, made.stroke_color.as_str()),
+            (Some(24.0), Some(8), "#e03131")
+        );
+        engine.undo();
+        assert!(
+            find(&engine, &id).is_none_or(|el| el.is_deleted),
+            "one undo takes it all away"
+        );
+    }
+
+    #[test]
+    fn an_existing_text_restyled_as_it_is_typed_is_one_step() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.commit_text_edit("mine", true);
+        let committed = element(&engine, &id);
+        engine.select(vec![id.clone()]);
+        assert!(engine.edit_selected_text());
+        engine.update_text_edit("mine, more");
+        engine.drain_events();
+        restyle(&mut engine, &id, Some(&committed));
+        engine.commit_text_edit("mine, more", true);
+        assert!(element(&engine, &id).version > committed.version);
+        engine.undo();
+        let back = element(&engine, &id);
+        assert_eq!(back.original_text.as_deref(), Some("mine"));
+        assert_eq!(
+            (back.font_size, back.font_family, back.stroke_color),
+            (
+                committed.font_size,
+                committed.font_family,
+                committed.stroke_color
+            ),
+            "one undo puts back the words and the look"
+        );
+    }
+
+    /// The font picker's hover shows a family on the text being typed, and leaving it
+    /// gives back the text as the hover found it — the words typed so far and the size
+    /// stepped meanwhile — as the oracle's picker caches the editing text when it opens
+    /// (`actionProperties.tsx@1118751f:1484-1499`). Given back to what was committed, the
+    /// words went and the text was no longer the edit's: a peer's copy got in.
+    #[test]
+    fn a_family_hovered_while_typing_gives_back_what_was_typed() {
+        for existing in [false, true] {
+            let mut engine = engine_with_measure(Vec::new());
+            let id = open_at(&mut engine, (300.0, 200.0));
+            if existing {
+                engine.commit_text_edit("mine", true);
+                engine.select(vec![id.clone()]);
+                assert!(engine.edit_selected_text());
+            }
+            engine.update_text_edit("mine, more");
+            engine.step_font_size(true);
+            let typed = element(&engine, &id);
+            engine.preview_font_family(Some(6));
+            assert_eq!(element(&engine, &id).font_family, Some(6));
+            assert_eq!(engine.text_edit_layout().expect("open").font_family, 6);
+            engine.preview_font_family(Some(8));
+            engine.preview_font_family(None);
+            assert_eq!(element(&engine, &id), typed, "existing: {existing}");
+
+            let mut theirs = typed.clone();
+            theirs.version += 5;
+            theirs.text = Some("theirs".into());
+            theirs.original_text = Some("theirs".into());
+            remote(&mut engine, &theirs);
+            assert_eq!(
+                element(&engine, &id).original_text.as_deref(),
+                Some("mine, more"),
+                "still the edit's, existing: {existing}"
+            );
+        }
+    }
+}
+
 /// The editor is the only copy of the text being typed (`Renderer.ts@1118751f:259-267`),
 /// and what moves with it is live.
 mod painting {
@@ -532,7 +674,7 @@ mod peers {
     }
 
     /// Their copy is refused until the commit, which stamps above it — past a style set
-    /// from the panel meanwhile, which commits what was typed so far.
+    /// from the panel meanwhile, which stays with the edit.
     #[test]
     fn a_peers_copy_is_refused_until_the_commit() {
         let mut engine = engine_with_measure(Vec::new());

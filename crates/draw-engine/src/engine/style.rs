@@ -102,7 +102,7 @@ impl DrawEngine {
         for element in changed {
             self.scene.put(element);
         }
-        self.push_history();
+        self.commit_style();
         self.request_draw();
     }
 
@@ -130,7 +130,7 @@ impl DrawEngine {
             self.scene.put(arrow);
         }
         self.apply_bindings();
-        self.push_history();
+        self.commit_style();
         self.request_draw();
     }
 
@@ -199,10 +199,9 @@ impl DrawEngine {
     /// (`offsetElementAfterFontResize`); otherwise a free text stays where it is, as the
     /// oracle's family and alignment changes leave it.
     ///
-    /// A text still being typed — made since the last commit, which only its editor
-    /// does — is not committed here: closing the editor makes it, in one step, and
-    /// committing it now would leave an empty text for undo to bring back. The font size
-    /// chords are what reach one ([`Self::step_font_size`]).
+    /// A text being typed is written here too, and its editor closing commits it
+    /// ([`Self::commit_style`]): committed now, a new one would leave an empty text for
+    /// undo to bring back.
     fn relayout_selected_texts(
         &mut self,
         change: impl Fn(&mut DrawElement),
@@ -212,9 +211,6 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
-        let drafting = texts
-            .iter()
-            .all(|text| self.scene.created_since_commit(&text.id));
         for prev in texts {
             let mut next = prev.clone();
             change(&mut next);
@@ -228,11 +224,7 @@ impl DrawEngine {
             self.put_laid(laid);
         }
         self.apply_bindings();
-        if drafting {
-            self.touch_style();
-        } else {
-            self.push_history();
-        }
+        self.commit_style();
         self.request_draw();
     }
 
@@ -264,11 +256,20 @@ impl DrawEngine {
     /// characters is not previewed. What a peer takes meanwhile is given back to them
     /// (`peers.rs`), as for [`Self::preview_style`].
     ///
+    /// A text being typed, and its shape, are given back as the first hover found them —
+    /// what was typed, and a size stepped meanwhile — as the oracle's picker caches the
+    /// editing text when it opens (`actionProperties.tsx@1118751f:1484-1499`), rather than
+    /// as they were committed.
+    ///
     /// The host loads the face first, as for [`Self::set_font_family`].
     pub fn preview_font_family(&mut self, family: Option<u8>) {
-        let previewed: Vec<String> = self.style_preview.drain().collect();
-        for id in &previewed {
-            self.drop_local_change(id);
+        let previewed: Vec<(String, Option<DrawElement>)> = self.style_preview.drain().collect();
+        let gave_back = !previewed.is_empty();
+        for (id, found) in previewed {
+            match found {
+                Some(found) => self.scene.put(found),
+                None => self.drop_local_change(&id),
+            }
         }
         let line_height = family
             .and_then(crate::text::font::family)
@@ -286,20 +287,29 @@ impl DrawEngine {
                     next.line_height = Some(line_height);
                     let laid = self.laid_out(&next);
                     if let Some(container) = laid.container {
-                        self.style_preview.insert(container.id.clone());
-                        self.scene.put(container);
+                        self.put_previewed(container);
                     }
                     if laid.text != prev {
-                        self.style_preview.insert(prev.id.clone());
-                        self.scene.put(laid.text);
+                        self.put_previewed(laid.text);
                     }
                 }
             }
         }
-        if !previewed.is_empty() || !self.style_preview.is_empty() {
+        if gave_back || !self.style_preview.is_empty() {
             self.touch_style();
             self.request_draw();
         }
+    }
+
+    /// Puts what a font preview changed, remembering what it found when that was already
+    /// a change of ours — the text being typed and its shape — to give it back as found.
+    fn put_previewed(&mut self, element: DrawElement) {
+        let found = self
+            .scene
+            .committed(&element.id)
+            .and_then(|_| self.scene.get(&element.id).cloned());
+        self.style_preview.insert(element.id.clone(), found);
+        self.scene.put(element);
     }
 
     /// The families the board's texts are drawn in, each once — the font picker's "In
@@ -362,7 +372,7 @@ impl DrawEngine {
             self.scene.put(laid.text);
         }
         self.apply_bindings();
-        self.push_history();
+        self.commit_style();
         self.request_draw();
     }
 

@@ -239,9 +239,11 @@ pub struct DrawEngine {
     style_revision: u32,
     /// What Copy styles took: an element, and the label it carried. See `selection_style.rs`.
     copied_styles: Option<Vec<DrawElement>>,
-    /// What the style preview in progress — the opacity slider mid-drag — has changed and
-    /// not committed. Emptied by the commit. See `selection_style.rs` and `peers.rs`.
-    style_preview: HashSet<String>,
+    /// What the style preview in progress — the opacity slider mid-drag, a font hovered —
+    /// has changed and not committed, with what a font preview found when that was already
+    /// a change of ours (`style.rs` › `preview_font_family`). Emptied by the commit. See
+    /// `selection_style.rs` and `peers.rs`.
+    style_preview: HashMap<String, Option<DrawElement>>,
     /// The text open in the host's editor. See `text_session.rs`.
     text_session: Option<TextEditSession>,
 }
@@ -311,7 +313,7 @@ impl DrawEngine {
             held: HashMap::new(),
             style_revision: 0,
             copied_styles: None,
-            style_preview: HashSet::new(),
+            style_preview: HashMap::new(),
             text_session: None,
         }
     }

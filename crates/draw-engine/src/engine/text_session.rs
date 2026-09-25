@@ -235,9 +235,10 @@ impl DrawEngine {
         }
     }
 
-    /// Marks the open text changed again after a step taken while it is typed — a style
-    /// set from the panel commits it as typed so far — so a peer's copy of it is still
-    /// refused until the edit ends.
+    /// Marks the open text changed again after a step taken while it is typed — a text
+    /// wrapped in a shape from the panel commits it as typed so far; a style does not
+    /// ([`Self::commit_style`]) — so a peer's copy of it is still refused until the edit
+    /// ends.
     ///
     /// A step that deleted it — `delete_selection` from a host that ends an edit the way
     /// it did before the session — ends the session instead: nothing is left to type
