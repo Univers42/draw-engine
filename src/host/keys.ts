@@ -4,7 +4,7 @@
  */
 
 import { toolForChord } from "../tools";
-import type { DrawTool, FlipAxis, ZOrderMode } from "../types";
+import type { DrawTool, FlipAxis, FlowchartDirection, FlowchartShape, ZOrderMode } from "../types";
 import type { HostCallbacks } from "./types";
 
 export type KeyResult = "prevent" | "pass";
@@ -48,15 +48,38 @@ export interface KeyEngine {
   activateTool(tool: DrawTool): void;
   linearInProgress(): boolean;
   finishLinear(): void;
+  flowchartCreate(direction: FlowchartDirection): void;
+  flowchartSetShape(shape: FlowchartShape): void;
+  flowchartCommit(): void;
+  flowchartCancel(): void;
+  isCreatingFlowchart(): boolean;
+  flowchartNavigate(direction: FlowchartDirection): string | null;
+  flowchartNavigationEnd(): void;
 }
 
 export interface KeySession {
   engine: KeyEngine;
-  callbacks: Pick<HostCallbacks, "onToolLockChange">;
+  callbacks: Pick<HostCallbacks, "onToolLockChange" | "onFlowchartReveal" | "onFlowchartCreatingChange">;
   spaceHeld: boolean;
 }
 
 const BRACKET_KEYS: Partial<Record<string, "]" | "[">> = { BracketRight: "]", BracketLeft: "[" };
+
+const FLOWCHART_ARROWS: Partial<Record<string, FlowchartDirection>> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+};
+
+// While Ctrl/Cmd is held for creation: chooses the pending nodes' shape (an extra the
+// oracle does not have). Plain 1/2/3 already select tools (`tools.ts`), so this only
+// fires with the modifier down, and only mid-creation — it never steals the plain chord.
+const FLOWCHART_SHAPE_KEYS: Partial<Record<string, FlowchartShape>> = {
+  "1": "rectangle",
+  "2": "diamond",
+  "3": "ellipse",
+};
 
 function handleModChords(session: KeySession, event: KeyEvent, key: string): boolean {
   const { engine } = session;
@@ -192,9 +215,12 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
 }
 
 export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult {
+  const { engine } = session;
   const mod = event.metaKey || event.ctrlKey;
   if (event.key === "Escape") {
-    session.engine.cancelPointer();
+    engine.cancelPointer();
+    engine.flowchartCancel();
+    session.callbacks.onFlowchartCreatingChange?.(false);
     return "pass";
   }
   // Enter ends a path being placed, the way Excalidraw's does — both keys run their
@@ -204,8 +230,54 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
     session.engine.finishLinear();
     return "prevent";
   }
+  const flowchartDirection = FLOWCHART_ARROWS[event.key];
+  if (flowchartDirection) {
+    // Ctrl/Cmd+Arrow grows the flowchart; Alt+Arrow walks it — same as the oracle's
+    // `App.flowchart.ts@1118751f`, checked here rather than as a `mod`/`handleModChords`
+    // chord because it must also fire held-and-repeated, and Alt alone never counts as
+    // `mod` for anything else this dispatcher does.
+    if (mod) {
+      // The engine only eases the camera at commit/navigate (`DrawEngine::reveal`), not
+      // while a cluster is still being previewed — a repeat press can grow it off screen
+      // before Ctrl is ever released, so the host reveals the pending preview itself.
+      engine.flowchartCreate(flowchartDirection);
+      session.callbacks.onFlowchartReveal?.();
+      session.callbacks.onFlowchartCreatingChange?.(true);
+      return "prevent";
+    }
+    if (event.altKey) {
+      // No host-side reveal here: `flowchart_navigate` eases the camera itself
+      // (`engine/flowchart.rs`, `DrawEngine::reveal`) — a second, host-driven pan on top
+      // of the engine's own in-flight animation would fight it every frame instead of
+      // cooperating.
+      engine.flowchartNavigate(flowchartDirection);
+      return "prevent";
+    }
+  }
+  const flowchartShape = FLOWCHART_SHAPE_KEYS[event.key];
+  if (mod && flowchartShape && engine.isCreatingFlowchart()) {
+    engine.flowchartSetShape(flowchartShape);
+    return "prevent";
+  }
   if (mod && handleModChords(session, event, event.key.toLowerCase())) return "prevent";
   if (mod || event.altKey) return "pass";
   if (handlePlainKeys(session, event)) return "prevent";
   return "pass";
+}
+
+/**
+ * Keyup has exactly one job today: finalizing the flowchart gesture by looking at which
+ * modifiers are *still* down, not which key was released — the oracle's own approach
+ * (`App.flowchart.ts@1118751f:handleKeyEvent`, the keyup half), so a fast Ctrl-then-Arrow-
+ * release ordering still commits. Both calls are no-ops when nothing is pending/exploring.
+ */
+export function dispatchKeyUp(session: KeySession, event: KeyEvent): void {
+  const { engine } = session;
+  if (!event.altKey) engine.flowchartNavigationEnd();
+  if (!(event.metaKey || event.ctrlKey)) {
+    engine.flowchartCommit();
+    // Unconditional, like the commit call above: a no-op commit leaves isCreatingFlowchart
+    // already false, so telling the host "not creating" again is harmless.
+    session.callbacks.onFlowchartCreatingChange?.(false);
+  }
 }

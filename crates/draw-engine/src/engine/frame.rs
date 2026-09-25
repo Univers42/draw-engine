@@ -320,6 +320,17 @@ impl DrawEngine {
                 }
             }
         }
+        // The flowchart cluster being previewed while Ctrl/Cmd is held: not in the scene
+        // either, until the commit adds it. See `engine/flowchart.rs`.
+        if let Some(creator) = &self.flowchart_creator {
+            for element in &creator.pending {
+                if !element.is_deleted
+                    && crate::render::bounds::intersects_viewport(element, &visible)
+                {
+                    elements.push(element);
+                }
+            }
+        }
         let peer_marks = self
             .peers()
             .iter()

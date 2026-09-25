@@ -44,6 +44,18 @@ export interface DrawCanvasProps {
   onContextMenu?: (point: { x: number; y: number }, kind: "element" | "canvas") => void;
   /** The keep-tool padlock was toggled (Q) — hosts mirror it in the toolbar. */
   onToolLockChange?: (locked: boolean) => void;
+  /**
+   * A flowchart cluster still being previewed (Ctrl/Cmd held) may have grown off-screen —
+   * the host scrolls it into view itself (a short ease, not a jump). Not fired for
+   * Alt+Arrow navigation or for the commit: `flowchart_navigate`/`flowchart_commit` ease
+   * the camera in the engine itself (`DrawEngine::reveal`), and a host-driven pan on top
+   * of that would fight its animation rather than cooperate with it. No payload: the host
+   * already holds the engine and reads `pendingFlowchartElements()` itself.
+   */
+  onFlowchartReveal?: () => void;
+  /** A flowchart cluster started or stopped being previewed (Ctrl/Cmd down vs. released,
+   *  or Escape) — hosts use it to show/hide the shape-chooser strip. */
+  onFlowchartCreatingChange?: (creating: boolean) => void;
   /** Pointer down on canvas. Return true to intercept and cancel engine pointer handling. */
   onPointerDown?: (point: { x: number; y: number }, event: PointerEvent) => boolean | void;
   /** Pointer move on canvas. */
@@ -63,6 +75,8 @@ export type HostCallbacks = Pick<
   | "onNotice"
   | "onContextMenu"
   | "onToolLockChange"
+  | "onFlowchartReveal"
+  | "onFlowchartCreatingChange"
   | "onPointerDown"
   | "onPointerMove"
   | "onPointerUp"

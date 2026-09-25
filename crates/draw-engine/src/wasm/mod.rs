@@ -10,6 +10,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use crate::engine::{DrawEngine, Painter};
 
 mod edit_api;
+mod flowchart_api;
 mod input;
 mod paint;
 mod vectorize_api;
