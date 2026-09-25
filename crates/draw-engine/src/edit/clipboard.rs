@@ -4,7 +4,7 @@ use crate::edit::group::{is_in_group, selected_group_for, with_labels};
 use crate::export::json::{elements_from_json, scene_to_json};
 use crate::scene::binding::{anchor, set_anchor, Anchor, End};
 use crate::scene::element::{new_element_id, DrawElement};
-use crate::scene::{frame_children, is_frame};
+use crate::scene::is_frame;
 
 pub fn expand_for_copy(elements: &[DrawElement], ids: &HashSet<String>) -> Vec<DrawElement> {
     expand_for_copy_among(elements.iter(), ids)
@@ -21,41 +21,34 @@ pub fn expand_for_copy_among<'a>(
     elements: impl IntoIterator<Item = &'a DrawElement>,
     ids: &HashSet<String>,
 ) -> Vec<DrawElement> {
-    // Two passes — find the labels the selection drags along, then take what is wanted —
-    // so the references are collected once rather than the iterator being walked twice.
+    // Collected once, then walked for the children a selected frame brings, the labels
+    // everything brings, and what is wanted.
     let elements: Vec<&DrawElement> = elements.into_iter().collect();
-    let wanted = with_labels(elements.iter().copied(), ids);
+    // A selected frame brings what is in it: copy and Ctrl+D both take the selection with
+    // `includeElementsInFrames` (`selection.ts@1118751f:196-209`, from
+    // `actionClipboard.tsx@1118751f:29-33` and `actionDuplicateSelection.tsx@1118751f:63-71`),
+    // a group member frame included (`duplicate.ts@1118751f:333-341`).
+    let frames: HashSet<&str> = elements
+        .iter()
+        .filter(|el| ids.contains(&el.id) && is_frame(el))
+        .map(|el| el.id.as_str())
+        .collect();
+    let mut grown = ids.clone();
+    if !frames.is_empty() {
+        grown.extend(
+            elements
+                .iter()
+                .filter(|el| !el.is_deleted)
+                .filter(|el| el.frame_id.as_deref().is_some_and(|f| frames.contains(f)))
+                .map(|el| el.id.clone()),
+        );
+    }
+    let wanted = with_labels(elements.iter().copied(), &grown);
     elements
         .into_iter()
         .filter(|element| !element.is_deleted && wanted.contains(&element.id))
         .cloned()
         .collect()
-}
-
-/// Grows `ids` to also cover, for a frame that is itself a member of a group among them,
-/// the frame's own children — even the ones with no group id of their own.
-///
-/// The oracle folds a group member frame's children straight into the group: `getElementsInGroup(
-/// ...).flatMap(el => isFrameLikeElement(el) ? [...getFrameChildren(elements, el.id), el] : [el])`
-/// (`duplicate.ts@1118751f:333-341`). A frame dragged into a group takes its contents with
-/// it, so duplicating the group without this left the frame behind with nothing in it — its
-/// children, never themselves group members, were never part of what got copied. A child
-/// that is *also* a direct group member is unaffected: it is already in `ids`, and adding
-/// it again through its frame is a no-op on the set, so [`duplicate_runs`] still sees it
-/// once.
-pub fn with_grouped_frame_children<'a>(
-    elements: impl IntoIterator<Item = &'a DrawElement>,
-    ids: &HashSet<String>,
-    editing: Option<&str>,
-) -> HashSet<String> {
-    let elements: Vec<&DrawElement> = elements.into_iter().collect();
-    let mut out = ids.clone();
-    for frame in elements.iter().copied().filter(|el| {
-        ids.contains(&el.id) && is_frame(el) && selected_group_for(el, editing).is_some()
-    }) {
-        out.extend(frame_children(elements.iter().copied(), &frame.id));
-    }
-    out
 }
 
 /// What a duplicated run is placed beside: the id every member of it shares, and how to
@@ -65,7 +58,7 @@ pub enum DuplicateRun {
     /// A group — the level `selected_group_for` names, or, with no sub-group of its own,
     /// the group being edited itself: the copy stays in it, so the whole edited group is
     /// where it lands (`duplicate_selection`'s prior, narrower rule, generalised here). A
-    /// member frame's own children join this run too (`with_grouped_frame_children`,
+    /// member frame's own children join this run too (`expand_for_copy_among`,
     /// `duplicate_runs`'s `grouped_frames`), even with no group id of their own — but the
     /// frame itself, which does carry one, is always in the run as well, so `owns` below
     /// never has to recognise a plain child on its own to find the run's anchor.
@@ -97,7 +90,7 @@ impl DuplicateRun {
 }
 
 /// Groups `source` (elements about to be duplicated, in scene order — already grown by
-/// [`with_grouped_frame_children`], so a group member frame's plain children are in it)
+/// [`expand_for_copy_among`], so a selected frame's plain children are in it)
 /// into the runs a copy joins as one block — a group, a frame with the children of it also
 /// being duplicated, a container with its label. Transcribes the oracle's
 /// `insertBeforeOrAfterIndex`, which splices every copy of a run in together, found with
@@ -148,7 +141,7 @@ pub fn duplicate_runs(
             .and_then(|frame| grouped_frames.get(frame))
         {
             // A plain child of a group member frame, with no group id of its own: folded
-            // into the group's run by `with_grouped_frame_children` before this ran, and
+            // into what is copied by `expand_for_copy_among` before this ran, and
             // this is where that copy is told the same run as the frame it belongs to.
             DuplicateRun::Group((*group).to_string())
         } else if is_frame(element) {
@@ -308,10 +301,9 @@ pub fn materialize_within(
 
 #[cfg(test)]
 mod duplicate_runs_tests {
-    use super::{duplicate_runs, with_grouped_frame_children, DuplicateRun};
+    use super::{duplicate_runs, DuplicateRun};
     use crate::scene::element::{create_element_default, DrawElementType, Geometry};
     use crate::scene::DrawElement;
-    use std::collections::HashSet;
 
     fn el(id: &str, kind: DrawElementType) -> DrawElement {
         let mut element = create_element_default(
@@ -401,41 +393,6 @@ mod duplicate_runs_tests {
         let source = vec![child, frame];
         let runs = duplicate_runs(&source, None);
         assert_eq!(runs, vec![(DuplicateRun::Group("g".into()), vec![0, 1])]);
-    }
-
-    /// [`with_grouped_frame_children`]: a group member frame's plain child is pulled into
-    /// what gets copied at all — without this it is never in `source` for `duplicate_runs`
-    /// to place, group-folding branch or not.
-    #[test]
-    fn with_grouped_frame_children_pulls_in_a_group_member_frames_plain_child() {
-        let mut frame = el("f", DrawElementType::Frame);
-        frame.group_ids = vec!["g".into()];
-        let mut sibling = rect("s");
-        sibling.group_ids = vec!["g".into()];
-        let mut child = rect("c");
-        child.frame_id = Some("f".into());
-        let elements = [child, frame, sibling];
-        let ids: HashSet<String> = ["f".into(), "s".into()].into_iter().collect();
-
-        let grown = with_grouped_frame_children(elements.iter(), &ids, None);
-
-        assert_eq!(grown, HashSet::from(["f".into(), "s".into(), "c".into()]));
-    }
-
-    /// A frame with no group at all does not have its children swept in — that is the
-    /// existing, unconditional frame-duplication path's job (`DuplicateRun::Frame`), not
-    /// this one, which only fires for a frame that is a group member.
-    #[test]
-    fn with_grouped_frame_children_leaves_an_ungrouped_frames_child_alone() {
-        let frame = el("f", DrawElementType::Frame);
-        let mut child = rect("c");
-        child.frame_id = Some("f".into());
-        let elements = [child, frame];
-        let ids: HashSet<String> = ["f".into()].into_iter().collect();
-
-        let grown = with_grouped_frame_children(elements.iter(), &ids, None);
-
-        assert_eq!(grown, ids);
     }
 
     /// Duplicating only the members of a group being edited, not the group itself, still
