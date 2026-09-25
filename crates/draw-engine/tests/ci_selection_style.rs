@@ -564,6 +564,32 @@ mod copy_paste {
         );
     }
 
+    /// A label pasted a larger size grows its shape to hold it, as every other change to
+    /// a label's font does: the paste lays it out with its container,
+    /// `redrawTextBoundingBox(newTextElement, container)` (`actions/actionStyles.ts@1118751f:174`).
+    #[test]
+    fn a_label_pasted_a_larger_size_grows_its_shape() {
+        let mut elements = labelled(box_at(0.0, 0.0, 200.0, 100.0), "src", "src-l");
+        elements[1].font_size = Some(80.0);
+        elements.extend(labelled(box_at(300.0, 0.0, 200.0, 40.0), "dst", "dst-l"));
+        let mut engine = engine_with_measure(elements);
+        engine.select(vec!["src".into()]);
+        engine.copy_styles();
+        engine.select(vec!["dst".into()]);
+        engine.paste_styles();
+
+        let (shape, label) = (element(&engine, "dst"), element(&engine, "dst-l"));
+        assert_eq!(label.font_size, Some(80.0));
+        assert!(
+            shape.y <= label.y && label.y + label.height <= shape.y + shape.height,
+            "the label {}..{} fits in its shape {}..{}",
+            label.y,
+            label.y + label.height,
+            shape.y,
+            shape.y + shape.height
+        );
+    }
+
     #[test]
     fn a_label_is_untouched_when_nothing_was_copied_for_it() {
         let source = styled(with_id(box_at(0.0, 0.0, 50.0, 50.0), "src"));

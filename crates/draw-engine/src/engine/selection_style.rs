@@ -18,9 +18,9 @@ use serde::Serialize;
 use super::DrawEngine;
 use crate::render::default_arrowhead;
 use crate::scene::{
-    apply_style_patch, is_transparent, resolved_text_align, resolved_vertical_align, source_text,
-    Arrowhead, DrawElement, DrawElementStylePatch, DrawElementType, FillStyle, StrokeStyle,
-    TextAlign, VerticalAlign,
+    apply_style_patch, is_transparent, resolved_text_align, resolved_vertical_align, Arrowhead,
+    DrawElement, DrawElementStylePatch, DrawElementType, FillStyle, StrokeStyle, TextAlign,
+    VerticalAlign,
 };
 
 /// Excalidraw's `reduceToCommonValue`: the one value everything shares, or nothing.
@@ -466,6 +466,9 @@ impl DrawEngine {
         if targets.is_empty() {
             return;
         }
+        // Shapes before labels: a label is laid out in its shape as pasted, and a shape
+        // its label grew must not then be put back from the copy taken here.
+        targets.sort_by_key(|element| element.container_id.is_some());
 
         for mut element in targets {
             let is_label = element.kind == DrawElementType::Text && element.container_id.is_some();
@@ -534,14 +537,16 @@ impl DrawEngine {
             if element == before {
                 continue;
             }
-            let id = element.id.clone();
-            let text = source_text(&element).to_owned();
-            self.scene.put(element);
             if is_text {
-                // A new size or font is a new box: `redrawTextBoundingBox` (`:174`).
-                if let Some(measured) = self.text_preview(&id, &text) {
-                    self.scene.put(measured);
+                // A new size or font is a new box, and a label that no longer fits grows
+                // its shape: `redrawTextBoundingBox(newTextElement, container)` (`:174`).
+                let laid = self.laid_out(&element);
+                if let Some(container) = laid.container {
+                    self.scene.put(container);
                 }
+                self.scene.put(laid.text);
+            } else {
+                self.scene.put(element);
             }
         }
         self.apply_bindings();
