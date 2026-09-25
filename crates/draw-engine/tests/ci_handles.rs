@@ -646,6 +646,49 @@ fn a_turned_elements_handle_does_not_jump() {
     assert_close(after.height, 150.0);
 }
 
+/// A line's `x`, `y` is its first point, which need not be a corner of the box its handles
+/// are drawn on. The resize is measured from that box, as the oracle's is
+/// (`previousOrigin`, `resizeElements.ts@1118751f:848-851`): taken where it is drawn, the
+/// handle moves nothing, and a pull moves only the edges it holds.
+#[test]
+fn a_lines_handle_does_not_jump_when_its_first_point_is_no_corner() {
+    for points in [
+        [(100.0, 150.0), (200.0, 100.0), (300.0, 150.0)],
+        [(300.0, 150.0), (200.0, 100.0), (100.0, 150.0)],
+        [(200.0, 100.0), (300.0, 150.0), (100.0, 150.0)],
+    ] {
+        for handle in [HandleKind::Se, HandleKind::Nw, HandleKind::E] {
+            let line = poly_line(&points);
+            let bounds = |element: &DrawElement| {
+                let b = element_bounds(element);
+                [b.min_x, b.min_y, b.max_x, b.max_y]
+            };
+            assert_eq!(bounds(&line), [100.0, 100.0, 300.0, 150.0]);
+            let after = pull(line.clone(), handle, (0.0, 0.0));
+            for (got, want) in bounds(&after).into_iter().zip([100.0, 100.0, 300.0, 150.0]) {
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "{points:?} {handle:?}: {:?}",
+                    bounds(&after)
+                );
+            }
+            let after = pull(line, handle, (20.0, 20.0));
+            let want = match handle {
+                HandleKind::Se => [100.0, 100.0, 320.0, 170.0],
+                HandleKind::Nw => [120.0, 120.0, 300.0, 150.0],
+                _ => [100.0, 100.0, 320.0, 150.0],
+            };
+            for (got, want) in bounds(&after).into_iter().zip(want) {
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "{points:?} {handle:?}: {:?}",
+                    bounds(&after)
+                );
+            }
+        }
+    }
+}
+
 /// With the grid on, a press takes the handle the cursor shows over it. Handles are hit
 /// where the pointer is, as the oracle's are (`pointerDownState.origin`,
 /// `App.tsx@1118751f:9220`, `:9366-9372`, `:9397-9404`); only what the drag then places

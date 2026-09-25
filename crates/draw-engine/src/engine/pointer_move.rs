@@ -644,6 +644,20 @@ impl DrawEngine {
         from.y = origin.y;
         from.width = origin.width;
         from.height = origin.height;
+        // A path's `x`, `y` is its first point, which need not be a corner of its box: it
+        // is resized from the box its handles are drawn on, as the oracle's is
+        // (`previousOrigin`, `resizeElements.ts@1118751f:848-851`). From its first point,
+        // a handle taken where it is drawn flattened a line whose first point was not its
+        // top-left.
+        if let Some(points) = origin_points.filter(|points| !points.is_empty()) {
+            let ring = ring_box(points);
+            (from.x, from.y, from.width, from.height) = (
+                origin.x + ring.x,
+                origin.y + ring.y,
+                ring.width,
+                ring.height,
+            );
+        }
         // Images hold their proportions unless Shift is held; every other shape is the
         // other way round. A photograph stretched by accident is a mistake you often do
         // not notice until much later.
@@ -710,8 +724,8 @@ impl DrawEngine {
             label.font_size = Some(next);
         }
         let flips = (
-            (geom.width < 0.0) != (origin.width < 0.0),
-            (geom.height < 0.0) != (origin.height < 0.0),
+            (geom.width < 0.0) != (from.width < 0.0),
+            (geom.height < 0.0) != (from.height < 0.0),
         );
         self.scene.put(element);
         self.relay_resized_label(label, handle, flips);
