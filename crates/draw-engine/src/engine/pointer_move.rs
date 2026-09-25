@@ -41,7 +41,8 @@ impl DrawEngine {
     ) -> Option<Interaction> {
         match it {
             // Same rubber-band as a shape: the box you drag out is the column you get.
-            Interaction::TextDraft { ref id, start, .. } | Interaction::Draft { ref id, start, .. } => {
+            Interaction::TextDraft { ref id, start, .. }
+            | Interaction::Draft { ref id, start, .. } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     // A note is square unless Shift frees it, where a shape is free unless
                     // Shift squares it (`App.tsx@1118751f:13419-13425`).
