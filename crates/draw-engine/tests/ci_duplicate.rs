@@ -144,6 +144,73 @@ fn a_frame_and_its_duplicated_children_stay_in_one_run_above_it() {
     assert_eq!(x_of(&stack[3]), 2.0, "then the frame's copy");
 }
 
+/// A group containing a frame takes the frame's own children with it too, even when they
+/// carry no group id of their own — the oracle folds a member frame's children into the
+/// group before splicing the whole thing in as one run (`duplicate.ts@1118751f:333-341`).
+/// Left unfixed, Ctrl+D on the group produced a copy of the frame with nothing in it.
+#[test]
+fn a_duplicated_groups_frame_takes_its_own_children_with_it() {
+    let mut child = with_id(box_at(20.0, 20.0, 10.0, 10.0), "child");
+    child.frame_id = Some("frame".into());
+    let mut frame = with_id(box_at(0.0, 0.0, 100.0, 100.0), "frame");
+    frame.kind = DrawElementType::Frame;
+    frame.group_ids = vec!["g".into()];
+    let mut sibling = with_id(box_at(200.0, 0.0, 10.0, 10.0), "sibling");
+    sibling.group_ids = vec!["g".into()];
+    let mut engine = engine_of(vec![child, frame, sibling]);
+    // The group is selected — the frame and its sibling, both group members. The child
+    // carries no group id and is never itself selected; whether it comes along regardless
+    // is exactly what this test is about.
+    engine.select(vec!["frame".into(), "sibling".into()]);
+
+    engine.duplicate_selection(2.0, 2.0);
+
+    let stack = stack(&engine);
+    assert_eq!(
+        stack.len(),
+        6,
+        "the child must be duplicated along with the group"
+    );
+    assert_eq!(
+        &stack[0..3],
+        &["child", "frame", "sibling"],
+        "the group, and the frame's child, are untouched"
+    );
+    let by_id = |id: &str| {
+        engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == *id)
+            .unwrap()
+    };
+    let x_of = |id: &str| by_id(id).x;
+    // The run's own order: the child first, as it did inside the frame, then the frame,
+    // then the sibling — the same block `duplicate.ts`'s flatMap builds.
+    assert_eq!(
+        x_of(&stack[3]),
+        22.0,
+        "the child's copy comes first, as the child did"
+    );
+    assert_eq!(x_of(&stack[4]), 2.0, "then the frame's copy");
+    assert_eq!(
+        x_of(&stack[5]),
+        202.0,
+        "then the sibling's copy, last as it was"
+    );
+
+    let frame_copy_id = stack[4].clone();
+    assert_eq!(
+        by_id(&stack[3]).frame_id.as_deref(),
+        Some(frame_copy_id.as_str()),
+        "the child's copy belongs to the new frame, not the old one"
+    );
+    assert_eq!(
+        by_id(&stack[5]).frame_id,
+        None,
+        "the sibling stays outside every frame, exactly as its original did"
+    );
+}
+
 /// A frame's child duplicated on its own, without the frame, is a run of one: the frame
 /// branch only fires when the frame itself is also being duplicated
 /// (`duplicate.ts@1118751f:349-352`).
