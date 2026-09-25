@@ -645,3 +645,57 @@ fn a_turned_elements_handle_does_not_jump() {
     assert_close(after.width, 200.0);
     assert_close(after.height, 150.0);
 }
+
+// -----------------------------------------------------------------------------
+// a text's handles
+// -----------------------------------------------------------------------------
+//
+// The oracle draws a text's four corners and its rotation handle, never its sides
+// (`DEFAULT_OMIT_SIDES`, `transformHandles.ts@1118751f:58-63`, on a desktop); a side is
+// taken by the frame line itself, anywhere within `SIDE_RESIZING_THRESHOLD` of it
+// (`resizeTest.ts@1118751f:96-121`). A one-line text has no room for a side handle
+// anyway, and its sides are what wrap it.
+
+fn text_box(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
+    let mut text = text_at(x, y, width, height);
+    text.text = Some("hello".into());
+    text
+}
+
+#[test]
+fn a_text_shows_its_corners_and_its_rotation_handle_only() {
+    let got = kinds(&selection_handles(
+        &text_box(0.0, 0.0, 300.0, 200.0),
+        layout(),
+    ));
+    assert_eq!(
+        got,
+        vec![
+            HandleKind::Nw,
+            HandleKind::Ne,
+            HandleKind::Se,
+            HandleKind::Sw,
+            HandleKind::Rotate,
+        ]
+    );
+}
+
+#[test]
+fn a_texts_sides_are_taken_on_its_frame_line() {
+    let text = text_box(100.0, 100.0, 194.0, 25.0);
+    let id = text.id.clone();
+    let mut engine = engine_with_scene(vec![text]);
+    engine.select(vec![id]);
+    // The frame line is 4px out; within 4px of it on either side is the side.
+    for (x, y, want) in [
+        (298.0, 112.5, HoverCursor::ResizeEw),
+        (301.5, 112.5, HoverCursor::ResizeEw),
+        (295.0, 112.5, HoverCursor::ResizeEw),
+        (96.0, 112.5, HoverCursor::ResizeEw),
+        (200.0, 96.0, HoverCursor::ResizeNs),
+        (200.0, 129.0, HoverCursor::ResizeNs),
+    ] {
+        assert_eq!(engine.hover_cursor(x, y), want, "at ({x}, {y})");
+    }
+    assert_ne!(engine.hover_cursor(302.5, 112.5), HoverCursor::ResizeEw);
+}

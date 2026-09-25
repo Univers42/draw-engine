@@ -342,6 +342,36 @@ impl DrawEngine {
         })
     }
 
+    /// Which resize or rotation handle of `single` is under `world`: one drawn, or — for
+    /// a free text, whose sides have none — the side whose frame line it is on
+    /// (`resizeTest`, `packages/element/src/resizeTest.ts@1118751f:62-121`). Shared with
+    /// the hover cursor, so the cursor promises what a press does.
+    pub(crate) fn resize_handle_at(
+        &self,
+        single: &crate::scene::DrawElement,
+        world: Point,
+    ) -> Option<HandleKind> {
+        let layout = self.handle_layout();
+        hit_handle(
+            &selection_handles(single, layout),
+            world.x,
+            world.y,
+            layout.hit,
+        )
+        .or_else(|| {
+            (single.kind == DrawElementType::Text && single.container_id.is_none())
+                .then(|| {
+                    crate::selection::side_at(
+                        single,
+                        world.x,
+                        world.y,
+                        crate::selection::SIDE_RESIZING_PX / self.camera.scale,
+                    )
+                })
+                .flatten()
+        })
+    }
+
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         self.narrow_on_click = None;
         if let Some(single) = self.single_selected() {
@@ -378,13 +408,7 @@ impl DrawEngine {
                     // The same layout the painter uses, so a grab can only land on a
                     // handle that is actually on screen — and its own reach, which is
                     // sized to stay clear of the element so the outline still moves it.
-                    let layout = self.handle_layout();
-                    hit_handle(
-                        &selection_handles(&single, layout),
-                        world.x,
-                        world.y,
-                        layout.hit,
-                    )
+                    self.resize_handle_at(&single, world)
                 };
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });

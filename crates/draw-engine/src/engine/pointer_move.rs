@@ -3,7 +3,7 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
-use crate::scene::{scene_bounds, DrawElement};
+use crate::scene::{scene_bounds, DrawElement, DrawElementType};
 use crate::selection::{resize_element, rotate_element, HandleKind};
 
 impl DrawEngine {
@@ -622,6 +622,10 @@ impl DrawEngine {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
+        if element.kind == DrawElementType::Text && element.container_id.is_none() {
+            self.resize_text(element, world, square, handle, &origin);
+            return;
+        }
         // Measured from where the element was when the drag started, so the anchor is
         // fixed for the whole gesture. Reading the live element instead let the anchor
         // follow the pointer the moment the element turned through it.
@@ -659,6 +663,76 @@ impl DrawEngine {
             set_anchor(&mut element, End::End, None);
         }
         self.scene.put(element);
+        self.apply_bindings();
+        self.request_draw();
+    }
+
+    /// A free text resized (`resizeSingleTextElement`, `resizeElements.ts@1118751f:
+    /// 317-409`):
+    ///
+    /// - a corner, the top or the bottom scales the font and the box by the height asked
+    ///   for (`:328-358`) — the lines are the same lines, scaled. A drag that would take
+    ///   the font below [`MIN_FONT_SIZE`](crate::selection::MIN_FONT_SIZE), past the
+    ///   anchor included, leaves the text as the last move had it, so it never turns
+    ///   inside out;
+    /// - a side fixes the width and wraps what was typed at it (`:360-408`), never
+    ///   narrower than a space and the padding.
+    ///
+    /// The corner opposite the handle stays put, turned or not (`getResizedOrigin`).
+    ///
+    /// Divergence: a side also stops at the widest glyph the wrapped lines hold, where the
+    /// oracle lets a glyph wider than the box hang out of it.
+    fn resize_text(
+        &mut self,
+        latest: DrawElement,
+        world: Point,
+        square: bool,
+        handle: HandleKind,
+        origin: &crate::selection::Geometry,
+    ) {
+        use crate::selection::{next_box_size, resized_origin, MIN_FONT_SIZE};
+        let (next_width, next_height) =
+            next_box_size(origin, latest.angle, handle, world.x, world.y, square);
+        let mut next = latest.clone();
+        if matches!(handle, HandleKind::E | HandleKind::W) {
+            let laid = self.with_measure(|measure| {
+                let min_width = crate::text::layout::min_text_width(&latest, measure);
+                let mut fixed = latest.clone();
+                fixed.auto_resize = Some(false);
+                fixed.width = next_width.max(min_width);
+                let mut laid = crate::text::layout::layout_text(&fixed, None, measure).text;
+                let ink = measure
+                    .size(
+                        laid.text.as_deref().unwrap_or_default(),
+                        crate::text::layout::font_of(&laid),
+                        crate::scene::resolved_line_height(&laid),
+                    )
+                    .0;
+                laid.width = laid.width.max(ink);
+                laid
+            });
+            let at = resized_origin(origin, laid.width, laid.height, latest.angle, handle);
+            next = laid;
+            next.x = at.x;
+            next.y = at.y;
+        } else {
+            if !(latest.height > 0.0 && latest.width.is_finite()) {
+                return;
+            }
+            let ratio = next_height / latest.height;
+            let size = crate::text::layout::font_size_of(&latest) * ratio;
+            if !(size.is_finite() && size >= MIN_FONT_SIZE) {
+                return;
+            }
+            let width = latest.width * ratio;
+            let at = resized_origin(origin, width, next_height, latest.angle, handle);
+            next.font_size = Some(size);
+            next.width = width;
+            next.height = next_height;
+            next.x = at.x;
+            next.y = at.y;
+        }
+        self.scene.put(next);
         self.apply_bindings();
         self.request_draw();
     }

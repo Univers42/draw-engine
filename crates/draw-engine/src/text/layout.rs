@@ -464,3 +464,12 @@ pub fn auto_resize_anchor(prev: &DrawElement, next_width: f64, next_height: f64)
         y: prev.y + (prev.height - next_height) * ay,
     }
 }
+
+/// `getMinTextElementWidth` (`textMeasurements.ts@1118751f:46-51`): the narrowest a text's
+/// side can make it — a space, and the padding either side.
+pub fn min_text_width(text: &DrawElement, measure: &Measure) -> f64 {
+    measure
+        .size("", font_of(text), resolved_line_height(text))
+        .0
+        + BOUND_TEXT_PADDING * 2.0
+}

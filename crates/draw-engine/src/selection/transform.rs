@@ -144,6 +144,105 @@ pub fn resize_element(
     }
 }
 
+/// Excalidraw's `MIN_FONT_SIZE` (`packages/common/src/constants.ts@1118751f:219`): a resize
+/// that would take a text below it changes nothing.
+pub const MIN_FONT_SIZE: f64 = 1.0;
+
+/// The width and height a drag of `handle` to `(wx, wy)` asks of a box that was `origin`,
+/// turned by `angle`, when the drag began: `getNextSingleWidthAndHeightFromPointer`
+/// (`resizeElements.ts@1118751f:988-1080`) for a box with positive extents. Signed: a
+/// pointer past the far side asks for a negative size. An axis the handle does not move
+/// keeps its size. With `keep_aspect` (Shift) a side handle scales the other axis with it
+/// and a corner takes the larger of its two scales.
+pub fn next_box_size(
+    origin: &Geometry,
+    angle: f64,
+    handle: HandleKind,
+    wx: f64,
+    wy: f64,
+    keep_aspect: bool,
+) -> (f64, f64) {
+    let (cx, cy) = (
+        origin.x + origin.width / 2.0,
+        origin.y + origin.height / 2.0,
+    );
+    let turned = rotate_point(wx - cx, wy - cy, -angle);
+    let (px, py) = (cx + turned.x, cy + turned.y);
+    let (x2, y2) = (origin.x + origin.width, origin.y + origin.height);
+    let mut width = match handle {
+        HandleKind::E | HandleKind::Ne | HandleKind::Se => px - origin.x,
+        HandleKind::W | HandleKind::Nw | HandleKind::Sw => x2 - px,
+        _ => origin.width,
+    };
+    let mut height = match handle {
+        HandleKind::S | HandleKind::Se | HandleKind::Sw => py - origin.y,
+        HandleKind::N | HandleKind::Ne | HandleKind::Nw => y2 - py,
+        _ => origin.height,
+    };
+    if keep_aspect && origin.width != 0.0 && origin.height != 0.0 {
+        let width_ratio = width.abs() / origin.width;
+        let height_ratio = height.abs() / origin.height;
+        if handle.has_ew() && handle.has_ns() {
+            let ratio = width_ratio.max(height_ratio);
+            width = origin.width * ratio * sign(width);
+            height = origin.height * ratio * sign(height);
+        } else {
+            height *= width_ratio;
+            width *= height_ratio;
+        }
+    }
+    (width, height)
+}
+
+/// `Math.sign`, which is 0 at 0 where `f64::signum` is 1.
+fn sign(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value.signum()
+    }
+}
+
+/// Where a box that was `prev` (its top-left, width and height), turned by `angle`, goes
+/// when it becomes `width × height` by `handle`: the corner or side opposite the handle
+/// stays put — `getResizedOrigin` with the anchor `getResizeAnchor` gives it
+/// (`resizeElements.ts@1118751f:580-727`), neither from the centre nor keeping the aspect,
+/// which is how a text is resized (`:338-348`, `:386-396`).
+pub fn resized_origin(
+    prev: &Geometry,
+    width: f64,
+    height: f64,
+    angle: f64,
+    handle: HandleKind,
+) -> Point {
+    let (sin, cos) = angle.sin_cos();
+    let (dw, dh) = ((prev.width - width) / 2.0, (prev.height - height) / 2.0);
+    let (x, y) = (prev.x, prev.y);
+    match handle {
+        // top-left
+        HandleKind::E | HandleKind::Se | HandleKind::S => Point {
+            x: x + dw - dw * cos + dh * sin,
+            y: y + dh - dw * sin - dh * cos,
+        },
+        // bottom-right
+        HandleKind::N | HandleKind::Nw | HandleKind::W => Point {
+            x: x + dw * (cos + 1.0) - dh * sin,
+            y: y + dh * (cos + 1.0) + dw * sin,
+        },
+        // bottom-left
+        HandleKind::Ne => Point {
+            x: x + dw * (1.0 - cos) - dh * sin,
+            y: y + dh * (cos + 1.0) - dw * sin,
+        },
+        // top-right
+        HandleKind::Sw => Point {
+            x: x + dw * (cos + 1.0) + dh * sin,
+            y: y + dh + dw * sin - dh * cos,
+        },
+        HandleKind::Rotate => Point { x, y },
+    }
+}
+
 impl HandleKind {
     fn has_ew(self) -> bool {
         matches!(
