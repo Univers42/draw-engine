@@ -1,7 +1,7 @@
 //! The typing session: a text open in the host's editor, laid out on every keystroke and
 //! committed once — a port of Excalidraw's `textWysiwyg` session
 //! (`packages/excalidraw/wysiwyg/textWysiwyg.tsx@1118751f`) and the `handleTextWysiwyg`
-//! the app runs it with (`App.tsx@1118751f:6344-6508`). See `engine/text_session.rs`.
+//! the app runs it with (`App.tsx@1118751f:6344-6515`). See `engine/text_session.rs`.
 
 mod common;
 use common::*;
@@ -258,7 +258,7 @@ mod growth {
     }
 
     /// A new label's shape too small for one line grows to hold one, from its top-left
-    /// (`App.tsx@1118751f:6983-7005`): the widest capital or digit and a line, each with
+    /// (`App.tsx@1118751f:6974-7006`): the widest capital or digit and a line, each with
     /// the padding either side. With the test measure a one-letter line is
     /// `20 · 0.5 + 4 = 14` wide and `20 · 1.25 = 25` tall, so `24 × 35`.
     #[test]
@@ -341,7 +341,7 @@ mod ending {
     use super::*;
 
     /// Escape and Ctrl+Enter leave the shape — or the text — selected; a click away lets
-    /// go (`App.tsx@1118751f:6437-6496`); with the tool locked nothing stays selected.
+    /// go (`App.tsx@1118751f:6439-6498`); with the tool locked nothing stays selected.
     #[test]
     fn the_keyboard_keeps_the_selection_and_a_click_lets_go() {
         let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "a");
@@ -518,7 +518,7 @@ mod entry {
     use super::*;
 
     /// A new free text's first line is centred on the pointer
-    /// (`App.tsx@1118751f:7019-7029`): 20px lines are 25px tall.
+    /// (`App.tsx@1118751f:7019-7027`): 20px lines are 25px tall.
     #[test]
     fn a_new_free_text_has_its_first_line_on_the_pointer() {
         let mut engine = engine_with_measure(Vec::new());
@@ -536,7 +536,7 @@ mod entry {
     }
 
     /// A click on a label selects its shape: bound text is not hit on its own, a shape is
-    /// hit through it (`App.tsx@1118751f:6713-6736`, `:6784-6828`). The shape here has no
+    /// hit through it (`App.tsx@1118751f:6713-6737`, `:6784-6829`). The shape here has no
     /// fill, so only its outline would be hit without the label.
     #[test]
     fn a_click_on_a_label_selects_its_shape() {

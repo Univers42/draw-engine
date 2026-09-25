@@ -729,7 +729,7 @@ mod holds_and_no_ops {
     /// by Select All, both of which leave out what a peer holds — is neither restyled nor
     /// laid out again: grown and stamped, the shape went to the server and to them. A
     /// click cannot reach it: a press on a label is a press on its shape
-    /// (`App.tsx@1118751f:6784-6828`), and the shape is theirs.
+    /// (`App.tsx@1118751f:6784-6829`), and the shape is theirs.
     #[test]
     fn a_shape_a_peer_holds_is_not_grown_through_its_label() {
         let rect = box_at(0.0, 0.0, 200.0, 100.0);

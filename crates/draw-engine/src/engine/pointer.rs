@@ -493,7 +493,7 @@ impl DrawEngine {
     /// What a press of the selection tool lands on: the topmost element under it that may
     /// be touched, a label standing for its shape. The oracle leaves bound text out of what
     /// a press can hit and hits a shape through its label instead (`getElementsAtPosition`,
-    /// `hitElement`, `App.tsx@1118751f:6713-6736`, `:6784-6828`), so a click on a label
+    /// `hitElement`, `App.tsx@1118751f:6713-6737`, `:6784-6829`), so a click on a label
     /// picks up the shape — which a command then acts on whole, as a label on its own
     /// moves only with its shape.
     fn press_target(&self, sx: f64, sy: f64) -> Option<crate::scene::DrawElement> {

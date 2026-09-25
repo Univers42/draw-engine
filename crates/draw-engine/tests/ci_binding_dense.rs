@@ -702,7 +702,7 @@ fn arrow_labelled(engine: &DrawEngine) -> bool {
 }
 
 /// Far away, with no press in between: a free text there, as on any empty spot — its
-/// first line centred on the point (`App.tsx@1118751f:7019-7029`), 20px Excalifont lines
+/// first line centred on the point (`App.tsx@1118751f:7019-7027`), 20px Excalifont lines
 /// being 25px tall.
 #[test]
 fn a_double_click_elsewhere_is_not_about_the_finished_arrow() {

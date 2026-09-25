@@ -3,7 +3,7 @@
 //!
 //! A port of the session Excalidraw's `textWysiwyg` runs over a text element
 //! (`packages/excalidraw/wysiwyg/textWysiwyg.tsx@1118751f`) and the `onChange` /
-//! `onSubmit` the app gives it (`handleTextWysiwyg`, `App.tsx@1118751f:6344-6508`):
+//! `onSubmit` the app gives it (`handleTextWysiwyg`, `App.tsx@1118751f:6344-6515`):
 //!
 //! - every keystroke replaces the element with what was typed, wrapped and measured, and
 //!   grows its shape — or shrinks it back, never below the height it had when the edit
@@ -21,7 +21,7 @@
 //!   applies, as the keys go to it in the oracle.
 //!
 //! Divergence: the element stays selected while it is typed (the oracle deselects
-//! everything, `App.tsx@1118751f:6507-6508`), so the properties panel keeps working on
+//! everything, `App.tsx@1118751f:6509-6510`), so the properties panel keeps working on
 //! it. Its selection frame and handles are not drawn.
 
 use crate::engine::DrawEngine;
@@ -145,7 +145,7 @@ impl DrawEngine {
     ///
     /// Emptied, a text goes: one made for this edit leaves no trace at all — no step, no
     /// tombstone, its shape as it was — and an existing one is deleted, as a step
-    /// (`textWysiwyg.tsx@1118751f:818-872`, `App.tsx@1118751f:6437-6496`).
+    /// (`textWysiwyg.tsx@1118751f:818-872`, `App.tsx@1118751f:6439-6498`).
     ///
     /// `via_keyboard` — Escape or Ctrl/Cmd+Enter — leaves the label's shape selected, or
     /// the text, so the keyboard carries on from it (Enter opens it again); any other
@@ -281,7 +281,7 @@ impl DrawEngine {
         if session.is_new && self.scene.created_since_commit(&element.id) {
             // The label, its shape told of it and resized for it, and the arrows that
             // followed the shape all go back as they were. Divergence: the oracle leaves a
-            // new label's shape grown to one line (`App.tsx@1118751f:6983-7005`),
+            // new label's shape grown to one line (`App.tsx@1118751f:6974-7006`),
             // uncaptured until the next step.
             self.scene.discard(&element.id);
             if let Some(container_id) = element.container_id.as_deref() {

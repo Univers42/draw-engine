@@ -138,7 +138,7 @@ impl DrawEngine {
     }
 
     /// Where a new free text's top goes for a press at `y`: its first line centred on the
-    /// pointer, as the oracle starts one from a point cursor (`App.tsx@1118751f:7019-7029`).
+    /// pointer, as the oracle starts one from a point cursor (`App.tsx@1118751f:7019-7027`).
     /// With the grid snapping, the oracle puts it on the nearest grid point instead
     /// (`getTextCreationGridPoint`); ponytail: left on the point here, until text
     /// creation snaps.
@@ -531,7 +531,7 @@ impl DrawEngine {
 }
 
 /// A shape too small for one line of the label it is being given grows to hold one, from
-/// its top-left corner (`startTextEditing`, `App.tsx@1118751f:6983-7005`).
+/// its top-left corner (`startTextEditing`, `App.tsx@1118751f:6974-7006`).
 fn grow_to_one_line(container: &mut DrawElement, (min_width, min_height): (f64, f64)) {
     let rect =
         crate::scene::normalize_rect(container.x, container.y, container.width, container.height);
