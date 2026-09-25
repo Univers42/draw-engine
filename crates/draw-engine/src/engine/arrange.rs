@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::engine::DrawEngine;
 use crate::scene::frame::FrameOwners;
-use crate::scene::{bump_version, is_frame, new_element_id, DrawElement, DrawElementType};
+use crate::scene::{bump_version, is_frame, new_element_id, DrawElement};
 
 impl DrawEngine {
     /// The arrow keys: the same set a drag moves, so a locked group member and a
@@ -131,20 +131,6 @@ impl DrawEngine {
             .filter_map(|id| self.scene.get(id).cloned())
             .collect();
         self.apply_patches(toggle_polygon(&targets));
-    }
-
-    /// Whether the panel's toggle should show pressed: every eligible selected line is
-    /// already a polygon. Mirrors `selection_locked`'s all-agree rule, and — like it —
-    /// reads `false` on a selection with nothing eligible in it at all, so the button
-    /// never shows "on" for a selection the toggle would do nothing to.
-    pub fn selection_is_polygon(&self) -> bool {
-        let targets: Vec<&DrawElement> = self
-            .selected_ids
-            .iter()
-            .filter_map(|id| self.scene.get(id))
-            .filter(|el| el.kind == DrawElementType::Line)
-            .collect();
-        !targets.is_empty() && targets.iter().all(|el| el.is_polygon())
     }
 
     pub(super) fn apply_patches(&mut self, patches: Vec<DrawElement>) {
