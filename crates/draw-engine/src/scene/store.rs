@@ -411,13 +411,25 @@ impl Scene {
 
     /// Hard delete, leaving no tombstone. Used when discarding an element that was
     /// never committed, such as a drag that ended below the minimum size.
+    ///
+    /// One created since the last commit leaves nothing behind for the commit either, as
+    /// if it had never been. Its entry used to stay, pending, until the next commit — and
+    /// while anything is pending the engine does not settle the selection a step of undo
+    /// begins with, so a click with a shape tool left every selection after it unsettled
+    /// and undo gave back the one before (`engine/stamp.rs`).
     pub fn discard(&mut self, id: &str) {
         self.record(Change::Rearranged);
         self.touch_static(id);
         if let Some(&i) = self.index.get(id) {
-            if !self.baseline.contains_key(id) {
-                self.baseline
-                    .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+            match self.baseline.get(id) {
+                Some(None) => {
+                    self.baseline.remove(id);
+                }
+                Some(Some(_)) => {}
+                None => {
+                    self.baseline
+                        .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+                }
             }
             self.elements.remove(i);
             self.reindex();
@@ -757,6 +769,21 @@ mod tests {
             "the tombstone sits beneath the live elements"
         );
         assert!(all[0].is_deleted);
+    }
+
+    /// A draft thrown away is as if it had never been: nothing is left for a commit, so
+    /// the engine settles the selection again (`engine/stamp.rs`). An element that was
+    /// there at the last commit and is hard-deleted is still a change.
+    #[test]
+    fn discarding_a_draft_leaves_nothing_pending() {
+        let mut scene = Scene::new([element("a")]);
+        let _ = scene.take_baseline();
+        scene.add(element("d"));
+        scene.discard("d");
+        assert!(!scene.has_pending());
+
+        scene.discard("a");
+        assert!(scene.has_pending());
     }
 
     #[test]

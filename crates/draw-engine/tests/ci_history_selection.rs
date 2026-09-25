@@ -212,3 +212,49 @@ fn undo_steps_back_into_the_group_the_step_was_made_in() {
     assert_eq!(engine.editing_group_id(), Some(group));
     assert_eq!(selection(&engine), set(&[&a]));
 }
+
+/// A click with a shape tool draws nothing: the draft is thrown away and the tool goes
+/// back to select. Nothing is left to commit, so the marquee after it settles as every
+/// selection does (the oracle captures at each pointer-up, `App.tsx@1118751f:12451-12464`),
+/// and undoing the delete selects what the marquee took. The draft stayed pending, which
+/// kept every later selection from settling until the next commit: undo gave back A.
+#[test]
+fn a_draft_thrown_away_leaves_the_next_selection_to_settle() {
+    let (mut engine, a, b) = two_boxes();
+    click(&mut engine, ON_A);
+    engine.set_tool(DrawTool::Rectangle);
+    click(&mut engine, (700.0, 100.0));
+    assert_eq!(
+        engine.get_tool(),
+        DrawTool::Select,
+        "setup: the click drew nothing"
+    );
+    drag(&mut engine, (50.0, 350.0), (250.0, 520.0));
+    assert_eq!(selection(&engine), set(&[&b]), "setup: the marquee took B");
+    engine.delete_selection();
+
+    engine.undo();
+    assert!(!element(&engine, &b).is_deleted);
+    assert_eq!(selection(&engine), set(&[&b]));
+    assert!(!selection(&engine).contains(&a));
+}
+
+/// The same after Escape abandons a shape being drawn, and for a selection made by a
+/// command: Ctrl+A, Delete, Ctrl+Z gives everything back selected.
+#[test]
+fn select_all_after_an_abandoned_draft_is_undone_to_everything_selected() {
+    let (mut engine, a, b) = two_boxes();
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(600.0, 100.0, false, false);
+    engine.move_pointer(680.0, 180.0, false, false);
+    engine.cancel_pointer();
+    assert!(
+        engine.get_scene().len() == 2,
+        "setup: Escape threw the draft away"
+    );
+    engine.select_all();
+    engine.delete_selection();
+
+    engine.undo();
+    assert_eq!(selection(&engine), set(&[&a, &b]));
+}
