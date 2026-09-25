@@ -507,7 +507,7 @@ impl DrawEngine {
                 && self.selected_ids.len() == 1
                 && self.selected_ids.contains(&hit.id)
             {
-                if let Some(id) = self.text_reopen_target(&hit) {
+                if let Some(id) = self.text_reopen_target(&hit, press) {
                     self.reopen_text_on_click = Some((id, world));
                 }
             }
@@ -728,14 +728,26 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    /// The text a click on `hit` reopens for typing: `hit` itself if it already is one,
-    /// else its shape's label — filtered exactly as [`Self::edit_selected_text`] filters
-    /// (deleted, locked, held by a peer, or a label of a shape that is).
-    fn text_reopen_target(&self, hit: &DrawElement) -> Option<String> {
+    /// The text a click at `press` on `hit` reopens for typing: `hit` itself if it
+    /// already is one, else its shape's label, but only when the label — not merely the
+    /// shape — is what the press landed on: `getSelectedTextEditingContainerAtPosition`
+    /// requires `getTextElementAtPosition` (`getElementAtPosition` with
+    /// `includeBoundTextElement`) to resolve to that same label
+    /// (`App.tsx@1118751f:6551-6582`), i.e. the topmost thing under the press, labels
+    /// counted, must be the label itself — a text is hit on its box, like
+    /// [`Self::element_at`] hits one. A click elsewhere on the shape (its outline, a
+    /// corner) selects it and stops there; only a second click on the label reopens it.
+    /// Filtered exactly as [`Self::edit_selected_text`] filters otherwise (deleted,
+    /// locked, held by a peer, or a label of a shape that is).
+    fn text_reopen_target(&self, hit: &DrawElement, press: Point) -> Option<String> {
         let text = if hit.kind == DrawElementType::Text {
             hit.clone()
         } else {
-            self.scene.get(hit.bound_text_id.as_deref()?)?.clone()
+            let text = self.scene.get(hit.bound_text_id.as_deref()?)?.clone();
+            if !crate::hit_test_element(&text, press.x, press.y, self.collision_tolerance()) {
+                return None;
+            }
+            text
         };
         (!text.is_deleted && !self.untouchable(&text) && !self.in_untouchable_shape(&text))
             .then_some(text.id)

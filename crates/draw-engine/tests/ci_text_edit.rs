@@ -1260,4 +1260,43 @@ mod entry {
         assert_eq!(request.id, label);
         assert!(request.caret.is_some());
     }
+
+    /// A click near a corner of a sole-selected, filled, labelled shape hits the shape —
+    /// filled, so its whole interior is a hit target — but is nowhere near the short
+    /// label centred in it, so it only selects: `getSelectedTextEditingContainerAtPosition`
+    /// requires `getTextElementAtPosition` at the click to resolve to the label itself,
+    /// not merely anywhere on its container (`App.tsx@1118751f:6551-6582`).
+    #[test]
+    fn a_click_near_a_corner_of_a_labelled_shape_does_not_reopen_its_label() {
+        let (mut engine, shape, _label) =
+            labelled(filled(box_at(100.0, 100.0, 200.0, 100.0)), "hi");
+        engine.select(vec![shape.clone()]);
+
+        engine.begin_pointer(105.0, 105.0, false, false);
+        engine.end_pointer();
+        assert!(
+            engine.drain_events().text_edit.is_none(),
+            "a corner is not the label"
+        );
+        assert_eq!(engine.get_selection(), vec![shape]);
+    }
+
+    /// The same shape, clicked on its outline away from the label: still only a hit on
+    /// the shape, not the label, so still no reopen.
+    #[test]
+    fn a_click_on_the_outline_away_from_the_label_does_not_reopen_it() {
+        let (mut engine, shape, _label) =
+            labelled(filled(box_at(100.0, 100.0, 200.0, 100.0)), "hi");
+        engine.select(vec![shape.clone()]);
+
+        // Left edge, at the shape's vertical middle — on the outline, but the short
+        // label centred in a 200-wide box is nowhere near it horizontally.
+        engine.begin_pointer(100.0, 150.0, false, false);
+        engine.end_pointer();
+        assert!(
+            engine.drain_events().text_edit.is_none(),
+            "the outline is not the label"
+        );
+        assert_eq!(engine.get_selection(), vec![shape]);
+    }
 }
