@@ -106,7 +106,7 @@ const ARC_STEPS: usize = 64;
 /// having this at all: a cubic covers more ground in one half of `t` than the other
 /// wherever it is asymmetric, so `t = 0.5` on a bent segment sits away from the middle a
 /// person sees. Excalidraw asks the same question the same way —
-/// `curvePointAtLength(segment, 0.5)`, `packages/math/src/curve.ts:516`.
+/// `curvePointAtLength(segment, 0.5)`, `packages/math/src/curve.ts@1118751f:516`.
 ///
 /// They integrate with 24-point Legendre-Gauss and then binary-search the parameter;
 /// this walks a polyline and interpolates. The answers agree to far better than a pixel

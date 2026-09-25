@@ -30,16 +30,16 @@ impl FlipAxis {
 
 /// Mirrors one element about the line `(lo + hi) / 2` on the chosen axis, and turns it
 /// the other way — Excalidraw's `resizeMultipleElements` with `flipByX | flipByY` at a
-/// scale of 1 (`packages/element/src/resizeElements.ts:1409-1497`).
+/// scale of 1 (`packages/element/src/resizeElements.ts@1118751f:1409-1497`).
 ///
 /// - **Boxes** — rectangles, ellipses, diamonds, frames, embeds, text — land on their
 ///   mirror image with the same width and height. What is drawn inside them is not
 ///   mirrored, as in the oracle: a flipped rectangle keeps its hand-drawn stroke and its
 ///   hatching, a text still reads forwards, and an embedded page is never shown backwards
-///   (Excalidraw only turns its iframe, `App.tsx:2046-2051`).
-/// - **Pictures** negate their extent on that axis. The sign is the mirror, which the
-///   painter and the SVG export apply as a scale of -1: the job the oracle's `scale`
-///   field does (`resizeElements.ts:1484-1489`, painted by `renderElement.ts:824-841`).
+///   (Excalidraw only turns its iframe, `App.tsx@1118751f:2047-2052`).
+/// - **Pictures** negate their extent on that axis. The sign is the mirror, which the painter
+///   and the SVG export apply as a scale of -1: the job the oracle's `scale` field does
+///   (`resizeElements.ts@1118751f:1484-1489`, painted by `renderElement.ts@1118751f:820-837`).
 /// - **Lines, arrows and freehand strokes** mirror their points, where their shape lives.
 ///
 /// Reflection is an involution, and so is each of these. Applied twice, the box's
@@ -49,7 +49,7 @@ fn flip_one(element: &DrawElement, axis: FlipAxis, lo: f64, hi: f64) -> DrawElem
     let horizontal = axis == FlipAxis::Horizontal;
     let mut next = element.clone();
     // A mirror reverses the direction of rotation with it — text included
-    // (`resizeElements.ts:1417-1419`).
+    // (`resizeElements.ts@1118751f:1417-1419`).
     next.angle = if element.angle != 0.0 {
         -element.angle
     } else {
@@ -132,9 +132,9 @@ fn mirror_points(
 
 /// An arrow's anchors, carried through the mirror: an end bound to a shape flipped with
 /// it is mirrored in that shape's own frame, and an end bound to a shape that stayed lets
-/// go (`resizeElements.ts:1558-1569`).
+/// go (`resizeElements.ts@1118751f:1558-1569`).
 ///
-/// Excalidraw mirrors the anchors of elbow arrows only (`resizeElements.ts:1446-1474`).
+/// Excalidraw mirrors the anchors of elbow arrows only (`resizeElements.ts@1118751f:1446-1474`).
 /// A straight or curved one keeps its old anchors, so its mirrored points are right only
 /// until something re-resolves them — on excalidraw.com it jumps back to the old sides
 /// the moment a bound shape is nudged. Here every bound arrow is re-resolved straight
@@ -170,11 +170,12 @@ fn swap_heads(arrow: &DrawElement) -> DrawElement {
 /// The patches that flip `ids` about the middle of their box.
 ///
 /// `ids` is the set a drag would move — a frame's children and a group's locked members
-/// included, as Excalidraw flips them (`actionFlip.ts:87-94`, `groups.ts:94-132`). Labels
-/// are left out and follow their container when the bindings are refreshed.
+/// included, as Excalidraw flips them (`actionFlip.ts@1118751f:87-94`,
+/// `groups.ts@1118751f:94-132`). Labels are left out and follow their container when the
+/// bindings are refreshed.
 ///
 /// Excalidraw moves the selection back onto its old middle afterwards
-/// (`actionFlip.ts:158-192`), because it measures a curved arrow by its rendered curve,
+/// (`actionFlip.ts@1118751f:158-192`), because it measures a curved arrow by its rendered curve,
 /// which can bump the box by a pixel. Here the box is measured from points, which mirror
 /// exactly, so there is no drift to take back.
 pub fn flip_elements(
@@ -189,7 +190,7 @@ pub fn flip_elements(
     if targets.is_empty() {
         return Vec::new();
     }
-    // Only bound arrows: they turn round and nothing moves (`actionFlip.ts:116-129`).
+    // Only bound arrows: they turn round and nothing moves (`actionFlip.ts@1118751f:116-129`).
     // Labels are not counted — an arrow with words on it is still only an arrow — where
     // Excalidraw counts them, and mirrors a labelled arrow off its shapes instead.
     if targets.iter().all(|el| {
@@ -200,8 +201,8 @@ pub fn flip_elements(
 
     let horizontal = axis == FlipAxis::Horizontal;
     // The middle of what the selection draws, turned — the oracle's `getCommonBoundingBox`
-    // (`actionFlip.ts:131`) — with the words on an arrow, which can reach past its ends
-    // (`resizeElements.ts:1280-1310`). Not the frame drawn round the selection here,
+    // (`actionFlip.ts@1118751f:131`) — with the words on an arrow, which can reach past its ends
+    // (`resizeElements.ts@1118751f:1280-1310`). Not the frame drawn round the selection here,
     // which is unturned (`group_box`): with a turned element in the selection, that frame
     // shifts on a flip where the oracle's stays put (`docs/reference/resize.md` › Flip).
     let words: HashSet<&str> = targets

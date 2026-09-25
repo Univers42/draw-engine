@@ -225,7 +225,7 @@ fn flip_horizontal() {
 
     // The two swap places, and each keeps a positive extent: a box is reflected, not
     // drawn backwards, so its hand-drawn stroke and hatching stay the ones it had — the
-    // oracle keeps width and height positive (`resizeElements.ts:1409-1444`).
+    // oracle keeps width and height positive (`resizeElements.ts@1118751f:1409-1444`).
     assert_eq!((flipped[0].x, flipped[0].width), (300.0, 100.0));
     assert_eq!((flipped[1].x, flipped[1].width), (0.0, 100.0));
     assert_eq!(

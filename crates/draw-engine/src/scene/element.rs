@@ -59,7 +59,7 @@ pub enum Arrowhead {
 
 /// How a bound arrow end sits against the shape it is bound to.
 ///
-/// Excalidraw's `BindMode` (`packages/element/src/types.ts:316-333`), less the `skip` mode
+/// Excalidraw's `BindMode` (`packages/element/src/types.ts@1118751f:316-333`), less the `skip` mode
 /// only its feature-flagged strategy produces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -153,7 +153,7 @@ pub fn resolved_vertical_align(element: &DrawElement) -> VerticalAlign {
 /// `text` is what is drawn: the source with its soft line breaks baked in. Every text
 /// saved before `original_text` existed has only that, so it stands in as the source,
 /// and so does it for an empty source, as the oracle's `originalText || text` has it
-/// (`packages/excalidraw/data/restore.ts:572`).
+/// (`packages/excalidraw/data/restore.ts@1118751f:570`).
 pub fn source_text(element: &DrawElement) -> &str {
     element
         .original_text
@@ -216,7 +216,7 @@ pub fn resolved_font_family(element: &DrawElement) -> Option<u8> {
 /// had. Out of range — which the contract refuses, and nothing coming in can carry, so
 /// only code can set it — is ignored rather than clamped. The oracle has no range to
 /// enforce: its restore replaces only a missing or zero value
-/// (`packages/excalidraw/data/restore.ts:557-564`).
+/// (`packages/excalidraw/data/restore.ts@1118751f:555-562`).
 pub fn resolved_line_height(element: &DrawElement) -> f64 {
     element
         .line_height

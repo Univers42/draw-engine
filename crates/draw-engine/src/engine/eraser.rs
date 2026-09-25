@@ -1,6 +1,6 @@
 //! The eraser: mark what the sweep touches, delete it on release.
 //!
-//! Excalidraw's, in two stages (`eraser/index.ts`, `App.tsx:12154-12180`). While the
+//! Excalidraw's, in two stages (`eraser/index.ts`, `App.tsx@1118751f:12162-12188`). While the
 //! button is down, everything the stroke touches is **marked** and drawn at a fifth of its
 //! opacity (`ELEMENT_READY_TO_ERASE_OPACITY`) — the document itself untouched. Releasing
 //! deletes all of it as one step; Escape lets it all go. Sweeping back over marked

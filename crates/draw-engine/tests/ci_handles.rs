@@ -112,7 +112,7 @@ fn the_padded_corner_is_still_grabbable() {
 /// the frame line drawn around it — which is what this used to assert, on the strength of
 /// a claim that Excalidraw "leaves a clear 4px ring". It does not: their corner grab box
 /// starts two pixels outside the element and so overlaps their own dashed frame, which
-/// sits four pixels out (`transformHandles.ts:138-200`, `dashedLineMargin` against
+/// sits four pixels out (`transformHandles.ts@1118751f:138-200`, `dashedLineMargin` against
 /// `centeringOffset`). Holding the reach inside the frame made the target smaller than
 /// the handle that was painted on top of it.
 #[test]
@@ -250,7 +250,7 @@ fn rotation_carries_the_handles() {
 // The number comes from Excalidraw, worked out from their geometry rather than guessed.
 // `getTransformHandles` places a corner's grab box at `x2 + dashedLineMargin -
 // centeringOffset`, which at 1:1 for a mouse is `x2 + 4 - 2`, and the box is
-// `transformHandleSizes.mouse` = 8 across (`transformHandles.ts:49-53, :138-200`). So
+// `transformHandleSizes.mouse` = 8 across (`transformHandles.ts@1118751f:49-53, :138-200`). So
 // their grab region spans two to ten pixels outside the element and reaches **half the
 // handle's diagonal** — 5.66px — from its centre, which is the direction a person aims
 // from at a corner. Ours is radial rather than a box, deliberately: their box stays
@@ -361,9 +361,9 @@ fn the_reach_shrinks_with_the_zoom_so_it_stays_constant_on_screen() {
 // is not something a box can express.
 //
 // Excalidraw's rule, and it is a count and not a kind: `hasBoundingBox` returns
-// `element.points.length > 2` for a linear element (`transformHandles.ts:352`), and the
+// `element.points.length > 2` for a linear element (`transformHandles.ts@1118751f:352`), and the
 // point circles are drawn only while the line editor is open or the line has exactly two
-// points (`interactiveScene.ts:1256`, `:1686`).
+// points (`interactiveScene.ts@1118751f:1198`, `:1628`).
 //
 // Ours was kind-based, so *every* line and arrow was grabbed by its points however many
 // it had. The element that made this matter is the bucket fill: it is a closed line of

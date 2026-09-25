@@ -53,7 +53,7 @@ impl WasmEngine {
     }
 
     /// Ctrl+D: a copy ten units down and right, Excalidraw's `DEFAULT_GRID_SIZE / 2`
-    /// (`packages/excalidraw/actions/actionDuplicateSelection.tsx:78-79`).
+    /// (`packages/excalidraw/actions/actionDuplicateSelection.tsx@1118751f:78-79`).
     #[wasm_bindgen(js_name = duplicateSelection)]
     pub fn duplicate_selection(&self) {
         self.cell

@@ -8,7 +8,7 @@
 //! however many other squares the point happens to be inside.
 //!
 //! The rule is Excalidraw's live one, `getBindingCandidates` +
-//! `getHoveredElementForBinding` at 1118751f (`packages/element/src/collision.ts:301-486`,
+//! `getHoveredElementForBinding` at 1118751f (`packages/element/src/collision.ts@1118751f:301-486`,
 //! #10753 4850bf33 and dc2c16d9), and every expected answer in the probe table below
 //! was measured on excalidraw.com, which serves that build.
 
@@ -194,7 +194,7 @@ const ORACLE_PROBES: [(f64, f64, &str, BindMode); 48] = [
 ];
 
 /// The oracle's Ctrl+D offset: `DEFAULT_GRID_SIZE / 2`
-/// (`packages/excalidraw/actions/actionDuplicateSelection.tsx:78-79`).
+/// (`packages/excalidraw/actions/actionDuplicateSelection.tsx@1118751f:78-79`).
 const CTRL_D: f64 = 10.0;
 
 #[test]
@@ -218,7 +218,7 @@ fn nearest_outline_wins_in_a_ctrl_d_pack() {
 
 /// The user's report: in a pack, clicking a square never finished the arrow. A press
 /// whose end would orbit a square finishes it there; one inside the nearest square places
-/// a waypoint (Excalidraw's `binding.test.tsx:240/259`). Either way the end is the one
+/// a waypoint (Excalidraw's `binding.test.tsx@1118751f:526/259`). Either way the end is the one
 /// the oracle chose.
 #[test]
 fn a_click_just_outside_a_packed_square_binds_and_finishes() {

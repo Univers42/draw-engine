@@ -147,7 +147,7 @@ where
 
 /// Every group's box taken whole, by group id — at any depth, so an outer group's box
 /// covers the groups nested in it. `None` for a group holding a frame, which no frame
-/// can hold (`omitGroupsContainingFrameLikes`, `packages/element/src/frame.ts:747-788`).
+/// can hold (`omitGroupsContainingFrameLikes`, `packages/element/src/frame.ts@1118751f:747-788`).
 fn group_boxes<'a>(
     elements: impl Iterator<Item = &'a DrawElement>,
 ) -> HashMap<&'a str, Option<WorldBounds>> {
@@ -167,8 +167,8 @@ fn group_boxes<'a>(
 ///
 /// So a group joins a frame or leaves it as one, as the oracle's does: a new frame takes
 /// a group only when all of it is inside (`omitPartialGroups`, `packages/element/src/
-/// frame.ts:395-434`), and a dragged member is decided by its group, never on its own
-/// (`isElementInFrame`, `frame.ts:857-906`). Judged per element, a group straddling the
+/// frame.ts@1118751f:395-434`), and a dragged member is decided by its group, never on its own
+/// (`isElementInFrame`, `frame.ts@1118751f:857-906`). Judged per element, a group straddling the
 /// border was split in two, half of it clipped and carried by a frame the rest ignored.
 ///
 /// The element's own box is folded in, so one not yet in the scene — a bucket fill

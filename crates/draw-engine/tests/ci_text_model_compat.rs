@@ -202,8 +202,8 @@ fn source_text_prefers_the_text_as_typed() {
 
 #[test]
 fn each_known_family_resolves_with_the_oracles_line_height() {
-    // `packages/common/src/constants.ts:133-144` for the ids,
-    // `packages/common/src/font-metadata.ts:35-104` for the line heights.
+    // `packages/common/src/constants.ts@1118751f:137-148` for the ids,
+    // `packages/common/src/font-metadata.ts@1118751f:35-104` for the line heights.
     let families = [
         (1, 1.25), // Virgil
         (2, 1.15), // Helvetica
@@ -351,7 +351,7 @@ fn a_value_the_contract_refuses_is_dropped_where_it_comes_in() {
     }
 }
 
-/// The oracle's `originalText || text` (`packages/excalidraw/data/restore.ts:572`): an
+/// The oracle's `originalText || text` (`packages/excalidraw/data/restore.ts@1118751f:570`): an
 /// empty string is no source, and must not hide the text that is drawn.
 #[test]
 fn an_empty_source_falls_back_to_the_text_drawn() {
@@ -411,7 +411,7 @@ fn an_edit_keeps_the_source_in_step() {
 }
 
 /// The editor opens on what was typed, as the oracle's does
-/// (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`). Opened on `text`, every soft
+/// (`packages/excalidraw/wysiwyg/textWysiwyg.tsx@1118751f:488`). Opened on `text`, every soft
 /// break a newer client wrapped at would come back from the edit as a hard one.
 #[test]
 fn the_editor_opens_on_the_source() {

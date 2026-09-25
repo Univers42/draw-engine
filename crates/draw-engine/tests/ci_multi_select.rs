@@ -151,7 +151,7 @@ fn shift_click_takes_out_what_is_already_held() {
 }
 
 /// The take-out happens on the release, and only if the press stayed a click: the oracle
-/// changes nothing on a shift-press over something already held (`App.tsx:9656-9660`)
+/// changes nothing on a shift-press over something already held (`App.tsx@1118751f:9664-9668`)
 /// and removes it on a release with no drag (`:12183-12260`). Taken out on the press, a
 /// shift-drag moved the rest of the selection and left the grabbed member behind.
 #[test]
@@ -250,7 +250,7 @@ fn dragging_one_member_carries_the_others() {
 /// obvious reading of a click is *select what was clicked*.
 ///
 /// That reading is right once the press is let go without moving anything — then it was
-/// a click, and it narrows (`App.tsx:12183-12190`, `:12322-12345`). This used to assert
+/// a click, and it narrows (`App.tsx@1118751f:12191-12198`, `:12330-12353`). This used to assert
 /// the release kept everything too, which is not the oracle's click: it left no way to
 /// narrow a multi-selection short of clicking off it first.
 #[test]

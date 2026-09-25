@@ -10,26 +10,26 @@
 //! The rules here are transcribed from the oracle at the SHA pinned in
 //! `scripts/oracle-sha.txt`, and the two constants are theirs:
 //!
-//! - `LINE_CONFIRM_THRESHOLD = 8` (`packages/common/src/constants.ts:23`) — how near the
+//! - `LINE_CONFIRM_THRESHOLD = 8` (`packages/common/src/constants.ts@1118751f:27`) — how near the
 //!   point you just placed a click has to land to mean "finish here", and the radius the
 //!   next segment refuses to grow inside.
-//! - `MINIMUM_ARROW_SIZE = 20` (`constants.ts:22`) — below this the press-and-release was
+//! - `MINIMUM_ARROW_SIZE = 20` (`constants.ts@1118751f:26`) — below this the press-and-release was
 //!   a *click*, which starts a path, rather than a drag, which draws one segment and
-//!   ends (`App.tsx:11705-11745`).
+//!   ends (`App.tsx@1118751f:11713-11753`).
 //!
 //! Two of their findings are worth stating because they are counter-intuitive:
 //!
 //! - **Double click is not handled at all.** `handleCanvasDoubleClick` returns early
-//!   while a path is being placed (`App.tsx:7195-7199`). A double click ends the path
+//!   while a path is being placed (`App.tsx@1118751f:7197-7201`). A double click ends the path
 //!   anyway, and it is worth understanding why: its second click lands on the point its
 //!   first click just placed, and clicking the last placed point is the rule that ends a
 //!   path. So the gesture works without anybody implementing it, and it keeps working if
 //!   the two clicks are slow enough not to be a double click at all.
 //! - **Closing the loop keeps the closing point.** The preview point that follows the
 //!   cursor is normally thrown away when the path ends, but a click that lands back on
-//!   the first point commits it first (`App.tsx:10117-10134`), and then finalize snaps it
+//!   the first point commits it first (`App.tsx@1118751f:10125-10142`), and then finalize snaps it
 //!   exactly onto the first point so the loop stays shut at every zoom
-//!   (`actionFinalize.tsx:308-325`).
+//!   (`actionFinalize.tsx@1118751f:308-325`).
 
 mod common;
 use common::*;
@@ -194,7 +194,7 @@ fn the_box_follows_a_path_that_grows_backwards() {
 
 /// Backing out of a segment without placing it: Excalidraw takes the preview point away
 /// again when the cursor comes back inside the last point's commit zone
-/// (`App.tsx:8025-8060`).
+/// (`App.tsx@1118751f:8031-8066`).
 #[test]
 fn the_preview_backs_out_when_the_cursor_returns() {
     let mut engine = line_engine();
@@ -395,7 +395,7 @@ fn an_arrow_is_placed_point_by_point_too() {
 /// "The line should not rely or be stick to other elements."
 ///
 /// Excalidraw agrees: `isBindingElementType` is `elementType === "arrow"` and nothing
-/// else (`typeChecks.ts:178-182`). Binding a line meant a line drawn across a diagram
+/// else (`typeChecks.ts@1118751f:178-182`). Binding a line meant a line drawn across a diagram
 /// silently attached itself to whatever its ends happened to touch, and then moved on its
 /// own whenever those shapes did.
 #[test]
@@ -606,7 +606,7 @@ fn assert_frame_contains_points(element: &DrawElement) {
 /// — no Enter, no Escape, no second click on the point just placed. The suggestion
 /// already promised the attach; asking for a separate confirmation after it would make
 /// the highlight a lie for one more click. Beside it, not inside: a click inside a shape
-/// places a waypoint, so a path can be routed across one (`App.tsx:10178-10205`) — see
+/// places a waypoint, so a path can be routed across one (`App.tsx@1118751f:10185-10212`) — see
 /// `a_multi_click_arrow_still_binds`.
 #[test]
 fn clicking_a_bind_suggestion_finishes_the_path() {

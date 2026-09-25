@@ -11,7 +11,7 @@ use crate::scene::{bump_version, is_frame, new_element_id, DrawElement};
 impl DrawEngine {
     /// The arrow keys: the same set a drag moves, so a locked group member and a
     /// frame's children come along — the oracle's arrow keys move every selected element
-    /// and what their frames hold (`packages/excalidraw/components/App.tsx:5770-5775`).
+    /// and what their frames hold (`packages/excalidraw/components/App.tsx@1118751f:5771-5776`).
     pub fn nudge_selection(&mut self, dx: f64, dy: f64) {
         let targets: Vec<DrawElement> = self
             .moving_selection()
@@ -92,18 +92,19 @@ impl DrawEngine {
     }
 
     /// Whether align has two units to line up (`alignActionsPredicate`,
-    /// `actionAlign.tsx:39-52`), so the host offers it when it would do something.
+    /// `actionAlign.tsx@1118751f:39-52`), so the host offers it when it would do something.
     pub fn can_align(&self) -> bool {
         self.arrange_units() > 1
     }
 
-    /// Whether distribute has three units to space (`actionDistribute.tsx:35-46`).
+    /// Whether distribute has three units to space (`actionDistribute.tsx@1118751f:35-46`).
     pub fn can_distribute(&self) -> bool {
         self.arrange_units() > 2
     }
 
-    /// Flips what a drag would move: a frame's children and a locked group member come
-    /// along, as the oracle's flip takes them (`actionFlip.ts:87-94`, `groups.ts:94-132`).
+    /// Flips what a drag would move: a frame's children and a locked group member come along,
+    /// as the oracle's flip takes them (`actionFlip.ts@1118751f:87-94`,
+    /// `groups.ts@1118751f:94-132`).
     pub fn flip_selection(&mut self, axis: FlipAxis) {
         let flipped = self.moving_selection();
         self.forget_original_heights(&flipped);
@@ -114,7 +115,7 @@ impl DrawEngine {
         // A patch that changes nothing is not an edit: stamped, it would be saved, sent to
         // every peer and take a step of undo that puts nothing back — a lone unturned box
         // flipped, shapes aligned already. The oracle's `mutateElement` keeps the version
-        // when no value changed (`packages/element/src/mutateElement.ts:129-131`).
+        // when no value changed (`packages/element/src/mutateElement.ts@1118751f:129-131`).
         let patches: Vec<DrawElement> = patches
             .into_iter()
             .filter(|patch| {
@@ -132,7 +133,7 @@ impl DrawEngine {
         }
         // No frame membership pass: outside a drag the oracle's align, distribute and
         // flip leave `frameId` alone (`isElementInFrame` is true unless the selection is
-        // being dragged, `packages/element/src/frame.ts:845-855`), and a lock has no frame
+        // being dragged, `packages/element/src/frame.ts@1118751f:845-855`), and a lock has no frame
         // logic at all. Grouping settles its own members in `group_selection`.
         self.apply_bindings();
         self.push_history();
@@ -141,7 +142,7 @@ impl DrawEngine {
 
     pub fn group_selection(&mut self) {
         // Labels are not counted: a shape and its own words are one thing to group, as
-        // `enableActionGroup` reads the selection without them (`actionGroup.tsx:73-83`).
+        // `enableActionGroup` reads the selection without them (`actionGroup.tsx@1118751f:73-83`).
         let shapes = self
             .selected_ids
             .iter()
@@ -163,7 +164,7 @@ impl DrawEngine {
         // typing into it, and their commit would stamp above this and take it back out.
         patches.retain(|el| !self.held.contains_key(&el.id));
         // Grouping across a frame's edge takes the group out whole
-        // (`packages/excalidraw/actions/actionGroup.tsx:138-150`): each member is judged
+        // (`packages/excalidraw/actions/actionGroup.tsx@1118751f:138-150`): each member is judged
         // with its new group's box, and nothing else on the board is touched.
         let owners: Vec<Option<String>> = {
             let patched: HashMap<&str, &DrawElement> =

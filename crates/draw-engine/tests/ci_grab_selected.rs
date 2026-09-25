@@ -8,14 +8,14 @@
 //!
 //! But it is only right for a shape you have *not* selected. Once a shape is selected it
 //! is hit anywhere in its box — the oracle's `hitElement` tests a selected element
-//! against its bounding box (`packages/excalidraw/components/App.tsx:6782-6806`), and two
+//! against its bounding box (`packages/excalidraw/components/App.tsx@1118751f:6784-6808`), and two
 //! or more selected share one common box (`isHittingCommonBoundingBoxOfSelectedElements`,
-//! `App.tsx:9783-9806`). So a press there keeps the selection and a drag moves it.
+//! `App.tsx@1118751f:9791-9814`). So a press there keeps the selection and a drag moves it.
 //!
 //! A press there that is let go without moving is a click on nothing, and lets go of the
-//! selection (`App.tsx:12344-12387`, `hitElementBoundingBoxOnly`). A selected line or
+//! selection (`App.tsx@1118751f:12352-12395`, `hitElementBoundingBoxOnly`). A selected line or
 //! arrow of two points has no box at all (`hasBoundingBox`,
-//! `packages/element/src/transformHandles.ts:328-353`), so nothing but the line grabs it.
+//! `packages/element/src/transformHandles.ts@1118751f:328-353`), so nothing but the line grabs it.
 
 mod common;
 use common::*;
@@ -140,7 +140,7 @@ mod already_selected {
 
     /// A click with no drag moves nothing and lets go, as a click on empty canvas does:
     /// the oracle deselects when the release hit only the selected element's box
-    /// (`App.tsx:12344-12387`). This used to keep the selection, on a misreading of the
+    /// (`App.tsx@1118751f:12352-12395`). This used to keep the selection, on a misreading of the
     /// oracle as offering the box to two or more elements only.
     #[test]
     fn a_click_in_the_hole_lets_go() {

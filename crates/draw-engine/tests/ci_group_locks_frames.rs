@@ -4,14 +4,14 @@
 //!
 //! - **a lock** stops an element being picked up on its own, but not being carried by the
 //!   group it belongs to — the group's members are selected with no lock filter
-//!   (`packages/element/src/groups.ts:94-132`) and the drag refuses only when *every*
-//!   selected element is locked (`packages/excalidraw/components/App.tsx:10899-10904`);
+//!   (`packages/element/src/groups.ts@1118751f:94-132`) and the drag refuses only when *every*
+//!   selected element is locked (`packages/excalidraw/components/App.tsx@1118751f:10907-10912`);
 //! - **a frame** takes a group in or lets it go whole — `omitPartialGroups`
-//!   (`packages/element/src/frame.ts:395-434`) and the group walk of `isElementInFrame`
-//!   (`frame.ts:857-906`) — so a group never ends up half in a frame;
+//!   (`packages/element/src/frame.ts@1118751f:395-434`) and the group walk of `isElementInFrame`
+//!   (`frame.ts@1118751f:857-906`) — so a group never ends up half in a frame;
 //! - **deleting a frame** deletes the frame, not the work in it: the children stay, lose
-//!   their `frameId`, and are selected (`actionDeleteSelected.tsx:57-73,115-122`, pinned
-//!   by `actionDeleteSelected.test.tsx:11`).
+//!   their `frameId`, and are selected (`actionDeleteSelected.tsx@1118751f:57-73,115-122`, pinned
+//!   by `actionDeleteSelected.test.tsx@1118751f:11`).
 //!
 //! Every scene here starts from the same probe, `nested_plus_h`: five filled 80×80 boxes
 //! in a row, A B C grouped with A+B nested inside, and D+E a group of their own.
@@ -169,7 +169,7 @@ fn a_locked_member_is_scaled_with_its_group() {
 }
 
 /// The keyboard is the other way a selection moves, and it left the same member behind.
-/// The oracle's arrow keys move every selected element (`App.tsx:5770-5830`).
+/// The oracle's arrow keys move every selected element (`App.tsx@1118751f:5771-5831`).
 #[test]
 fn nudging_a_group_carries_its_locked_member() {
     let Probe {
@@ -185,7 +185,7 @@ fn nudging_a_group_carries_its_locked_member() {
 }
 
 /// Only membership carries a locked element. Pressed on directly it is not there to be
-/// hit — the oracle nulls a hit on a locked element (`App.tsx:9510-9517`) — so the press
+/// hit — the oracle nulls a hit on a locked element (`App.tsx@1118751f:9518-9525`) — so the press
 /// starts a marquee and nothing moves.
 #[test]
 fn a_locked_member_is_not_a_handle_on_its_group() {
@@ -211,7 +211,7 @@ fn a_locked_member_is_not_a_handle_on_its_group() {
 ///
 /// Select All is the one door that lets such a group into the selection here — it takes
 /// locked elements so they can be unlocked from the menu, where the oracle's skips them
-/// (`actionSelectAll.ts:32-38`) — and dragging the rest of that selection must not pick
+/// (`actionSelectAll.ts@1118751f:32-38`) — and dragging the rest of that selection must not pick
 /// it up with them.
 #[test]
 fn a_group_that_is_locked_throughout_stays_put() {
@@ -260,7 +260,7 @@ fn a_locked_child_moves_with_its_frame() {
 }
 
 /// The arrow keys move what a drag moves. The oracle nudges with
-/// `includeElementsInFrames: true` (`App.tsx:5770-5775`); here the frame moved alone,
+/// `includeElementsInFrames: true` (`App.tsx@1118751f:5771-5776`); here the frame moved alone,
 /// out from under everything it still claimed.
 #[test]
 fn nudging_a_frame_carries_what_it_holds() {
@@ -279,7 +279,7 @@ fn nudging_a_frame_carries_what_it_holds() {
 // ---------------------------------------------------------------------------
 
 /// Drawn over A alone, a frame took A out of the middle of its group. The oracle omits a
-/// group that is not wholly inside a new frame (`omitPartialGroups`, `frame.ts:395-434`).
+/// group that is not wholly inside a new frame (`omitPartialGroups`, `frame.ts@1118751f:395-434`).
 #[test]
 fn a_frame_drawn_over_part_of_a_group_takes_none_of_it() {
     let Probe {
@@ -349,7 +349,7 @@ fn a_group_dragged_across_a_frame_edge_does_not_split() {
 }
 
 /// A frame holds no frame, so it holds no group with a frame in it either — not even the
-/// part lying inside it (`omitGroupsContainingFrameLikes`, `frame.ts:747-788`).
+/// part lying inside it (`omitGroupsContainingFrameLikes`, `frame.ts@1118751f:747-788`).
 #[test]
 fn a_group_holding_a_frame_is_held_by_no_frame() {
     let outer = create_element_default(
@@ -378,7 +378,7 @@ fn a_group_holding_a_frame_is_held_by_no_frame() {
 }
 
 /// Grouping an element inside a frame with one outside takes the first out of the frame,
-/// as `actionGroup.tsx:138-150` does, in the same step — so one undo puts it back.
+/// as `actionGroup.tsx@1118751f:138-150` does, in the same step — so one undo puts it back.
 #[test]
 fn grouping_across_a_frame_edge_takes_the_group_out_whole() {
     let inside = filled(box_at(40.0, 340.0, 80.0, 80.0));
@@ -484,7 +484,7 @@ fn undo_brings_the_frame_back_with_its_children_in_it() {
 
 /// Outside a drag the oracle's align, distribute and flip leave `frameId` alone —
 /// `isElementInFrame` is true unless the selection is being dragged
-/// (`packages/element/src/frame.ts:845-855`).
+/// (`packages/element/src/frame.ts@1118751f:845-855`).
 #[test]
 fn aligning_a_child_out_of_its_frame_keeps_it_in_the_frame() {
     let child = filled(box_at(60.0, 60.0, 80.0, 80.0));
@@ -629,7 +629,7 @@ fn a_locked_shapes_label_is_not_carried_on_its_own() {
 // Align and distribute carry what a drag carries
 // ---------------------------------------------------------------------------
 
-/// The oracle's align has no lock filter (`packages/element/src/align.ts:19-50`): a
+/// The oracle's align has no lock filter (`packages/element/src/align.ts@1118751f:19-50`): a
 /// locked member is aligned with its group, as a drag carries it. Filtered out one by
 /// one, B stayed at 250 while A went to 0 — and the group was torn apart.
 #[test]
@@ -700,7 +700,7 @@ fn distribute_carries_a_locked_group_member() {
 // Part of an edited group dragged across a frame's edge leaves the group
 // ---------------------------------------------------------------------------
 
-/// `updateGroupIdsAfterEditingGroup` (`App.tsx:11993-12060`): a member of the edited
+/// `updateGroupIdsAfterEditingGroup` (`App.tsx@1118751f:12001-12068`): a member of the edited
 /// group dragged into a frame leaves that group — and every group around it — and joins
 /// the frame. The group it left, down to one member, is no group any more, and nothing
 /// is being edited. Judged here by where the dragged part lies, as membership always is.
@@ -931,7 +931,7 @@ fn leaving_the_edited_group_leaves_a_member_a_peer_holds_alone() {
 // ---------------------------------------------------------------------------
 
 /// Ungrouping a group that straddles a frame leaves its members where they were — the
-/// oracle re-judges only frames they already belong to (`actionGroup.tsx:262-285`). The
+/// oracle re-judges only frames they already belong to (`actionGroup.tsx@1118751f:262-285`). The
 /// next unrelated click used to re-derive membership across the board: A joined the
 /// frame, was restamped and sent as part of that click, and its undo took A back out.
 #[test]
@@ -1004,7 +1004,7 @@ fn last_drawn(engine: &DrawEngine) -> String {
 
 /// What is created is judged as it is committed. A shape drawn inside a frame is that
 /// frame's at once — the oracle gives a new element the frame it is created in
-/// (`App.tsx:9897-9927`) — and moves with it. Judged only by a later gesture of its own,
+/// (`App.tsx@1118751f:9905-9935`) — and moves with it. Judged only by a later gesture of its own,
 /// it stayed out of the frame, which then moved without it.
 #[test]
 fn a_shape_drawn_inside_a_frame_joins_it_and_moves_with_it() {

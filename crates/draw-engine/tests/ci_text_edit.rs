@@ -1227,7 +1227,7 @@ mod entry {
     }
 
     /// Dragging the sole selected text moves it instead of reopening it: only a press
-    /// that never moved reads as the click that does (`App.tsx:10918-10921`).
+    /// that never moved reads as the click that does (`App.tsx@1118751f:10926-10929`).
     #[test]
     fn dragging_the_sole_selected_text_moves_it_instead() {
         let mut engine = engine_with_measure(Vec::new());

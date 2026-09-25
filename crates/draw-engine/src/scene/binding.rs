@@ -27,8 +27,8 @@ use crate::scene::geometry::{
 };
 use crate::scene::outline_distance::signed_outline_distance;
 
-/// Excalidraw's `BASE_BINDING_GAP` (`packages/element/src/binding.ts:115`): the air between
-/// an orbiting end and the outline, before half the target's stroke is added to it.
+/// Excalidraw's `BASE_BINDING_GAP` (`packages/element/src/binding.ts@1118751f:116`): the air
+/// between an orbiting end and the outline, before half the target's stroke is added to it.
 pub const BASE_BINDING_GAP: f64 = 5.0;
 /// The gap in front of a shape with the default 2px stroke. See [`binding_gap`].
 pub const BINDING_GAP: f64 = 6.0;
@@ -45,12 +45,12 @@ pub const LABEL_PADDING: f64 = crate::text::layout::BOUND_TEXT_PADDING;
 /// the gap is exactly Excalidraw's.
 const GAP_SHARE_OF_SIDE: f64 = 0.25;
 
-/// Excalidraw's `FIXED_POINT_BOUND` (`binding.ts:2712`). An anchor can sit outside its
+/// Excalidraw's `FIXED_POINT_BOUND` (`binding.ts@1118751f:2724`). An anchor can sit outside its
 /// shape — an orbit anchor projected from a drop beside it — but not unboundedly far.
 const FIXED_POINT_BOUND: f64 = 10.0;
 
 /// Excalidraw insets a rectangle's diagonals by 15 at each end before projecting a drop
-/// onto them (`packages/element/src/utils.ts:552-561`), so an anchor never lands in a
+/// onto them (`packages/element/src/utils.ts@1118751f:553-562`), so an anchor never lands in a
 /// corner. Capped to a share of the diagonal here for the same reason as the gap.
 const DIAGONAL_INSET: f64 = 15.0;
 const DIAGONAL_INSET_SHARE: f64 = 0.1;
@@ -61,7 +61,7 @@ const MIDPOINT_SNAP_SHARE_OF_SIDE: f64 = 0.25;
 
 /// An arrow narrower and shorter than this, in screen pixels, has no direction yet — it is
 /// the press that starts one — so there is no line to project its end along. Excalidraw's
-/// is 3 scene units (`packages/element/src/utils.ts:706-708`); in pixels here so it means
+/// is 3 scene units (`packages/element/src/utils.ts@1118751f:834-836`); in pixels here so it means
 /// the same thing at every zoom. Excalidraw's check also turns the midpoint snap off for
 /// the press, while its hover still shows the midpoint dot — a promise the press then
 /// breaks. Here the snap does not need a direction, and the dot is kept.
@@ -74,7 +74,7 @@ pub fn is_linear_element(element: &DrawElement) -> bool {
 /// Whether this element attaches itself to the shapes its ends meet.
 ///
 /// **An arrow, and nothing else.** Excalidraw's `isBindingElementType` is the same single
-/// comparison (`packages/element/src/typeChecks.ts:178-182`), and the distinction is the
+/// comparison (`packages/element/src/typeChecks.ts@1118751f:178-182`), and the distinction is the
 /// whole difference between the two linear kinds: an arrow *means* a relationship between
 /// two things, so following them about is the point of it. A line is a line. Binding one
 /// meant a line drawn across a diagram silently attached itself to whatever its ends
@@ -100,7 +100,7 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
 
 /// Whether an arrow end can attach to this kind of element.
 ///
-/// Excalidraw's `isBindableElement(element, false)` (`typeChecks.ts:184-202`): the three
+/// Excalidraw's `isBindableElement(element, false)` (`typeChecks.ts@1118751f:184-202`): the three
 /// shapes, pictures, embeds, frames and free-standing text — not a label, which belongs
 /// to its container, and never a line or arrow. A locked one is not a target, but it
 /// still stands in the way of what is behind it, so the lock is [`arrow_target_among`]'s
@@ -297,7 +297,7 @@ fn rotate_about(p: Point, centre: Point, angle: f64) -> Point {
 
 /// The anchor for a world point on `shape`: the point un-turned into the shape's own frame
 /// and expressed as a ratio of its size. `calculateFixedPointForNonElbowArrowBinding`
-/// (`binding.ts:2160-2211`).
+/// (`binding.ts@1118751f:2172-2223`).
 pub fn fixed_point_at(shape: &DrawElement, world: Point) -> [f64; 2] {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     // A shape with no extent on an axis has nothing to take a ratio of. Excalidraw's
@@ -311,7 +311,7 @@ pub fn fixed_point_at(shape: &DrawElement, world: Point) -> [f64; 2] {
 }
 
 /// Where an anchor is on the board now: its point in the shape's frame, turned with the
-/// shape. `getGlobalFixedPointForBindableElement` (`binding.ts:2634-2649`).
+/// shape. `getGlobalFixedPointForBindableElement` (`binding.ts@1118751f:2646-2661`).
 pub fn focus_point(shape: &DrawElement, fixed_point: [f64; 2]) -> Point {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     let [fx, fy] = clean_fixed_point(fixed_point);
@@ -329,7 +329,7 @@ pub fn focus_point(shape: &DrawElement, fixed_point: [f64; 2]) -> Point {
 
 /// The gap an orbiting end keeps from `shape`'s outline.
 ///
-/// Excalidraw's `getBindingGap` (`binding.ts:125-135`) — 5 plus half the target's stroke —
+/// Excalidraw's `getBindingGap` (`binding.ts@1118751f:125-131`) — 5 plus half the target's stroke —
 /// capped by [`GAP_SHARE_OF_SIDE`] so it shrinks with the shape instead of dwarfing it.
 pub fn binding_gap(shape: &DrawElement) -> f64 {
     let base = BASE_BINDING_GAP + shape.stroke_width.max(0.0) / 2.0;
@@ -349,7 +349,7 @@ pub fn midpoint_snap_radius(shape: &DrawElement, radius: f64) -> f64 {
 
 /// The four points an orbiting end snaps to: the middle of each side, turned with the
 /// shape — right, bottom, left, top. For a diamond these are its vertices.
-/// `getSnapOutlineMidPoint` (`packages/element/src/utils.ts:634-695`).
+/// `getSnapOutlineMidPoint` (`packages/element/src/utils.ts@1118751f:788-808`).
 pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     let c = rotation_center(shape);
@@ -436,7 +436,7 @@ fn ellipse_interval(
 ///
 /// Every target is convex, so a line meets its outline at most twice and the inside is one
 /// interval. The outline pushed out by the gap is Excalidraw's too
-/// (`intersectElementWithLineSegment` with an offset, `collision.ts:627-751`): a box grows
+/// (`intersectElementWithLineSegment` with an offset, `collision.ts@1118751f:675-799`): a box grows
 /// into a rounded box, so an arrow arriving at a corner keeps the same gap as one arriving
 /// square on.
 fn outline_interval(shape: &DrawElement, a: Point, b: Point, gap: f64) -> Option<(f64, f64)> {
@@ -531,7 +531,7 @@ fn nearest_to(points: Vec<Point>, to: Point) -> Option<Point> {
 
 /// The two lines an orbit anchor is projected onto: a rectangle's diagonals, inset from
 /// the corners, or the centre lines of anything else. `getDiagonalsForBindableElement`
-/// (`packages/element/src/utils.ts:549-632`).
+/// (`packages/element/src/utils.ts@1118751f:550-633`).
 fn projection_lines(shape: &DrawElement) -> [(Point, Point); 2] {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     let c = rotation_center(shape);
@@ -595,7 +595,7 @@ fn ray_hits_segment(from: Point, toward: Point, p: Point, q: Point) -> Option<(f
 ///   outside), and one the point is outside of counts only within `tolerance`;
 /// - a frame is bound only from outside, near its border, so a point inside a frame is
 ///   aimed at what the frame holds; a shape inside a frame is skipped where the frame
-///   clips it from view (`isPointClippedByEnclosingFrame`, `collision.ts:283-298`);
+///   clips it from view (`isPointClippedByEnclosingFrame`, `collision.ts@1118751f:283-298`);
 /// - the walk stops at the first opaque shape — filled, or a picture — the point is
 ///   inside, so nothing hidden under it can be bound through it. A locked shape is never
 ///   a candidate, but an opaque one still hides what is behind it;
@@ -778,7 +778,7 @@ pub struct EndDrop {
     /// The world size of one screen pixel.
     pub pixel: f64,
     /// Grid snapping is on: the end lands on the grid, and a midpoint snap would pull it
-    /// off it — Excalidraw's grid mode turns the snap off (`binding.ts:876-878`).
+    /// off it — Excalidraw's grid mode turns the snap off (`binding.ts@1118751f:885-887`).
     pub grid: bool,
 }
 
@@ -799,7 +799,7 @@ pub fn snapped_midpoint(shape: &DrawElement, pointer: Point, reach: f64) -> Opti
 /// The side midpoint to mark for a pointer at `pointer` near `shape`, and whether a drop
 /// there would snap onto it (`true`) or it is only close (`false`, within twice the snap).
 /// `renderBindingHighlightForBindableElement_simple`
-/// (`packages/excalidraw/renderer/interactiveScene.ts:284-322`). Nothing inside the shape:
+/// (`packages/excalidraw/renderer/interactiveScene.ts@1118751f:284-322`). Nothing inside the shape:
 /// a drop there binds exactly where it is.
 pub fn midpoint_mark(shape: &DrawElement, pointer: Point, reach: f64) -> Option<(Point, bool)> {
     if is_inside(shape, pointer) {
@@ -822,7 +822,7 @@ pub fn midpoint_mark(shape: &DrawElement, pointer: Point, reach: f64) -> Option<
 /// Where an orbit anchor goes for a drop beside `shape`: where the arrow's own line,
 /// continued through the drop, first crosses the shape's projection lines.
 ///
-/// `projectFixedPointOntoDiagonal` (`packages/element/src/utils.ts:697-787`). The arrow's
+/// `projectFixedPointOntoDiagonal` (`packages/element/src/utils.ts@1118751f:810-902`). The arrow's
 /// line is aimed from the far end's anchor for a straight arrow, or from the neighbouring
 /// point of a bent one. The result is the anchor that keeps the end arriving where the
 /// person aimed it — along the side it came in on, at the height they chose — instead of
@@ -864,7 +864,7 @@ fn projected_anchor<'a>(
 ///
 /// Returns the new binding for that end, and — only when it has to change — the other
 /// end's. Excalidraw's `getBindingStrategyForDraggingBindingElementEndpoints_simple`
-/// (`binding.ts:644-953`):
+/// (`binding.ts@1118751f:654-962`):
 ///
 /// - nothing near: unbound;
 /// - both ends on the same shape: both sit exactly where they are ([`BindMode::Inside`]),
@@ -934,7 +934,7 @@ pub fn anchor_for_drop<'a>(
 /// orbiting far end is drawn toward its anchor, not toward where it happens to be, so an
 /// anchor off that line bends the arrow off the angle it was held to. Re-projecting it
 /// from the far end's current point puts it back on the line. Excalidraw's `angleLocked`
-/// branch (`packages/element/src/binding.ts:933-950`). An end sitting inside its shape is
+/// branch (`packages/element/src/binding.ts@1118751f:942-959`). An end sitting inside its shape is
 /// exactly where it was put, and stays.
 fn reprojected_other<'a>(
     arrow: &DrawElement,
@@ -988,14 +988,14 @@ fn aim(points: &[Point], end: End, other: Option<&Bound<'_>>) -> Point {
     }
 }
 
-/// Where one bound end is drawn. `updateBoundPoint` (`binding.ts:1938-2094`).
+/// Where one bound end is drawn. `updateBoundPoint` (`binding.ts@1118751f:1948-2104`).
 ///
 /// An inside end is its anchor. An orbiting end runs from its anchor toward [`aim`] and
 /// stops where that line leaves the outline, a gap clear of it — or stays on its anchor
 /// when the line never leaves, which is an anchor the person put outside the shape.
 ///
 /// Excalidraw also sends an orbiting end *onto* its anchor when the arrow gets short or
-/// its outline point falls inside the far shape (`binding.ts:2026-2083`). Its anchors
+/// its outline point falls inside the far shape (`binding.ts@1118751f:2036-2093`). Its anchors
 /// mostly sit on the outline, so there that is a small step; an anchor at a shape's
 /// centre — every arrow bound before anchors existed — made it a jump deep into the
 /// shape. Here an orbiting end never goes inside its shape, and the one thing those rules
@@ -1004,7 +1004,7 @@ fn aim(points: &[Point], end: End, other: Option<&Bound<'_>>) -> Point {
 /// Also says whether an orbiting end is **trapped**: its anchor inside the shape and no
 /// way out toward its aim. An anchor put outside the shape that the line never leaves
 /// from is not trapped — the end simply stays on it, as Excalidraw keeps one on its focus
-/// (`utils.ts:782-786`, `binding.ts:880`).
+/// (`utils.ts@1118751f:897-901`, `binding.ts@1118751f:889`).
 fn resolve_end(
     points: &[Point],
     end: End,
@@ -1201,7 +1201,7 @@ pub fn layout_label(mut label: DrawElement, container: &DrawElement) -> DrawElem
 /// is re-resolved when it or either shape it is bound to was touched; a label when it or
 /// its container was, or its container was re-routed here. So an edit re-resolves the
 /// arrows of what it moved, as the oracle's `updateBoundElements(changedElement)` does
-/// (`packages/element/src/align.ts:45-48`), and nothing else: re-resolving the whole
+/// (`packages/element/src/align.ts@1118751f:45-48`), and nothing else: re-resolving the whole
 /// board rewrote an arrow saved before its ends were anchored on the first unrelated
 /// edit — stamped as part of that edit, or, on a peer's patch, not stamped at all, so
 /// this engine and the server held two geometries under one version.

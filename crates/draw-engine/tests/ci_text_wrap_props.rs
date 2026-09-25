@@ -134,7 +134,7 @@ fn nfc(text: &str) -> String {
     text.nfc().collect()
 }
 
-/// textWrapping.test.ts:22-27, and the offsets of `getHardLineBreaks`.
+/// textWrapping.test.ts@1118751f:22-27, and the offsets of `getHardLineBreaks`.
 #[test]
 fn an_invalid_width_keeps_the_hard_lines() {
     let text = "Hello Excalidraw\nx";
@@ -181,7 +181,7 @@ fn offsets_lead_back_to_the_source() {
     assert!(lines_checked > 10_000, "{lines_checked}");
 }
 
-/// The oracle keeps a line that fits verbatim (textWrapping.ts:462-469) and composes only
+/// The oracle keeps a line that fits verbatim (textWrapping.ts@1118751f:462-469) and composes only
 /// the lines it has to break; the offsets still count bytes of the decomposed source.
 #[test]
 fn only_a_line_that_wraps_is_composed() {

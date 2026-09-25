@@ -2,9 +2,9 @@
 //!
 //! It used to be always on. Every drag near another shape was pulled a few pixels onto
 //! its edge or centre, and the only way out was a modifier held through the whole drag.
-//! Excalidraw ships it **off** (`appState.ts:129`, `objectsSnapModeEnabled: false`), with
+//! Excalidraw ships it **off** (`appState.ts@1118751f:129`, `objectsSnapModeEnabled: false`), with
 //! `Alt+S` to turn it on and Ctrl/Cmd to invert it for one gesture
-//! (`snapping.ts:180-183`):
+//! (`snapping.ts@1118751f:180-183`):
 //!
 //! ```text
 //! snap = (objectsSnap && !ctrlOrCmd) || (!objectsSnap && ctrlOrCmd && !gridMode)

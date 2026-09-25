@@ -118,7 +118,7 @@ fn evict_images(live: &[&DrawElement]) {
 /// element's coordinates, away from the element itself. Clicking the picture hit
 /// nothing and the real, grabbable image sat in empty-looking space. That was the whole
 /// of "an image cannot be dragged". Excalidraw draws it the same local way
-/// (`renderElement.ts:606-616`).
+/// (`renderElement.ts@1118751f:606-616`).
 fn paint_image(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     let (w, h) = (element.width.abs(), element.height.abs());
     let decoded = decoded_image(element);
@@ -1931,7 +1931,7 @@ fn paint_lasso(ctx: &CanvasRenderingContext2d, view: &PaintView) {
 ///
 /// Pulled out of [`paint_shape_selection`] because a multi-selection needs exactly this
 /// and nothing else: Excalidraw gives every selected element its own border and *then*
-/// draws the group's box around all of them (`interactiveScene.ts:1922-1948` and
+/// draws the group's box around all of them (`interactiveScene.ts@1118751f:1864-1890` and
 /// `:2027-2052`). Only the single-element case adds handles on top.
 fn paint_element_outline(ctx: &CanvasRenderingContext2d, view: &PaintView, element: &DrawElement) {
     let corners = selection_corners_padded(element, view.handle_layout.frame_pad);
@@ -2220,7 +2220,7 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     let br = crate::world_to_screen(view.camera, bounds.max_x + pad, bounds.max_y + pad);
     // Dotted, so the group's box reads as chrome around the outlines rather than as a
     // sixth rectangle someone drew. Excalidraw dots this one and only this one
-    // (`setLineDash([2 / zoom])`, `interactiveScene.ts:2037`) for the same reason.
+    // (`setLineDash([2 / zoom])`, `interactiveScene.ts@1118751f:1979`) for the same reason.
     set_dash_cached(ctx, Some([2.0, 2.0]));
     ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
     set_dash_cached(ctx, None);

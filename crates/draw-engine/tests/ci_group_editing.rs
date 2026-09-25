@@ -140,7 +140,7 @@ fn group_ids_of(engine: &DrawEngine, id: &str) -> Vec<String> {
 // Leaving
 // ---------------------------------------------------------------------------
 
-/// `clearSelection(null)` resets the edited group (`App.tsx:12889-12902`), so a click on
+/// `clearSelection(null)` resets the edited group (`App.tsx@1118751f:12897-12910`), so a click on
 /// nothing is a way out. Left set, the next marquee around D was resolved inside g2,
 /// where D has no group to expand to — and took D without E.
 #[test]
@@ -160,7 +160,7 @@ fn a_click_on_empty_canvas_leaves_the_edited_group() {
 }
 
 /// A marquee starts on empty canvas, and that press already clears the edited group
-/// (`App.tsx:9580`, `:11332`) — so it resolves at the top level, and a box around A
+/// (`App.tsx@1118751f:9588`, `:11340`) — so it resolves at the top level, and a box around A
 /// takes everything A is grouped with.
 #[test]
 fn a_marquee_inside_the_edited_group_selects_whole_top_level_groups() {
@@ -178,7 +178,7 @@ fn a_marquee_inside_the_edited_group_selects_whole_top_level_groups() {
 }
 
 /// Picking up the lasso puts the selection down, and the edited group with it
-/// (`setActiveTool`, `App.tsx:6206-6218`). Kept, the loop around D was resolved inside
+/// (`setActiveTool`, `App.tsx@1118751f:6208-6220`). Kept, the loop around D was resolved inside
 /// g2 and took D without E.
 #[test]
 fn picking_up_the_lasso_leaves_the_edited_group() {
@@ -201,7 +201,7 @@ fn picking_up_the_lasso_leaves_the_edited_group() {
 }
 
 /// Shift or not, pressing something outside the edited group drops the selection and the
-/// group before the press is resolved (`App.tsx:9639-9650`). Keeping the inner selection
+/// group before the press is resolved (`App.tsx@1118751f:9647-9658`). Keeping the inner selection
 /// under a shift-click held half of g2 beside all of h.
 #[test]
 fn a_shift_click_outside_the_edited_group_takes_only_what_was_clicked() {
@@ -219,7 +219,7 @@ fn a_shift_click_outside_the_edited_group_takes_only_what_was_clicked() {
 }
 
 /// A shift-click that lets go of the last thing held lets go of the group with it, as the
-/// oracle's empty selection does (`groups.ts:188-196`). The toggle used to edit the
+/// oracle's empty selection does (`groups.ts@1118751f:188-196`). The toggle used to edit the
 /// selection behind `set_selection`'s back, and left g1 open around nothing.
 #[test]
 fn a_shift_click_that_empties_the_selection_leaves_the_edited_group() {
@@ -235,7 +235,7 @@ fn a_shift_click_that_empties_the_selection_leaves_the_edited_group() {
 }
 
 /// A shift-drag that stays inside the edited group adds to it at that level, and the group
-/// stays open — the oracle keeps both under shift (`App.tsx:11275-11296`).
+/// stays open — the oracle keeps both under shift (`App.tsx@1118751f:11283-11304`).
 #[test]
 fn a_shift_marquee_inside_the_edited_group_stays_in_it() {
     let mut board = board();
@@ -255,7 +255,7 @@ fn a_shift_marquee_inside_the_edited_group_stays_in_it() {
 /// One that reaches outside leaves the group, and everything it holds is taken whole at
 /// the top. Grown inside first and left after, it held D without E beside half of g2 —
 /// a selection Ctrl+G turns into two groups that overlap. A deliberate divergence: the
-/// oracle keeps g2 open over that same mixed selection (`App.tsx:11331-11345`).
+/// oracle keeps g2 open over that same mixed selection (`App.tsx@1118751f:11339-11353`).
 #[test]
 fn a_shift_marquee_reaching_outside_the_edited_group_takes_whole_groups() {
     let mut board = board();
@@ -274,7 +274,7 @@ fn a_shift_marquee_reaching_outside_the_edited_group_takes_whole_groups() {
     );
 }
 
-/// Escape goes up **one** level and holds that level's group (`actionDeselect.ts:36-62`,
+/// Escape goes up **one** level and holds that level's group (`actionDeselect.ts@1118751f:36-62`,
 /// `:72-111`); only at the top does it let go. Leaving every level at once made three
 /// double clicks down a one-key trip back to nothing.
 #[test]
@@ -303,7 +303,7 @@ fn escape_goes_up_one_level_at_a_time() {
     assert!(selection(&engine).is_empty());
 }
 
-/// Select-all is a top-level selection (`actionSelectAll.ts:49` passes `editingGroupId:
+/// Select-all is a top-level selection (`actionSelectAll.ts@1118751f:49` passes `editingGroupId:
 /// null`). Kept, Ctrl+G inserted the new level *inside* g2 while wrapping D and E from
 /// outside it, and the result no longer nested.
 #[test]
@@ -357,7 +357,7 @@ fn select_all_inside_a_group_that_holds_everything_is_still_top_level() {
     );
 }
 
-/// Undo can remove the edited group itself; the oracle then drops it (`delta.ts:806-818`).
+/// Undo can remove the edited group itself; the oracle then drops it (`delta.ts@1118751f:806-818`).
 /// Left set, it named a group nothing carried, and every click and marquee on the board
 /// was resolved inside it — so no group anywhere expanded.
 #[test]
@@ -383,7 +383,7 @@ fn undo_leaves_no_stale_edited_group() {
 
 /// A press on something already selected might be the start of a drag, so it keeps the
 /// selection; released without moving, it was a click, and a click selects what it hit
-/// (`App.tsx:12183-12190`, `:12322-12345`).
+/// (`App.tsx@1118751f:12191-12198`, `:12330-12353`).
 #[test]
 fn a_click_on_a_selected_member_narrows_to_its_group() {
     let mut board = board();
@@ -439,7 +439,7 @@ fn a_click_inside_the_edited_group_narrows_at_that_level() {
 // ---------------------------------------------------------------------------
 
 /// With two or more left, the group stays open and its first member is selected
-/// (`actionDeleteSelected.tsx:130-137`, then `handleGroupEditingState`, `:190-205`).
+/// (`actionDeleteSelected.tsx@1118751f:130-137`, then `handleGroupEditingState`, `:190-205`).
 #[test]
 fn deleting_inside_a_group_selects_the_next_sibling() {
     let (mut engine, [a, _, _, d]) = three_levels();
@@ -456,7 +456,7 @@ fn deleting_inside_a_group_selects_the_next_sibling() {
 }
 
 /// One left: the level is not a group any more, so it steps up to the group around it,
-/// if that one still is (`actionDeleteSelected.tsx:138-167`).
+/// if that one still is (`actionDeleteSelected.tsx@1118751f:138-167`).
 #[test]
 fn deleting_down_to_one_steps_up_a_level() {
     let mut board = board();
@@ -496,7 +496,7 @@ fn deleting_down_to_one_at_the_outermost_level_leaves_the_group() {
 // ---------------------------------------------------------------------------
 
 /// A and B grouped, then B deleted: A still carries the id, but a group of one is not a
-/// group (`groups.ts:42-54`, `:134-141`).
+/// group (`groups.ts@1118751f:42-54`, `:134-141`).
 fn lone_member() -> (DrawEngine, String) {
     let (a, b) = (square(0.0), square(150.0));
     let (ia, ib) = (a.id.clone(), b.id.clone());
@@ -555,7 +555,7 @@ fn a_double_click_on_a_label_steps_in_to_its_shape() {
     );
 }
 
-/// Ungroup has no group to remove (`actionGroup.tsx:222-231` finds no selected group), so
+/// Ungroup has no group to remove (`actionGroup.tsx@1118751f:222-231` finds no selected group), so
 /// it changes nothing — not even the dead id.
 #[test]
 fn ungroup_leaves_a_group_of_one_alone() {
@@ -573,7 +573,7 @@ fn ungroup_leaves_a_group_of_one_alone() {
 // ---------------------------------------------------------------------------
 
 /// A loop drawn with the lasso already in hand is resolved at the level being edited, as
-/// the oracle's (`lasso/index.ts:72-89`, `:119-127`): its press empties the selection
+/// the oracle's (`lasso/index.ts@1118751f:72-89`, `:119-127`): its press empties the selection
 /// but keeps the group, where emptying it here used to drop the group too.
 #[test]
 fn a_lasso_inside_the_edited_group_stays_at_that_level() {
@@ -659,7 +659,7 @@ fn deleting_inside_a_group_skips_a_member_a_peer_holds() {
     assert!(holds(&engine, &[&ids[1]]), "{:?}", selection(&engine));
 }
 
-/// Any move makes the press a drag (`drag.hasOccurred`, `App.tsx:10918-10921`), even one
+/// Any move makes the press a drag (`drag.hasOccurred`, `App.tsx@1118751f:10926-10929`), even one
 /// that comes back to where it started — it is not a click, and does not narrow.
 #[test]
 fn a_drag_that_comes_back_home_does_not_narrow() {

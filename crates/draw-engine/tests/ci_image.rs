@@ -328,7 +328,7 @@ fn assert_near(actual: f64, expected: f64, tolerance: f64) {
 // Corners and export
 // ---------------------------------------------------------------------------
 
-/// An inserted image starts sharp, as Excalidraw's does (`App.tsx:10084` inserts with
+/// An inserted image starts sharp, as Excalidraw's does (`App.tsx@1118751f:10092` inserts with
 /// `roundness: null`). It used to inherit the default style's rounding, so the panel said
 /// Round for a picture whose bitmap is square — a control that described nothing.
 #[test]

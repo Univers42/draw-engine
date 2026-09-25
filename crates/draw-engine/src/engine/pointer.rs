@@ -69,7 +69,7 @@ impl DrawEngine {
                 if !additive {
                     // The level being edited outlives the empty selection a loop starts
                     // from, and the release resolves the loop at it (`select_caught`), as
-                    // the oracle's does (`lasso/index.ts:72-89`, `:119-127`). Cleared with
+                    // the oracle's does (`lasso/index.ts@1118751f:72-89`, `:119-127`). Cleared with
                     // the selection, a lasso inside a group took whole top-level groups.
                     let editing = self.editing_group_id.take();
                     self.clear_selection();
@@ -231,7 +231,7 @@ impl DrawEngine {
         }
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
         // The tail binds on the same terms the head will, as Excalidraw's initial binding
-        // does (`packages/excalidraw/components/App.tsx:10317-10339`): inside a shape it
+        // does (`packages/excalidraw/components/App.tsx@1118751f:10325-10347`): inside a shape it
         // sits exactly where the press was, near one it orbits from there.
         let (start, _) = self.drop_binding(&element, End::Start, world, false);
         set_anchor(&mut element, End::Start, start);
@@ -579,7 +579,7 @@ impl DrawEngine {
             // relative to a group it has nothing to do with and select nothing at all.
             //
             // By letting go of what is held, shift or not, which lets go of the group
-            // too (`App.tsx:9639-9650`): a shift-click that kept the pieces inside held
+            // too (`App.tsx@1118751f:9647-9658`): a shift-click that kept the pieces inside held
             // half of one group beside all of another. Not through `leave_group`, which
             // re-derives the selection: this click is about to compute its own, and a
             // re-derivation here would make the hit look already-selected and turn the
@@ -607,7 +607,7 @@ impl DrawEngine {
                 }
                 if held && !duplicate {
                     // Taken out on the release, and only by a click: the oracle changes
-                    // nothing on a shift-press over what is held (`App.tsx:9656-9660`)
+                    // nothing on a shift-press over what is held (`App.tsx@1118751f:9664-9668`)
                     // and removes it on a release with no drag (`:12183-12260`). Taken
                     // out here, a shift-drag moved the rest and left this one behind.
                     self.narrow_on_click = Some(next);
@@ -629,9 +629,9 @@ impl DrawEngine {
         }
         // Nothing was hit — but the press may still be *inside what is selected*, which
         // the oracle hits as a whole: a selected element by its box, several by their
-        // common box (`App.tsx:6782-6806`, `:9783-9806`). A drag from there moves the
+        // common box (`App.tsx@1118751f:6784-6808`, `:9791-9814`). A drag from there moves the
         // selection; a release without one was a click on nothing, and lets go of it
-        // (`App.tsx:12344-12387`).
+        // (`App.tsx@1118751f:12352-12395`).
         //
         // It matters because a shape with no fill is hit on its outline only, so the
         // middle of a selected empty rectangle is a hole, movable otherwise only by
@@ -665,10 +665,10 @@ impl DrawEngine {
     /// else: the frame is a line, and a line is not something anyone can aim at exactly.
     ///
     /// For one element as for several: the oracle hits a selected element anywhere in
-    /// its box (`hitElement`, `App.tsx:6782-6806`) and several in their common box
-    /// (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx:9783-9806`). Except a
+    /// its box (`hitElement`, `App.tsx@1118751f:6784-6808`) and several in their common box
+    /// (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx@1118751f:9791-9814`). Except a
     /// line or arrow edited by its points, which has no box drawn round it and so none to
-    /// grab (`hasBoundingBox`, `packages/element/src/transformHandles.ts:328-353`).
+    /// grab (`hasBoundingBox`, `packages/element/src/transformHandles.ts@1118751f:328-353`).
     ///
     /// By reference: the hover cursor asks this on every move, and cloning the selection
     /// there cost the size of a select-all per move.
@@ -722,7 +722,7 @@ impl DrawEngine {
     ///
     /// Locked children included, as a group's locked members are: the oracle adds every
     /// child of a dragged frame with no lock filter (`packages/element/src/
-    /// dragElements.ts:75-84`), and one left behind would sit outside the frame that
+    /// dragElements.ts@1118751f:75-84`), and one left behind would sit outside the frame that
     /// still claims it. A child a peer holds stays where they have it: what a peer holds
     /// is untouchable, and moving it anyway left the two sides stamping the same version.
     pub(crate) fn moving_selection(&self) -> std::collections::HashSet<String> {

@@ -15,7 +15,7 @@ use crate::scene::element::DrawElement;
 /// The group a click on `element` should select, given the group currently being edited.
 ///
 /// This is the whole of nested-group selection, and every other behaviour here falls out
-/// of it — `selectGroupsFromGivenElements`, `packages/element/src/groups.ts:243-270`:
+/// of it — `selectGroupsFromGivenElements`, `packages/element/src/groups.ts@1118751f:243-270`:
 ///
 /// - Nothing entered: the **outermost** group, so clicking any member takes the lot.
 /// - Inside `editing`: the outermost group still **strictly inside** it, so each step in
@@ -49,7 +49,7 @@ pub fn is_in_group(element: &DrawElement, group: &str) -> bool {
 ///
 /// Deleting all but one member leaves the id on the survivor, and a group of one is no
 /// group — the oracle drops it wherever it would select it (`selectGroup`,
-/// `packages/element/src/groups.ts:42-54`; `_selectGroups`, `:134-141`). So it cannot be
+/// `packages/element/src/groups.ts@1118751f:42-54`; `_selectGroups`, `:134-141`). So it cannot be
 /// stepped into, ungrouped, or kept as the level being edited.
 pub fn is_live_group<'a>(elements: impl Iterator<Item = &'a DrawElement>, group: &str) -> bool {
     elements
@@ -60,7 +60,7 @@ pub fn is_live_group<'a>(elements: impl Iterator<Item = &'a DrawElement>, group:
 
 /// The group directly around `group` on `element`, if any — the next id out in its
 /// innermost → outermost list. `getParentEditingGroupId`,
-/// `packages/excalidraw/actions/actionDeselect.ts:36-62`.
+/// `packages/excalidraw/actions/actionDeselect.ts@1118751f:36-62`.
 pub fn parent_group<'a>(element: &'a DrawElement, group: &str) -> Option<&'a String> {
     let index = element.group_ids.iter().position(|id| id == group)?;
     element.group_ids.get(index + 1)
@@ -71,10 +71,10 @@ pub fn parent_group<'a>(element: &'a DrawElement, group: &str) -> Option<&'a Str
 /// The edited group is a claim about the selection — "everything held is inside this" —
 /// and it holds only while something is held, all of it is inside, and the group is still
 /// a group. The oracle drops it wherever one of those stops being true: on an empty
-/// selection (`clearSelection`, `packages/excalidraw/components/App.tsx:12889-12902`;
-/// `groups.ts:188-196`), on a press outside it (`App.tsx:9639-9650`), and once its group
-/// is gone (`packages/element/src/delta.ts:806-818`). Kept past any of them, every later
-/// click and marquee was resolved inside a group it had nothing to do with.
+/// selection (`clearSelection`, `packages/excalidraw/components/App.tsx@1118751f:12897-12910`;
+/// `groups.ts@1118751f:188-196`), on a press outside it (`App.tsx@1118751f:9647-9658`), and
+/// once its group is gone (`packages/element/src/delta.ts@1118751f:806-818`). Kept past any of
+/// them, every later click and marquee was resolved inside a group it had nothing to do with.
 pub fn keeps_editing<'a, I>(elements: I, selected: &HashSet<String>, editing: &str) -> bool
 where
     I: Iterator<Item = &'a DrawElement> + Clone,
@@ -91,7 +91,7 @@ where
 /// Where deleting inside `editing` leaves you: the level still being edited, and what is
 /// held there. `elements` is the scene after the deletion.
 ///
-/// `actionDeleteSelected.tsx:130-170`, then `handleGroupEditingState` (`:190-205`), which
+/// `actionDeleteSelected.tsx@1118751f:130-170`, then `handleGroupEditingState` (`:190-205`), which
 /// overrides the selection with the first member of whatever level is still open:
 ///
 /// - two or more left: the group stays open, holding its first member;
@@ -192,19 +192,19 @@ where
 /// grown back to the groups that part belongs to, and nothing that is not selected.
 ///
 /// A locked element is never picked up on its own, but a group is one thing. The oracle
-/// selects a group's members with no lock filter (`packages/element/src/groups.ts:94-132`)
+/// selects a group's members with no lock filter (`packages/element/src/groups.ts@1118751f:94-132`)
 /// and drags every selected element, refusing only when *every* one is locked
-/// (`packages/excalidraw/components/App.tsx:10899-10904`). Filtering locked elements out
+/// (`packages/excalidraw/components/App.tsx@1118751f:10907-10912`). Filtering locked elements out
 /// one by one instead left a locked member behind while the rest of its group moved.
 ///
 /// Grown from the unlocked part rather than taken whole because a locked element can be
 /// in the selection here without a group to carry it: Select All takes locked elements
 /// so they can be unlocked from the menu, where the oracle's skips them
-/// (`actionSelectAll.ts:32-38`). Such an element, or a group locked throughout, stays.
+/// (`actionSelectAll.ts@1118751f:32-38`). Such an element, or a group locked throughout, stays.
 ///
 /// Nor is a label picked up on its own: it goes where its shape goes, as a marquee never
 /// takes one alone (`selection/marquee.rs`). This Select All takes labels too, where the
-/// oracle's skips them (`actionSelectAll.ts:32-38`); grown from one whose shape stays —
+/// oracle's skips them (`actionSelectAll.ts@1118751f:32-38`); grown from one whose shape stays —
 /// locked, or held by a peer — the label went without it, to the back of the stack
 /// under its own shape.
 pub fn carried_by<'a, I>(
@@ -291,7 +291,7 @@ pub fn expand_to_groups(
 /// A label is never selected on its own — a click on the words selects the shape — so
 /// whatever acts on a selection reads the labels in, or a shape leaves its words behind:
 /// `getSelectedElements` with `includeBoundTextElement: true`,
-/// `packages/element/src/selection.ts:184-193`.
+/// `packages/element/src/selection.ts@1118751f:184-193`.
 pub fn with_labels<'a>(
     elements: impl IntoIterator<Item = &'a DrawElement>,
     ids: &HashSet<String>,
@@ -309,7 +309,7 @@ pub fn with_labels<'a>(
 /// Adds `group_id` as a new level around `ids`.
 ///
 /// Inserted **before** `editing` when a group is being edited, and appended otherwise —
-/// `addToGroup`, `groups.ts:311-326`. So grouping at the top level wraps outward, and
+/// `addToGroup`, `groups.ts@1118751f:311-326`. So grouping at the top level wraps outward, and
 /// grouping inside a group nests inward, which is the only way to add a level in the
 /// middle without rewriting what is around it.
 ///
@@ -348,11 +348,11 @@ pub fn group_patches(
 ///
 /// The level removed is whatever [`selected_group_for`] would have selected — so it is
 /// the level you can see, and ungrouping twice peels twice rather than flattening on the
-/// first press. `removeFromSelectedGroups`, `groups.ts:327-330`, observed on
+/// first press. `removeFromSelectedGroups`, `groups.ts@1118751f:327-330`, observed on
 /// excalidraw.com: `[inner, outer]` becomes `[inner]`.
 ///
-/// A group of one is not a level: the oracle never selects it (`groups.ts:134-141`), so
-/// `actionUngroup` finds nothing to remove (`actionGroup.tsx:226-231`) and the dead id
+/// A group of one is not a level: the oracle never selects it (`groups.ts@1118751f:134-141`), so
+/// `actionUngroup` finds nothing to remove (`actionGroup.tsx@1118751f:226-231`) and the dead id
 /// stays on its survivor.
 pub fn ungroup_patches(
     elements: &[DrawElement],
@@ -415,7 +415,7 @@ where
     }
     // One shape is enough once its label shares the group: a group holding a labelled
     // shape and nothing else is still a group, as it is to the oracle's
-    // `allElementsInSameGroup` (`actionGroup.tsx:73-83`). Counted as two, it wrapped
+    // `allElementsInSameGroup` (`actionGroup.tsx@1118751f:73-83`). Counted as two, it wrapped
     // itself in a new level on every Ctrl+G.
     let Some(group) = group.filter(|group| count > 0 && is_live_group(elements.clone(), group))
     else {
