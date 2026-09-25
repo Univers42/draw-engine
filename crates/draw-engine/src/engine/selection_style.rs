@@ -160,12 +160,6 @@ impl DrawEngine {
             .filter(|label| !label.is_deleted)
     }
 
-    /// The label of a shape a style reaches, if a style may change it too.
-    fn styled_label(&self, element: &DrawElement) -> Option<&DrawElement> {
-        self.live_label(element)
-            .filter(|label| self.restylable(label))
-    }
-
     /// Whether `element` is the label of a shape that is selected too. Select All takes
     /// labels with their shapes, where the oracle's skips bound text
     /// (`actions/actionSelectAll.ts@1118751f:32-38`) and a marquee never takes one alone
@@ -192,10 +186,11 @@ impl DrawEngine {
         if selected.is_empty() {
             return self.next_selection_style();
         }
+        let carried = std::cell::OnceCell::new();
         let styled: Vec<&DrawElement> = selected
             .iter()
             .copied()
-            .filter(|element| self.restylable(element))
+            .filter(|element| self.restylable(element, &carried))
             .collect();
 
         let mut kinds = Vec::new();
@@ -240,7 +235,7 @@ impl DrawEngine {
         };
         for element in &styled {
             target(element);
-            if let Some(label) = self.styled_label(element) {
+            if let Some(label) = self.label_of(element, &carried) {
                 target(label);
             }
         }
@@ -266,7 +261,7 @@ impl DrawEngine {
             let text = if element.kind == DrawElementType::Text {
                 Some(*element)
             } else {
-                self.styled_label(element)
+                self.label_of(element, &carried)
             };
             if let Some(text) = text {
                 font_size.add(text.font_size.unwrap_or(super::DEFAULT_FONT_SIZE));
@@ -359,13 +354,16 @@ impl DrawEngine {
             ..Default::default()
         };
         let reaches_labels = for_label.stroke_color.is_some() || for_label.opacity.is_some();
+        let carried = std::cell::OnceCell::new();
         let mut selected = self.get_selected_elements();
-        selected.retain(|element| !self.is_carried_label(element) && self.restylable(element));
+        selected.retain(|element| {
+            !self.is_carried_label(element) && self.restylable(element, &carried)
+        });
         let ids: HashSet<&str> = selected.iter().map(|element| element.id.as_str()).collect();
         let mut labels = Vec::new();
         if reaches_labels {
             for element in &selected {
-                if let Some(label) = self.label_of(element) {
+                if let Some(label) = self.label_of(element, &carried) {
                     if !ids.contains(label.id.as_str()) {
                         labels.push((label.clone(), for_label.clone()));
                     }
@@ -458,8 +456,8 @@ impl DrawEngine {
     /// A label takes the copied label's style and is left alone when none was copied.
     /// A text also takes the font — or the defaults, when the source has none — and is
     /// measured again. An arrow takes the heads of an arrow; a frame stays clear and
-    /// square. A locked element, and the label of a locked shape, keep their own
-    /// ([`Self::restylable`]).
+    /// square. What a style may not change keeps its own ([`Self::restylable`]): a loose
+    /// locked element, what a peer holds, and their labels.
     pub fn paste_styles(&mut self) {
         let Some(copied) = self.copied_styles.clone() else {
             return;
@@ -469,12 +467,13 @@ impl DrawEngine {
         };
         let label_source = copied.get(1);
 
+        let carried = std::cell::OnceCell::new();
         let mut targets = self.get_selected_elements();
-        targets.retain(|element| self.restylable(element));
+        targets.retain(|element| self.restylable(element, &carried));
         let ids: HashSet<String> = targets.iter().map(|element| element.id.clone()).collect();
         let labels: Vec<DrawElement> = targets
             .iter()
-            .filter_map(|element| self.label_of(element))
+            .filter_map(|element| self.label_of(element, &carried))
             .filter(|label| !ids.contains(&label.id))
             .cloned()
             .collect();

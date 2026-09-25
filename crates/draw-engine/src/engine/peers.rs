@@ -61,6 +61,11 @@ impl DrawEngine {
                 held.entry(id.clone()).or_insert(index);
             }
         }
+        // What they hold is out of every style's reach (`style.rs` › `restylable`), so the
+        // panel may read differently now.
+        if held.len() != self.held.len() || held.keys().any(|id| !self.held.contains_key(id)) {
+            self.touch_style();
+        }
         self.peers = peers;
         self.held = held;
 

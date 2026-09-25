@@ -1,29 +1,58 @@
+use std::cell::OnceCell;
+use std::collections::HashSet;
+
 use crate::engine::DrawEngine;
 use crate::scene::{bump_version, is_linear_element, DrawElement};
 
 impl DrawEngine {
-    /// The live label of `container` that is ours to change: not one a peer holds —
-    /// typing into a label holds the label alone, and its shape stays selectable — nor a
-    /// locked one (`untouchable`). Every write that reaches a label through its shape goes
-    /// through here: the style panel's (`selection_style.rs`) and the text rows' below.
-    pub(super) fn label_of(&self, container: &DrawElement) -> Option<&DrawElement> {
+    /// The live label of `container` that a style reaching the shape may change too
+    /// ([`Self::restylable`]): not one a peer holds — typing into a label holds the label
+    /// alone, and its shape stays selectable — nor a locked one the selection does not
+    /// carry. Every write that reaches a label through its shape goes through here: the
+    /// style panel's (`selection_style.rs`) and the text rows' below.
+    pub(super) fn label_of(
+        &self,
+        container: &DrawElement,
+        carried: &OnceCell<HashSet<String>>,
+    ) -> Option<&DrawElement> {
         container
             .bound_text_id
             .as_deref()
             .and_then(|id| self.scene.get(id))
-            .filter(|label| !label.is_deleted && !self.untouchable(label))
+            .filter(|label| !label.is_deleted && self.restylable(label, carried))
     }
 
-    /// Whether a style may change `element`: not a locked one, nor the label of a locked
-    /// shape. The oracle cannot select a locked element (`shouldIgnoreElementFromSelection`,
-    /// `packages/element/src/selection.ts@1118751f:33-34`), so none of its styles reaches
-    /// one. This engine's Select All takes locked elements, so they can be unlocked from
-    /// the menu; a style chosen then passes them by.
-    pub(super) fn restylable(&self, element: &DrawElement) -> bool {
-        !element.locked()
-            && self
-                .container_of(element)
-                .is_none_or(|container| !container.locked())
+    /// Whether a style may change `element`, one of the selection or the label of one.
+    /// `carried` is [`Self::carried_selection`], worked out the first time a locked
+    /// element needs it — and so, with none selected, never: worked out for every read,
+    /// it cost the panel's read of a whole selected board 80% more.
+    ///
+    /// Not a locked element the selection holds without carrying it. This engine's Select
+    /// All takes a loose locked element, so it can be unlocked from the menu, where the
+    /// oracle's skips it (`actions/actionSelectAll.ts@1118751f:32-38`); a style chosen
+    /// then passes it by. A locked member of a selected group is carried, and is
+    /// restyled: the oracle selects every member of a clicked group with no lock filter
+    /// (`selectGroupsForSelectedElements`, `packages/element/src/groups.ts@1118751f:66-140`)
+    /// and restyles every selected element (`changeProperty`,
+    /// `actions/actionProperties.tsx@1118751f:193-223`) — its lock filter,
+    /// `shouldIgnoreElementFromSelection` (`packages/element/src/selection.ts@1118751f:33-34`),
+    /// is the marquee's alone.
+    ///
+    /// Nor anything a peer holds, nor the label of a shape that is not ours to change —
+    /// locked and not carried, or held by a peer: a label is laid out in its shape and
+    /// grows it, so restyling the words restyles the shape.
+    pub(super) fn restylable(
+        &self,
+        element: &DrawElement,
+        carried: &OnceCell<HashSet<String>>,
+    ) -> bool {
+        let ours = |el: &DrawElement| {
+            !self.untouchable(el)
+                || carried
+                    .get_or_init(|| self.carried_selection())
+                    .contains(&el.id)
+        };
+        ours(element) && self.container_of(element).is_none_or(ours)
     }
 
     pub fn set_arrowheads(
@@ -198,16 +227,17 @@ impl DrawEngine {
     /// style may not change is taken ([`Self::restylable`]). Deduplicated by id, because
     /// selecting a shape *and* a loose text must not visit anything twice.
     fn selected_texts(&self) -> Vec<crate::scene::DrawElement> {
-        let mut seen = std::collections::HashSet::new();
+        let carried = OnceCell::new();
+        let mut seen = HashSet::new();
         let mut out = Vec::new();
         for element in self.get_selected_elements() {
-            if !self.restylable(&element) {
+            if !self.restylable(&element, &carried) {
                 continue;
             }
             let candidate = if element.kind == crate::scene::DrawElementType::Text {
                 Some(element)
             } else {
-                self.label_of(&element).cloned()
+                self.label_of(&element, &carried).cloned()
             };
             if let Some(text) = candidate {
                 if seen.insert(text.id.clone()) {

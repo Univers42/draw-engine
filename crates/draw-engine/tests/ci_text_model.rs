@@ -707,6 +707,61 @@ mod holds_and_no_ops {
             Some(TextAlign::Right)
         );
     }
+
+    fn ana_holds(id: &str) -> Vec<Peer> {
+        vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![id.to_owned()],
+            preview: Vec::new(),
+        }]
+    }
+
+    /// Where a label's middle is on screen, the camera being the identity here.
+    fn middle_of(engine: &DrawEngine, id: &str) -> (f64, f64) {
+        let label = element(engine, id);
+        (label.x + label.width / 2.0, label.y + label.height / 2.0)
+    }
+
+    /// A shape a peer holds holds its words. A label is laid out in its shape and grows
+    /// it, so one reached without the shape — clicked on its own, or taken by Select All,
+    /// both of which leave out what a peer holds — is neither restyled nor laid out
+    /// again: grown and stamped, the shape went to the server and to them.
+    #[test]
+    fn a_shape_a_peer_holds_is_not_grown_through_its_label() {
+        let rect = box_at(0.0, 0.0, 200.0, 100.0);
+        let rect_id = rect.id.clone();
+        let (mut engine, label_id) = labelled(rect, "hello");
+        // A style to paste: a shape whose label is big enough to outgrow the first one.
+        let mut scene = engine.get_scene();
+        scene.push(box_at(400.0, 0.0, 200.0, 100.0));
+        engine.set_scene(Scene::new(scene));
+        engine.handle_double_click(500.0, 50.0);
+        let big = engine.drain_events().text_edit.expect("a second label");
+        engine.set_element_text(&big.id, "big");
+        engine.select(vec![big.id.clone()]);
+        engine.set_font_size(80.0);
+        let source = element(&engine, &big.id).container_id.unwrap();
+        engine.select(vec![source]);
+        assert!(engine.copy_styles());
+
+        engine.set_peers(ana_holds(&rect_id));
+        let (shape, label) = (element(&engine, &rect_id), element(&engine, &label_id));
+        let (x, y) = middle_of(&engine, &label_id);
+        engine.begin_pointer(x, y, false, false);
+        engine.end_pointer();
+        assert_eq!(engine.get_selection(), vec![label_id.clone()], "setup");
+        assert_eq!(engine.selection_style().font_size, None, "no text rows");
+        engine.set_font_size(80.0);
+        engine.set_font_family(7);
+        engine.paste_styles();
+        engine.select_all();
+        engine.set_font_size(60.0);
+
+        assert_eq!(element(&engine, &rect_id), shape);
+        assert_eq!(element(&engine, &label_id), label);
+    }
 }
 
 /// The cut in a line's stroke under its label follows the label as it is painted.

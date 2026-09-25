@@ -242,3 +242,72 @@ fn the_panel_reads_only_what_a_style_would_change() {
         "the layer, flip and group rows still act on both"
     );
 }
+
+/// A free box `a` and the locked labelled `box` in one group, selected as a click on `a`
+/// selects them. The oracle selects every member of a clicked group with no lock filter
+/// (`selectGroupsForSelectedElements`, `packages/element/src/groups.ts@1118751f:66-140`,
+/// from `App.tsx@1118751f:8917-8925`) and restyles every selected element
+/// (`changeProperty`, `actionProperties.tsx@1118751f:193-223`); its lock filter
+/// (`shouldIgnoreElementFromSelection`, `selection.ts@1118751f:33-34`) is the marquee's
+/// alone (`:70-96`).
+fn a_group_with_a_locked_member() -> DrawEngine {
+    let mut elements = labelled_box();
+    elements[0].locked = Some(true);
+    for element in &mut elements {
+        element.group_ids = vec!["g".into()];
+    }
+    let mut free = filled(box_at(0.0, 200.0, 100.0, 100.0));
+    free.id = "a".into();
+    free.group_ids = vec!["g".into()];
+    elements.push(free);
+    let mut source = box_at(400.0, 0.0, 100.0, 100.0);
+    source.id = "source".into();
+    source.stroke_color = "#2f9e44".into();
+    elements.push(source);
+    let mut engine = engine_with_measure(elements);
+    engine.begin_pointer(50.0, 250.0, false, false);
+    engine.end_pointer();
+    let mut selected = engine.get_selection();
+    selected.sort();
+    assert_eq!(
+        selected,
+        vec!["a", "box", "label"],
+        "setup: the whole group"
+    );
+    engine
+}
+
+/// So a locked member takes the group's colour, and its label the text colour and size.
+#[test]
+fn a_locked_member_of_a_selected_group_is_restyled() {
+    let mut engine = a_group_with_a_locked_member();
+    assert!(
+        engine
+            .selection_style()
+            .kinds
+            .contains(&DrawElementType::Text),
+        "the locked member's label offers the text rows"
+    );
+
+    engine.apply_style(stroke_patch("#e03131"));
+    engine.set_font_size(36.0);
+
+    assert_eq!(element(&engine, "a").stroke_color, "#e03131");
+    assert_eq!(element(&engine, "box").stroke_color, "#e03131");
+    let label = element(&engine, "label");
+    assert_eq!(label.stroke_color, "#e03131");
+    assert_eq!(label.font_size, Some(36.0));
+}
+
+#[test]
+fn a_style_pasted_on_a_group_reaches_its_locked_member() {
+    let mut engine = a_group_with_a_locked_member();
+    engine.select(vec!["source".into()]);
+    assert!(engine.copy_styles());
+    engine.begin_pointer(50.0, 250.0, false, false);
+    engine.end_pointer();
+
+    engine.paste_styles();
+
+    assert_eq!(element(&engine, "box").stroke_color, "#2f9e44");
+}
