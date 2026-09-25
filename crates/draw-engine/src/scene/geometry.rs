@@ -155,6 +155,37 @@ pub fn scene_bounds<'a>(
     bounds
 }
 
+/// The union of every live element's *turned* bounds — Excalidraw's `getCommonBounds`
+/// (`packages/element/src/bounds.ts@1118751f:1005-1027`), which folds `getElementBounds`
+/// (our [`element_outline_bounds`]) over the selection rather than each element's
+/// unrotated box.
+///
+/// [`scene_bounds`] is the wrong shape for a selection frame: with a turned element in
+/// it, the union of unturned boxes reaches further than what is actually drawn, so the
+/// frame — and its handles, and its hit test — sit somewhere a flip then has to shift
+/// them back from (`docs/reference/resize.md` › the multi-selection frame).
+pub fn scene_outline_bounds<'a>(
+    elements: impl IntoIterator<Item = &'a DrawElement>,
+) -> Option<WorldBounds> {
+    let mut bounds: Option<WorldBounds> = None;
+    for element in elements {
+        if element.is_deleted {
+            continue;
+        }
+        let next = element_outline_bounds(element);
+        bounds = Some(match bounds {
+            None => next,
+            Some(cur) => WorldBounds {
+                min_x: cur.min_x.min(next.min_x),
+                min_y: cur.min_y.min(next.min_y),
+                max_x: cur.max_x.max(next.max_x),
+                max_y: cur.max_y.max(next.max_y),
+            },
+        });
+    }
+    bounds
+}
+
 pub fn distance_to_segment(px: f64, py: f64, ax: f64, ay: f64, bx: f64, by: f64) -> f64 {
     let dx = bx - ax;
     let dy = by - ay;

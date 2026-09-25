@@ -74,12 +74,20 @@ impl DrawEngine {
                 grab,
             } => {
                 let at = self.resize_pointer(sx, sy, grab);
+                // Alt, as of the last move: every handle then grows the frame about its
+                // own centre instead of the opposite corner or side.
+                let from_center = self.alt_held;
                 let elements: Vec<DrawElement> = ids
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
                 let resized = crate::selection::group_transform::resize_group(
-                    &elements, frame, handle, at, square,
+                    &elements,
+                    frame,
+                    handle,
+                    at,
+                    square,
+                    from_center,
                 );
                 let keep_aspect =
                     square || crate::selection::group_transform::resize_keeps_aspect(&elements);
@@ -97,8 +105,12 @@ impl DrawEngine {
                 // `handleBindTextResize` forgets a shape's remembered height before it lays
                 // the label out (`textElement.ts@1118751f:174`).
                 self.forget_original_heights(ids);
-                let flips =
-                    crate::selection::group_transform::resize_group_flips(handle, frame, at);
+                let flips = crate::selection::group_transform::resize_group_flips(
+                    handle,
+                    frame,
+                    at,
+                    from_center,
+                );
                 for label in labels {
                     // A note lays its label out itself, below.
                     if label
@@ -730,6 +742,7 @@ impl DrawEngine {
             world.y,
             min_size,
             if lock { ratio } else { None },
+            self.alt_held,
         );
         element.x = geom.x;
         element.y = geom.y;
@@ -896,7 +909,15 @@ impl DrawEngine {
             }
             None => (min_width, min_height),
         };
-        let geom = resize_element_within(&from, handle, world.x, world.y, min_size, aspect);
+        let geom = resize_element_within(
+            &from,
+            handle,
+            world.x,
+            world.y,
+            min_size,
+            aspect,
+            self.alt_held,
+        );
         (note.x, note.width) = if geom.width < 0.0 {
             (geom.x + geom.width, -geom.width)
         } else {
@@ -987,9 +1008,24 @@ impl DrawEngine {
     ) {
         use crate::selection::{next_box_size, MIN_FONT_SIZE};
         use crate::text::layout::keep_point;
-        let (next_width, next_height) =
-            next_box_size(origin, latest.angle, handle, world.x, world.y, square);
-        let keep = text_resize_anchor(handle);
+        // Alt, as of the last move (`self.alt_held`): the box grows from its own centre,
+        // which is where `getResizedOrigin`'s "center" anchor already sits for every
+        // kind — `keep_point`'s (0.5, 0.5) is exactly that point, turned or not.
+        let from_center = self.alt_held;
+        let (next_width, next_height) = next_box_size(
+            origin,
+            latest.angle,
+            handle,
+            world.x,
+            world.y,
+            square,
+            from_center,
+        );
+        let keep = if from_center {
+            (0.5, 0.5)
+        } else {
+            text_resize_anchor(handle)
+        };
         let mut next = latest.clone();
         if matches!(handle, HandleKind::E | HandleKind::W) {
             let laid = self.with_measure(|measure| {

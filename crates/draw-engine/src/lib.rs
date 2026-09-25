@@ -59,9 +59,10 @@ pub use scene::{
     linear_endpoints, linear_from_endpoints, linear_retarget, local_box, local_center, merge_style,
     new_element_id, normalize_rect, refresh_bindings, resolved_font_family, resolved_line_height,
     resolved_text_align, resolved_vertical_align, rotation_center, scene_bounds,
-    segment_hits_element, source_text, Arrowhead, DrawElement, DrawElementStyle,
-    DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene, StrokeStyle,
-    TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
+    scene_outline_bounds, segment_hits_element, source_text, Arrowhead, DrawElement,
+    DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene,
+    StrokeStyle, TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS,
+    VERTICAL_ALIGNS,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,

@@ -31,14 +31,30 @@ pub fn resize_element(
     wy: f64,
     min_size: f64,
     aspect: Option<f64>,
+    from_center: bool,
 ) -> Geometry {
-    resize_element_within(element, handle, wx, wy, (min_size, min_size), aspect)
+    resize_element_within(
+        element,
+        handle,
+        wx,
+        wy,
+        (min_size, min_size),
+        aspect,
+        from_center,
+    )
 }
 
 /// [`resize_element`] with a minimum per axis, `(width, height)`: the smallest a shape
 /// holding a label may become (`resizeSingleElement`, `resizeElements.ts@1118751f:778-803`).
 /// A minimum bounds the size, not the side the pointer is on, so the shape still turns
 /// through its anchor.
+///
+/// `from_center` is Alt (`shouldResizeFromCenter`, `packages/common/src/keys.ts@1118751f:
+/// 145-146`): the box grows and shrinks about its own centre instead of the corner
+/// opposite the handle, which stays fixed either way. Doubling the reach from the centre
+/// is exactly the oracle's `2 * nextWidth - origElement.width`
+/// (`getNextSingleWidthAndHeightFromPointer`, `resizeElements.ts@1118751f:1052-1055`): a
+/// pointer at the far corner is only half the box away from the centre.
 pub fn resize_element_within(
     element: &DrawElement,
     handle: HandleKind,
@@ -46,6 +62,7 @@ pub fn resize_element_within(
     wy: f64,
     min_size: (f64, f64),
     aspect: Option<f64>,
+    from_center: bool,
 ) -> Geometry {
     let (min_width, min_height) = min_size;
     if handle == HandleKind::Rotate {
@@ -73,20 +90,30 @@ pub fn resize_element_within(
             height: element.height,
         };
     };
-    let anchor_local = handle_local_point(opp, hw, hh);
-    let aw = rotate_point(anchor_local.x, anchor_local.y, angle);
-    let anchor_world = Point {
-        x: cx + aw.x,
-        y: cy + aw.y,
+
+    // The anchor a corner-mode drag holds fixed is the opposite corner; Alt's is the
+    // centre itself, needing no rotation correction because the centre already is the
+    // pivot every box turns about.
+    let anchor_world = if from_center {
+        Point { x: cx, y: cy }
+    } else {
+        let anchor_local = handle_local_point(opp, hw, hh);
+        let aw = rotate_point(anchor_local.x, anchor_local.y, angle);
+        Point {
+            x: cx + aw.x,
+            y: cy + aw.y,
+        }
     };
     let rel = rotate_point(wx - anchor_world.x, wy - anchor_world.y, -angle);
     let controls_x = handle.has_ew();
     let controls_y = handle.has_ns();
 
-    // Which way the box lies from its anchor: the anchor is the corner that stays put, so
-    // the element extends away from it.
-    let sign_x = if anchor_local.x <= 0.0 { 1.0 } else { -1.0 };
-    let sign_y = if anchor_local.y <= 0.0 { 1.0 } else { -1.0 };
+    // Which way the box lies from the handle: unaffected by `from_center`, since it is
+    // the *handle's* own side, not the (possibly absent) opposite corner — the two agree
+    // exactly for the corner-anchored case this replaced.
+    let handle_local = handle_local_point(handle, 1.0, 1.0);
+    let sign_x = if handle_local.x < 0.0 { -1.0 } else { 1.0 };
+    let sign_y = if handle_local.y < 0.0 { -1.0 } else { 1.0 };
 
     // How far the pointer is from the anchor along that direction. **Signed**: negative
     // means the pointer has crossed the anchor and the element should turn through and
@@ -98,14 +125,17 @@ pub fn resize_element_within(
     // anchor instead of passing through it.
     let reach_x = sign_x * rel.x;
     let reach_y = sign_y * rel.y;
+    // From the centre, a corner sits at half the box away — so the reach has to be
+    // doubled to read as a full width or height.
+    let center_scale = if from_center { 2.0 } else { 1.0 };
 
     let mut width = if controls_x {
-        reach_x.abs().max(min_width)
+        (reach_x.abs() * center_scale).max(min_width)
     } else {
         element.width.abs()
     };
     let mut height = if controls_y {
-        reach_y.abs().max(min_height)
+        (reach_y.abs() * center_scale).max(min_height)
     } else {
         element.height.abs()
     };
@@ -123,11 +153,20 @@ pub fn resize_element_within(
     let dir_x = sign_x * if flipped_x { -1.0 } else { 1.0 };
     let dir_y = sign_y * if flipped_y { -1.0 } else { 1.0 };
 
-    let off_local_x = if controls_x { dir_x * width / 2.0 } else { 0.0 };
-    let off_local_y = if controls_y {
-        dir_y * height / 2.0
+    // Centred, the box never moves off its anchor — it only grows or shrinks about it —
+    // where the corner-anchored box's centre slides to stay half a side away from the
+    // corner that holds still.
+    let (off_local_x, off_local_y) = if from_center {
+        (0.0, 0.0)
     } else {
-        0.0
+        (
+            if controls_x { dir_x * width / 2.0 } else { 0.0 },
+            if controls_y {
+                dir_y * height / 2.0
+            } else {
+                0.0
+            },
+        )
     };
     let off = rotate_point(off_local_x, off_local_y, angle);
     let ncx = anchor_world.x + off.x;
@@ -170,6 +209,10 @@ pub const MIN_FONT_SIZE: f64 = 1.0;
 /// pointer past the far side asks for a negative size. An axis the handle does not move
 /// keeps its size. With `keep_aspect` (Shift) a side handle scales the other axis with it
 /// and a corner takes the larger of its two scales.
+///
+/// `from_center` is Alt: `2 * width - origin.width` is the oracle's own doubling
+/// (`resizeElements.ts@1118751f:1052-1055`), applied — as there — before the aspect
+/// adjustment, so Shift still reads the *centred* size.
 pub fn next_box_size(
     origin: &Geometry,
     angle: f64,
@@ -177,6 +220,7 @@ pub fn next_box_size(
     wx: f64,
     wy: f64,
     keep_aspect: bool,
+    from_center: bool,
 ) -> (f64, f64) {
     let (cx, cy) = (
         origin.x + origin.width / 2.0,
@@ -195,6 +239,10 @@ pub fn next_box_size(
         HandleKind::N | HandleKind::Ne | HandleKind::Nw => y2 - py,
         _ => origin.height,
     };
+    if from_center {
+        width = 2.0 * width - origin.width;
+        height = 2.0 * height - origin.height;
+    }
     if keep_aspect && origin.width != 0.0 && origin.height != 0.0 {
         let width_ratio = width.abs() / origin.width;
         let height_ratio = height.abs() / origin.height;

@@ -374,7 +374,7 @@ fn handles_hit() {
 #[test]
 fn transform_resize_axis_aligned() {
     let el = box_at(0.0, 0.0, 100.0, 60.0);
-    let geom = resize_element(&el, HandleKind::Se, 150.0, 90.0, 1.0, None);
+    let geom = resize_element(&el, HandleKind::Se, 150.0, 90.0, 1.0, None, false);
     assert_eq!(
         (geom.x, geom.y, geom.width, geom.height),
         (0.0, 0.0, 150.0, 90.0)
@@ -386,7 +386,7 @@ fn transform_resize_rotated_keeps_anchor() {
     let mut el = box_at(0.0, 0.0, 100.0, 60.0);
     el.angle = std::f64::consts::PI / 6.0;
     let before = handle_world(&el, HandleKind::Nw);
-    let geom = resize_element(&el, HandleKind::Se, 200.0, 140.0, 1.0, None);
+    let geom = resize_element(&el, HandleKind::Se, 200.0, 140.0, 1.0, None, false);
     el.x = geom.x;
     el.y = geom.y;
     el.width = geom.width;
@@ -399,7 +399,7 @@ fn transform_resize_rotated_keeps_anchor() {
 #[test]
 fn transform_resize_min_size() {
     let el = box_at(0.0, 0.0, 100.0, 60.0);
-    let geom = resize_element(&el, HandleKind::Se, 0.0, 0.0, 1.0, None);
+    let geom = resize_element(&el, HandleKind::Se, 0.0, 0.0, 1.0, None, false);
     assert!(geom.width >= 1.0 && geom.height >= 1.0);
 }
 

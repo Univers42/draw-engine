@@ -314,12 +314,17 @@ impl DrawEngine {
 
     /// The box a multi-selection's handles sit on: around what it carries, so a loose
     /// locked element is neither framed nor grabbed. `None` below two carried elements.
+    ///
+    /// Turned bounds (`scene_outline_bounds`), not the unturned union: with a turned
+    /// element carried, the unturned union reached past what is actually drawn, so the
+    /// frame drifted sideways on a flip instead of staying where the oracle's does
+    /// (`docs/reference/resize.md` › the multi-selection frame).
     pub(crate) fn group_box(&self) -> Option<crate::camera::WorldBounds> {
         let ids = self.carried_selection();
         if ids.len() < 2 {
             return None;
         }
-        crate::scene_bounds(ids.iter().filter_map(|id| self.scene.get(id)))
+        crate::scene_outline_bounds(ids.iter().filter_map(|id| self.scene.get(id)))
     }
 
     /// What the current multi-selection carries, with its shared frame.
@@ -333,40 +338,19 @@ impl DrawEngine {
         Some((ids, frame))
     }
 
-    /// Which handle of the multi-selection's frame sits under `world`.
+    /// Which handle of the multi-selection's frame sits under `world`: the four corners
+    /// and rotation always, plus a cardinal side once the frame is large enough along
+    /// that axis (`group_selection_handles`).
     ///
     /// Shared with the hover cursor, so what the pointer reports and what a press
-    /// actually starts are decided by one piece of code.
+    /// actually starts are decided by one piece of code, and with the painter
+    /// (`PaintView::group_box` plus this same layout), so nothing is hit-testable that is
+    /// not also drawn.
     pub(crate) fn group_handle_at(&self, world: Point) -> Option<HandleKind> {
         let b = self.group_box()?;
         let layout = self.handle_layout();
-        // Offset exactly as the painter offsets them, and exactly as a single shape's
-        // are, so the inside of a group stays a move target.
-        let (min_x, min_y) = (
-            b.min_x - layout.handle_offset,
-            b.min_y - layout.handle_offset,
-        );
-        let (max_x, max_y) = (
-            b.max_x + layout.handle_offset,
-            b.max_y + layout.handle_offset,
-        );
-
-        let candidates = [
-            (HandleKind::Nw, min_x, min_y),
-            (HandleKind::Ne, max_x, min_y),
-            (HandleKind::Se, max_x, max_y),
-            (HandleKind::Sw, min_x, max_y),
-            (
-                HandleKind::Rotate,
-                (min_x + max_x) / 2.0,
-                min_y - layout.rotate_gap,
-            ),
-        ];
-
-        candidates
-            .into_iter()
-            .find(|&(_, hx, hy)| (world.x - hx).hypot(world.y - hy) <= layout.hit)
-            .map(|(kind, _, _)| kind)
+        let points = crate::selection::group_selection_handles(b, layout);
+        hit_handle(&points, world.x, world.y, layout.hit)
     }
 
     /// Corner and rotation handles for a multi-element selection.
@@ -387,19 +371,10 @@ impl DrawEngine {
         if kind == HandleKind::Rotate {
             return Some(Interaction::RotateGroup { ids, frame });
         }
-        let b = &frame.bounds;
-        let corner = Point {
-            x: if matches!(kind, HandleKind::Nw | HandleKind::Sw) {
-                b.min_x
-            } else {
-                b.max_x
-            },
-            y: if matches!(kind, HandleKind::Nw | HandleKind::Ne) {
-                b.min_y
-            } else {
-                b.max_y
-            },
-        };
+        // A corner, or the middle of a side for a cardinal handle — where a side's grab
+        // is measured from the middle, as a single element's is (`docs/reference/
+        // resize.md` › "The grab offset").
+        let corner = crate::selection::group_handle_point(kind, frame.bounds);
         let carried: std::collections::HashSet<String> = ids.iter().cloned().collect();
         let labels = crate::edit::with_labels(self.scene.iter_ordered(), &carried);
         ids.extend(labels.into_iter().filter(|id| {
@@ -687,12 +662,21 @@ impl DrawEngine {
             return false;
         }
         let mut live = selected();
-        if let (Some(single), None) = (live.next(), live.next()) {
+        let first = live.next();
+        let multi = live.next().is_some();
+        if let (Some(single), false) = (first, multi) {
             if self.shows_point_handles(single) {
                 return false;
             }
         }
-        let Some(bounds) = crate::scene_bounds(selected()) else {
+        // Turned bounds for a multi-selection, matching the frame `group_box` draws and
+        // hit-tests (`docs/reference/resize.md` › the multi-selection frame); a single
+        // element keeps the box it always had here.
+        let Some(bounds) = (if multi {
+            crate::scene_outline_bounds(selected())
+        } else {
+            crate::scene_bounds(selected())
+        }) else {
             return false;
         };
         let pad = self.handle_layout().frame_pad + self.collision_tolerance();

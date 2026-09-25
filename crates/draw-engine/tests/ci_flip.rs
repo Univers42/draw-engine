@@ -449,6 +449,29 @@ fn the_axis_is_what_each_kind_draws() {
     }
 }
 
+/// The multi-selection frame does not drift across a flip: it is drawn from the same
+/// turned bounds as the mirror line, so a turned element in the selection no longer
+/// shifts it sideways and back (`docs/reference/resize.md` › the multi-selection frame,
+/// which gives this exact example: a 200×20 bar stood on end beside a box at 300..350).
+#[test]
+fn the_multi_selection_frame_does_not_drift_across_a_flip() {
+    let mut bar = named("bar", box_at(0.0, 0.0, 200.0, 20.0));
+    bar.angle = PI / 2.0;
+    let square = named("sq", box_at(300.0, 0.0, 50.0, 50.0));
+    let mut engine = engine_with_scene(vec![bar, square]);
+    engine.select(vec!["bar".into(), "sq".into()]);
+
+    let before = engine.paint_view().group_box.expect("a box around both");
+    assert_close(before.min_x, 90.0);
+    assert_close(before.max_x, 350.0);
+
+    engine.flip_selection(FlipAxis::Horizontal);
+
+    let after = engine.paint_view().group_box.expect("a box around both");
+    assert_close(after.min_x, before.min_x);
+    assert_close(after.max_x, before.max_x);
+}
+
 /// The words on an arrow count toward the box, as the oracle adds an arrow's label to it
 /// (`resizeElements.ts:1280-1310`): a label wider than its arrow widens the selection.
 #[test]

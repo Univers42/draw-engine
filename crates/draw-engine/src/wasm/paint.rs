@@ -2225,28 +2225,18 @@ fn paint_group_selection(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     ctx.stroke_rect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
     set_dash_cached(ctx, None);
 
-    // The handles sit further out than the frame, exactly as they do on a single shape.
-    let off = view.handle_layout.handle_offset;
-    let htl = crate::world_to_screen(view.camera, bounds.min_x - off, bounds.min_y - off);
-    let hbr = crate::world_to_screen(view.camera, bounds.max_x + off, bounds.max_y + off);
-
     let half = view.handle_px / 2.0;
-    // `rotate_gap` is in world units; the overlay paints in screen space.
-    let rotate_y = htl.y - view.handle_layout.rotate_gap * view.camera.scale;
-
-    // Corners, matching what a single shape gets, plus the rotation circle above.
-    for (x, y, is_rotate) in [
-        (htl.x, htl.y, false),
-        (hbr.x, htl.y, false),
-        (hbr.x, hbr.y, false),
-        (htl.x, hbr.y, false),
-        ((htl.x + hbr.x) / 2.0, rotate_y, true),
-    ] {
+    // Corners and rotation always, plus a cardinal side once the frame is large enough
+    // along that axis not to crowd its corners — the same list the hit test and the
+    // hover cursor read (`group_handle_at`), so nothing here is unhittable and nothing
+    // hittable goes undrawn.
+    for point in crate::selection::group_selection_handles(bounds, view.handle_layout) {
+        let s = crate::world_to_screen(view.camera, point.x, point.y);
         ctx.begin_path();
-        if is_rotate {
-            let _ = ctx.arc(x, y, half, 0.0, std::f64::consts::PI * 2.0);
+        if point.kind == HandleKind::Rotate {
+            let _ = ctx.arc(s.x, s.y, half, 0.0, std::f64::consts::PI * 2.0);
         } else {
-            ctx.rect(x - half, y - half, view.handle_px, view.handle_px);
+            ctx.rect(s.x - half, s.y - half, view.handle_px, view.handle_px);
         }
         set_fill(ctx, &view.theme.background);
         ctx.fill();

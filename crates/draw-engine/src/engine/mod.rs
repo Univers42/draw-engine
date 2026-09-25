@@ -511,7 +511,7 @@ impl DrawEngine {
         if self.selected_ids.len() < 2 {
             return false;
         }
-        let Some(bounds) = crate::scene::geometry::scene_bounds(
+        let Some(bounds) = crate::scene::geometry::scene_outline_bounds(
             self.scene
                 .iter_ordered()
                 .filter(|element| self.selected_ids.contains(&element.id)),
