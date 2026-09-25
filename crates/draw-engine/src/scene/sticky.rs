@@ -318,9 +318,11 @@ pub fn wall_clock_ms() -> f64 {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Whole milliseconds, as `Date.now()` gives: a fraction does not survive every
+        // JSON writer's shortest form, and a date has no use for it.
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1000.0)
+            .map_or(0.0, |elapsed| elapsed.as_millis() as f64)
     }
 }
 
@@ -534,6 +536,13 @@ mod tests {
         assert!((one() - 0.627_073_940_588_161_3).abs() < 1e-15);
         let mut zero = seeded_random(0);
         assert!((zero() - 0.266_429_208_684_712_65).abs() < 1e-15);
+    }
+
+    #[test]
+    fn the_wall_clock_is_whole_milliseconds() {
+        // A fraction did not survive a JSON round trip: `a_note_round_trips` failed on
+        // `created` by one ulp, whenever the clock read one that did not.
+        assert_eq!(wall_clock_ms().fract(), 0.0);
     }
 
     #[test]

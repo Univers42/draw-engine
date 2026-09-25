@@ -1192,6 +1192,17 @@ mod around_the_note {
         assert_near(element(&engine, &label).y, before.y + 30.0);
     }
 
+    /// Deleting the note takes its label: nothing of it is left drawn.
+    #[test]
+    fn a_deleted_note_takes_its_label() {
+        let (mut engine, note, label) = note_with("hi");
+        engine.select(vec![note.clone()]);
+        engine.delete_selection();
+        assert!(live(&engine).is_empty(), "{:?}", live(&engine));
+        assert!(element(&engine, &note).is_deleted);
+        assert!(element(&engine, &label).is_deleted);
+    }
+
     /// Ctrl+D copies the note with its label, and the copy is dated now
     /// (`duplicate.ts@1118751f:116-117`).
     #[test]
