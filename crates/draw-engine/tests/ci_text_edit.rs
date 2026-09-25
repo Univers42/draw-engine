@@ -565,6 +565,43 @@ mod layout {
 mod ending {
     use super::*;
 
+    /// Undo and redo of an edit select what its step began and ended with (`stamp.rs`,
+    /// "Undo puts the selection back"): the shape the double click or Enter left
+    /// selected — never its label on its own, which the session selects only while it is
+    /// open — and, after the keyboard ended it, the shape again, its label emptied or not.
+    #[test]
+    fn undo_and_redo_of_an_edit_select_the_shape() {
+        for (typed, by_enter) in [
+            ("hello there", false),
+            ("", false),
+            ("hi", true),
+            ("", true),
+        ] {
+            let (mut engine, shape, _) = labelled(box_at(100.0, 100.0, 300.0, 100.0), "hello");
+            let case = format!("typed {typed:?}, by Enter: {by_enter}");
+            if by_enter {
+                engine.select(vec![shape.clone()]);
+                assert!(engine.edit_selected_text());
+            } else {
+                engine.clear_selection();
+                // A double click as a pointer makes one: two presses, then the event.
+                for _ in 0..2 {
+                    engine.begin_pointer(250.0, 150.0, false, false);
+                    engine.end_pointer();
+                }
+                engine.handle_double_click(250.0, 150.0);
+            }
+            assert!(engine.text_edit_session().is_some(), "{case}");
+            engine.update_text_edit(typed);
+            engine.commit_text_edit(typed, true);
+            assert_eq!(engine.get_selection(), vec![shape.clone()], "{case}");
+            engine.undo();
+            assert_eq!(engine.get_selection(), vec![shape.clone()], "undo, {case}");
+            engine.redo();
+            assert_eq!(engine.get_selection(), vec![shape.clone()], "redo, {case}");
+        }
+    }
+
     /// Escape and Ctrl+Enter leave the shape — or the text — selected; a click away lets
     /// go (`App.tsx@1118751f:6439-6498`); with the tool locked nothing stays selected.
     #[test]

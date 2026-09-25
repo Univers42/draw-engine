@@ -220,8 +220,17 @@ impl DrawEngine {
         } else {
             self.create_label(container)
         };
-        self.set_selection(vec![label.id.clone()]);
-        self.request_text_edit(&label);
+        self.type_in(&label);
+    }
+
+    /// Opens `element` for typing, and selects it while it is typed — after opening it,
+    /// so the change pending from then on keeps that selection from being the one the
+    /// edit's step of history begins with: that is what the press or the key left
+    /// selected, a label's shape and not the label on its own (`stamp.rs`, "Undo puts the
+    /// selection back").
+    fn type_in(&mut self, element: &DrawElement) {
+        self.request_text_edit(element);
+        self.set_selection(vec![element.id.clone()]);
     }
 
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
@@ -288,8 +297,7 @@ impl DrawEngine {
         .cloned()
         {
             if hit.kind == DrawElementType::Text && !self.in_untouchable_shape(&hit) {
-                self.set_selection(vec![hit.id.clone()]);
-                self.request_text_edit(&hit);
+                self.type_in(&hit);
                 return;
             }
             // A path of more than two points selects to a box, because it is a shape.
@@ -313,10 +321,8 @@ impl DrawEngine {
             height: font_size,
         });
         element.y = self.first_line_top(&element, world.y);
-        let id = element.id.clone();
         self.scene.add(element.clone());
-        self.set_selection(vec![id]);
-        self.request_text_edit(&element);
+        self.type_in(&element);
     }
 
     /// Gives a text column a new width and re-wraps it to fit.

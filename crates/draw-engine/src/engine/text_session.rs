@@ -170,13 +170,13 @@ impl DrawEngine {
         };
         let keep = via_keyboard && !self.tool_locked && self.tool != DrawTool::AutoShape;
         if text.trim().is_empty() {
-            let container = element.container_id.clone();
-            self.remove_emptied_text(&element);
-            match container.filter(|_| keep) {
+            // Selected before the step is taken, so redo selects it again.
+            match element.container_id.clone().filter(|_| keep) {
                 // The shape stays selected even though its label is gone.
                 Some(container) => self.set_selection(vec![container]),
                 None => self.clear_selection(),
             }
+            self.remove_emptied_text(&element);
             self.refresh_live();
             self.request_draw();
             return;
