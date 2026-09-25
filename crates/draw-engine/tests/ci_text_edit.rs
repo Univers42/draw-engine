@@ -1113,13 +1113,13 @@ mod entry {
     }
 
     /// With the grid on, a new free text lands on the grid instead of centring its first
-    /// line on the pointer. A double click reaches `text_creation_point` with the raw
-    /// press, so it floors straight to the grid point below it, as the oracle's
-    /// `getTextCreationGridPoint` does. The text tool's click goes through the one snap
-    /// every gesture starts from (`begin_pointer_step`), which rounds to the *nearest*
-    /// intersection before `text_creation_point` ever sees it — flooring an already
-    /// on-grid point changes nothing, so the two can land in neighbouring cells;
-    /// documented in `docs/reference/text-model.md`.
+    /// line on the pointer, from the *raw* press either way: a double click reaches
+    /// `text_creation_point` with it directly, and the text tool's click carries it
+    /// alongside the per-gesture-snapped `start` its draft box drags from
+    /// (`TextDraft::press`, `begin_text`) so `end_text` floors the same unsnapped point
+    /// `text_creation_point` floors for a double click — the oracle's
+    /// `getTextCreationGridPoint` also floors the raw scene point
+    /// (`App.tsx@1118751f:1524-1542`). Both entry points land in the same cell.
     #[test]
     fn a_new_free_text_snaps_to_the_grid_when_it_is_on() {
         let mut engine = engine_with_measure(Vec::new());
@@ -1145,8 +1145,8 @@ mod entry {
         let text = element(&engine, &id);
         assert_eq!(
             (text.x, text.y),
-            (100.0, 100.0),
-            "already rounded to the grid upstream"
+            (100.0, 80.0),
+            "the click floors the same raw press a double click does"
         );
     }
 

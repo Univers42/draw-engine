@@ -223,7 +223,7 @@ impl DrawEngine {
     /// the width you dragged. Which one it was is only knowable on release, so the
     /// editor cannot open here the way it used to — `end_text` opens it, once the
     /// gesture has said how wide the thing is.
-    fn begin_text(&mut self, _sx: f64, _sy: f64, world: Point) {
+    fn begin_text(&mut self, sx: f64, sy: f64, world: Point) {
         let element = self.new_text_element(Geometry {
             x: world.x,
             y: world.y,
@@ -232,7 +232,12 @@ impl DrawEngine {
         });
         let id = element.id.clone();
         self.scene.add(element);
-        self.interaction = Some(Interaction::TextDraft { id, start: world });
+        let press = self.screen_to_world(sx, sy);
+        self.interaction = Some(Interaction::TextDraft {
+            id,
+            start: world,
+            press,
+        });
         self.request_draw();
     }
 

@@ -95,7 +95,15 @@ pub(crate) enum Interaction {
     /// which is the commonest way to make text and must not be discarded.
     TextDraft {
         id: String,
+        /// Where the draft box starts, snapped like every other gesture
+        /// (`begin_pointer_step`) — what a drag grows the column from.
         start: Point,
+        /// The unsnapped press, kept alongside `start` only for the click case:
+        /// `text_creation_point` floors this raw position itself, as the oracle's
+        /// `getTextCreationGridPoint` does (`App.tsx@1118751f:1524-1542`); flooring the
+        /// already-rounded `start` a second time would land a click on whatever cell
+        /// rounding picked instead.
+        press: Point,
     },
     Linear {
         id: String,

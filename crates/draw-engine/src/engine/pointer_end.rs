@@ -32,7 +32,7 @@ impl DrawEngine {
         self.snap_guides.clear();
         match it {
             Interaction::Draft { id, .. } => self.end_draft(&id),
-            Interaction::TextDraft { id, start } => self.end_text(&id, start),
+            Interaction::TextDraft { id, press, .. } => self.end_text(&id, press),
             Interaction::Linear { id, start, pointer } => self.end_linear(&id, start, pointer),
             // The release is what places a point. Committing on the press instead would
             // freeze it where the button went down, so it could never be nudged before
@@ -413,7 +413,7 @@ impl DrawEngine {
     /// two-pixel wobble would produce a two-pixel column that wraps every character onto
     /// its own line — indistinguishable from a click to the person who made it, and the
     /// worst of the available outcomes.
-    fn end_text(&mut self, id: &str, start: Point) {
+    fn end_text(&mut self, id: &str, press: Point) {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
@@ -428,8 +428,10 @@ impl DrawEngine {
         } else {
             // Put back the click-sized box `begin_text` could not commit to — its first
             // line centred on the click, or, with the grid on, its top-left grid point
-            // (`text_creation_point`).
-            let at = self.text_creation_point(&element, start);
+            // (`text_creation_point`). From `press`, the unsnapped position, not `start`:
+            // the oracle floors the raw scene point, and `start` is already rounded to
+            // the grid by the per-gesture snap every gesture shares.
+            let at = self.text_creation_point(&element, press);
             element.x = at.x;
             element.y = at.y;
             element.width = 4.0;
