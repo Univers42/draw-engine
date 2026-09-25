@@ -242,6 +242,59 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Ctrl/Cmd+Shift+> (`true`) and < (`false`): the selected texts a tenth bigger or
+    /// smaller, each from its own size.
+    #[wasm_bindgen(js_name = stepFontSize)]
+    pub fn step_font_size(&self, increase: bool) {
+        self.cell.borrow_mut().engine.step_font_size(increase);
+        self.flush();
+    }
+
+    /// `"sharp"` or `"round"` for the selected arrows and the next one. Anything else —
+    /// `"elbow"`, which the engine does not route — is ignored.
+    #[wasm_bindgen(js_name = setArrowType)]
+    pub fn set_arrow_type(&self, arrow_type: &str) {
+        if let Some(arrow_type) = crate::engine::ArrowType::parse(arrow_type) {
+            self.cell.borrow_mut().engine.set_arrow_type(arrow_type);
+            self.flush();
+        }
+    }
+
+    /// The font picker's hover: a family shown on the selected texts uncommitted, or —
+    /// with none — what the last hover changed given back. `setFontFamily` commits.
+    #[wasm_bindgen(js_name = previewFontFamily)]
+    pub fn preview_font_family(&self, family: Option<u8>) {
+        self.cell.borrow_mut().engine.preview_font_family(family);
+        self.flush();
+    }
+
+    /// The families the board's texts use, each once: the picker's "In this scene".
+    #[wasm_bindgen(js_name = sceneFontFamilies)]
+    pub fn scene_font_families(&self) -> Vec<u8> {
+        self.cell.borrow().engine.scene_font_families()
+    }
+
+    /// "Bind text to the container": a free text and one empty shape selected.
+    #[wasm_bindgen(js_name = bindText)]
+    pub fn bind_text(&self) {
+        self.cell.borrow_mut().engine.bind_text();
+        self.flush();
+    }
+
+    /// "Unbind text": each selected shape's label becomes free text.
+    #[wasm_bindgen(js_name = unbindText)]
+    pub fn unbind_text(&self) {
+        self.cell.borrow_mut().engine.unbind_text();
+        self.flush();
+    }
+
+    /// "Wrap text in a container": a rectangle around each selected free text.
+    #[wasm_bindgen(js_name = wrapTextInContainer)]
+    pub fn wrap_text_in_container(&self) {
+        self.cell.borrow_mut().engine.wrap_text_in_container();
+        self.flush();
+    }
+
     /// `[[colour, count], …]` over the live board, for the picker's most-used colours.
     #[wasm_bindgen(js_name = colorCountsJson)]
     pub fn color_counts_json(&self, background: bool) -> String {

@@ -73,6 +73,9 @@ impl DrawEngine {
                 for next in members {
                     self.scene.put(next);
                 }
+                // `handleBindTextResize` forgets a shape's remembered height before it lays
+                // the label out (`textElement.ts@1118751f:174`).
+                self.forget_original_heights(ids);
                 let flips =
                     crate::selection::group_transform::resize_group_flips(handle, frame, at);
                 for label in labels {
@@ -704,6 +707,9 @@ impl DrawEngine {
             set_anchor(&mut element, End::Start, None);
             set_anchor(&mut element, End::End, None);
         }
+        // Resized, a shape keeps its new height when its label is let go, labelled now or
+        // not (`resetOriginalContainerCache`, `textElement.ts@1118751f:174`).
+        self.forget_original_heights([id]);
         let Some(mut label) = label else {
             self.scene.put(element);
             self.apply_bindings();

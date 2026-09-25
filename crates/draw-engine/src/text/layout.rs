@@ -86,7 +86,7 @@ pub fn font_size_of(text: &DrawElement) -> f64 {
 }
 
 /// `Math.round`, which rounds halves up — Rust's `round` rounds them away from zero.
-fn js_round(value: f64) -> f64 {
+pub(crate) fn js_round(value: f64) -> f64 {
     (value + 0.5).floor()
 }
 

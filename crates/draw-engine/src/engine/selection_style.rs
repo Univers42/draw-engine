@@ -18,9 +18,9 @@ use serde::Serialize;
 use super::DrawEngine;
 use crate::render::default_arrowhead;
 use crate::scene::{
-    apply_style_patch, is_transparent, resolved_text_align, resolved_vertical_align, Arrowhead,
-    DrawElement, DrawElementStylePatch, DrawElementType, FillStyle, StrokeStyle, TextAlign,
-    VerticalAlign,
+    apply_style_patch, is_auto_resize, is_transparent, resolved_font_family, resolved_text_align,
+    resolved_vertical_align, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
+    DrawElementType, FillStyle, StrokeStyle, TextAlign, VerticalAlign,
 };
 
 /// Excalidraw's `reduceToCommonValue`: the one value everything shares, or nothing.
@@ -66,6 +66,46 @@ impl Edges {
     }
 }
 
+/// The Arrow type row: `ARROW_TYPE` (`packages/common/src/constants.ts@1118751f`) less
+/// `elbow`, which this engine does not route — a recorded gap (`docs/reference/console.md`).
+/// An arrow is curved when it has a roundness at all, as the oracle's form value reads it
+/// (`actionProperties.tsx@1118751f:2275-2296`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ArrowType {
+    Sharp,
+    Round,
+}
+
+impl ArrowType {
+    pub(super) fn of(roundness: Option<f64>) -> Self {
+        if roundness.is_some() {
+            ArrowType::Round
+        } else {
+            ArrowType::Sharp
+        }
+    }
+
+    /// The roundness an arrow of this type is drawn with. A curve takes the default
+    /// style's: the painter reads an arrow's roundness only as "curved" (`PROPORTIONAL_RADIUS`
+    /// carries no value either).
+    pub(super) fn roundness(self) -> Option<f64> {
+        match self {
+            ArrowType::Round => DrawElementStyle::default().roundness,
+            ArrowType::Sharp => None,
+        }
+    }
+
+    /// `"sharp"` or `"round"`; anything else — `"elbow"` included — is `None`.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "sharp" => Some(ArrowType::Sharp),
+            "round" => Some(ArrowType::Round),
+            _ => None,
+        }
+    }
+}
+
 /// What the properties panel shows. Every value is `None` when the selection disagrees
 /// on it — the panel then marks nothing as current — or when nothing selected has it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -100,9 +140,28 @@ pub struct SelectionStyle {
     pub edges: Option<Edges>,
     pub start_arrowhead: Option<Arrowhead>,
     pub end_arrowhead: Option<Arrowhead>,
+    /// Read off arrows alone; the Edges row reads everything else.
+    pub arrow_type: Option<ArrowType>,
     pub font_size: Option<f64>,
+    /// The family the texts share — 0 for the system stack a text with none is drawn in.
+    pub font_family: Option<u8>,
     pub text_align: Option<TextAlign>,
     pub vertical_align: Option<VerticalAlign>,
+    /// A free text is selected: the auto-resize row means something, and "Wrap text in
+    /// a container" is offered (`actionWrapTextInContainer`'s predicate,
+    /// `actions/actionBoundText.tsx@1118751f:262-268`).
+    pub has_free_text: bool,
+    /// Whether the free texts size themselves to their text ([`is_auto_resize`]).
+    pub auto_resize: Option<bool>,
+    /// A label is reached — selected, or carried by a selected shape.
+    pub has_label: bool,
+    /// Whether the labels wrap inside their shapes (`wrap` other than `false`).
+    pub label_wrap: Option<bool>,
+    /// "Bind text to the container" (`actionBoundText.tsx@1118751f:128-154`); see
+    /// `bound_text.rs`.
+    pub can_bind_text: bool,
+    /// "Unbind text": a selected shape carries a label a style may change (`:64-68`).
+    pub can_unbind_text: bool,
 }
 
 /// `hasFillStyle` (`packages/element/src/comparisons.ts@1118751f:16-17`).
@@ -152,7 +211,7 @@ impl DrawEngine {
     }
 
     /// The label a shape carries, if it is live.
-    fn live_label(&self, element: &DrawElement) -> Option<&DrawElement> {
+    pub(super) fn live_label(&self, element: &DrawElement) -> Option<&DrawElement> {
         element
             .bound_text_id
             .as_deref()
@@ -175,14 +234,19 @@ impl DrawEngine {
             .is_some_and(|label| label.id == element.id)
     }
 
-    /// Everything the panel shows, in one pass over the selection.
-    pub fn selection_style(&self) -> SelectionStyle {
-        let selected: Vec<&DrawElement> = self
-            .selected_ids
+    /// The selection as the panel reads it: live, less the labels its shapes carry
+    /// ([`Self::is_carried_label`]).
+    pub(super) fn panel_selection(&self) -> Vec<&DrawElement> {
+        self.selected_ids
             .iter()
             .filter_map(|id| self.scene.get(id))
             .filter(|element| !element.is_deleted && !self.is_carried_label(element))
-            .collect();
+            .collect()
+    }
+
+    /// Everything the panel shows, in one pass over the selection.
+    pub fn selection_style(&self) -> SelectionStyle {
+        let selected = self.panel_selection();
         if selected.is_empty() {
             return self.next_selection_style();
         }
@@ -207,9 +271,16 @@ impl DrawEngine {
         let mut edges = Common::Empty;
         let mut start_arrowhead = Common::Empty;
         let mut end_arrowhead = Common::Empty;
+        let mut arrow_type = Common::Empty;
         let mut font_size = Common::Empty;
+        let mut font_family = Common::Empty;
         let mut text_align = Common::Empty;
         let mut vertical_align = Common::Empty;
+        let mut has_free_text = false;
+        let mut auto_resize = Common::Empty;
+        let mut has_label = false;
+        let mut label_wrap = Common::Empty;
+        let mut can_unbind_text = false;
 
         // The oracle's targets: each selected element, then the label it carries.
         let mut target = |element: &DrawElement| {
@@ -253,6 +324,7 @@ impl DrawEngine {
             if element.kind == DrawElementType::Arrow {
                 start_arrowhead.add(default_arrowhead(element, "start"));
                 end_arrowhead.add(default_arrowhead(element, "end"));
+                arrow_type.add(ArrowType::of(element.roundness));
             } else {
                 edges.add(Edges::of(element.roundness));
             }
@@ -261,10 +333,20 @@ impl DrawEngine {
             let text = if element.kind == DrawElementType::Text {
                 Some(*element)
             } else {
-                self.label_of(element, &carried)
+                let label = self.label_of(element, &carried);
+                can_unbind_text |= label.is_some();
+                label
             };
             if let Some(text) = text {
                 font_size.add(text.font_size.unwrap_or(super::DEFAULT_FONT_SIZE));
+                font_family.add(resolved_font_family(text).unwrap_or(crate::text::FontKey::LEGACY));
+                if text.container_id.is_some() {
+                    has_label = true;
+                    label_wrap.add(text.wrap != Some(false));
+                } else {
+                    has_free_text = true;
+                    auto_resize.add(is_auto_resize(text));
+                }
                 text_align.add(resolved_text_align(text));
                 // Free text has no vertical alignment to report (`:1712-1714`).
                 vertical_align.add(
@@ -300,9 +382,17 @@ impl DrawEngine {
             edges: edges.get(),
             start_arrowhead: start_arrowhead.get(),
             end_arrowhead: end_arrowhead.get(),
+            arrow_type: arrow_type.get(),
             font_size: font_size.get(),
+            font_family: font_family.get(),
             text_align: text_align.get(),
             vertical_align: vertical_align.get().flatten(),
+            has_free_text,
+            auto_resize: auto_resize.get(),
+            has_label,
+            label_wrap: label_wrap.get(),
+            can_bind_text: self.bind_pair(&selected, &carried).is_some(),
+            can_unbind_text,
         }
     }
 
@@ -326,12 +416,20 @@ impl DrawEngine {
             roughness: Some(next.roughness),
             opacity: Some(next.opacity),
             edges: Some(Edges::of(next.roundness)),
-            // The engine keeps no next arrowheads: a new arrow gets the defaults.
-            start_arrowhead: Some(Arrowhead::None),
-            end_arrowhead: Some(Arrowhead::Arrow),
+            // Unchosen, the heads a new arrow resolves to (`render::default_arrowhead`).
+            start_arrowhead: Some(self.next_start_arrowhead.unwrap_or(Arrowhead::None)),
+            end_arrowhead: Some(self.next_end_arrowhead.unwrap_or(Arrowhead::Arrow)),
+            arrow_type: Some(self.next_arrow_type),
             font_size: Some(self.next_font_size),
+            font_family: Some(self.next_font_family),
             text_align: Some(self.next_text_align.unwrap_or(TextAlign::Left)),
             vertical_align: Some(self.next_vertical_align.unwrap_or(VerticalAlign::Middle)),
+            has_free_text: false,
+            auto_resize: None,
+            has_label: false,
+            label_wrap: None,
+            can_bind_text: false,
+            can_unbind_text: false,
         }
     }
 
@@ -570,10 +668,7 @@ impl DrawEngine {
                 // A new size or font is a new box, and a label that no longer fits grows
                 // its shape: `redrawTextBoundingBox(newTextElement, container)` (`:174`).
                 let laid = self.laid_out(&element);
-                if let Some(container) = laid.container {
-                    self.scene.put(container);
-                }
-                self.scene.put(laid.text);
+                self.put_laid(laid);
             } else {
                 self.scene.put(element);
             }
