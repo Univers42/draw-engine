@@ -89,6 +89,38 @@ fn an_older_copy_with_a_picture_changes_nothing_else() {
     assert_close(element(&engine, "photo").x, 100.0);
 }
 
+/// What a migrated sticky's shadow and date rely on: a scene loaded with an id already
+/// tombstoned (`+page.svelte` seeds `Scene` with `[...elements, ...migrated.removed]`,
+/// which reaches here through `engine.setScene`/`set_scene_json`, both keeping tombstones
+/// in the `Vec` — `scene/store.rs`) refuses a stale peer's live copy of that id on stamp
+/// alone, the same as any other tombstone. Without this, `apply_remote_patch_step` had
+/// never heard of the id (`self.scene.get(&element.id) => None => true`) and took it
+/// unconditionally — which is what let a peer tab still holding the pre-migration shadow
+/// resurrect it on a migrated page (`docs/reference/sticky.md` › Open).
+#[test]
+fn a_tombstone_loaded_at_boot_refuses_a_stale_remote_copy() {
+    let mut tombstone = box_at(3.0, 3.0, 220.0, 220.0);
+    tombstone.id = "shadow".into();
+    tombstone.version = 4;
+    tombstone.version_nonce = 40;
+    tombstone.is_deleted = true;
+
+    let mut engine = engine_with_scene(vec![tombstone]);
+
+    // The stale peer's copy, at the version the shadow had before it was migrated away.
+    let mut stale = box_at(3.0, 3.0, 220.0, 220.0);
+    stale.id = "shadow".into();
+    stale.version = 3;
+    stale.version_nonce = 30;
+
+    assert!(!engine.apply_remote_patch(&patch(&[stale])));
+    let shadow = element(&engine, "shadow");
+    assert!(
+        shadow.is_deleted,
+        "the boot-time tombstone must outrank the stale copy"
+    );
+}
+
 #[test]
 fn one_element_that_cannot_be_read_costs_only_itself() {
     let mut engine = engine_with_scene(vec![box_at(0.0, 0.0, 10.0, 10.0)]);
