@@ -309,6 +309,11 @@ mod labels {
         let grab = (400.0 + HANDLE, 125.0);
         drag(&mut engine, grab, (grab.0 - 200.0, grab.1), 4, false);
         let narrow = element(&engine, &shape_id);
+        assert_eq!(
+            element(&engine, &label_id).text.as_deref(),
+            Some("hello\nworld\nfoo bar"),
+            "narrowed, it wrapped"
+        );
 
         let grab = (200.0 + HANDLE, narrow.y + narrow.height / 2.0);
         drag(&mut engine, grab, (grab.0 + 300.0, grab.1), 4, false);
