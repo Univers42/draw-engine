@@ -463,6 +463,39 @@ mod painting {
         assert!(painted(&engine).contains(&label), "painted again");
         assert!(engine.debug_live().is_empty());
     }
+
+    /// Its frame and handles are not drawn, so they offer nothing: where a corner or the
+    /// side line of a free text would be, the cursor promises what a press does once the
+    /// host has ended the edit — pick the text up, as those lie within a click's reach of
+    /// it — and past that reach, inside the box that is not drawn, nothing. A press on a
+    /// hidden handle resizes nothing.
+    #[test]
+    fn the_hidden_frame_offers_nothing() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.update_text_edit("hello world");
+        let typed = element(&engine, &id);
+        let (right, bottom) = (typed.x + typed.width, typed.y + typed.height);
+        let middle = typed.y + typed.height / 2.0;
+        let corner = (right + 8.0, bottom + 8.0);
+        for (at, name, cursor) in [
+            (corner, "corner", HoverCursor::Move),
+            ((right + 4.0, middle), "side", HoverCursor::Move),
+            ((right + 14.0, middle), "box", HoverCursor::Default),
+        ] {
+            assert_eq!(engine.hover_cursor(at.0, at.1), cursor, "{name}");
+        }
+
+        engine.begin_pointer(corner.0, corner.1, false, false);
+        engine.move_pointer(corner.0 + 80.0, corner.1 + 60.0, false, false);
+        engine.end_pointer();
+        let now = element(&engine, &id);
+        assert_eq!(
+            (now.font_size, now.width, now.height),
+            (typed.font_size, typed.width, typed.height),
+            "resized"
+        );
+    }
 }
 
 /// A label's shape grows as its label is typed and shrinks back as it is deleted, never

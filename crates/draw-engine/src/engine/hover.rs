@@ -160,7 +160,7 @@ impl DrawEngine {
 
         let world = self.screen_to_world(sx, sy);
 
-        if let Some(single) = self.single_selected() {
+        if let Some(single) = self.single_selected().filter(|_| self.selection_framed()) {
             if !single.locked() {
                 // Same order as `begin_select`, so what the cursor promises is what a
                 // press does.

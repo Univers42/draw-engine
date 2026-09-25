@@ -405,7 +405,7 @@ impl DrawEngine {
         // hit where the grid put the press, a handle a few pixels off a grid line could not
         // be taken. Only what a gesture places is snapped.
         let press = self.screen_to_world(sx, sy);
-        if let Some(single) = self.single_selected() {
+        if let Some(single) = self.single_selected().filter(|_| self.selection_framed()) {
             if !single.locked() {
                 // Radius handles first. They sit *inside* the shape, so a press on one of
                 // a filled rectangle would otherwise pick the whole shape up and move it.
@@ -594,6 +594,9 @@ impl DrawEngine {
     /// By reference: the hover cursor asks this on every move, and cloning the selection
     /// there cost the size of a select-all per move.
     pub(crate) fn pointer_is_inside_selection(&self, world: Point) -> bool {
+        if !self.selection_framed() {
+            return false;
+        }
         let selected = || {
             self.selected_ids
                 .iter()
@@ -618,6 +621,17 @@ impl DrawEngine {
             && world.x <= bounds.max_x + pad
             && world.y >= bounds.min_y - pad
             && world.y <= bounds.max_y + pad
+    }
+
+    /// Whether the selection's frame is drawn, and so takes a press: not while what is
+    /// selected is the text being typed, which the painter leaves unframed (`paint_view`,
+    /// `text_session.rs`). Its handles and the box around it then offer nothing, to the
+    /// cursor or to a press — the host ends the edit on a press on the board and lets go
+    /// of it, as the oracle's selection is empty while it types
+    /// (`App.tsx@1118751f:6509-6510`).
+    pub(crate) fn selection_framed(&self) -> bool {
+        self.editing_text_id()
+            .is_none_or(|id| !self.selected_ids.contains(id))
     }
 
     /// What moving the selection moves, by drag or by arrow key: what it carries, plus

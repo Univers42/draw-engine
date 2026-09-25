@@ -22,7 +22,8 @@
 //!
 //! Divergence: the element stays selected while it is typed (the oracle deselects
 //! everything, `App.tsx@1118751f:6509-6510`), so the properties panel keeps working on
-//! it. Its selection frame and handles are not drawn.
+//! it. Its selection frame and handles are not drawn, and take no press
+//! (`pointer.rs` › `selection_framed`).
 
 use crate::engine::DrawEngine;
 use crate::interaction::DrawTool;
