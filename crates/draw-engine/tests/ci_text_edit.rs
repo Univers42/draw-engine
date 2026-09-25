@@ -810,6 +810,32 @@ mod peers {
         assert!(!engine.update_text_edit("a\nb"));
         assert_eq!((element(&engine, &shape), element(&engine, &label)), before);
     }
+
+    /// A shape a peer takes while its label is typed ends the edit, and a style written
+    /// after it reaches neither: the label of a held shape is out of every style's reach
+    /// (`style.rs` › `restylable`), the text being typed or not.
+    #[test]
+    fn a_style_after_a_peer_took_the_shape_reaches_nothing() {
+        let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "a");
+        let before = (element(&engine, &shape), element(&engine, &label));
+        engine.select(vec![label.clone()]);
+        assert!(engine.edit_selected_text());
+        engine.update_text_edit("typed");
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![shape.clone()],
+            preview: Vec::new(),
+        }]);
+        assert!(engine.text_edit_session().is_none());
+        engine.step_font_size(true);
+        engine.apply_style(DrawElementStylePatch {
+            stroke_color: Some("#e03131".into()),
+            ..Default::default()
+        });
+        assert_eq!((element(&engine, &shape), element(&engine, &label)), before);
+    }
 }
 
 /// Where a text starts and what a press on one reaches — only the old entry points, so

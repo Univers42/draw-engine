@@ -299,6 +299,32 @@ mod free_text {
 mod labels {
     use super::*;
 
+    /// A peer taking the shape mid-drag abandons the resize, as it abandons a move
+    /// (`ci_peers.rs`): the shape and the label laid out on the way both go back as they
+    /// were, and nothing is committed over them.
+    #[test]
+    fn a_resize_a_peer_takes_the_shape_from_puts_the_label_back() {
+        let (mut engine, shape_id, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        let before = (element(&engine, &shape_id), element(&engine, &label_id));
+        let grab = (400.0 + HANDLE, 125.0);
+        engine.begin_pointer(grab.0, grab.1, false, false);
+        engine.move_pointer(grab.0 - 200.0, grab.1, false, false);
+        assert_ne!(element(&engine, &label_id).text, before.1.text, "laid out");
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![shape_id.clone()],
+            preview: Vec::new(),
+        }]);
+        engine.move_pointer(grab.0 - 250.0, grab.1, false, false);
+        engine.end_pointer();
+        assert_eq!(
+            (element(&engine, &shape_id), element(&engine, &label_id)),
+            before
+        );
+    }
+
     /// `handleBindTextResize` on every move: narrowed by its east handle, the shape's
     /// label is wrapped at its new room while the pointer is still down, and the shape
     /// grows down to hold it — from its top, which the drag holds.
