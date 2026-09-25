@@ -304,21 +304,10 @@ pub fn side_at(element: &DrawElement, wx: f64, wy: f64, reach: f64) -> Option<Ha
     ]
     .into_iter()
     .find(|&(_, a, b)| {
-        let distance = distance_to_segment(Point { x: wx, y: wy }, a, b);
+        let distance = crate::scene::geometry::distance_to_segment(wx, wy, a.x, a.y, b.x, b.y);
         distance == 0.0 || distance < reach
     })
     .map(|(kind, _, _)| kind)
-}
-
-fn distance_to_segment(p: Point, a: Point, b: Point) -> f64 {
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let length = dx * dx + dy * dy;
-    let t = if length > 0.0 {
-        (((p.x - a.x) * dx + (p.y - a.y) * dy) / length).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    (p.x - (a.x + t * dx)).hypot(p.y - (a.y + t * dy))
 }
 
 /// Which handle, if any, is within `tolerance` of the pointer.

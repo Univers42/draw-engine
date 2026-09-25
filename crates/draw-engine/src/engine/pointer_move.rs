@@ -798,9 +798,11 @@ impl DrawEngine {
         handle: HandleKind,
         origin: &crate::selection::Geometry,
     ) {
-        use crate::selection::{next_box_size, resized_origin, MIN_FONT_SIZE};
+        use crate::selection::{next_box_size, MIN_FONT_SIZE};
+        use crate::text::layout::keep_point;
         let (next_width, next_height) =
             next_box_size(origin, latest.angle, handle, world.x, world.y, square);
+        let keep = text_resize_anchor(handle);
         let mut next = latest.clone();
         if matches!(handle, HandleKind::E | HandleKind::W) {
             let laid = self.with_measure(|measure| {
@@ -810,7 +812,7 @@ impl DrawEngine {
                 fixed.width = next_width.max(min_width);
                 crate::text::layout::layout_text(&fixed, None, measure).text
             });
-            let at = resized_origin(origin, laid.width, laid.height, latest.angle, handle);
+            let at = keep_point(origin, latest.angle, laid.width, laid.height, keep);
             next = laid;
             next.x = at.x;
             next.y = at.y;
@@ -824,7 +826,7 @@ impl DrawEngine {
                 return;
             }
             let width = latest.width * ratio;
-            let at = resized_origin(origin, width, next_height, latest.angle, handle);
+            let at = keep_point(origin, latest.angle, width, next_height, keep);
             next.font_size = Some(size);
             next.width = width;
             next.height = next_height;
@@ -834,6 +836,20 @@ impl DrawEngine {
         self.scene.put(next);
         self.apply_bindings();
         self.request_draw();
+    }
+}
+
+/// The point of a text's box that a resize by `handle` keeps where it is, as fractions of
+/// its width and height: the corner opposite the handle, and for a side the corner that
+/// `getResizeAnchor` gives it (`resizeElements.ts@1118751f:580-619`) — the top-left for
+/// the east, the bottom-right for the west, so a text wrapped from its west side grows
+/// upward.
+fn text_resize_anchor(handle: HandleKind) -> (f64, f64) {
+    match handle {
+        HandleKind::N | HandleKind::Nw | HandleKind::W => (1.0, 1.0),
+        HandleKind::Ne => (0.0, 1.0),
+        HandleKind::Sw => (1.0, 0.0),
+        HandleKind::E | HandleKind::Se | HandleKind::S | HandleKind::Rotate => (0.0, 0.0),
     }
 }
 

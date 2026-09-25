@@ -508,12 +508,20 @@ pub fn min_container_size(label: &DrawElement, measure: &Measure) -> (f64, f64) 
     )
 }
 
-/// Where a box goes when it becomes `width` × `height` and the point `keep` of it —
-/// fractions of its width and height from its top-left, turned with it — stays where it
-/// was: `getPositionAfterHeightChange` (`sizeHelpers.ts@1118751f:28-54`) for either axis.
-/// `prev` is read for its `x`, `y`, `width`, `height` and `angle`, extents positive.
-pub fn keep_point(prev: &DrawElement, width: f64, height: f64, keep: (f64, f64)) -> Point {
-    let (sin, cos) = prev.angle.sin_cos();
+/// Where a box that was `prev`, turned by `angle`, goes when it becomes `width` ×
+/// `height` and the point `keep` of it — fractions of its width and height from its
+/// top-left, turned with it — stays where it was: `getPositionAfterHeightChange`
+/// (`sizeHelpers.ts@1118751f:28-54`) for either axis, and `getResizedOrigin`
+/// (`resizeElements.ts@1118751f:621-727`) with the corner its anchor names. Extents
+/// positive.
+pub fn keep_point(
+    prev: &crate::selection::Geometry,
+    angle: f64,
+    width: f64,
+    height: f64,
+    keep: (f64, f64),
+) -> Point {
+    let (sin, cos) = angle.sin_cos();
     // From the centre to the kept point, before and after, in the box's own frame.
     let before = ((keep.0 - 0.5) * prev.width, (keep.1 - 0.5) * prev.height);
     let after = ((keep.0 - 0.5) * width, (keep.1 - 0.5) * height);
@@ -555,9 +563,13 @@ pub fn bound_text_resize(
     // `layout_text` grows it from its top-left.
     let rect =
         crate::scene::normalize_rect(container.x, container.y, container.width, container.height);
-    let mut before = container.clone();
-    (before.x, before.y, before.width, before.height) = (rect.x, rect.y, rect.width, rect.height);
-    let at = keep_point(&before, grown.width, grown.height, keep);
+    let before = crate::selection::Geometry {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+    };
+    let at = keep_point(&before, container.angle, grown.width, grown.height, keep);
     grown.x = at.x;
     grown.y = at.y;
     let placed = bound_text_position(grown, &laid.text);

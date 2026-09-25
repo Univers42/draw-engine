@@ -219,46 +219,6 @@ fn sign(value: f64) -> f64 {
     }
 }
 
-/// Where a box that was `prev` (its top-left, width and height), turned by `angle`, goes
-/// when it becomes `width × height` by `handle`: the corner or side opposite the handle
-/// stays put — `getResizedOrigin` with the anchor `getResizeAnchor` gives it
-/// (`resizeElements.ts@1118751f:580-727`), neither from the centre nor keeping the aspect,
-/// which is how a text is resized (`:338-348`, `:386-396`).
-pub fn resized_origin(
-    prev: &Geometry,
-    width: f64,
-    height: f64,
-    angle: f64,
-    handle: HandleKind,
-) -> Point {
-    let (sin, cos) = angle.sin_cos();
-    let (dw, dh) = ((prev.width - width) / 2.0, (prev.height - height) / 2.0);
-    let (x, y) = (prev.x, prev.y);
-    match handle {
-        // top-left
-        HandleKind::E | HandleKind::Se | HandleKind::S => Point {
-            x: x + dw - dw * cos + dh * sin,
-            y: y + dh - dw * sin - dh * cos,
-        },
-        // bottom-right
-        HandleKind::N | HandleKind::Nw | HandleKind::W => Point {
-            x: x + dw * (cos + 1.0) - dh * sin,
-            y: y + dh * (cos + 1.0) + dw * sin,
-        },
-        // bottom-left
-        HandleKind::Ne => Point {
-            x: x + dw * (1.0 - cos) - dh * sin,
-            y: y + dh * (cos + 1.0) - dw * sin,
-        },
-        // top-right
-        HandleKind::Sw => Point {
-            x: x + dw * (cos + 1.0) + dh * sin,
-            y: y + dh + dw * sin - dh * cos,
-        },
-        HandleKind::Rotate => Point { x, y },
-    }
-}
-
 impl HandleKind {
     fn has_ew(self) -> bool {
         matches!(
