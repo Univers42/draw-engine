@@ -538,7 +538,28 @@ impl Scene {
     /// two — 79ms for 5,000 over 5,000 against 4.7ms with none; 5.7ms with the set
     /// (`cargo bench --bench editing -- reorder/one_to_front`). A board with no tombstone
     /// builds no set.
+    ///
+    /// A wholesale replacement, so the host is told to resync entirely — for a scene loaded
+    /// from elsewhere, or a merge that may have touched content this cannot itself compare.
+    /// A reorder of elements the host already has, its content unchanged, is
+    /// [`Self::reorder_live`] instead.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
+        self.replace_live_order(live);
+        self.structural = true;
+    }
+
+    /// [`Self::set_order`], told to the host as a delta with the order rather than the
+    /// whole scene: a z-order command changes no element's content, so the list of live ids
+    /// is the whole story, the same delta a shape joining a frame already sends
+    /// (`Self::place_above`, `docs/reference/zorder.md`). On 20,000 elements that delta
+    /// measured 0.52MB against 10.7MB for the whole scene (`cargo bench --bench editing --
+    /// frame_join`); a z-order command's own numbers are `reorder` in the same benchmark.
+    pub(crate) fn reorder_live(&mut self, live: Vec<DrawElement>) {
+        self.replace_live_order(live);
+        self.reordered = true;
+    }
+
+    fn replace_live_order(&mut self, live: Vec<DrawElement>) {
         self.record(Change::Rearranged);
         self.static_revision = next_revision();
         self.note_order();
@@ -556,7 +577,6 @@ impl Scene {
         next.extend(live.into_iter().map(Rc::new));
         self.elements = next;
         self.reindex();
-        self.structural = true;
     }
 
     /// Every element the store holds, tombstones included.

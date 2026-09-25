@@ -46,14 +46,16 @@ impl DrawEngine {
         let next: Vec<DrawElement> = {
             let live = self.scene.ordered_refs();
             let order = reorder_positions(&live, &carried, mode, self.editing_group_id.as_deref());
-            // Nothing moved, so nothing to record or send: a reorder hands the host the
-            // whole scene, and the oracle's store records no step for unchanged elements.
+            // Nothing moved, so nothing to record or send — the oracle's store records no
+            // step for unchanged elements either.
             if order.iter().enumerate().all(|(at, &was)| at == was) {
                 return;
             }
             order.into_iter().map(|i| live[i].clone()).collect()
         };
-        self.scene.set_order(next);
+        // No element's content changes, only where it stands, so the host hears a delta
+        // carrying the order rather than the whole scene (`Scene::reorder_live`).
+        self.scene.reorder_live(next);
         self.push_history();
         self.request_draw();
     }

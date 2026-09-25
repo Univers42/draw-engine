@@ -211,10 +211,12 @@ fn reordering(c: &mut Criterion) {
     let mut group = c.benchmark_group("reorder");
 
     // A z-order command as a person issues it, the whole of it: the restacking, the step
-    // of undo, and the whole scene handed to the host. Each should grow with the board
-    // and no faster — the oracle rebuilds the array once per run of the selection, and
-    // `every_other` cuts the selection into n/2 runs.
-    for n in [1000usize, 5000] {
+    // of undo, and what the host is handed — a delta carrying just the order, not the
+    // whole scene (`Scene::reorder_live`). Each should grow with the board and no faster
+    // — the oracle rebuilds the array once per run of the selection, and `every_other`
+    // cuts the selection into n/2 runs. 20k added alongside `frame_join`/`remote_patch`'s
+    // top size to measure the delta-vs-full-scene win at the same board size.
+    for n in [1000usize, 5000, 20000] {
         group.bench_function(format!("one_to_front_of_{n}"), |b| {
             b.iter_batched_ref(
                 || {
@@ -292,6 +294,29 @@ fn reordering(c: &mut Criterion) {
                 |engine| {
                     engine.reorder_selection(ZOrderMode::Front);
                     black_box(engine.get_selection().len())
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+
+    // What actually leaves the wasm boundary: an order-only delta now
+    // (`Scene::reorder_live`), the whole scene serialised before the fix in
+    // `followups.md`'s "U". The restack above costs the same either way — this is the
+    // part the fix changes. 5k and 20k, as the wave-4 brief asks.
+    for n in [5000usize, 20000] {
+        group.bench_function(format!("delta_of_{n}"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut engine = engine_of(n);
+                    let first = engine.get_scene()[0].id.clone();
+                    engine.select(vec![first]);
+                    let _ = engine.drain_events();
+                    engine
+                },
+                |engine| {
+                    engine.reorder_selection(ZOrderMode::Front);
+                    black_box(engine.drain_events())
                 },
                 BatchSize::SmallInput,
             );

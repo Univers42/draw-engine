@@ -719,6 +719,25 @@ fn a_reorder_that_moves_nothing_is_not_an_edit() {
     assert!(!engine.debug_state().scene.can_undo, "no step recorded");
 }
 
+/// A z-order command changes no element's content, only where it stands, so the host
+/// hears a delta carrying the order rather than the whole scene — the same saving a shape
+/// joining a frame already gets (`Scene::reorder_live`, `docs/reference/zorder.md`).
+#[test]
+fn a_zorder_command_reaches_the_host_as_a_delta_with_the_order() {
+    let (mut engine, cast) = framed(&[("A", &[], false), ("B", &[], false), ("C", &[], false)]);
+    engine.select(vec![id(&cast, "B")]);
+    let _ = engine.drain_events();
+
+    engine.reorder_selection(Front);
+
+    let events = engine.drain_events();
+    assert!(events.scene_json.is_none(), "not the whole scene");
+    let delta = events.scene_delta.expect("a delta");
+    assert!(delta.updated.is_empty(), "no element's content changed");
+    let order: Vec<String> = ["A", "C", "B"].iter().map(|n| id(&cast, n)).collect();
+    assert_eq!(delta.order, Some(order));
+}
+
 // ---------------------------------------------------------------------------------------
 // What joins a frame goes directly below it
 // ---------------------------------------------------------------------------------------
