@@ -327,6 +327,15 @@ impl WasmEngine {
             .and_then(|el| serde_json::to_string(&el).ok())
     }
 
+    /// Whether `(sx, sy)` lands inside the padded common bounding box of the current
+    /// selection, with nothing itself under it — a right-click there opens the element
+    /// menu on the existing selection instead of the board's
+    /// ([`DrawEngine::hits_selection_box`]).
+    #[wasm_bindgen(js_name = hitsSelectionBox)]
+    pub fn hits_selection_box(&self, sx: f64, sy: f64) -> bool {
+        self.cell.borrow().engine.hits_selection_box(sx, sy)
+    }
+
     /// The cursor to show for the pointer at `(sx, sy)`, as a [`crate::HoverCursor`] code.
     ///
     /// A `u8` rather than a string: this is called on every pointer move, and returning

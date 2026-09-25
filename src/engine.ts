@@ -133,6 +133,15 @@ export class DrawEngine {
   }
 
   /**
+   * Whether `(sx, sy)` lands inside the padded common bounding box of the current
+   * multi-selection, with no element itself under it — a right-click there is still a
+   * right-click on the selection, not on the board (`hits_selection_box`).
+   */
+  hitsSelectionBox(sx: number, sy: number): boolean {
+    return this.inner.hitsSelectionBox(sx, sy);
+  }
+
+  /**
    * Who else is in the room, what they hold and what they are doing right now. Replaces
    * what the engine knew; `[]` when everyone has left. What this engine had selected and
    * a peer now holds is let go — see `engine/peers.rs`.
