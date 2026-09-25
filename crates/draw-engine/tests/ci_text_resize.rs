@@ -388,6 +388,27 @@ mod labels {
         assert_close(label.font_size.unwrap(), 20.0 * 590.0 / 290.0);
     }
 
+    /// Shift's font lasts only as long as Shift: a move without it lays the label out at
+    /// the font it had when the drag began (`resizeSingleElement`, `:805-814`, reads the
+    /// label as it was at pointer-down; only a move with the aspect kept overrides it).
+    #[test]
+    fn letting_go_of_shift_gives_the_label_its_font_back() {
+        let (mut engine, _, label_id) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        let font = |engine: &DrawEngine| element(engine, &label_id).font_size.unwrap();
+
+        let grab = (400.0 + HANDLE, 150.0 + HANDLE);
+        engine.begin_pointer(grab.0, grab.1, false, false);
+        engine.move_pointer(grab.0 + 150.0, grab.1 + 25.0, true, false);
+        engine.move_pointer(grab.0 + 300.0, grab.1 + 50.0, true, false);
+        assert!(font(&engine) > 40.0, "Shift scaled it: {}", font(&engine));
+        engine.move_pointer(grab.0 + 250.0, grab.1 + 50.0, false, false);
+        assert_close(font(&engine), 20.0);
+        engine.move_pointer(grab.0 + 200.0, grab.1 + 50.0, false, false);
+        engine.end_pointer();
+
+        assert_close(font(&engine), 20.0);
+    }
+
     /// A drag is one edit: nothing is stamped while it goes, and the shape and the label
     /// it re-wrapped are stamped once, on release.
     #[test]

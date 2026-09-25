@@ -146,6 +146,10 @@ pub(crate) enum Interaction {
         /// handle drawn beyond it (`getResizeOffsetXY`,
         /// `packages/element/src/resizeElements.ts@1118751f:497-554`).
         grab: Point,
+        /// The element's label and its font when the drag began: a move that does not
+        /// keep the proportions lays the label out at that font, whatever an earlier move
+        /// with Shift made it (`resizeSingleElement`, `resizeElements.ts@1118751f:805-814`).
+        label_font: Option<(String, Option<f64>)>,
     },
     Rotate {
         id: String,

@@ -454,6 +454,14 @@ impl DrawEngine {
                             x: press.x - edge.x,
                             y: press.y - edge.y,
                         },
+                        label_font: single
+                            .bound_text_id
+                            .as_deref()
+                            .and_then(|id| self.scene.get(id))
+                            .filter(|label| {
+                                !label.is_deleted && label.kind == DrawElementType::Text
+                            })
+                            .map(|label| (label.id.clone(), label.font_size)),
                     });
                     return;
                 }

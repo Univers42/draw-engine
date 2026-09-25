@@ -184,6 +184,7 @@ impl DrawEngine {
                 origin,
                 ref origin_points,
                 grab,
+                ref label_font,
             } => {
                 let points = origin_points.clone();
                 let at = self.resize_pointer(sx, sy, grab);
@@ -196,6 +197,7 @@ impl DrawEngine {
                         ratio,
                         origin,
                         origin_points: points.as_deref(),
+                        label_font: label_font.as_ref(),
                     },
                 );
                 Some(it)
@@ -627,6 +629,7 @@ impl DrawEngine {
             ratio,
             origin,
             origin_points,
+            label_font,
         } = drag;
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
@@ -722,6 +725,10 @@ impl DrawEngine {
                 return;
             }
             label.font_size = Some(next);
+        } else if let Some((_, font)) = label_font.filter(|(id, _)| *id == label.id) {
+            // Every other move starts from the font the label had at the press (`:805-814`),
+            // so letting go of Shift gives it back.
+            label.font_size = *font;
         }
         let flips = (
             (geom.width < 0.0) != (from.width < 0.0),
@@ -847,6 +854,7 @@ struct ResizeDrag<'a> {
     ratio: Option<f64>,
     origin: crate::selection::Geometry,
     origin_points: Option<&'a [[f64; 2]]>,
+    label_font: Option<&'a (String, Option<f64>)>,
 }
 
 /// Scale a path's points so its ring follows the box the handle just dragged.
