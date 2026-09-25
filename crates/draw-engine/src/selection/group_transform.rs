@@ -97,7 +97,10 @@ impl GroupFrame {
     /// Captures the frame and each member's starting geometry.
     pub fn capture<'a>(elements: impl IntoIterator<Item = &'a DrawElement>) -> Option<Self> {
         let elements: Vec<&DrawElement> = elements.into_iter().collect();
-        let bounds = crate::scene::geometry::scene_bounds(elements.iter().copied())?;
+        // Turned bounds, matching the oracle's `getCommonBoundingBox` — the box a
+        // multi-selection resize scales within is the same one drawn round it
+        // (`docs/reference/resize.md` › the multi-selection frame).
+        let bounds = crate::scene::geometry::scene_outline_bounds(elements.iter().copied())?;
         let origins = elements
             .iter()
             .map(|e| {
@@ -136,16 +139,38 @@ fn anchor_for(handle: HandleKind, b: &WorldBounds) -> (f64, f64) {
     }
 }
 
+/// The point a resize holds fixed: the corner or side opposite `handle`, or — with Alt —
+/// the frame's own centre, which needs no per-handle case since every handle grows the
+/// box symmetrically about it (`shouldResizeFromCenter`,
+/// `resizeElements.ts@1118751f:1150-1155`).
+fn resize_anchor(handle: HandleKind, b: &WorldBounds, from_center: bool) -> (f64, f64) {
+    if from_center {
+        ((b.min_x + b.max_x) / 2.0, (b.min_y + b.max_y) / 2.0)
+    } else {
+        anchor_for(handle, b)
+    }
+}
+
 /// The scale factors a drag to `pointer` implies, relative to the captured frame.
 ///
 /// A handle that only moves one axis leaves the other at 1. Factors are clamped away
 /// from zero so a selection dragged onto its own anchor collapses to a sliver rather
 /// than to nothing — a zero-size group can never be grabbed again.
-fn scale_for(handle: HandleKind, frame: &GroupFrame, pointer: Point, uniform: bool) -> (f64, f64) {
+///
+/// `from_center` is Alt: the anchor is the frame's centre, only half the box away from
+/// either edge, so the scale needs doubling — the oracle's own
+/// `resizeFromCenterScale = 2` (`resizeElements.ts@1118751f:1155`).
+fn scale_for(
+    handle: HandleKind,
+    frame: &GroupFrame,
+    pointer: Point,
+    uniform: bool,
+    from_center: bool,
+) -> (f64, f64) {
     const MIN_SCALE: f64 = 0.01;
 
     let b = &frame.bounds;
-    let (ax, ay) = anchor_for(handle, b);
+    let (ax, ay) = resize_anchor(handle, b, from_center);
     let w = b.max_x - b.min_x;
     let h = b.max_y - b.min_y;
 
@@ -167,14 +192,27 @@ fn scale_for(handle: HandleKind, frame: &GroupFrame, pointer: Point, uniform: bo
             | HandleKind::N
             | HandleKind::S
     );
+    // Which side of the frame `handle` sits on — the direction growth reads as positive.
+    let east = matches!(handle, HandleKind::Ne | HandleKind::E | HandleKind::Se);
+    let south = matches!(handle, HandleKind::Se | HandleKind::S | HandleKind::Sw);
 
     let mut sx = if horizontal && w.abs() > f64::EPSILON {
-        (pointer.x - ax) / (if ax == b.min_x { w } else { -w })
+        if from_center {
+            let sign = if east { 1.0 } else { -1.0 };
+            sign * (pointer.x - ax) * 2.0 / w
+        } else {
+            (pointer.x - ax) / (if ax == b.min_x { w } else { -w })
+        }
     } else {
         1.0
     };
     let mut sy = if vertical && h.abs() > f64::EPSILON {
-        (pointer.y - ay) / (if ay == b.min_y { h } else { -h })
+        if from_center {
+            let sign = if south { 1.0 } else { -1.0 };
+            sign * (pointer.y - ay) * 2.0 / h
+        } else {
+            (pointer.y - ay) / (if ay == b.min_y { h } else { -h })
+        }
     } else {
         1.0
     };
@@ -207,8 +245,13 @@ fn scale_for(handle: HandleKind, frame: &GroupFrame, pointer: Point, uniform: bo
 
 /// Whether a drag of `handle` to `pointer` turns the selection through its anchor, on
 /// each axis (`flipByX`, `flipByY`: `resizeElements.ts@1118751f:1177-1198`).
-pub fn resize_group_flips(handle: HandleKind, frame: &GroupFrame, pointer: Point) -> (bool, bool) {
-    let (sx, sy) = scale_for(handle, frame, pointer, false);
+pub fn resize_group_flips(
+    handle: HandleKind,
+    frame: &GroupFrame,
+    pointer: Point,
+    from_center: bool,
+) -> (bool, bool) {
+    let (sx, sy) = scale_for(handle, frame, pointer, false, from_center);
     (sx < 0.0, sy < 0.0)
 }
 
@@ -239,10 +282,11 @@ pub fn resize_group(
     handle: HandleKind,
     pointer: Point,
     uniform: bool,
+    from_center: bool,
 ) -> Vec<DrawElement> {
     let keep_aspect = uniform || resize_keeps_aspect(elements);
-    let (sx, sy) = scale_for(handle, frame, pointer, keep_aspect);
-    let (ax, ay) = anchor_for(handle, &frame.bounds);
+    let (sx, sy) = scale_for(handle, frame, pointer, keep_aspect, from_center);
+    let (ax, ay) = resize_anchor(handle, &frame.bounds, from_center);
     let containers: std::collections::HashSet<&str> = elements
         .iter()
         .filter(|e| e.container_id.is_none())
@@ -431,6 +475,7 @@ mod tests {
             HandleKind::Se,
             Point { x: 600.0, y: 600.0 },
             false,
+            false,
         );
 
         let a = out.iter().find(|e| e.id == "a").unwrap();
@@ -454,6 +499,7 @@ mod tests {
             HandleKind::Se,
             Point { x: 900.0, y: 900.0 },
             false,
+            false,
         );
         assert_eq!(out[0].stroke_width, before);
     }
@@ -472,6 +518,7 @@ mod tests {
             HandleKind::Se,
             Point { x: 600.0, y: 600.0 },
             false,
+            false,
         );
         assert_eq!(out[0].font_size, Some(40.0));
     }
@@ -486,6 +533,7 @@ mod tests {
             &frame,
             HandleKind::E,
             Point { x: 600.0, y: 300.0 },
+            false,
             false,
         );
         let a = out.iter().find(|e| e.id == "a").unwrap();
@@ -509,6 +557,7 @@ mod tests {
                 y: -300.0,
             },
             false,
+            false,
         );
         for e in &out {
             assert!(e.width >= 0.0, "{} went negative-width", e.id);
@@ -527,6 +576,7 @@ mod tests {
             &frame,
             HandleKind::Se,
             Point { x: 0.0, y: 0.0 },
+            false,
             false,
         );
         let total: f64 = out.iter().map(|e| e.width + e.height).sum();
@@ -547,6 +597,7 @@ mod tests {
             HandleKind::Se,
             Point { x: 900.0, y: 450.0 },
             true,
+            false,
         );
         let a = out.iter().find(|e| e.id == "a").unwrap();
         assert_eq!(a.width, a.height, "a square member stayed square");

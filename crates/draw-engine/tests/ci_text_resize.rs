@@ -115,6 +115,28 @@ mod free_text {
         );
     }
 
+    /// Alt scales a free text about its own centre too: which corner or side moved is
+    /// irrelevant, since `getResizedOrigin`'s "center" case recentres the box however it
+    /// is reached (`resizeElements.ts@1118751f:688-691`, taken by `resizeSingleTextElement`
+    /// via `shouldResizeFromCenter`, `:334-343`).
+    #[test]
+    fn alt_resizes_a_free_text_from_its_centre() {
+        let text = free_text(100.0, 100.0, WORDS);
+        let id = text.id.clone();
+        let mut engine = engine_selecting(vec![text], &[&id]);
+        let centre = (197.0, 112.5);
+
+        engine.set_alt_held(true);
+        let grab = (294.0 + HANDLE, 125.0 + HANDLE);
+        drag(&mut engine, grab, (grab.0, 140.0 + HANDLE), 4, false);
+
+        let after = element(&engine, &id);
+        assert_close(after.height, 55.0);
+        assert_close(after.font_size.unwrap(), 44.0);
+        assert_close(after.x + after.width / 2.0, centre.0);
+        assert_close(after.y + after.height / 2.0, centre.1);
+    }
+
     /// A north-west corner holds the bottom-right (`getResizeAnchor`, `:611-618`).
     #[test]
     fn a_north_west_corner_holds_the_bottom_right() {

@@ -529,6 +529,7 @@ fn scaling_a_group_scales_a_leftward_line_in_place() {
         HandleKind::Se,
         Point { x: 400.0, y: 400.0 },
         false,
+        false,
     );
     let line = out.iter().find(|el| el.id == "line").unwrap();
     let points = world_points(line);

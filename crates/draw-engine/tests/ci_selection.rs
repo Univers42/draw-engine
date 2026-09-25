@@ -14,7 +14,7 @@ fn assert_resize_anchor(handle: HandleKind, target: Point, aspect: Option<f64>, 
     element.angle = angle;
     let anchor = handle_world(&element, opposite_handle(handle));
 
-    let geom = resize_element(&element, handle, target.x, target.y, 4.0, aspect);
+    let geom = resize_element(&element, handle, target.x, target.y, 4.0, aspect, false);
     let mut resized = element.clone();
     resized.x = geom.x;
     resized.y = geom.y;
@@ -71,7 +71,7 @@ fn resize_sw_handle() {
 #[test]
 fn resize_n_handle_preserves_width() {
     let element = box_at(20.0, 10.0, 80.0, 40.0);
-    let geom = resize_element(&element, HandleKind::N, 60.0, -10.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::N, 60.0, -10.0, 4.0, None, false);
     assert_close(geom.width, 80.0);
     assert_close(geom.height, 60.0);
 }
@@ -79,7 +79,7 @@ fn resize_n_handle_preserves_width() {
 #[test]
 fn resize_s_handle_preserves_width() {
     let element = box_at(20.0, 10.0, 80.0, 40.0);
-    let geom = resize_element(&element, HandleKind::S, 60.0, 90.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::S, 60.0, 90.0, 4.0, None, false);
     assert_close(geom.width, 80.0);
     assert_close(geom.height, 80.0);
 }
@@ -87,7 +87,7 @@ fn resize_s_handle_preserves_width() {
 #[test]
 fn resize_e_handle_preserves_height() {
     let element = box_at(20.0, 10.0, 80.0, 40.0);
-    let geom = resize_element(&element, HandleKind::E, 140.0, 30.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::E, 140.0, 30.0, 4.0, None, false);
     assert_close(geom.height, 40.0);
     assert_close(geom.width, 120.0);
 }
@@ -95,7 +95,7 @@ fn resize_e_handle_preserves_height() {
 #[test]
 fn resize_w_handle_preserves_height() {
     let element = box_at(20.0, 10.0, 80.0, 40.0);
-    let geom = resize_element(&element, HandleKind::W, -20.0, 30.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::W, -20.0, 30.0, 4.0, None, false);
     assert_close(geom.height, 40.0);
     assert_close(geom.width, 120.0);
 }
@@ -111,11 +111,11 @@ fn a_handle_dragged_past_its_anchor_turns_the_element_through() {
     let element = box_at(50.0, 50.0, 60.0, 60.0);
 
     // Just short of the anchor: still the right way round, nearly collapsed.
-    let near = resize_element(&element, HandleKind::Se, 54.0, 54.0, 1.0, None);
+    let near = resize_element(&element, HandleKind::Se, 54.0, 54.0, 1.0, None, false);
     assert!(near.width > 0.0 && near.width < 6.0);
 
     // Well past it: the same size, on the other side, and mirrored.
-    let through = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+    let through = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None, false);
     assert_close(through.width, -40.0);
     assert_close(through.height, -40.0);
     assert_close(
@@ -140,7 +140,7 @@ fn a_handle_dragged_past_its_anchor_turns_the_element_through() {
 #[test]
 fn turning_through_twice_comes_back() {
     let element = box_at(50.0, 50.0, 60.0, 60.0);
-    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None, false);
 
     let mut mirrored = element.clone();
     mirrored.x = once.x;
@@ -151,7 +151,7 @@ fn turning_through_twice_comes_back() {
 
     // It now occupies [10, 50]; its south-east handle is at (50, 50) and the anchor
     // opposite that is (10, 10). Drag the handle out through *that* anchor.
-    let twice = resize_element(&mirrored, HandleKind::Se, -30.0, -30.0, 1.0, None);
+    let twice = resize_element(&mirrored, HandleKind::Se, -30.0, -30.0, 1.0, None, false);
     assert!(twice.width > 0.0, "back the right way round");
     assert!(twice.height > 0.0);
 }
@@ -161,7 +161,7 @@ fn turning_through_twice_comes_back() {
 #[test]
 fn growing_a_mirrored_element_keeps_it_mirrored() {
     let element = box_at(50.0, 50.0, 60.0, 60.0);
-    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None);
+    let once = resize_element(&element, HandleKind::Se, 10.0, 10.0, 1.0, None, false);
     let mut mirrored = element.clone();
     mirrored.x = once.x;
     mirrored.y = once.y;
@@ -169,7 +169,7 @@ fn growing_a_mirrored_element_keeps_it_mirrored() {
     mirrored.height = once.height;
 
     // Away from the anchor at (10, 10), so no flip.
-    let bigger = resize_element(&mirrored, HandleKind::Se, 110.0, 110.0, 1.0, None);
+    let bigger = resize_element(&mirrored, HandleKind::Se, 110.0, 110.0, 1.0, None, false);
     assert!(bigger.width < 0.0, "still mirrored");
     assert_close(bigger.width.abs(), 100.0);
 }
@@ -178,7 +178,7 @@ fn growing_a_mirrored_element_keeps_it_mirrored() {
 #[test]
 fn the_minimum_size_applies_to_either_side() {
     let element = box_at(50.0, 50.0, 60.0, 60.0);
-    let geom = resize_element(&element, HandleKind::Se, 49.0, 49.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::Se, 49.0, 49.0, 4.0, None, false);
     assert_close(geom.width.abs(), 4.0);
     assert!(geom.width < 0.0, "and on the far side of the anchor");
 }
@@ -187,7 +187,15 @@ fn the_minimum_size_applies_to_either_side() {
 fn resize_aspect_ratio_lock_se() {
     let element = box_at(0.0, 0.0, 100.0, 50.0);
     let ratio = 100.0 / 50.0;
-    let geom = resize_element(&element, HandleKind::Se, 200.0, 80.0, 4.0, Some(ratio));
+    let geom = resize_element(
+        &element,
+        HandleKind::Se,
+        200.0,
+        80.0,
+        4.0,
+        Some(ratio),
+        false,
+    );
     assert_close(geom.width / geom.height, ratio);
 }
 
@@ -195,7 +203,15 @@ fn resize_aspect_ratio_lock_se() {
 fn resize_aspect_ratio_lock_nw() {
     let element = box_at(50.0, 50.0, 80.0, 40.0);
     let ratio = 80.0 / 40.0;
-    let geom = resize_element(&element, HandleKind::Nw, 10.0, 20.0, 4.0, Some(ratio));
+    let geom = resize_element(
+        &element,
+        HandleKind::Nw,
+        10.0,
+        20.0,
+        4.0,
+        Some(ratio),
+        false,
+    );
     assert_close(geom.width / geom.height, ratio);
 }
 
@@ -219,10 +235,52 @@ fn resize_rotated_element_90deg() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Alt: resize from the centre (docs/reference/resize.md › "Alt: resize from the centre")
+// ---------------------------------------------------------------------------
+
+/// Alt scales a single element about its own centre: both edges move by the same amount
+/// in opposite directions, so the centre never moves (`shouldResizeFromCenter`,
+/// `packages/common/src/keys.ts@1118751f:145-146`).
+#[test]
+fn alt_resizes_a_single_element_from_its_centre() {
+    let element = box_at(0.0, 0.0, 100.0, 100.0);
+    let centre = (
+        element.x + element.width / 2.0,
+        element.y + element.height / 2.0,
+    );
+
+    let geom = resize_element(&element, HandleKind::Se, 200.0, 200.0, 1.0, None, true);
+
+    // The SE corner asked to reach (200, 200) is 100 past the centre on each axis; from
+    // the centre that reach is doubled, so the box grows to 300x300 evenly about (50,50).
+    assert_close(geom.width, 300.0);
+    assert_close(geom.height, 300.0);
+    assert_close(geom.x + geom.width / 2.0, centre.0);
+    assert_close(geom.y + geom.height / 2.0, centre.1);
+}
+
+/// Shift still keeps proportions with Alt held: the anchor is the centre, but a corner
+/// still takes the larger of its two scales (`getResizeAnchor` returns "center" whenever
+/// `shouldResizeFromCenter`, whatever `shouldMaintainAspectRatio` says —
+/// `resizeElements.ts@1118751f:621-627`).
+#[test]
+fn shift_and_alt_compose_on_a_single_element() {
+    let element = box_at(0.0, 0.0, 100.0, 50.0);
+
+    // Only x moves under the pointer; with Shift the y follows at the same ratio.
+    let geom = resize_element(&element, HandleKind::Se, 200.0, 25.0, 1.0, Some(2.0), true);
+
+    assert_close(geom.width, 300.0);
+    assert_close(geom.height, 150.0);
+    assert_close(geom.x, -100.0);
+    assert_close(geom.y, -50.0);
+}
+
 #[test]
 fn resize_rotate_handle_is_noop() {
     let element = box_at(10.0, 20.0, 100.0, 50.0);
-    let geom = resize_element(&element, HandleKind::Rotate, 50.0, -100.0, 4.0, None);
+    let geom = resize_element(&element, HandleKind::Rotate, 50.0, -100.0, 4.0, None, false);
     assert_eq!(geom.x, 10.0);
     assert_eq!(geom.y, 20.0);
     assert_eq!(geom.width, 100.0);

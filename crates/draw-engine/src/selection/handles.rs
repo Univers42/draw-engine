@@ -1,4 +1,4 @@
-use crate::camera::Point;
+use crate::camera::{Point, WorldBounds};
 use crate::scene::geometry::element_bounds;
 use crate::scene::{DrawElement, DrawElementType};
 
@@ -329,4 +329,103 @@ pub fn hit_handle(points: &[HandlePoint], wx: f64, wy: f64, tolerance: f64) -> O
         }
     }
     best.map(|(_, kind)| kind)
+}
+
+/// The point on a multi-selection's own frame `b` that `kind` sits at, unpadded: a
+/// corner, or the middle of a side. The group's analogue of [`handle_edge_point`] — the
+/// frame is never turned, so there is no rotation to apply.
+pub fn group_handle_point(kind: HandleKind, b: WorldBounds) -> Point {
+    let mid_x = (b.min_x + b.max_x) / 2.0;
+    let mid_y = (b.min_y + b.max_y) / 2.0;
+    match kind {
+        HandleKind::Nw => Point {
+            x: b.min_x,
+            y: b.min_y,
+        },
+        HandleKind::Ne => Point {
+            x: b.max_x,
+            y: b.min_y,
+        },
+        HandleKind::Se => Point {
+            x: b.max_x,
+            y: b.max_y,
+        },
+        HandleKind::Sw => Point {
+            x: b.min_x,
+            y: b.max_y,
+        },
+        HandleKind::N => Point {
+            x: mid_x,
+            y: b.min_y,
+        },
+        HandleKind::S => Point {
+            x: mid_x,
+            y: b.max_y,
+        },
+        HandleKind::E => Point {
+            x: b.max_x,
+            y: mid_y,
+        },
+        HandleKind::W => Point {
+            x: b.min_x,
+            y: mid_y,
+        },
+        HandleKind::Rotate => Point {
+            x: mid_x,
+            y: b.min_y,
+        },
+    }
+}
+
+/// Every handle a multi-selection's frame offers, in world space — corners and rotation
+/// always, the cardinal sides only when the frame is big enough along that axis not to
+/// crowd its corners: Excalidraw's `minimumSizeForEightHandles`
+/// (`transformHandles.ts@1118751f:218-244`), read off `layout.min_side` as a single
+/// element's own handles already are ([`selection_handles`]).
+///
+/// The oracle omits every side on the desktop, single element or group, and takes them on
+/// the frame line instead (`DEFAULT_OMIT_SIDES`, `resizeTest.ts@1118751f:96-121`). This
+/// engine already diverges for a single shape, which keeps its drawn side handles
+/// (`docs/reference/resize.md` › "the sides of anything but a text"); a group's follow the
+/// same, already-pinned convention rather than adding a second way of taking a side.
+pub fn group_selection_handles(b: WorldBounds, layout: HandleLayout) -> Vec<HandlePoint> {
+    let wide = (b.max_x - b.min_x) > layout.min_side;
+    let tall = (b.max_y - b.min_y) > layout.min_side;
+    let padded = WorldBounds {
+        min_x: b.min_x - layout.handle_offset,
+        min_y: b.min_y - layout.handle_offset,
+        max_x: b.max_x + layout.handle_offset,
+        max_y: b.max_y + layout.handle_offset,
+    };
+    let mut kinds = vec![
+        HandleKind::Nw,
+        HandleKind::Ne,
+        HandleKind::Se,
+        HandleKind::Sw,
+    ];
+    if wide {
+        kinds.push(HandleKind::N);
+        kinds.push(HandleKind::S);
+    }
+    if tall {
+        kinds.push(HandleKind::E);
+        kinds.push(HandleKind::W);
+    }
+    let mut points: Vec<HandlePoint> = kinds
+        .into_iter()
+        .map(|kind| {
+            let p = group_handle_point(kind, padded);
+            HandlePoint {
+                kind,
+                x: p.x,
+                y: p.y,
+            }
+        })
+        .collect();
+    points.push(HandlePoint {
+        kind: HandleKind::Rotate,
+        x: (padded.min_x + padded.max_x) / 2.0,
+        y: padded.min_y - layout.rotate_gap,
+    });
+    points
 }

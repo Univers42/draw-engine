@@ -384,11 +384,11 @@ fn snap_move_magnetises() {
 #[test]
 fn resize_with_aspect() {
     let element = box_at(0.0, 0.0, 100.0, 50.0);
-    let corner = resize_element(&element, HandleKind::Se, 300.0, 60.0, 1.0, Some(2.0));
+    let corner = resize_element(&element, HandleKind::Se, 300.0, 60.0, 1.0, Some(2.0), false);
     assert_eq!((corner.width / corner.height).round(), 2.0);
-    let edge = resize_element(&element, HandleKind::E, 240.0, 25.0, 1.0, Some(2.0));
+    let edge = resize_element(&element, HandleKind::E, 240.0, 25.0, 1.0, Some(2.0), false);
     assert_eq!(edge.width.round(), 240.0);
     assert_eq!(edge.height.round(), 120.0);
-    let free = resize_element(&element, HandleKind::E, 240.0, 25.0, 1.0, None);
+    let free = resize_element(&element, HandleKind::E, 240.0, 25.0, 1.0, None, false);
     assert_eq!(free.height, 50.0);
 }
