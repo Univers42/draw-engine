@@ -12,6 +12,8 @@
 //! - A shape with a label cannot be made smaller than one line of it (`:778-789`), and
 //!   the label is wrapped again on every move of the drag, the shape growing back from
 //!   the side the drag holds (`handleBindTextResize`).
+//! - Several elements with a text among them scale as one, fonts included; a label in
+//!   them is wrapped again (`:1370-1377`, `:1491-1514`).
 //!
 //! Every drag goes in several steps: a resize has to be measured from where it started,
 //! and one step cannot tell.
@@ -406,5 +408,110 @@ mod labels {
 
         assert_eq!(version(&engine, &shape_id), shape_before + 1);
         assert_eq!(version(&engine, &label_id), label_before + 1);
+    }
+}
+
+mod several {
+    use super::*;
+
+    /// Two 300 × 50 shapes side by side at (0, 0) and (400, 0), each with a label typed
+    /// into it. Returns each shape's id with its label's.
+    fn labelled_pair() -> (DrawEngine, [(String, String); 2]) {
+        let shapes = [
+            box_at(0.0, 0.0, 300.0, 50.0),
+            box_at(400.0, 0.0, 300.0, 50.0),
+        ];
+        let ids = shapes.clone().map(|shape| shape.id);
+        let mut engine = engine_with_measure(shapes.to_vec());
+        let labels = [150.0, 550.0].map(|x| {
+            engine.handle_double_click(x, 25.0);
+            let id = engine
+                .drain_events()
+                .text_edit
+                .expect("a double click on a shape opens its label")
+                .id;
+            engine.set_element_text(&id, WORDS);
+            id
+        });
+        let [left, right] = ids;
+        let [left_label, right_label] = labels;
+        (engine, [(left, left_label), (right, right_label)])
+    }
+
+    /// With a text among them, elements scale as one (`keepAspectRatio`, `:1370-1377`):
+    /// twice as wide and no taller is twice as big, fonts included (`:1491-1497`).
+    #[test]
+    fn a_text_makes_the_selection_scale_as_one() {
+        let shape = box_at(0.0, 0.0, 100.0, 100.0);
+        let text = free_text(200.0, 0.0, WORDS);
+        let (shape_id, text_id) = (shape.id.clone(), text.id.clone());
+        let mut engine = engine_selecting(vec![shape, text], &[&shape_id, &text_id]);
+
+        // The frame is (0, 0)-(394, 100).
+        let grab = (394.0 + HANDLE, 100.0 + HANDLE);
+        drag(
+            &mut engine,
+            grab,
+            (788.0 + HANDLE, 100.0 + HANDLE),
+            4,
+            false,
+        );
+
+        let shape = element(&engine, &shape_id);
+        let text = element(&engine, &text_id);
+        assert_close(shape.width, 200.0);
+        assert_close(shape.height, 200.0);
+        assert_close(text.font_size.unwrap(), 40.0);
+        assert_close(text.width, 388.0);
+        assert_close(text.height, 50.0);
+        assert_close(text.x, 400.0);
+    }
+
+    /// Without one, the shapes stretch and their labels keep their size and wrap again at
+    /// the room they are left, the shapes growing to hold them (`:1512`, `:1581-1588`).
+    #[test]
+    fn labels_wrap_again_when_their_shapes_are_stretched_together() {
+        let (mut engine, pair) = labelled_pair();
+        engine.select(pair.iter().map(|(shape, _)| shape.clone()).collect());
+
+        // The frame is (0, 0)-(700, 50): half as wide, as tall.
+        let grab = (700.0 + HANDLE, 50.0 + HANDLE);
+        drag(&mut engine, grab, (350.0 + HANDLE, 50.0 + HANDLE), 4, false);
+
+        for (shape_id, label_id) in &pair {
+            let shape = element(&engine, shape_id);
+            let label = element(&engine, label_id);
+            assert_close(shape.width, 150.0);
+            assert_close(label.font_size.unwrap(), 20.0);
+            // Room for 140: "hello world foo" is 154.
+            assert_eq!(label.text.as_deref(), Some("hello world\nfoo bar"));
+            assert_close(shape.height, 60.0);
+            assert_close(shape.y, 0.0);
+        }
+        assert_close(element(&engine, &pair[1].0).x, 200.0);
+    }
+
+    /// Grouped, they scale as one (`isInGroup`, `:1376`), and so do their labels' fonts
+    /// (`:1505-1510`).
+    #[test]
+    fn a_group_scales_as_one_and_its_labels_fonts_with_it() {
+        let (mut engine, pair) = labelled_pair();
+        let shapes: Vec<String> = pair.iter().map(|(shape, _)| shape.clone()).collect();
+        engine.select(shapes.clone());
+        engine.group_selection();
+        engine.select(shapes);
+
+        // Half as wide and half as tall.
+        let grab = (700.0 + HANDLE, 50.0 + HANDLE);
+        drag(&mut engine, grab, (350.0 + HANDLE, 25.0 + HANDLE), 4, false);
+
+        for (shape_id, label_id) in &pair {
+            let shape = element(&engine, shape_id);
+            let label = element(&engine, label_id);
+            assert_close(shape.width, 150.0);
+            assert_close(shape.height, 25.0);
+            assert_close(label.font_size.unwrap(), 10.0);
+            assert_eq!(label.text.as_deref(), Some(WORDS));
+        }
     }
 }

@@ -312,9 +312,13 @@ impl DrawEngine {
     /// Without this a group could only be moved: dragging its corner fell through to
     /// the hit test and started a marquee instead, so a multi-selection could never be
     /// scaled or turned.
+    ///
+    /// A resize carries the labels of what it resizes, so it can lay them out again from
+    /// the fonts they started with (`resizeMultipleElements`,
+    /// `packages/element/src/resizeElements.ts@1118751f:1499-1514`).
     fn begin_group_transform(&self, world: Point, press: Point) -> Option<Interaction> {
         let kind = self.group_handle_at(world)?;
-        let (ids, frame) = self.group_frame()?;
+        let (mut ids, frame) = self.group_frame()?;
         if kind == HandleKind::Rotate {
             return Some(Interaction::RotateGroup { ids, frame });
         }
@@ -331,6 +335,11 @@ impl DrawEngine {
                 b.max_y
             },
         };
+        let carried: std::collections::HashSet<String> = ids.iter().cloned().collect();
+        let labels = crate::edit::with_labels(self.scene.iter_ordered(), &carried);
+        ids.extend(labels.into_iter().filter(|id| !carried.contains(id)));
+        let frame =
+            crate::selection::GroupFrame::capture(ids.iter().filter_map(|id| self.scene.get(id)))?;
         Some(Interaction::ResizeGroup {
             ids,
             handle: kind,

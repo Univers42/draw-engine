@@ -64,10 +64,19 @@ impl DrawEngine {
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
-                for next in crate::selection::group_transform::resize_group(
+                let resized = crate::selection::group_transform::resize_group(
                     &elements, frame, handle, at, square,
-                ) {
+                );
+                let (labels, members): (Vec<DrawElement>, Vec<DrawElement>) = resized
+                    .into_iter()
+                    .partition(|el| el.container_id.is_some() && el.kind == DrawElementType::Text);
+                for next in members {
                     self.scene.put(next);
+                }
+                let flips =
+                    crate::selection::group_transform::resize_group_flips(handle, frame, at);
+                for label in labels {
+                    self.relay_resized_label(label, handle, flips);
                 }
                 self.release_ends_outside(ids);
                 // Bound arrows have to keep up with the shapes they point at. Without
