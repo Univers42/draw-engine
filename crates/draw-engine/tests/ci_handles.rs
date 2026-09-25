@@ -646,6 +646,79 @@ fn a_turned_elements_handle_does_not_jump() {
     assert_close(after.height, 150.0);
 }
 
+/// With the grid on, a press takes the handle the cursor shows over it. Handles are hit
+/// where the pointer is, as the oracle's are (`pointerDownState.origin`,
+/// `App.tsx@1118751f:9220`, `:9366-9372`, `:9397-9404`); only what the drag then places
+/// lands on the grid. Hit where the grid put the press, a handle a few pixels off a grid
+/// line could not be taken: the press moved the shape instead.
+#[test]
+fn with_the_grid_on_a_press_takes_the_handle_the_cursor_shows() {
+    let grid = GridSettings {
+        enabled: true,
+        size: 20.0,
+        step: 5,
+        snap: true,
+    };
+    // Every handle below sits 9 or so off the grid: snapped, the press would land out of
+    // its reach.
+    let rect = box_at(91.0, 91.0, 200.0, 150.0);
+    let text = text_box(91.0, 91.0, 194.0, 25.0);
+    let line = connector(91.0, 91.0, 289.0, 189.0, DrawElementType::Line);
+    let group = [
+        box_at(91.0, 91.0, 100.0, 90.0),
+        box_at(201.0, 91.0, 80.0, 40.0),
+    ];
+    let cases: Vec<(&str, Vec<DrawElement>, (f64, f64))> = vec![
+        ("a corner", vec![rect.clone()], (299.0, 249.0)),
+        ("a text's side", vec![text], (289.0, 103.5)),
+        ("a line's end", vec![line], (289.0, 189.0)),
+        ("a group's corner", group.to_vec(), (289.0, 189.0)),
+    ];
+    for (what, elements, (x, y)) in cases {
+        let ids: Vec<String> = elements.iter().map(|e| e.id.clone()).collect();
+        let mut engine = engine_with_scene(elements);
+        engine.set_grid(grid);
+        engine.select(ids);
+        let shown = engine.hover_cursor(x, y);
+        assert!(
+            !matches!(shown, HoverCursor::Default | HoverCursor::Move),
+            "{what}: no handle under ({x}, {y})"
+        );
+        engine.begin_pointer(x, y, false, false);
+        assert_eq!(engine.hover_cursor(x, y), shown, "{what}");
+        engine.end_pointer();
+    }
+
+    // A radius handle, placed 9 off the grid on both axes.
+    let at = |engine: &DrawEngine| engine.paint_view().radius_handles[0];
+    let probe = {
+        let mut engine = engine_with_scene(vec![filled(rect.clone())]);
+        engine.select(vec![rect.id.clone()]);
+        at(&engine)
+    };
+    let off = |v: f64| 9.0 - v.rem_euclid(20.0);
+    let rect = filled(box_at(
+        91.0 + off(probe.x),
+        91.0 + off(probe.y),
+        200.0,
+        150.0,
+    ));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.set_grid(grid);
+    engine.select(vec![rect.id]);
+    let handle = at(&engine);
+    assert_eq!(
+        engine.hover_cursor(handle.x, handle.y),
+        HoverCursor::PointHandle
+    );
+    engine.begin_pointer(handle.x, handle.y, false, false);
+    assert_eq!(
+        engine.hover_cursor(handle.x, handle.y),
+        HoverCursor::PointHandle,
+        "a radius handle"
+    );
+}
+
 // -----------------------------------------------------------------------------
 // a text's handles
 // -----------------------------------------------------------------------------

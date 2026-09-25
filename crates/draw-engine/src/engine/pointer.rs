@@ -316,8 +316,8 @@ impl DrawEngine {
     /// A resize carries the labels of what it resizes, so it can lay them out again from
     /// the fonts they started with (`resizeMultipleElements`,
     /// `packages/element/src/resizeElements.ts@1118751f:1499-1514`).
-    fn begin_group_transform(&self, world: Point, press: Point) -> Option<Interaction> {
-        let kind = self.group_handle_at(world)?;
+    fn begin_group_transform(&self, press: Point) -> Option<Interaction> {
+        let kind = self.group_handle_at(press)?;
         let (mut ids, frame) = self.group_frame()?;
         if kind == HandleKind::Rotate {
             return Some(Interaction::RotateGroup { ids, frame });
@@ -383,11 +383,16 @@ impl DrawEngine {
 
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         self.narrow_on_click = None;
+        // Handles are hit where the pointer is, as the hover cursor reads them and as the
+        // oracle does (`pointerDownState.origin`, `App.tsx@1118751f:9220`, `:9366-9404`):
+        // hit where the grid put the press, a handle a few pixels off a grid line could not
+        // be taken. Only what a gesture places is snapped.
+        let press = self.screen_to_world(sx, sy);
         if let Some(single) = self.single_selected() {
             if !single.locked() {
                 // Radius handles first. They sit *inside* the shape, so a press on one of
                 // a filled rectangle would otherwise pick the whole shape up and move it.
-                if let Some(corner) = self.radius_handle_at(world) {
+                if let Some(corner) = self.radius_handle_at(press) {
                     self.begin_corner_radius(&single, corner, world);
                     return;
                 }
@@ -401,7 +406,7 @@ impl DrawEngine {
                     let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
                     let handles = crate::selection::linear::handle_points(&single, min_segment);
                     if let Some(handle) =
-                        crate::selection::linear::hit_handle(&handles, world.x, world.y, world_tol)
+                        crate::selection::linear::hit_handle(&handles, press.x, press.y, world_tol)
                     {
                         self.interaction = Some(Interaction::LinearPoint {
                             id: single.id,
@@ -417,7 +422,7 @@ impl DrawEngine {
                     // The same layout the painter uses, so a grab can only land on a
                     // handle that is actually on screen — and its own reach, which is
                     // sized to stay clear of the element so the outline still moves it.
-                    self.resize_handle_at(&single, world)
+                    self.resize_handle_at(&single, press)
                 };
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
@@ -437,7 +442,6 @@ impl DrawEngine {
                     };
                     // From the unsnapped press, as the oracle measures it from the raw
                     // pointer-down (`App.tsx@1118751f:9406-9416`).
-                    let press = self.screen_to_world(sx, sy);
                     let edge =
                         crate::selection::handle_edge_point(&single, handle).unwrap_or(press);
                     self.interaction = Some(Interaction::Resize {
@@ -457,9 +461,7 @@ impl DrawEngine {
         }
         // More than one element selected: the handles belong to the group's frame.
         if self.selected_ids.len() > 1 {
-            if let Some(interaction) =
-                self.begin_group_transform(world, self.screen_to_world(sx, sy))
-            {
+            if let Some(interaction) = self.begin_group_transform(press) {
                 self.interaction = Some(interaction);
                 return;
             }
