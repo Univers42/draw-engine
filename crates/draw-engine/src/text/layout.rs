@@ -486,15 +486,21 @@ const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 /// char and one line, each with the padding either side (`getApproxMinLineWidth`,
 /// `getApproxMinLineHeight`, `textMeasurements.ts@1118751f:32-44`, `:99-104`).
 ///
+/// The chars are measured through the char widths the wrap caches, so a resize, which
+/// asks this on every move, measures them once per font.
+///
 /// Divergence: the oracle's widest char is the widest it has measured in that font so
 /// far (its `charWidth` cache), and the alphabet above only when it has measured none;
 /// here it is always the alphabet's, so the minimum does not depend on what was typed
 /// before.
 pub fn min_container_size(label: &DrawElement, measure: &Measure) -> (f64, f64) {
+    use super::TextMetrics;
     let font = font_of(label);
+    let line_width = |line: &str| (measure.line_width)(line, font);
+    let metrics = measure.cache.metrics(font, &line_width);
     let widest = DUMMY_TEXT
         .chars()
-        .map(|c| (measure.line_width)(c.encode_utf8(&mut [0; 4]), font))
+        .map(|c| metrics.char_width(c))
         .fold(0.0_f64, f64::max);
     (
         widest + BOUND_TEXT_PADDING * 2.0,

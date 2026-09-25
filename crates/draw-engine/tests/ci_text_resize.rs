@@ -418,6 +418,39 @@ mod labels {
         assert_close(font(&engine), 20.0);
     }
 
+    thread_local! {
+        static MEASURED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// The test hook's widths, counted.
+    fn counted(line: &str, font: draw_engine::text::FontKey) -> f64 {
+        MEASURED.with(|calls| calls.set(calls.get() + 1));
+        measure_text(line, font.size()).0
+    }
+
+    /// Once the caches are warm a resize move asks the host to measure nothing: the
+    /// label's smallest room reads its chars through the same cache the wrap fills
+    /// (`getApproxMinLineWidth` reads the oracle's `charWidth` cache,
+    /// `textMeasurements.ts@1118751f:32-44`). In a browser every measure crosses to JS.
+    #[test]
+    fn a_warm_resize_measures_nothing() {
+        let (mut engine, _, _) = labelled(box_at(100.0, 100.0, 300.0, 50.0), WORDS);
+        engine.set_measure_line(counted);
+
+        let grab = (250.0, 150.0 + HANDLE);
+        engine.begin_pointer(grab.0, grab.1, false, false);
+        engine.move_pointer(grab.0, grab.1 + 10.0, false, false);
+        let mut per_move = Vec::new();
+        for step in 2..=5 {
+            MEASURED.with(|calls| calls.set(0));
+            engine.move_pointer(grab.0, grab.1 + 10.0 * f64::from(step), false, false);
+            per_move.push(MEASURED.with(std::cell::Cell::get));
+        }
+        engine.end_pointer();
+
+        assert_eq!(per_move, [0, 0, 0, 0]);
+    }
+
     /// A drag is one edit: nothing is stamped while it goes, and the shape and the label
     /// it re-wrapped are stamped once, on release.
     #[test]
