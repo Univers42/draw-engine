@@ -542,7 +542,16 @@ impl DrawEngine {
                 if resolved_text_align(&element) != align {
                     element.text_align = Some(align);
                 }
-                element.line_height = from.line_height.filter(|_| from_text);
+                // `sourceText.lineHeight || getLineHeight(fontFamily)` (`:157`): from a
+                // shape, the default family's own. Left unset, a text the text tool made
+                // lost the 1.25 it was written with, and the paste of a shape's style
+                // onto it was an edit that changed nothing on screen.
+                element.line_height = if from_text {
+                    from.line_height
+                } else {
+                    crate::text::font::family(crate::text::font::DEFAULT_FONT_FAMILY)
+                        .map(|family| family.line_height)
+                };
             } else {
                 element.roundness = from.roundness.filter(|_| takes_roundness(element.kind));
             }

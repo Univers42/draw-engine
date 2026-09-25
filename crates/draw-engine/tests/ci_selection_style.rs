@@ -804,6 +804,30 @@ mod copy_paste {
         assert_eq!(element(&engine, "dst").font_family, fresh);
     }
 
+    /// From a shape, a text takes the line height of the family it gets:
+    /// `sourceText.lineHeight || getLineHeight(fontFamily)` (`:143-157`). A text the text
+    /// tool made already has both, so a shape in the default style pastes nothing new.
+    #[test]
+    fn a_shapes_default_style_on_a_new_text_is_not_an_edit() {
+        let mut engine = engine_with_measure(vec![with_id(box_at(0.0, 0.0, 50.0, 50.0), "shape")]);
+        engine.set_tool(DrawTool::Text);
+        engine.begin_pointer(300.0, 300.0, false, false);
+        engine.end_pointer();
+        let request = engine
+            .drain_events()
+            .text_edit
+            .expect("the text tool opens an editor");
+        engine.set_element_text(&request.id, "hi");
+        let before = element(&engine, &request.id);
+        engine.select(vec!["shape".into()]);
+        engine.copy_styles();
+        engine.select(vec![request.id.clone()]);
+
+        engine.paste_styles();
+
+        assert_eq!(element(&engine, &request.id), before);
+    }
+
     #[test]
     fn arrowheads_transfer_between_arrows_only() {
         let mut source = with_id(
