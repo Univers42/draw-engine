@@ -218,6 +218,33 @@ mod free_text {
         assert_eq!(after.auto_resize, Some(false));
     }
 
+    /// A side fixes the width; "Enable text auto-resizing" in the context menu, or Grow in
+    /// the panel's Wrap row, gives the text its own width back — both are
+    /// `set_text_auto_resize(true)` (`actionTextAutoResize.ts@1118751f`): its typed lines,
+    /// measured, the left edge a left-aligned text pins held, as one step of undo.
+    #[test]
+    fn a_side_resized_text_takes_its_own_width_back() {
+        let text = free_text(100.0, 100.0, WORDS);
+        let id = text.id.clone();
+        let mut engine = engine_selecting(vec![text], &[&id]);
+        let grab = (294.0 + SIDE, 112.5);
+        drag(&mut engine, grab, (grab.0 - 94.0, grab.1), 4, false);
+        let fixed = element(&engine, &id);
+        assert_eq!(fixed.auto_resize, Some(false));
+
+        engine.set_text_auto_resize(true);
+        let auto = element(&engine, &id);
+        assert_eq!(auto.auto_resize, Some(true));
+        assert_eq!(auto.text.as_deref(), Some(WORDS));
+        assert_close(auto.width, measure_text(WORDS, 20.0).0);
+        assert_close(auto.height, 25.0);
+        assert_close(auto.x, 100.0);
+        assert_close(auto.y, 100.0);
+
+        engine.undo();
+        assert_eq!(element(&engine, &id).auto_resize, Some(false), "one step");
+    }
+
     /// A side dragged through the other one stops at the oracle's minimum, a space and the
     /// padding (`getMinTextElementWidth`: 14 + 10) — the width is never negative.
     #[test]
