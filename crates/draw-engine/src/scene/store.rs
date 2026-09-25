@@ -446,13 +446,29 @@ impl Scene {
     /// the board — a label above its shape, a copy inside the group it was made in —
     /// without cloning the board to say so. Nothing happens when they are already there.
     pub(crate) fn place_above(&mut self, ids: &[String], anchor: &str) {
+        self.place_beside(ids, anchor, true);
+    }
+
+    /// Moves `ids`, in the order given, to directly below `anchor` — what joins a frame
+    /// goes under it (`engine/pointer_end.rs`).
+    pub(crate) fn place_below(&mut self, ids: &[String], anchor: &str) {
+        self.place_beside(ids, anchor, false);
+    }
+
+    fn place_beside(&mut self, ids: &[String], anchor: &str, above: bool) {
         let Some(&at) = self.index.get(anchor) else {
             return;
         };
-        let in_place = ids
-            .iter()
-            .enumerate()
-            .all(|(k, id)| self.index.get(id) == Some(&(at + 1 + k)));
+        let first = if above {
+            Some(at + 1)
+        } else {
+            at.checked_sub(ids.len())
+        };
+        let in_place = first.is_some_and(|first| {
+            ids.iter()
+                .enumerate()
+                .all(|(k, id)| self.index.get(id) == Some(&(first + k)))
+        });
         let moving: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
         if in_place || moving.contains(anchor) {
             return;
@@ -472,7 +488,7 @@ impl Scene {
         let at = rest
             .iter()
             .position(|el| el.id == anchor)
-            .map_or(rest.len(), |i| i + 1);
+            .map_or(rest.len(), |i| if above { i + 1 } else { i });
         rest.splice(at..at, ids.iter().filter_map(|id| taken.remove(id)));
         self.elements = rest;
         self.reindex();
@@ -741,6 +757,18 @@ mod tests {
             "the tombstone sits beneath the live elements"
         );
         assert!(all[0].is_deleted);
+    }
+
+    #[test]
+    fn place_below_puts_ids_under_the_anchor_and_leaves_them_there() {
+        let mut scene = Scene::new([element("a"), element("f"), element("x"), element("n")]);
+        let _ = scene.take_baseline();
+        scene.place_below(&["x".into(), "n".into()], "f");
+        assert_eq!(ids(&scene), ["a", "x", "n", "f"]);
+        let _ = scene.take_order_baseline();
+
+        scene.place_below(&["x".into(), "n".into()], "f");
+        assert!(!scene.has_pending(), "already there: no reorder recorded");
     }
 
     /// Every mutation has to leave the index consistent with the vector, or lookups

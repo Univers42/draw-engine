@@ -248,9 +248,88 @@ impl DrawEngine {
         }
         // Stamped by the commit, as every change is (`stamp.rs`) — so one created here
         // keeps the stamp it was created with.
+        let mut joined: Vec<(String, std::collections::HashSet<String>)> = Vec::new();
         for (id, frame_id) in changes {
+            if let Some(frame) = &frame_id {
+                match joined.iter_mut().find(|(f, _)| f == frame) {
+                    Some((_, ids)) => {
+                        ids.insert(id.clone());
+                    }
+                    None => joined.push((frame.clone(), [id.clone()].into())),
+                }
+            }
             self.scene
                 .update(&id, |element| element.frame_id = frame_id);
+        }
+        for (frame, ids) in joined {
+            self.stack_under_frame(&frame, &ids, touched);
+        }
+    }
+
+    /// What joined `frame` goes directly below it, as the oracle keeps a frame's children
+    /// in one run under it: a new element is inserted there (`insertNewElements`,
+    /// `App.tsx@1118751f:7754-7782`), and one dragged in, pasted in or taken in by a new
+    /// frame is moved there (`addElementsToFrame`, `packages/element/src/frame.ts@1118751f:
+    /// 538-635`). Drawn, pasted or dragged in, a shape used to stay on top of the board,
+    /// above the frame it belonged to.
+    ///
+    /// The run is what joined, with the members the commit also touched — a selection
+    /// dragged in partly from inside goes together, in its own order, since the oracle
+    /// reorders whenever what it adds does not all share the frame already
+    /// (`getCommonFrameId`, `frame.ts@1118751f:503-519`) — or every member, when the
+    /// frame itself was drawn, resized or moved (`replaceAllElementsInFrame`, `:684-694`).
+    /// Each shape takes its label, directly above it (`frame.ts@1118751f:578-582`).
+    ///
+    /// Directly below the frame, or directly above its highest member when one sits above
+    /// it (`getFrameChildrenInsertionIndex`, `frame.ts@1118751f:521-536`). A label counts
+    /// with its shape's frame, since here only the shape carries it.
+    fn stack_under_frame(
+        &mut self,
+        frame: &str,
+        joined: &std::collections::HashSet<String>,
+        touched: &std::collections::HashSet<String>,
+    ) {
+        let whole = touched.contains(frame);
+        let mut block: Vec<String> = Vec::new();
+        for element in self.scene.iter_ordered() {
+            if element.container_id.is_some()
+                || element.frame_id.as_deref() != Some(frame)
+                || !(whole || joined.contains(&element.id) || touched.contains(&element.id))
+            {
+                continue;
+            }
+            block.push(element.id.clone());
+            let label = element.bound_text_id.as_ref().filter(|label| {
+                self.scene.get(label).is_some_and(|text| {
+                    !text.is_deleted && text.container_id.as_deref() == Some(&element.id)
+                })
+            });
+            block.extend(label.cloned());
+        }
+        let anchor = {
+            let moving: std::collections::HashSet<&str> =
+                block.iter().map(String::as_str).collect();
+            self.scene
+                .iter_ordered()
+                .rev()
+                .filter(|el| !moving.contains(el.id.as_str()))
+                .find_map(|el| {
+                    if el.id == frame {
+                        return Some((el.id.clone(), false));
+                    }
+                    let shape = match &el.container_id {
+                        Some(container) => self.scene.get(container),
+                        None => Some(el),
+                    };
+                    shape
+                        .is_some_and(|shape| shape.frame_id.as_deref() == Some(frame))
+                        .then(|| (el.id.clone(), true))
+                })
+        };
+        match anchor {
+            Some((child, true)) => self.scene.place_above(&block, &child),
+            Some((frame, false)) => self.scene.place_below(&block, &frame),
+            None => {}
         }
     }
 

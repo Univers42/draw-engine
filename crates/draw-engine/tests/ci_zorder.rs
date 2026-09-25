@@ -717,3 +717,202 @@ fn a_reorder_that_moves_nothing_is_not_an_edit() {
     );
     assert!(!engine.debug_state().scene.can_undo, "no step recorded");
 }
+
+// ---------------------------------------------------------------------------------------
+// What joins a frame goes directly below it
+// ---------------------------------------------------------------------------------------
+//
+// The oracle keeps a frame's children in one run under it as they join: a new element is
+// inserted there (`insertNewElements`, `App.tsx@1118751f:7754-7782`), and one dragged in,
+// pasted in or taken in by a new frame is moved there (`addElementsToFrame`,
+// `packages/element/src/frame.ts@1118751f:538-635`) — directly below the frame, or directly
+// above its highest child when a child sits above it (`getFrameChildrenInsertionIndex`,
+// `frame.ts@1118751f:521-536`). Each case below was run on excalidraw.com, 2026-09-25
+// (`scratchpad/history-frames/oracle.cjs`, F4-F7).
+
+fn drag(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64)) {
+    engine.begin_pointer(from.0, from.1, false, false);
+    for step in 1..=5 {
+        let t = f64::from(step) / 5.0;
+        engine.move_pointer(
+            from.0 + (to.0 - from.0) * t,
+            from.1 + (to.1 - from.1) * t,
+            false,
+            false,
+        );
+    }
+    engine.end_pointer();
+}
+
+/// The one element the last command left selected, named `name` in the cast.
+fn selected_as(engine: &DrawEngine, cast: &mut Cast, name: &'static str) {
+    let selected = engine.get_selection();
+    assert_eq!(selected.len(), 1, "one element selected: {selected:?}");
+    cast.push((name, selected[0].clone()));
+}
+
+fn frame_of(engine: &DrawEngine, id: &str) -> Option<String> {
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .and_then(|el| el.frame_id)
+}
+
+/// OBSERVED (F4): a rectangle drawn in a frame lands under it, above the frame's other
+/// children — not on top of the board, over the frame.
+#[test]
+fn a_shape_drawn_inside_a_frame_goes_directly_below_it() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+
+    assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+}
+
+/// OBSERVED (F5): a shape dragged into a frame moves to just below it, and undo puts the
+/// stack back with the membership.
+#[test]
+fn a_shape_dragged_into_a_frame_goes_directly_below_it() {
+    let (mut engine, cast) = framed(&[
+        ("A", &[], false),
+        ("C1", &[], true),
+        ("F", &[], false),
+        ("X", &[], false),
+    ]);
+
+    // A sits at (20, 400); into the frame at (320, 60).
+    drag(&mut engine, (50.0, 430.0), (350.0, 90.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "A")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["C1", "A", "F", "X"]);
+
+    engine.undo();
+    assert_eq!(frame_of(&engine, &id(&cast, "A")), None);
+    assert_eq!(stack(&engine, &cast), vec!["A", "C1", "F", "X"]);
+
+    engine.redo();
+    assert_eq!(stack(&engine, &cast), vec!["C1", "A", "F", "X"]);
+}
+
+/// OBSERVED (F6): a copy pasted into a frame goes just below it.
+#[test]
+fn a_paste_into_a_frame_goes_directly_below_it() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.select(vec![id(&cast, "X")]);
+    let copied = engine.copy_selection();
+
+    assert!(engine.paste_json(copied.as_deref(), Some((400.0, 100.0))));
+    selected_as(&engine, &mut cast, "P");
+
+    assert_eq!(frame_of(&engine, &id(&cast, "P")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["C1", "P", "F", "X"]);
+
+    // Away from any frame, a paste goes on top of the board.
+    assert!(engine.paste_json(copied.as_deref(), Some((800.0, 500.0))));
+    selected_as(&engine, &mut cast, "Q");
+    assert_eq!(frame_of(&engine, &id(&cast, "Q")), None);
+    assert_eq!(stack(&engine, &cast), vec!["C1", "P", "F", "X", "Q"]);
+}
+
+/// OBSERVED (F7): a frame drawn over a shape takes it in, and the shape goes directly below
+/// the new frame, which is on top of the board.
+#[test]
+fn a_frame_drawn_over_a_shape_takes_it_directly_below_it() {
+    let a = filled(box_at(40.0, 40.0, 60.0, 60.0));
+    let x = filled(box_at(500.0, 400.0, 60.0, 60.0));
+    let mut cast: Cast = vec![("A", a.id.clone()), ("X", x.id.clone())];
+    let mut engine = engine_with_scene(vec![a, x]);
+    engine.set_tool(DrawTool::Frame);
+
+    drag(&mut engine, (0.0, 0.0), (200.0, 200.0));
+    selected_as(&engine, &mut cast, "F");
+
+    assert_eq!(stack(&engine, &cast), vec!["X", "A", "F"]);
+}
+
+/// A label goes with its shape, directly above it, as the oracle adds bound text with its
+/// container (`frame.ts@1118751f:578-582`).
+#[test]
+fn a_labelled_shape_dragged_into_a_frame_takes_its_label_along() {
+    let (engine, mut cast) = framed(&[("F", &[], false), ("X", &[], false), ("R", &[], false)]);
+    let mut scene = engine.get_scene();
+    let mut label = text_at(200.0, 420.0, 40.0, 20.0);
+    label.text = Some("hi".into());
+    label.container_id = Some(id(&cast, "R"));
+    scene[2].bound_text_id = Some(label.id.clone());
+    cast.push(("T", label.id.clone()));
+    scene.push(label);
+    let mut engine = engine_with_scene(scene);
+    engine.set_tool(DrawTool::Select);
+
+    // R sits at (200, 400); into the frame at (300, 60).
+    drag(&mut engine, (230.0, 405.0), (330.0, 65.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "R")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["R", "T", "F", "X"]);
+}
+
+/// What already belongs to the frame is not restacked by a move inside it
+/// (`commonFrameId === frame.id`, `frame.ts@1118751f:601-608`).
+#[test]
+fn a_child_moved_inside_its_frame_keeps_its_place() {
+    let (mut engine, cast) = framed(&[
+        ("C1", &[], true),
+        ("C2", &[], true),
+        ("F", &[], false),
+        ("X", &[], false),
+    ]);
+
+    // C1 sits at (20, 60).
+    drag(&mut engine, (50.0, 90.0), (450.0, 110.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "C1")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["C1", "C2", "F", "X"]);
+}
+
+/// A child sitting above its frame — a stack the oracle's own tests call denormalised —
+/// takes a newcomer directly above it rather than below the frame.
+#[test]
+fn a_child_above_its_frame_takes_the_newcomer_above_it() {
+    let (mut engine, mut cast) = framed(&[("F", &[], false), ("C1", &[], true), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+
+    assert_eq!(stack(&engine, &cast), vec!["F", "C1", "N", "X"]);
+}
+
+/// A selection dragged in together, part of it in the frame already, goes below the frame
+/// together, in its own order: the oracle adds what the drag carried, members included,
+/// whenever they do not all share the frame (`getCommonFrameId`, `frame.ts@1118751f:503-519`).
+#[test]
+fn a_selection_dragged_in_partly_from_inside_goes_below_the_frame_together() {
+    let mut frame = box_at(0.0, 0.0, 600.0, 200.0);
+    frame.kind = DrawElementType::Frame;
+    let mut c1 = filled(box_at(20.0, 100.0, 60.0, 60.0));
+    c1.frame_id = Some(frame.id.clone());
+    let a = filled(box_at(300.0, 210.0, 60.0, 60.0));
+    let mut c2 = filled(box_at(450.0, 60.0, 60.0, 60.0));
+    c2.frame_id = Some(frame.id.clone());
+    let x = filled(box_at(700.0, 400.0, 60.0, 60.0));
+    let cast: Cast = vec![
+        ("C1", c1.id.clone()),
+        ("A", a.id.clone()),
+        ("C2", c2.id.clone()),
+        ("F", frame.id.clone()),
+        ("X", x.id.clone()),
+    ];
+    let mut engine = engine_with_scene(vec![c1, a, c2, frame, x]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id(&cast, "C1"), id(&cast, "A")]);
+
+    drag(&mut engine, (330.0, 240.0), (330.0, 160.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "A")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["C2", "C1", "A", "F", "X"]);
+}
