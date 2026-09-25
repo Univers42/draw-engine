@@ -270,6 +270,8 @@ pub struct DrawEngine {
     flowchart_creator: Option<flowchart::FlowchartCreator>,
     /// Alt+Arrow's same-level exploration state. See `flowchart.rs`.
     flowchart_navigator: flowchart::FlowchartNavigator,
+    /// An in-flight eased camera move, started by `reveal`. See `style.rs`.
+    camera_anim: Option<style::CameraAnim>,
 }
 
 impl Default for DrawEngine {
@@ -344,6 +346,7 @@ impl DrawEngine {
             text_session: None,
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
+            camera_anim: None,
         }
     }
 
@@ -354,6 +357,7 @@ impl DrawEngine {
         // per flick and walks all of them every frame to draw nothing.
         self.laser.prune(now_ms);
         self.prune_peer_lasers(now_ms);
+        self.tick_camera_anim(now_ms);
     }
 
     /// Measures by size alone: every family is measured as one. Kept for hosts that
@@ -473,7 +477,8 @@ impl DrawEngine {
             && (self.dirty
                 || self.in_motion()
                 || self.laser.is_active(self.now_ms)
-                || self.peer_laser_active())
+                || self.peer_laser_active()
+                || self.camera_anim.is_some())
     }
 
     pub fn is_disposed(&self) -> bool {

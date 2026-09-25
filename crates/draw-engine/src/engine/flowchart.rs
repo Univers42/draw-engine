@@ -68,6 +68,11 @@ use crate::scene::{
 const VERTICAL_OFFSET: f64 = 100.0;
 const HORIZONTAL_OFFSET: f64 = 100.0;
 
+/// Screen-space clearance a reveal keeps around the node, matching the oracle's own
+/// `revealIfHidden` under `offsets: { ui: true }` in spirit — this engine has no chrome
+/// layout to read, so a fixed margin stands in for it.
+const REVEAL_PADDING: f64 = 48.0;
+
 /// Which way an arrow points, or a person navigates — Excalidraw's `LinkDirection`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkDirection {
@@ -643,8 +648,10 @@ impl DrawEngine {
     }
 
     /// Releasing Ctrl/Cmd: adds the pending cluster to the scene, selects the first new
-    /// node, and records **one** step of history — `insertNewElements` followed by
-    /// `captureUpdate: IMMEDIATELY` (`App.flowchart.ts@1118751f:78-90`).
+    /// node, records **one** step of history — `insertNewElements` followed by
+    /// `captureUpdate: IMMEDIATELY` (`App.flowchart.ts@1118751f:78-90`) — and eases the
+    /// camera to the new node if it landed off screen (`App.flowchart.ts@1118751f:86`'s own
+    /// `selectAndReveal`).
     pub fn flowchart_commit(&mut self) {
         let Some(creator) = self.flowchart_creator.take() else {
             return;
@@ -653,12 +660,14 @@ impl DrawEngine {
             return;
         }
         let first_node_id = creator.pending[0].id.clone();
+        let first_node_bounds = element_rotated_bounds(&creator.pending[0]);
         for element in creator.pending {
             self.scene.add(element);
         }
         self.set_selection(vec![first_node_id]);
         self.apply_bindings();
         self.push_history();
+        self.reveal(first_node_bounds, REVEAL_PADDING);
         self.request_draw();
     }
 
@@ -684,8 +693,8 @@ impl DrawEngine {
     }
 
     /// Alt+Arrow: selects the node connected in that direction, cycling same-level nodes on
-    /// a repeat press. Returns the id selected, or `None` with no exactly-one bindable
-    /// selection or nothing linked that way.
+    /// a repeat press, and eases the camera to it if it is off screen. Returns the id
+    /// selected, or `None` with no exactly-one bindable selection or nothing linked that way.
     pub fn flowchart_navigate(&mut self, direction: LinkDirection) -> Option<String> {
         let selected = self.get_selected_elements();
         let [element] = selected.as_slice() else {
@@ -700,6 +709,10 @@ impl DrawEngine {
             .explore(&element, &self.scene, direction);
         if let Some(id) = &id {
             self.set_selection(vec![id.clone()]);
+            let bounds = self.scene.get(id).map(element_rotated_bounds);
+            if let Some(bounds) = bounds {
+                self.reveal(bounds, REVEAL_PADDING);
+            }
         }
         id
     }

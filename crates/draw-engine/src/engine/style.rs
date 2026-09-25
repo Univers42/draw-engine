@@ -2,7 +2,10 @@ use std::cell::OnceCell;
 use std::collections::HashSet;
 
 use super::ArrowType;
+use crate::camera::{Camera, WorldBounds};
 use crate::engine::DrawEngine;
+use crate::interaction::ease_out;
+use crate::math::lerp;
 use crate::scene::{is_linear_element, Arrowhead, DrawElement, DrawElementType};
 
 /// The font sizes the contract stores (`fontSize`, `packages/contract/src/element.ts`).
@@ -21,6 +24,20 @@ const PREVIEW_MAX_CHARS: usize = 5000;
 fn storable_font_size(size: f64) -> Option<f64> {
     size.is_finite()
         .then(|| size.clamp(*FONT_SIZES.start(), *FONT_SIZES.end()))
+}
+
+/// How long a reveal takes to ease in, matching the oracle's own
+/// `animation: { duration: 300 }` (`App.tsx@1118751f`, `revealIfHidden`).
+const CAMERA_REVEAL_MS: f64 = 300.0;
+
+/// An in-flight camera move: linear in `x`/`y`/`scale`, eased in time. `DrawEngine::set_now`
+/// ticks it; [`DrawEngine::reveal`] is the one place that starts one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CameraAnim {
+    from: Camera,
+    to: Camera,
+    start_ms: f64,
+    end_ms: f64,
 }
 
 impl DrawEngine {
@@ -606,6 +623,67 @@ impl DrawEngine {
 
     pub fn zoom_reset(&mut self) {
         self.zoom_at(self.width / 2.0, self.height / 2.0, 1.0 / self.camera.scale);
+    }
+
+    /// Pans (and, only if it would not otherwise fit, zooms out) so `bounds` is on screen,
+    /// eased over [`CAMERA_REVEAL_MS`] rather than jumping — the flowchart's commit and its
+    /// Alt+Arrow navigation both land here (`engine/flowchart.rs`). A no-op when `bounds` is
+    /// already fully visible, so following a chain of nodes that are all in view never
+    /// nudges the camera.
+    pub(crate) fn reveal(&mut self, bounds: WorldBounds, padding: f64) {
+        let visible = crate::visible_world_rect(self.camera, self.width, self.height);
+        let already_visible = bounds.min_x >= visible.min_x
+            && bounds.max_x <= visible.max_x
+            && bounds.min_y >= visible.min_y
+            && bounds.max_y <= visible.max_y;
+        if already_visible {
+            return;
+        }
+        let fit = crate::fit_bounds(bounds, self.width, self.height, padding);
+        // Scale down to fit only when the bounds do not already fit at the current zoom —
+        // never in, so revealing a small new node does not also zoom in on it.
+        let scale = fit.scale.min(self.camera.scale);
+        let center_x = (bounds.min_x + bounds.max_x) / 2.0;
+        let center_y = (bounds.min_y + bounds.max_y) / 2.0;
+        let target = Camera {
+            scale,
+            x: self.width / 2.0 - center_x * scale,
+            y: self.height / 2.0 - center_y * scale,
+        };
+        self.animate_camera_to(target, CAMERA_REVEAL_MS);
+    }
+
+    fn animate_camera_to(&mut self, target: Camera, duration_ms: f64) {
+        if target == self.camera {
+            return;
+        }
+        self.camera_anim = Some(CameraAnim {
+            from: self.camera,
+            to: target,
+            start_ms: self.now_ms,
+            end_ms: self.now_ms + duration_ms,
+        });
+        self.request_draw();
+    }
+
+    /// Advances an in-flight [`reveal`](Self::reveal), if any. Called from `set_now` every
+    /// frame the host owes one — `needs_frame` answers `true` for as long as this holds
+    /// `Some`, so the host's loop keeps ticking until the ease finishes.
+    pub(crate) fn tick_camera_anim(&mut self, now_ms: f64) {
+        let Some(anim) = self.camera_anim else {
+            return;
+        };
+        let span = (anim.end_ms - anim.start_ms).max(1.0);
+        let t = ((now_ms - anim.start_ms) / span).clamp(0.0, 1.0);
+        let eased = ease_out(t);
+        self.set_camera(Camera {
+            x: lerp(anim.from.x, anim.to.x, eased),
+            y: lerp(anim.from.y, anim.to.y, eased),
+            scale: lerp(anim.from.scale, anim.to.scale, eased),
+        });
+        if t >= 1.0 {
+            self.camera_anim = None;
+        }
     }
 
     pub fn content_in_view(&self) -> bool {

@@ -326,3 +326,66 @@ fn navigate_requires_a_single_bindable_selection() {
     engine.select(scene_ids);
     assert_eq!(engine.flowchart_navigate(LinkDirection::Right), None);
 }
+
+// ----------------------------------------------------------------------------- the camera
+
+#[test]
+fn commit_eases_the_camera_to_an_offscreen_node() {
+    // Near the right edge of the 800-wide viewport `engine_with_scene` sets up, so a node
+    // created further right lands off screen.
+    let rect = filled(box_at(750.0, 0.0, 100.0, 60.0));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id.clone()]);
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.flowchart_create(LinkDirection::Right);
+    engine.flowchart_commit();
+
+    assert_eq!(
+        engine.camera, before,
+        "the commit starts the pan; it does not jump straight to the target"
+    );
+    assert!(engine.needs_frame(), "an eased pan is now in flight");
+
+    engine.set_now(300.0);
+    assert_ne!(
+        engine.camera, before,
+        "the camera eased toward the new node"
+    );
+
+    let node = live_kind(&engine, DrawElementType::Rectangle)
+        .into_iter()
+        .find(|el| el.id != rect.id)
+        .expect("the new node");
+    let visible = visible_world_rect(engine.camera, 800.0, 600.0);
+    assert!(
+        node.x >= visible.min_x && node.x + node.width <= visible.max_x,
+        "the new node is on screen once the ease has finished"
+    );
+    // `take_dirty` first: the commit itself asked for a repaint (new elements to draw),
+    // which alone would justify a frame regardless of the camera. Only what is left after
+    // that says whether the *animation* is done.
+    engine.take_dirty();
+    assert!(
+        !engine.needs_frame(),
+        "the ease is done: nothing left to animate"
+    );
+}
+
+#[test]
+fn commit_does_not_move_the_camera_when_the_node_is_already_visible() {
+    let (mut engine, _rect) = one_rect();
+    engine.set_now(0.0);
+    let before = engine.camera;
+
+    engine.flowchart_create(LinkDirection::Right);
+    engine.flowchart_commit();
+
+    assert_eq!(
+        engine.camera, before,
+        "the new node already fit on screen: nothing to reveal"
+    );
+    engine.take_dirty();
+    assert!(!engine.needs_frame());
+}
