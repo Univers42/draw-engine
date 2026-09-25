@@ -487,6 +487,16 @@ export class DrawEngine {
     return this.inner.selectionLocked();
   }
 
+  /**
+   * Closes the selected line(s) into filled polygons, or opens them back up
+   * (`actionTogglePolygon`). Whether this would do anything, and whether the panel's
+   * toggle should show pressed, are read off `selectionStyle()` — `canTogglePolygon` and
+   * `isPolygon` — not asked for here.
+   */
+  togglePolygon(): void {
+    this.inner.togglePolygon();
+  }
+
   setFontSize(size: number): void {
     this.inner.setFontSize(size);
   }

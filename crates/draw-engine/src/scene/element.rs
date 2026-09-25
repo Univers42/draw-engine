@@ -294,6 +294,16 @@ pub struct DrawElement {
     pub seed: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub points: Option<Vec<[f64; 2]>>,
+    /// Only a line's: closes on its first point and paints as a filled shape rather than
+    /// an open stroke — Excalidraw's `ExcalidrawLineElement.polygon`
+    /// (`packages/element/src/types.ts@1118751f:382`).
+    ///
+    /// `None` — every line saved before this field existed — reads as `false`, exactly as
+    /// the oracle's restore does (`packages/excalidraw/data/restore.ts@1118751f:645-651`):
+    /// only an explicit `true` promotes a line, a first point that happens to equal the
+    /// last never does on its own. Read it through [`DrawElement::is_polygon`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polygon: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_binding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -435,6 +445,11 @@ impl DrawElement {
     pub fn locked(&self) -> bool {
         self.locked.unwrap_or(false)
     }
+
+    /// See [`Self::polygon`].
+    pub fn is_polygon(&self) -> bool {
+        self.polygon.unwrap_or(false)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -496,6 +511,7 @@ pub fn create_element(
         corner_radius: None,
         seed: rand_int(),
         points: None,
+        polygon: None,
         start_binding: None,
         end_binding: None,
         start_fixed_point: None,
@@ -643,5 +659,27 @@ pub fn normalize_group_ids(element: &mut DrawElement) {
         if element.group_ids.is_empty() {
             element.group_ids.push(legacy);
         }
+    }
+}
+
+/// Sanitizes a line's `polygon` flag against its own points on the way in.
+///
+/// The oracle's restore (`packages/excalidraw/data/restore.ts@1118751f:645-651`):
+/// `polygon: isValidPolygon(points) ? element.polygon ?? false : false`. A geometrically
+/// closed line does **not** get promoted to `polygon: true` on load — only an explicit
+/// `true` does, and even that survives only when the points can actually support it
+/// ([`crate::scene::geometry::is_valid_polygon`]: more than three points, closed exactly).
+/// A `true` saved over points that no longer qualify — hand-edited, or truncated by a
+/// point removed elsewhere in the same document — is corrected to `false` rather than
+/// trusted, the same way an out-of-range `lineHeight` is dropped rather than clamped.
+///
+/// Left untouched (not stamped to `Some(false)`) when there was nothing to correct, so
+/// the overwhelming common case — an ordinary open line — round-trips byte-identical.
+pub fn normalize_polygon(element: &mut DrawElement) {
+    if element.kind == DrawElementType::Line
+        && element.polygon == Some(true)
+        && !crate::scene::geometry::is_valid_polygon(element.points.as_deref().unwrap_or(&[]))
+    {
+        element.polygon = Some(false);
     }
 }

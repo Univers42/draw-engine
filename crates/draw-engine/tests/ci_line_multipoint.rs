@@ -318,6 +318,29 @@ fn a_path_that_returns_to_its_start_closes_into_a_shape() {
             (100.0, 100.0),
         ],
     );
+    assert!(
+        only_line(&engine).is_polygon(),
+        "closing on the first point is what turns a line into a filled polygon \
+         (actionFinalize.tsx@1118751f:310-334)"
+    );
+}
+
+/// A path that closes back onto its start with only two *distinct* vertices — A, B, then
+/// back to A — is a segment folded in half, not a shape: `isValidPolygon` requires more
+/// than three points (`typeChecks.ts@1118751f:391-401`), so the `polygon: true` the close
+/// would otherwise set is immediately taken back.
+#[test]
+fn closing_with_only_two_distinct_points_does_not_polygon_it() {
+    let mut engine = line_engine();
+    click(&mut engine, 100.0, 100.0);
+    place(&mut engine, &[(300.0, 100.0)]);
+    hover(&mut engine, 100.0 + 3.0, 100.0 - 2.0);
+    click(&mut engine, 100.0 + 3.0, 100.0 - 2.0);
+
+    assert!(engine.linear_in_progress().is_none());
+    let line = only_line(&engine);
+    assert!(!line.is_polygon());
+    assert_eq!(line.points.unwrap().len(), 3);
 }
 
 /// The closing rule needs three points before it can apply, or the second click of every

@@ -34,9 +34,11 @@ pub fn elements_from_json(json: &str) -> Option<Vec<DrawElement>> {
         .and_then(|value| serde_json::from_value(value.clone()).ok())?;
     // Boards saved before groups could nest carry a single `groupId`. Folded here, at
     // the one door scenes come in through, so nothing downstream has to know the old
-    // spelling ever existed.
+    // spelling ever existed. A line's `polygon` flag is sanitized against its own points
+    // the same way — see `normalize_polygon`.
     for element in &mut elements {
         crate::scene::element::normalize_group_ids(element);
+        crate::scene::element::normalize_polygon(element);
     }
     Some(elements)
 }

@@ -14,7 +14,8 @@
 //! nothing else, which works identically whatever direction the element runs in.
 
 use crate::camera::Point;
-use crate::scene::element::DrawElement;
+use crate::scene::element::{DrawElement, DrawElementType};
+use crate::scene::geometry::is_valid_polygon;
 
 /// Which part of a linear element a pointer grabbed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -253,7 +254,19 @@ pub fn move_handle(element: &DrawElement, handle: LinearHandle, world: Point) ->
 
     match handle {
         LinearHandle::Point(i) if i < points.len() => {
-            points[i] = to_local(element, world);
+            let moved = to_local(element, world);
+            points[i] = moved;
+            // A polygon's first and last point are the same vertex twice over — dragging
+            // either end has to move both, or the loop tears open. `movePoints`,
+            // `packages/element/src/linearElementEditor.ts@1118751f:1663-1680`.
+            if element.kind == DrawElementType::Line && element.is_polygon() {
+                let last = points.len() - 1;
+                if i == 0 {
+                    points[last] = moved;
+                } else if i == last {
+                    points[0] = moved;
+                }
+            }
         }
         LinearHandle::Midpoint(i) if i + 1 < points.len() => {
             // Dragging a midpoint inserts a point there and starts moving it, which is
@@ -286,6 +299,21 @@ pub fn remove_point(element: &DrawElement, i: usize) -> DrawElement {
     points.remove(i);
 
     let mut next = element.clone();
+    let is_polygon = element.kind == DrawElementType::Line && element.is_polygon();
+    if is_polygon {
+        // Keep the loop closed whichever vertex went — the start, the end, or one in
+        // between — by snapping the new first point back onto the new last one.
+        // `deletePoints`, `packages/element/src/linearElementEditor.ts@1118751f:1590-1602`.
+        if let (Some(&last), true) = (points.last(), points.len() >= 2) {
+            points[0] = last;
+        }
+        // A polygon broken below validity by the deletion gives up the flag, exactly as
+        // it does when the drawing gesture itself closes on too short a loop
+        // (`engine/multi_linear.rs`) — `actionFinalize.tsx@1118751f:336-340`.
+        if !is_valid_polygon(&points) {
+            next.polygon = Some(false);
+        }
+    }
     normalise_points(&mut next, points);
     next
 }

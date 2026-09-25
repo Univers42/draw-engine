@@ -112,6 +112,16 @@ impl WasmEngine {
         }
     }
 
+    /// Closes the selected line(s) into filled polygons, or opens them back up. Whether
+    /// this would do anything (`canTogglePolygon`) and whether the toggle should show
+    /// pressed (`isPolygon`) are both read off `selectionStyle()`, in one pass with the
+    /// rest of the panel — not asked for here.
+    #[wasm_bindgen(js_name = togglePolygon)]
+    pub fn toggle_polygon(&self) {
+        self.cell.borrow_mut().engine.toggle_polygon_selection();
+        self.flush();
+    }
+
     #[wasm_bindgen(js_name = groupSelection)]
     pub fn group_selection(&self) {
         self.cell.borrow_mut().engine.group_selection();

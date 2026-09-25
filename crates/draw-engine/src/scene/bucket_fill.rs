@@ -398,14 +398,7 @@ fn is_opaque_color(color: &str) -> bool {
     true
 }
 
-use crate::scene::geometry::is_path_a_loop;
-
-/// A line element's points, closed and with more than three of them.
-fn is_valid_polygon(points: &[[f64; 2]]) -> bool {
-    points.len() > 3
-        && (points[0][0] - points[points.len() - 1][0]).abs() <= crate::scene::geometry::PRECISION
-        && (points[0][1] - points[points.len() - 1][1]).abs() <= crate::scene::geometry::PRECISION
-}
+use crate::scene::geometry::{is_path_a_loop, is_valid_polygon};
 
 fn element_points(element: &DrawElement) -> &[[f64; 2]] {
     element.points.as_deref().unwrap_or(&[])
@@ -428,7 +421,10 @@ pub fn renders_opaque_fill(element: &DrawElement) -> bool {
     {
         return false;
     }
-    // An open stroke never paints its background, whatever colour it is set to.
+    // An open stroke never paints its background, whatever colour it is set to. Geometric,
+    // not the `polygon` flag: `render/opts.rs`'s own fill decision for a line asks only
+    // whether its points loop, so this has to ask the same question or a line whose loop
+    // was never toggled would paint on canvas but not count as opaque here.
     if matches!(
         element.kind,
         DrawElementType::Line | DrawElementType::Freedraw

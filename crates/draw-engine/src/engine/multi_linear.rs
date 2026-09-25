@@ -31,7 +31,8 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::constrain_to_angle;
 use crate::scene::binding::{anchor, is_inside, set_anchor, Anchor, End};
 use crate::scene::{
-    bump_version, is_path_a_loop_within, DrawElement, DrawElementType, LINE_CONFIRM_THRESHOLD,
+    bump_version, is_path_a_loop_within, is_valid_polygon, DrawElement, DrawElementType,
+    LINE_CONFIRM_THRESHOLD,
 };
 
 impl DrawEngine {
@@ -311,12 +312,24 @@ impl DrawEngine {
         }
 
         // A loop is shut exactly, not to within a few pixels: a gap of three pixels at
-        // this zoom is three hundred at the next one, and the shape comes apart.
+        // this zoom is three hundred at the next one, and the shape comes apart. Finishing
+        // a line on its own first point is what turns it into a filled polygon —
+        // `actionFinalize.tsx@1118751f:310-334` sets both `points` and `polygon: true` in
+        // the same mutation, for the same reason: a loop that closed but stayed unfilled
+        // would look identical to one a stray click almost closed.
         if element.kind == DrawElementType::Line
             && is_path_a_loop_within(&points, self.confirm_tolerance())
         {
             let first = points[0];
             *points.last_mut().expect("checked non-empty") = first;
+            element.polygon = Some(true);
+        }
+        // A two-vertex loop — closed back onto itself one click after the start — is a
+        // segment, not a shape: nothing it could enclose. `isValidPolygon`
+        // (`typeChecks.ts@1118751f:391-401`) requires three, so the `true` just set above
+        // is undone rather than left to paint a fill with no area.
+        if element.kind == DrawElementType::Line && !is_valid_polygon(&points) {
+            element.polygon = Some(false);
         }
 
         element.points = Some(points);

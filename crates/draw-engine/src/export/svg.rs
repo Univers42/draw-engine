@@ -103,6 +103,52 @@ fn head_svg(
     }
 }
 
+/// A closed line's flat SVG shape — its full path as a filled `<polygon>`, the same shape
+/// `render::opts::generate_rough_options` fills on canvas.
+///
+/// `None` for an open line, so [`element_svg`] falls back to [`linear_svg`]'s straight
+/// shaft. Gated on geometry (a loop, `is_path_a_loop`), not on the `polygon` field: canvas
+/// paint decides whether to draw a line as a closed shape the same way, by its points
+/// alone (`render/opts.rs`'s `generate_rough_options`), so the export has to draw what the
+/// canvas shows regardless of whether the flag happens to be set. `linear_svg` only ever
+/// draws a straight two-point shaft with arrowheads — correct for an open line or an
+/// arrow, but it silently dropped every waypoint of a closed one and never painted its
+/// fill at all.
+fn closed_line_svg(element: &DrawElement) -> Option<String> {
+    let points = element.points.as_deref()?;
+    if !crate::scene::geometry::is_path_a_loop(points) {
+        return None;
+    }
+    let rect = normalize_rect(element.x, element.y, element.width, element.height);
+    let fill = if element.background_color.is_empty() || element.background_color == "transparent" {
+        "none"
+    } else {
+        element.background_color.as_str()
+    };
+    let pts = points
+        .iter()
+        .map(|&[px, py]| format!("{},{}", element.x + px, element.y + py))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let transform = if element.angle != 0.0 {
+        format!(
+            " transform=\"rotate({} {} {})\"",
+            (element.angle * 180.0) / std::f64::consts::PI,
+            rect.x + rect.width / 2.0,
+            rect.y + rect.height / 2.0
+        )
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "<polygon points=\"{pts}\" stroke=\"{}\" stroke-width=\"{}\" fill=\"{fill}\"{} opacity=\"{}\"{transform}/>",
+        element.stroke_color,
+        element.stroke_width,
+        dash(element.stroke_style),
+        element.opacity / 100.0
+    ))
+}
+
 fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
     let body = linear_body_svg(element);
     let Some(label) = label.filter(|_| !body.is_empty()) else {
@@ -168,6 +214,11 @@ fn element_svg<'a>(
     element: &DrawElement,
     lookup: impl Fn(&str) -> Option<&'a DrawElement>,
 ) -> String {
+    if element.kind == DrawElementType::Line {
+        if let Some(svg) = closed_line_svg(element) {
+            return svg;
+        }
+    }
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
         return linear_svg(element, crate::render::linear_label(element, lookup));
     }

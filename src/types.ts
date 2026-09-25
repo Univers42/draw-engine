@@ -115,6 +115,12 @@ export interface DrawElement extends DrawElementStyle {
   angle: number;
   seed: number;
   points?: Array<[number, number]>;
+  /**
+   * Only a line's: closed on its first point and painted as a filled shape rather than
+   * an open stroke (Excalidraw's `polygon`). Absent — every line saved before this field
+   * existed — reads as `false`, the open path it always was.
+   */
+  polygon?: boolean;
   startBinding?: string | null;
   endBinding?: string | null;
   /**
@@ -508,6 +514,11 @@ export interface SelectionStyle {
   verticalAlignable: boolean;
   canAlign: boolean;
   canDistribute: boolean;
+  /**
+   * Whether the polygon toggle would do anything: every selected element a line with
+   * four points or more, and at least one selected.
+   */
+  canTogglePolygon: boolean;
   /** Only asked for a single element: from two up the group row shows regardless. */
   isGroup: boolean;
   strokeColor: string | null;
@@ -522,6 +533,12 @@ export interface SelectionStyle {
   endArrowhead: Arrowhead | null;
   /** Read off arrows alone; `edges` reads everything else. */
   arrowType: ArrowType | null;
+  /**
+   * Whether the selected lines are already closed polygons — `null` for a mixed
+   * selection, or one holding nothing the polygon toggle applies to. Read off lines
+   * alone, the same way `arrowType` reads off arrows alone.
+   */
+  isPolygon: boolean | null;
   fontSize: number | null;
   /** The family the texts share — 0 for the system stack a text with none is drawn in. */
   fontFamily: number | null;
@@ -563,6 +580,7 @@ export const EMPTY_SELECTION_STYLE: SelectionStyle = {
   verticalAlignable: false,
   canAlign: false,
   canDistribute: false,
+  canTogglePolygon: false,
   isGroup: false,
   strokeColor: DEFAULT_ELEMENT_STYLE.strokeColor,
   backgroundColor: DEFAULT_ELEMENT_STYLE.backgroundColor,
@@ -575,6 +593,7 @@ export const EMPTY_SELECTION_STYLE: SelectionStyle = {
   startArrowhead: "none",
   endArrowhead: "arrow",
   arrowType: "round",
+  isPolygon: null,
   fontSize: 20,
   fontFamily: 5,
   textAlign: "left",
