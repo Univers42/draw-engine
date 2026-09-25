@@ -507,6 +507,31 @@ fn aligning_a_child_out_of_its_frame_keeps_it_in_the_frame() {
     );
 }
 
+/// Lock and Unlock are one toggle, as the context menu names it. Locked, a shape is not
+/// there to be pressed on — the press starts a marquee and nothing moves; Select All is
+/// how the menu reaches it again, and a second toggle gives it back to a drag.
+#[test]
+fn a_second_toggle_unlocks() {
+    let shape = filled(box_at(100.0, 100.0, 80.0, 80.0));
+    let id = shape.id.clone();
+    let mut engine = engine_with_scene(vec![shape]);
+    engine.set_tool(DrawTool::Select);
+    lock(&mut engine, &[&id]);
+    assert!(element(&engine, &id).locked());
+
+    drag(&mut engine, (140.0, 140.0), (240.0, 140.0));
+    assert_close(element(&engine, &id).x, 100.0);
+
+    engine.select_all();
+    assert!(engine.selection_locked());
+    engine.toggle_lock_selection();
+    engine.clear_selection();
+    assert!(!element(&engine, &id).locked());
+
+    drag(&mut engine, (140.0, 140.0), (240.0, 140.0));
+    assert_close(element(&engine, &id).x, 200.0);
+}
+
 /// A lock touches what is locked and nothing else: a pass over the whole board rewrote
 /// and re-stamped an element straddling a frame's edge, as a board from Excalidraw can
 /// hold one, and sent it to every peer.
