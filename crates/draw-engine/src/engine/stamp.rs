@@ -54,6 +54,21 @@
 //! the commit, and restoring one reverted them — with fresh stamps, now, that revert
 //! would have been sent to everyone.
 //!
+//! # A peer's delete outranks an unrelated undo
+//!
+//! A step that only edited a property (a move, a recolour, a resize) records `is_deleted:
+//! false` on both its before and its after — it never named deletion. If a peer deletes
+//! the same element in between, replaying that step must not put it back: the oracle's
+//! delta for a plain edit carries only the properties that actually changed
+//! (`ElementsDelta.calculate`, `packages/element/src/delta.ts@1118751f:1234-1259`), and
+//! applying it merges just those onto whatever the *current* element is
+//! (`ElementsDelta.applyDelta`, `packages/element/src/delta.ts@1118751f:1732-1781`) — so an
+//! `isDeleted` the delta never carried is left exactly as the live, tombstoned element
+//! already has it. [`replay_step`] mirrors that: a step whose own before/after agree on
+//! `is_deleted` skips an element the scene now has as deleted, rather than resurrecting it
+//! above the tombstone. A step that *did* delete or undelete the element — an own delete,
+//! undone or redone — still replays normally.
+//!
 //! # Undo puts the selection back
 //!
 //! A step also records what was selected, and the group being edited, when it began and
@@ -128,6 +143,11 @@ fn stamped(mut element: DrawElement, version: u32, now: f64) -> DrawElement {
     element.version_nonce = rand_int();
     element.updated = now;
     element
+}
+
+/// Not on the board, from this step's own point of view: absent, or a tombstone.
+fn gone(element: &Option<Rc<DrawElement>>) -> bool {
+    element.as_ref().is_none_or(|el| el.is_deleted)
 }
 
 impl DrawEngine {
@@ -284,7 +304,25 @@ impl DrawEngine {
             let now = self.scene.get_rc(id).cloned();
             match (want, now) {
                 (Some(want), Some(now)) => {
-                    if !same_content(want, &now) {
+                    // Whether *this step* deleted or undeleted the element — as opposed
+                    // to a peer's tombstone landing on it since. `change.before` and
+                    // `change.after` are direction-independent, so this reads the same
+                    // on undo and on redo.
+                    let step_touches_deletion = gone(&change.before) != gone(&change.after);
+                    if now.is_deleted && !step_touches_deletion {
+                        // A peer deleted this element after the step ran; the step
+                        // itself never named `is_deleted` (its own before/after agree
+                        // on it), so replaying it must not resurrect what it never
+                        // touched — same as an edit to a property the step never
+                        // named. Mirrors the oracle: a plain edit's delta carries only
+                        // the properties that changed (`ElementsDelta.calculate`,
+                        // `packages/element/src/delta.ts@1118751f:1234-1259`), and
+                        // applying it merges just those onto whatever the *current*
+                        // element is (`ElementsDelta.applyDelta`,
+                        // `packages/element/src/delta.ts@1118751f:1732-1781`) — so an
+                        // `isDeleted` the delta never carried is left exactly as the
+                        // live (tombstoned) element already has it.
+                    } else if !same_content(want, &now) {
                         let version = now.version.max(want.version) + 1;
                         self.scene.put(stamped((**want).clone(), version, clock));
                         replayed.insert(id.clone());

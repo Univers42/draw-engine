@@ -541,6 +541,36 @@ fn undo_leaves_a_peers_later_edit_alone() {
     assert_close(get(&engine, &theirs_id).x, 500.0);
 }
 
+/// A peer deletes what you just moved, and their tombstone lands before your Ctrl+Z:
+/// undo must not resurrect what they deleted as a side effect of undoing the move.
+/// Found by review — `undo_leaves_a_peers_*` above cover a peer's later *edit* of the
+/// element a step touched, never a peer's *delete* of it.
+#[test]
+fn undo_does_not_resurrect_what_a_peer_deleted_since() {
+    let (mut engine, id) = one_box();
+    drag(&mut engine, (160.0, 140.0), (260.0, 200.0));
+
+    let mut tombstone = get(&engine, &id);
+    tombstone.is_deleted = true;
+    tombstone.version += 1;
+    tombstone.version_nonce = 999;
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [tombstone],
+    })
+    .to_string();
+    assert!(engine.apply_remote_patch(&patch), "setup: the delete lands");
+
+    engine.undo();
+
+    let after = get(&engine, &id);
+    assert!(
+        after.is_deleted,
+        "the peer's delete must survive an undo of the move it deleted"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Hygiene
 // ---------------------------------------------------------------------------
