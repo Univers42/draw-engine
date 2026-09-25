@@ -258,6 +258,31 @@ mod font_size {
         assert_eq!(element(&engine, "l").font_size, Some(20.0));
     }
 
+    /// The chord reaches the text editor (`wysiwyg/textWysiwyg.tsx@1118751f:675-678`). A
+    /// text still being typed is not in the scene until its editor closes, so its size
+    /// is written into it, and the commit that makes it is still the one that closes the
+    /// editor: one undo takes it away rather than leaving an empty text behind.
+    #[test]
+    fn a_text_being_typed_takes_the_step_in_the_commit_that_makes_it() {
+        let mut engine = engine_with_measure(vec![]);
+        engine.handle_double_click(100.0, 100.0);
+        let draft = engine
+            .get_selected_elements()
+            .pop()
+            .expect("a text to type into");
+        engine.step_font_size(true);
+        assert_eq!(element(&engine, &draft.id).font_size, Some(22.0));
+        engine.set_element_text(&draft.id, "hi");
+        assert_eq!(element(&engine, &draft.id).font_size, Some(22.0));
+        engine.undo();
+        let live: Vec<DrawElement> = engine
+            .get_scene()
+            .into_iter()
+            .filter(|element| !element.is_deleted)
+            .collect();
+        assert!(live.is_empty(), "one step made it: {live:?}");
+    }
+
     #[test]
     fn nothing_selected_changes_nothing() {
         let mut engine = engine_with_measure(vec![text("t", 20.0)]);

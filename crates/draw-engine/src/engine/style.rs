@@ -198,6 +198,11 @@ impl DrawEngine {
     /// auto-sizing text keeps its aligned edge and its vertical middle
     /// (`offsetElementAfterFontResize`); otherwise a free text stays where it is, as the
     /// oracle's family and alignment changes leave it.
+    ///
+    /// A text still being typed — made since the last commit, which only its editor
+    /// does — is not committed here: closing the editor makes it, in one step, and
+    /// committing it now would leave an empty text for undo to bring back. The font size
+    /// chords are what reach one ([`Self::step_font_size`]).
     fn relayout_selected_texts(
         &mut self,
         change: impl Fn(&mut DrawElement),
@@ -207,6 +212,9 @@ impl DrawEngine {
         if texts.is_empty() {
             return;
         }
+        let drafting = texts
+            .iter()
+            .all(|text| self.scene.created_since_commit(&text.id));
         for prev in texts {
             let mut next = prev.clone();
             change(&mut next);
@@ -223,7 +231,11 @@ impl DrawEngine {
             self.scene.put(laid.text);
         }
         self.apply_bindings();
-        self.push_history();
+        if drafting {
+            self.touch_style();
+        } else {
+            self.push_history();
+        }
         self.request_draw();
     }
 
