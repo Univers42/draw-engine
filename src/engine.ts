@@ -487,6 +487,11 @@ export class DrawEngine {
    * Set the Excalidraw font family (1 Virgil, 2 Helvetica, 3 Cascadia, 5 Excalifont,
    * 6 Nunito, 7 Lilita One, 8 Comic Shanns, 9 Liberation Sans) of the selected texts and
    * labels, and of the next text drawn. Unknown ids are ignored.
+   *
+   * The text is laid out, and its shape grown, at once and in whatever face the browser
+   * has: load the face first (`document.fonts.load` with the stack `fontFamily(id)` gives),
+   * as Excalidraw's `changeFontFamily` waits for it (`actionProperties.tsx@1118751f:1302-1356`).
+   * Laid out in a fallback wider than the face, a shape grows and keeps the growth.
    */
   setFontFamily(id: number): void {
     this.inner.setFontFamily(id);
