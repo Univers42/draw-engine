@@ -91,18 +91,9 @@ fn map_points(from: &DrawElement, map: impl Fn(Point) -> Point) -> DrawElement {
 
 impl GroupFrame {
     /// Captures the frame and each member's starting geometry.
-    ///
-    /// The frame is the members' own: a label rides in its shape and is laid out there
-    /// again, so it is captured without widening the frame.
     pub fn capture<'a>(elements: impl IntoIterator<Item = &'a DrawElement>) -> Option<Self> {
         let elements: Vec<&DrawElement> = elements.into_iter().collect();
-        let bounds = crate::scene::geometry::scene_bounds(
-            elements
-                .iter()
-                .copied()
-                .filter(|e| e.container_id.is_none()),
-        )
-        .or_else(|| crate::scene::geometry::scene_bounds(elements.iter().copied()))?;
+        let bounds = crate::scene::geometry::scene_bounds(elements.iter().copied())?;
         let origins = elements
             .iter()
             .map(|e| {

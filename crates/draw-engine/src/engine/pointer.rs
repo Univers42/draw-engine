@@ -316,7 +316,9 @@ impl DrawEngine {
     /// A resize carries the labels of what it resizes, so it can lay them out again from
     /// the fonts they started with (`resizeMultipleElements`,
     /// `packages/element/src/resizeElements.ts@1118751f:1499-1514`) — the live ones: a
-    /// shape can still name a label someone else deleted.
+    /// shape can still name a label someone else deleted. They ride inside the frame that
+    /// is drawn, never widening it, so the corner opposite the handle holds where it is
+    /// drawn.
     fn begin_group_transform(&self, press: Point) -> Option<Interaction> {
         let kind = self.group_handle_at(press)?;
         let (mut ids, frame) = self.group_frame()?;
@@ -345,8 +347,10 @@ impl DrawEngine {
                     .get(id)
                     .is_some_and(|label| !label.is_deleted && label.kind == DrawElementType::Text)
         }));
-        let frame =
-            crate::selection::GroupFrame::capture(ids.iter().filter_map(|id| self.scene.get(id)))?;
+        let frame = crate::selection::GroupFrame {
+            bounds: frame.bounds,
+            ..crate::selection::GroupFrame::capture(ids.iter().filter_map(|id| self.scene.get(id)))?
+        };
         Some(Interaction::ResizeGroup {
             ids,
             handle: kind,

@@ -538,6 +538,52 @@ mod several {
         assert_eq!(gone, before, "the tombstone is untouched");
     }
 
+    /// A group's labels are in its frame — the one drawn and the one scaled, the same box
+    /// (`getNextMultipleWidthAndHeightFromPointer` counts an arrow's label,
+    /// `resizeElements.ts@1118751f:1101-1131`) — so the corner opposite the handle holds
+    /// when an arrow's label hangs past the shapes.
+    #[test]
+    fn a_groups_drawn_corner_holds_with_an_arrows_label_past_its_shapes() {
+        let rect = box_at(0.0, 0.0, 100.0, 100.0);
+        let arrow = connector(0.0, 150.0, 60.0, 150.0, DrawElementType::Arrow);
+        let (rect_id, arrow_id) = (rect.id.clone(), arrow.id.clone());
+        let mut engine = engine_with_measure(vec![rect, arrow]);
+        engine.handle_double_click(30.0, 150.0);
+        let label_id = engine
+            .drain_events()
+            .text_edit
+            .expect("a double click on an arrow's middle opens its label")
+            .id;
+        engine.set_element_text(&label_id, WORDS);
+        engine.select(vec![rect_id.clone(), arrow_id]);
+        engine.group_selection();
+        engine.select(Vec::new());
+        // A click on the rectangle's outline takes the whole group, its label with it.
+        engine.begin_pointer(100.0, 50.0, false, false);
+        engine.end_pointer();
+        let drawn = |engine: &DrawEngine| engine.paint_view().group_box.expect("a frame");
+        let before = drawn(&engine);
+        // The label, 194 wide on the arrow's middle, hangs 67 left of the rectangle.
+        assert_close(before.min_x, -67.0);
+        assert_close(before.min_y, 0.0);
+
+        let grab = (before.max_x + HANDLE, before.max_y + HANDLE);
+        drag(
+            &mut engine,
+            grab,
+            (grab.0 + 100.0, grab.1 + 100.0),
+            4,
+            false,
+        );
+
+        let after = drawn(&engine);
+        // The label is laid out again at its scaled font, not scaled: the test hook's 4 per
+        // line does not scale, and moves its edge by 2 × (scale − 1) at most.
+        assert!((after.min_x - before.min_x).abs() < 2.0, "{after:?}");
+        assert_close(after.min_y, 0.0);
+        assert!(after.max_x > before.max_x + 90.0, "{after:?}");
+    }
+
     /// Grouped, they scale as one (`isInGroup`, `:1376`), and so do their labels' fonts
     /// (`:1505-1510`).
     #[test]
