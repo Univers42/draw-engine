@@ -422,6 +422,14 @@ export class DrawEngine {
     return this.inner.pasteJson(json ?? undefined, at?.x, at?.y);
   }
 
+  /**
+   * The command palette's "Add rectangle / diamond / ellipse": a default-sized shape
+   * centred on `center`, selected, as one step of undo. `null` for any other kind.
+   */
+  insertDefaultShape(kind: FlowchartShape, center: { x: number; y: number }): string | null {
+    return this.inner.insertDefaultShape(kind, center.x, center.y) ?? null;
+  }
+
   duplicateSelection(): void {
     this.inner.duplicateSelection();
   }

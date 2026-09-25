@@ -52,6 +52,22 @@ impl WasmEngine {
         ok
     }
 
+    /// Track B: the command palette's "Add rectangle / diamond / ellipse" — a default-sized
+    /// shape centred at `(center_x, center_y)`, selected, one step of history
+    /// (`DrawEngine::insert_default_shape`). `undefined` for any kind the palette does not
+    /// offer.
+    #[wasm_bindgen(js_name = insertDefaultShape)]
+    pub fn insert_default_shape(&self, kind: &str, center_x: f64, center_y: f64) -> Option<String> {
+        let kind = serde_json::from_str(&format!("\"{kind}\"")).ok()?;
+        let id = self
+            .cell
+            .borrow_mut()
+            .engine
+            .insert_default_shape(kind, center_x, center_y);
+        self.flush();
+        id
+    }
+
     /// Ctrl+D: a copy ten units down and right, Excalidraw's `DEFAULT_GRID_SIZE / 2`
     /// (`packages/excalidraw/actions/actionDuplicateSelection.tsx@1118751f:78-79`).
     #[wasm_bindgen(js_name = duplicateSelection)]

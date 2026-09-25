@@ -21,6 +21,7 @@ mod flowchart;
 mod frame;
 mod hover;
 mod image;
+mod insert;
 mod live;
 pub use image::EmbedFrame;
 pub use peers::Peer;
