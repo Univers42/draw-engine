@@ -916,3 +916,88 @@ fn a_selection_dragged_in_partly_from_inside_goes_below_the_frame_together() {
     assert_eq!(frame_of(&engine, &id(&cast, "A")), Some(id(&cast, "F")));
     assert_eq!(stack(&engine, &cast), vec!["C2", "C1", "A", "F", "X"]);
 }
+
+/// Only what the selection carried joins the run. An arrow of the frame's that the drag
+/// re-routed — it is bound to S1 — was changed by the commit but never carried, and keeps
+/// its place: the oracle adds the selected elements that are in the frame
+/// (`App.tsx@1118751f:12046-12059`), with their labels (`frame.ts@1118751f:567-584`).
+/// Transcribed: the others are [Ar, S2, F], the run goes in at F (`:521-536`).
+#[test]
+fn an_arrow_the_drag_rerouted_keeps_its_place() {
+    let mut frame = box_at(0.0, 0.0, 800.0, 300.0);
+    frame.kind = DrawElementType::Frame;
+    let mut s1 = filled(box_at(20.0, 100.0, 60.0, 60.0));
+    s1.frame_id = Some(frame.id.clone());
+    let mut s2 = filled(box_at(600.0, 100.0, 60.0, 60.0));
+    s2.frame_id = Some(frame.id.clone());
+    let mut ar = connector(80.0, 130.0, 600.0, 130.0, DrawElementType::Arrow);
+    ar.frame_id = Some(frame.id.clone());
+    ar.start_binding = Some(s1.id.clone());
+    ar.end_binding = Some(s2.id.clone());
+    let t = filled(box_at(200.0, 305.0, 60.0, 60.0));
+    let cast: Cast = vec![
+        ("Ar", ar.id.clone()),
+        ("S1", s1.id.clone()),
+        ("S2", s2.id.clone()),
+        ("F", frame.id.clone()),
+        ("T", t.id.clone()),
+    ];
+    let mut engine = engine_with_scene(vec![ar, s1, s2, frame, t]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id(&cast, "S1"), id(&cast, "T")]);
+
+    drag(&mut engine, (230.0, 335.0), (230.0, 265.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "T")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["Ar", "S2", "S1", "T", "F"]);
+}
+
+/// The frame's south-east handle, dragged by `by`.
+fn resize_frame(engine: &mut DrawEngine, cast: &Cast, by: (f64, f64)) {
+    let frame = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id(cast, "F"))
+        .expect("the frame");
+    engine.select(vec![frame.id.clone()]);
+    let offset = HandleLayout::screen(8.0, 26.0, 1.0).handle_offset;
+    let at = (
+        frame.x + frame.width + offset,
+        frame.y + frame.height + offset,
+    );
+    drag(engine, at, (at.0 + by.0, at.1 + by.1));
+}
+
+/// A frame resized puts its children in one run directly below it even when nothing
+/// joined: the oracle takes them all out and adds them back (`replaceAllElementsInFrame`,
+/// `frame.ts@1118751f:684-694`) on every resize (`App.tsx@1118751f:12097-12117`). A child
+/// above its frame — a Ctrl+D copy of one, here — goes below it.
+#[test]
+fn a_resized_frame_takes_a_child_above_it_below_it() {
+    let (mut engine, cast) = framed(&[("F", &[], false), ("C1", &[], true), ("X", &[], false)]);
+
+    resize_frame(&mut engine, &cast, (50.0, 50.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "C1")), Some(id(&cast, "F")));
+    assert_eq!(stack(&engine, &cast), vec!["C1", "F", "X"]);
+}
+
+/// What a resize takes in goes in above the children the frame had, which keep their
+/// order: the oracle's run is the previous children, then the newcomers
+/// (`getElementsInResizingFrame`, `frame.ts@1118751f:283-377`).
+#[test]
+fn a_frame_resized_over_a_shape_puts_it_above_the_children_it_had() {
+    let (mut engine, cast) = framed(&[
+        ("N", &[], false),
+        ("C1", &[], true),
+        ("F", &[], false),
+        ("X", &[], false),
+    ]);
+
+    // F (0, 0, 600, 200) to (0, 0, 260, 470): N at (20, 400) inside, X at (290, 400) not.
+    resize_frame(&mut engine, &cast, (-340.0, 270.0));
+
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+    assert_eq!(frame_of(&engine, &id(&cast, "X")), None);
+    assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
+}

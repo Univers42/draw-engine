@@ -261,6 +261,25 @@ impl DrawEngine {
             self.scene
                 .update(&id, |element| element.frame_id = frame_id);
         }
+        // A frame resized puts its children back in one run below it even when none joined:
+        // the oracle takes them all out and adds them back on every resize
+        // (`App.tsx@1118751f:12097-12117`), which also mends a child left above its frame.
+        // Not a frame moved: a drag adds only what it carried (`:12040-12059`).
+        let resized: Vec<String> = touched
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| crate::scene::is_frame(el))
+            .filter(|el| {
+                matches!(self.scene.committed(&el.id), Some(Some(before))
+                    if before.width != el.width || before.height != el.height)
+            })
+            .map(|el| el.id.clone())
+            .collect();
+        for frame in resized {
+            if !joined.iter().any(|(f, _)| *f == frame) {
+                joined.push((frame, std::collections::HashSet::new()));
+            }
+        }
         for (frame, ids) in joined {
             self.stack_under_frame(&frame, &ids, touched);
         }
@@ -273,12 +292,16 @@ impl DrawEngine {
     /// 538-635`). Drawn, pasted or dragged in, a shape used to stay on top of the board,
     /// above the frame it belonged to.
     ///
-    /// The run is what joined, with the members the commit also touched — a selection
+    /// The run is what joined, with what the gesture carried of the frame's — a selection
     /// dragged in partly from inside goes together, in its own order, since the oracle
-    /// reorders whenever what it adds does not all share the frame already
-    /// (`getCommonFrameId`, `frame.ts@1118751f:503-519`) — or every member, when the
-    /// frame itself was drawn, resized or moved (`replaceAllElementsInFrame`, `:684-694`).
-    /// Each shape takes its label, directly above it (`frame.ts@1118751f:578-582`).
+    /// adds the selected elements that are in the frame (`App.tsx@1118751f:12046-12059`)
+    /// and reorders whenever they do not all share it already (`getCommonFrameId`,
+    /// `frame.ts@1118751f:503-519`). A member the commit only re-routed, an arrow bound to
+    /// what was dragged, keeps its place. When the frame itself was drawn, resized or
+    /// moved, the run is every member: the children it had, in their order, then what it
+    /// took in (`replaceAllElementsInFrame`, `:684-694`, over `getElementsInResizingFrame`,
+    /// `:283-377`, which lists loose newcomers before grouped ones where these keep the
+    /// stack's order). Each shape takes its label, directly above it (`:578-582`).
     ///
     /// Directly below the frame, or directly above its highest member when one sits above
     /// it (`getFrameChildrenInsertionIndex`, `frame.ts@1118751f:521-536`). A label counts
@@ -290,14 +313,26 @@ impl DrawEngine {
         touched: &std::collections::HashSet<String>,
     ) {
         let whole = touched.contains(frame);
+        let carried = if whole {
+            std::collections::HashSet::new()
+        } else {
+            self.moving_selection()
+        };
+        let members = self
+            .scene
+            .iter_ordered()
+            .filter(|el| el.container_id.is_none() && el.frame_id.as_deref() == Some(frame));
+        let run: Vec<&crate::scene::DrawElement> = if whole {
+            let (newcomers, had): (Vec<_>, Vec<_>) =
+                members.partition(|el| joined.contains(&el.id));
+            had.into_iter().chain(newcomers).collect()
+        } else {
+            members
+                .filter(|el| joined.contains(&el.id) || carried.contains(&el.id))
+                .collect()
+        };
         let mut block: Vec<String> = Vec::new();
-        for element in self.scene.iter_ordered() {
-            if element.container_id.is_some()
-                || element.frame_id.as_deref() != Some(frame)
-                || !(whole || joined.contains(&element.id) || touched.contains(&element.id))
-            {
-                continue;
-            }
+        for element in run {
             block.push(element.id.clone());
             let label = element.bound_text_id.as_ref().filter(|label| {
                 self.scene.get(label).is_some_and(|text| {

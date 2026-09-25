@@ -243,6 +243,12 @@ impl Scene {
         matches!(self.baseline.get(id), Some(None))
     }
 
+    /// What the element was at the last commit, when it has changed since — `Some(None)`
+    /// for one created since. See the `baseline` field.
+    pub(crate) fn committed(&self, id: &str) -> Option<Option<&DrawElement>> {
+        self.baseline.get(id).map(Option::as_deref)
+    }
+
     /// What every element changed since the last commit was before it — `None` for one
     /// the change created. Left in place: see `engine/peers.rs`, which puts them back.
     pub(crate) fn baseline(&self) -> Vec<(String, Option<Rc<DrawElement>>)> {
