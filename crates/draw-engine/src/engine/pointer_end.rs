@@ -18,6 +18,8 @@ const TEXT_BOX_MIN_DRAG: f64 = 12.0;
 impl DrawEngine {
     pub fn end_pointer(&mut self) {
         self.end_pointer_step();
+        self.pointer_open = false;
+        self.settle_selection();
         self.refresh_live();
     }
 
@@ -246,9 +248,123 @@ impl DrawEngine {
         }
         // Stamped by the commit, as every change is (`stamp.rs`) — so one created here
         // keeps the stamp it was created with.
+        let mut joined: Vec<(String, std::collections::HashSet<String>)> = Vec::new();
         for (id, frame_id) in changes {
+            if let Some(frame) = &frame_id {
+                match joined.iter_mut().find(|(f, _)| f == frame) {
+                    Some((_, ids)) => {
+                        ids.insert(id.clone());
+                    }
+                    None => joined.push((frame.clone(), [id.clone()].into())),
+                }
+            }
             self.scene
                 .update(&id, |element| element.frame_id = frame_id);
+        }
+        // A frame resized puts its children back in one run below it even when none joined:
+        // the oracle takes them all out and adds them back on every resize
+        // (`App.tsx@1118751f:12097-12117`), which also mends a child left above its frame.
+        // Not a frame moved: a drag adds only what it carried (`:12040-12059`).
+        let resized: Vec<String> = touched
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .filter(|el| crate::scene::is_frame(el))
+            .filter(|el| {
+                matches!(self.scene.committed(&el.id), Some(Some(before))
+                    if before.width != el.width || before.height != el.height)
+            })
+            .map(|el| el.id.clone())
+            .collect();
+        for frame in resized {
+            if !joined.iter().any(|(f, _)| *f == frame) {
+                joined.push((frame, std::collections::HashSet::new()));
+            }
+        }
+        for (frame, ids) in joined {
+            self.stack_under_frame(&frame, &ids, touched);
+        }
+    }
+
+    /// What joined `frame` goes directly below it, as the oracle keeps a frame's children
+    /// in one run under it: a new element is inserted there (`insertNewElements`,
+    /// `App.tsx@1118751f:7754-7782`), and one dragged in, pasted in or taken in by a new
+    /// frame is moved there (`addElementsToFrame`, `packages/element/src/frame.ts@1118751f:
+    /// 538-635`). Drawn, pasted or dragged in, a shape used to stay on top of the board,
+    /// above the frame it belonged to.
+    ///
+    /// The run is what joined, with what the gesture carried of the frame's — a selection
+    /// dragged in partly from inside goes together, in its own order, since the oracle
+    /// adds the selected elements that are in the frame (`App.tsx@1118751f:12046-12059`)
+    /// and reorders whenever they do not all share it already (`getCommonFrameId`,
+    /// `frame.ts@1118751f:503-519`). A member the commit only re-routed, an arrow bound to
+    /// what was dragged, keeps its place. When the frame itself was drawn, resized or
+    /// moved, the run is every member: the children it had, in their order, then what it
+    /// took in (`replaceAllElementsInFrame`, `:684-694`, over `getElementsInResizingFrame`,
+    /// `:283-377`, which lists loose newcomers before grouped ones where these keep the
+    /// stack's order). Each shape takes its label, directly above it (`:578-582`).
+    ///
+    /// Directly below the frame, or directly above its highest member when one sits above
+    /// it (`getFrameChildrenInsertionIndex`, `frame.ts@1118751f:521-536`). A label counts
+    /// with its shape's frame, since here only the shape carries it.
+    fn stack_under_frame(
+        &mut self,
+        frame: &str,
+        joined: &std::collections::HashSet<String>,
+        touched: &std::collections::HashSet<String>,
+    ) {
+        let whole = touched.contains(frame);
+        let carried = if whole {
+            std::collections::HashSet::new()
+        } else {
+            self.moving_selection()
+        };
+        let members = self
+            .scene
+            .iter_ordered()
+            .filter(|el| el.container_id.is_none() && el.frame_id.as_deref() == Some(frame));
+        let run: Vec<&crate::scene::DrawElement> = if whole {
+            let (newcomers, had): (Vec<_>, Vec<_>) =
+                members.partition(|el| joined.contains(&el.id));
+            had.into_iter().chain(newcomers).collect()
+        } else {
+            members
+                .filter(|el| joined.contains(&el.id) || carried.contains(&el.id))
+                .collect()
+        };
+        let mut block: Vec<String> = Vec::new();
+        for element in run {
+            block.push(element.id.clone());
+            let label = element.bound_text_id.as_ref().filter(|label| {
+                self.scene.get(label).is_some_and(|text| {
+                    !text.is_deleted && text.container_id.as_deref() == Some(&element.id)
+                })
+            });
+            block.extend(label.cloned());
+        }
+        let anchor = {
+            let moving: std::collections::HashSet<&str> =
+                block.iter().map(String::as_str).collect();
+            self.scene
+                .iter_ordered()
+                .rev()
+                .filter(|el| !moving.contains(el.id.as_str()))
+                .find_map(|el| {
+                    if el.id == frame {
+                        return Some((el.id.clone(), false));
+                    }
+                    let shape = match &el.container_id {
+                        Some(container) => self.scene.get(container),
+                        None => Some(el),
+                    };
+                    shape
+                        .is_some_and(|shape| shape.frame_id.as_deref() == Some(frame))
+                        .then(|| (el.id.clone(), true))
+                })
+        };
+        match anchor {
+            Some((child, true)) => self.scene.place_above(&block, &child),
+            Some((frame, false)) => self.scene.place_below(&block, &frame),
+            None => {}
         }
     }
 
@@ -391,6 +507,8 @@ impl DrawEngine {
 
     pub fn cancel_pointer(&mut self) {
         self.cancel_pointer_step();
+        self.pointer_open = false;
+        self.settle_selection();
         self.refresh_live();
     }
 

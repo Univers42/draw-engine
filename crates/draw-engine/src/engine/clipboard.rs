@@ -77,9 +77,12 @@ impl DrawEngine {
         // Only a step that changed something is recorded. A click that selected, or a
         // commit after a peer's patch and nothing of ours, used to push an entry anyway —
         // one that undid nothing and threw the redo stack away.
-        if let Some(step) = self.take_local_step() {
+        let selected = std::rc::Rc::new(self.selection_state());
+        if let Some(step) = self.take_local_step(&selected) {
             self.history.push(step);
         }
+        // The next step begins with what this one left selected.
+        self.settled_selection = selected;
         self.style_preview.clear();
         self.touch_style();
         self.emit_scene_change();
@@ -92,9 +95,11 @@ impl DrawEngine {
     /// four dropped frames for the act of drawing one rectangle — and it got worse as
     /// the board filled up, which is exactly the shape of "it feels slow".
     ///
-    /// A delta covers the common path. The rare structural changes — a z-order command,
-    /// a discarded draft, a wholesale replace — still send everything, because there is
-    /// no smaller honest answer for them.
+    /// A delta covers the common path, including elements placed beside another — a
+    /// shape joining a frame goes below it, a new label above its shape — for which it
+    /// carries the order of the ids. The rare structural changes — a z-order command, a
+    /// discarded draft, a wholesale replace — still send everything, because there is no
+    /// smaller honest answer for them.
     pub(super) fn emit_scene_change(&mut self) {
         match self.scene.take_delta() {
             Some(delta) => self.events.scene_delta = Some(delta),
@@ -108,14 +113,15 @@ impl DrawEngine {
         let _ = self.scene.take_order_baseline();
         self.remote_refused.clear();
         self.history.reset(super::stamp::HistoryEntry::default());
+        self.settle_selection();
     }
 
-    fn after_history_step(&mut self) {
-        // Through `set_selection`, so the group being edited goes with what was held.
-        // The step may have taken that group away (the oracle then drops it,
-        // `packages/element/src/delta.ts:806-818`); cleared behind its back, it named a
-        // group nothing carried, and no click anywhere on the board expanded to a group.
-        self.set_selection(Vec::new());
+    fn after_history_step(&mut self, selected: &super::stamp::SelectionState) {
+        // What the step recorded as selected, through `set_selection`: the step may have
+        // taken the group being edited away (the oracle then drops it,
+        // `packages/element/src/delta.ts:806-818`); kept behind its back, it named a group
+        // nothing carried, and no click anywhere on the board expanded to a group.
+        self.restore_selection(selected);
         // A drag carries on over the scene the step left, and what it remembered of the
         // arrow under it — the far end's binding as it found it — is of the scene before.
         self.clear_binding_suggestion();
@@ -132,7 +138,7 @@ impl DrawEngine {
         let step = self.history.current().clone();
         self.history.undo();
         self.replay_step(&step, false);
-        self.after_history_step();
+        self.after_history_step(&step.selection.0);
     }
 
     pub fn redo(&mut self) {
@@ -140,7 +146,7 @@ impl DrawEngine {
             return;
         };
         self.replay_step(&step, true);
-        self.after_history_step();
+        self.after_history_step(&step.selection.1);
     }
 
     pub fn copy_selection(&mut self) -> Option<String> {
@@ -274,14 +280,16 @@ impl DrawEngine {
                         }
                     }
                 }
-                for element in self.scene.ordered_cloned() {
-                    if element.is_deleted {
-                        continue;
-                    }
-                    if !ids.iter().any(|id| *id == element.id) {
-                        live.push(element);
-                    }
-                }
+                // What the order leaves out stays on top. Told by a set: searched in the
+                // list once per element, a peer's order cost the board squared — 533ms on
+                // 20,000 shapes — and every shape a peer draws into a frame sends one.
+                let listed: HashSet<&str> = ids.iter().copied().collect();
+                live.extend(
+                    self.scene
+                        .iter_ordered()
+                        .filter(|element| !listed.contains(element.id.as_str()))
+                        .cloned(),
+                );
                 self.scene.set_order(live);
                 changed = true;
             }

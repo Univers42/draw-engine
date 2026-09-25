@@ -92,6 +92,11 @@ pub struct Scene {
     /// Set when a change cannot be expressed as "these elements differ" — a z-order
     /// rearrangement or a hard delete. The host then needs the whole scene.
     structural: bool,
+    /// Set when elements were placed beside another ([`Self::place_above`],
+    /// [`Self::place_below`]) — what joins a frame goes below it, a new label above its
+    /// shape. The host can follow that from the ids alone, so the delta carries the order
+    /// rather than the whole scene. See [`Self::take_delta`].
+    reordered: bool,
     /// Bumped by every mutation.
     ///
     /// The painter keeps the static scene in an offscreen layer and needs one question
@@ -133,6 +138,10 @@ pub struct SceneDelta {
     pub updated: Vec<DrawElement>,
     /// Ids that were tombstoned.
     pub removed: Vec<String>,
+    /// Every live id, bottom first, when the stack moved as well — elements placed
+    /// beside another. `None` when nothing moved: what is new goes on top.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<Vec<String>>,
 }
 
 impl Scene {
@@ -232,10 +241,21 @@ impl Scene {
         self.baseline.keys().cloned().collect()
     }
 
+    /// Whether anything — an element or the z-order — changed since the last commit.
+    pub(crate) fn has_pending(&self) -> bool {
+        !self.baseline.is_empty() || self.order_baseline.is_some()
+    }
+
     /// Whether the element was created since the last commit — a draft, a label being
     /// typed — and so can be dropped without a trace, rather than deleted.
     pub(crate) fn created_since_commit(&self, id: &str) -> bool {
         matches!(self.baseline.get(id), Some(None))
+    }
+
+    /// What the element was at the last commit, when it has changed since — `Some(None)`
+    /// for one created since. See the `baseline` field.
+    pub(crate) fn committed(&self, id: &str) -> Option<Option<&DrawElement>> {
+        self.baseline.get(id).map(Option::as_deref)
     }
 
     /// What every element changed since the last commit was before it — `None` for one
@@ -406,13 +426,25 @@ impl Scene {
 
     /// Hard delete, leaving no tombstone. Used when discarding an element that was
     /// never committed, such as a drag that ended below the minimum size.
+    ///
+    /// One created since the last commit leaves nothing behind for the commit either, as
+    /// if it had never been. Its entry used to stay, pending, until the next commit — and
+    /// while anything is pending the engine does not settle the selection a step of undo
+    /// begins with, so a click with a shape tool left every selection after it unsettled
+    /// and undo gave back the one before (`engine/stamp.rs`).
     pub fn discard(&mut self, id: &str) {
         self.record(Change::Rearranged);
         self.touch_static(id);
         if let Some(&i) = self.index.get(id) {
-            if !self.baseline.contains_key(id) {
-                self.baseline
-                    .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+            match self.baseline.get(id) {
+                Some(None) => {
+                    self.baseline.remove(id);
+                }
+                Some(Some(_)) => {}
+                None => {
+                    self.baseline
+                        .insert(id.to_string(), Some(Rc::clone(&self.elements[i])));
+                }
             }
             self.elements.remove(i);
             self.reindex();
@@ -441,20 +473,42 @@ impl Scene {
     /// the board — a label above its shape, a copy inside the group it was made in —
     /// without cloning the board to say so. Nothing happens when they are already there.
     pub(crate) fn place_above(&mut self, ids: &[String], anchor: &str) {
+        self.place_beside(ids, anchor, true);
+    }
+
+    /// Moves `ids`, in the order given, to directly below `anchor` — what joins a frame
+    /// goes under it (`engine/pointer_end.rs`).
+    pub(crate) fn place_below(&mut self, ids: &[String], anchor: &str) {
+        self.place_beside(ids, anchor, false);
+    }
+
+    fn place_beside(&mut self, ids: &[String], anchor: &str, above: bool) {
         let Some(&at) = self.index.get(anchor) else {
             return;
         };
-        let in_place = ids
-            .iter()
-            .enumerate()
-            .all(|(k, id)| self.index.get(id) == Some(&(at + 1 + k)));
+        let first = if above {
+            Some(at + 1)
+        } else {
+            at.checked_sub(ids.len())
+        };
+        let in_place = first.is_some_and(|first| {
+            ids.iter()
+                .enumerate()
+                .all(|(k, id)| self.index.get(id) == Some(&(first + k)))
+        });
         let moving: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
         if in_place || moving.contains(anchor) {
             return;
         }
         self.record(Change::Rearranged);
         self.static_revision = next_revision();
-        self.note_order();
+        // Where an element created since the last commit goes is part of its creation, not
+        // a reorder for undo to record: undo tombstones it where it stands and redo brings
+        // it back there. Recorded, a shape drawn into a frame kept two lists of every id on
+        // the board per step of history — 1.9MB a step at 20k elements.
+        if !ids.iter().all(|id| self.created_since_commit(id)) {
+            self.note_order();
+        }
         let mut taken: HashMap<String, Rc<DrawElement>> = HashMap::new();
         let mut rest: Vec<Rc<DrawElement>> = Vec::with_capacity(self.elements.len());
         for element in self.elements.drain(..) {
@@ -467,43 +521,44 @@ impl Scene {
         let at = rest
             .iter()
             .position(|el| el.id == anchor)
-            .map_or(rest.len(), |i| i + 1);
+            .map_or(rest.len(), |i| if above { i + 1 } else { i });
         rest.splice(at..at, ids.iter().filter_map(|id| taken.remove(id)));
         self.elements = rest;
         self.reindex();
-        self.structural = true;
+        self.reordered = true;
     }
 
     /// Replaces the z-order with `live`, keeping tombstones at the back of the stack.
     ///
     /// Tombstones go first so that restoring one by undo puts it beneath everything
     /// drawn since, which is what the user expects.
+    ///
+    /// Tombstones are told from `live` by a set: searched in the list, once per tombstone,
+    /// a reorder on a board that had deleted as much as it held cost the product of the
+    /// two — 79ms for 5,000 over 5,000 against 4.7ms with none; 5.7ms with the set
+    /// (`cargo bench --bench editing -- reorder/one_to_front`). A board with no tombstone
+    /// builds no set.
     pub fn set_order(&mut self, live: Vec<DrawElement>) {
         self.record(Change::Rearranged);
         self.static_revision = next_revision();
         self.note_order();
-        let mut next: Vec<Rc<DrawElement>> = self
-            .elements
-            .iter()
-            .filter(|element| element.is_deleted)
-            .filter(|element| !live.iter().any(|l| l.id == element.id))
-            .cloned()
-            .collect();
+        let mut next: Vec<Rc<DrawElement>> = if !self.elements.iter().any(|e| e.is_deleted) {
+            Vec::with_capacity(live.len())
+        } else {
+            let listed: std::collections::HashSet<&str> =
+                live.iter().map(|l| l.id.as_str()).collect();
+            self.elements
+                .iter()
+                .filter(|element| element.is_deleted && !listed.contains(element.id.as_str()))
+                .cloned()
+                .collect()
+        };
         next.extend(live.into_iter().map(Rc::new));
         self.elements = next;
         self.reindex();
         self.structural = true;
     }
 
-    /// Takes what changed since the last call, clearing the record.
-    ///
-    /// `None` means the change was structural — a reorder or a hard delete — and the
-    /// caller should send the whole scene instead. That is rare: it is a z-order
-    /// command or a discarded draft, never the common path of drawing or moving.
-    /// A number that changes whenever the scene does, and never otherwise.
-    ///
-    /// Deliberately not a hash of the contents: this is asked once per frame and has to
-    /// cost nothing, and a counter cannot miss a field the way a hash can.
     /// Every element the store holds, tombstones included.
     ///
     /// Tombstones stay in the scene because a deletion has to be *sent* to the other
@@ -513,6 +568,10 @@ impl Scene {
         self.elements.len()
     }
 
+    /// A number that changes whenever the scene does, and never otherwise.
+    ///
+    /// Deliberately not a hash of the contents: this is asked once per frame and has to
+    /// cost nothing, and a counter cannot miss a field the way a hash can.
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -542,8 +601,18 @@ impl Scene {
         }
     }
 
+    /// Takes what changed since the last call, clearing the record.
+    ///
+    /// `None` means the change was structural — a z-order command, a hard delete, a scene
+    /// replaced — and the caller should send the whole scene instead. That is rare, never
+    /// the common path of drawing or moving. Elements placed beside another are not: every
+    /// shape drawn, pasted or dragged into a frame goes below it, and a new label above
+    /// its shape. That stays a delta, which then carries the order — every live id, not
+    /// every element: on a board of 20,000, a shape drawn into a frame sent the host 10.7MB
+    /// of scene (`cargo bench --bench editing -- frame_join`).
     pub fn take_delta(&mut self) -> Option<SceneDelta> {
         let structural = std::mem::take(&mut self.structural);
+        let reordered = std::mem::take(&mut self.reordered);
         let dirty = std::mem::take(&mut self.dirty);
         if structural {
             return None;
@@ -568,6 +637,9 @@ impl Scene {
                 None => {}
             }
         }
+        if reordered {
+            delta.order = Some(self.iter_ordered().map(|el| el.id.clone()).collect());
+        }
         Some(delta)
     }
 
@@ -584,6 +656,7 @@ impl Scene {
     pub(crate) fn forget_pending(&mut self) {
         self.dirty.clear();
         self.structural = false;
+        self.reordered = false;
     }
 
     pub fn bounds(&self) -> Option<WorldBounds> {
@@ -726,6 +799,58 @@ mod tests {
             "the tombstone sits beneath the live elements"
         );
         assert!(all[0].is_deleted);
+    }
+
+    /// A draft thrown away is as if it had never been: nothing is left for a commit, so
+    /// the engine settles the selection again (`engine/stamp.rs`). An element that was
+    /// there at the last commit and is hard-deleted is still a change.
+    #[test]
+    fn discarding_a_draft_leaves_nothing_pending() {
+        let mut scene = Scene::new([element("a")]);
+        let _ = scene.take_baseline();
+        scene.add(element("d"));
+        scene.discard("d");
+        assert!(!scene.has_pending());
+
+        scene.discard("a");
+        assert!(scene.has_pending());
+    }
+
+    /// Placed beside another, what was created since the last commit is no reorder for
+    /// undo — its place is part of its creation — and the host is told the order in the
+    /// delta rather than handed the whole scene. What was there before is a reorder.
+    #[test]
+    fn placing_what_was_just_made_is_a_delta_with_the_order() {
+        let mut scene = Scene::new([element("a"), element("f")]);
+        let _ = scene.take_baseline();
+        let _ = scene.take_delta();
+        scene.add(element("n"));
+        scene.place_below(&["n".into()], "f");
+        assert_eq!(scene.take_order_baseline(), None);
+        let delta = scene.take_delta().expect("a delta, not the whole scene");
+        assert_eq!(delta.order, Some(vec!["a".into(), "n".into(), "f".into()]));
+        assert_eq!(delta.updated.len(), 1);
+
+        scene.place_below(&["a".into()], "f");
+        assert_eq!(
+            scene.take_order_baseline(),
+            Some(vec!["a".into(), "n".into(), "f".into()])
+        );
+        let delta = scene.take_delta().expect("a delta");
+        assert_eq!(delta.order, Some(vec!["n".into(), "a".into(), "f".into()]));
+        assert_eq!(scene.take_delta().expect("nothing since").order, None);
+    }
+
+    #[test]
+    fn place_below_puts_ids_under_the_anchor_and_leaves_them_there() {
+        let mut scene = Scene::new([element("a"), element("f"), element("x"), element("n")]);
+        let _ = scene.take_baseline();
+        scene.place_below(&["x".into(), "n".into()], "f");
+        assert_eq!(ids(&scene), ["a", "x", "n", "f"]);
+        let _ = scene.take_order_baseline();
+
+        scene.place_below(&["x".into(), "n".into()], "f");
+        assert!(!scene.has_pending(), "already there: no reorder recorded");
     }
 
     /// Every mutation has to leave the index consistent with the vector, or lookups

@@ -208,6 +208,11 @@ pub struct DrawEngine {
     ctrl_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
+    /// The selection the next step of history begins with: as the last gesture or command
+    /// left it. See `stamp.rs`, "Undo puts the selection back".
+    settled_selection: std::rc::Rc<stamp::SelectionState>,
+    /// Between a press and its release, when what the press selects is not settled yet.
+    pointer_open: bool,
     /// A peer's copy of an element with an uncommitted local change, refused because a
     /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
     /// it if the gesture came to nothing. See `stamp.rs`.
@@ -279,6 +284,8 @@ impl DrawEngine {
             ctrl_held: false,
             history: SnapshotHistory::new(stamp::HistoryEntry::default(), |entry| entry.seq, 200),
             history_seq: 0,
+            settled_selection: std::rc::Rc::default(),
+            pointer_open: false,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
             peers: Vec::new(),
@@ -534,8 +541,25 @@ impl DrawEngine {
         //
         // Going back to select is how a person picks up what they have just made, so that
         // one direction keeps it.
-        if tool != DrawTool::Select {
+        //
+        // What was held stays what the next step begins with: the oracle's `setActiveTool`
+        // captures nothing for a shape tool (`App.tsx@1118751f:6110-6256`), so undoing the
+        // shape it draws selects again what the tool put down. See `stamp.rs`.
+        //
+        // The pencil is the exception: picking it records the selection it lets go of
+        // (`App.tsx@1118751f:6204-6206`; "should create entry when selecting freedraw",
+        // `history.test.tsx@1118751f:1249`), so undoing a stroke leaves nothing selected
+        // and the colour then picked for the pencil restyles nothing. Settled even when
+        // nothing was held: a shape tool picked before it may have kept an older one.
+        // Auto-shape, which the oracle lacks, goes with the shape tools — like them, it
+        // leaves what it made selected.
+        if tool == DrawTool::Freedraw {
             self.clear_selection();
+            self.settle_selection();
+        } else if tool != DrawTool::Select {
+            let settled = std::rc::Rc::clone(&self.settled_selection);
+            self.clear_selection();
+            self.settled_selection = settled;
         }
     }
 
@@ -609,6 +633,7 @@ impl DrawEngine {
             }
         }
         self.revalidate_editing();
+        self.settle_selection();
         self.touch_style();
         self.events.selection = Some(self.get_selection());
         self.request_draw();

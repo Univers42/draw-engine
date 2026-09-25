@@ -64,7 +64,14 @@ fn draw_arrow(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64)) -> Draw
         );
     }
     engine.end_pointer();
-    the_arrow(engine)
+    // The one just drawn is selected; it is not always the topmost arrow, since one drawn
+    // in a frame goes below the frame.
+    let drawn = engine.get_selection();
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|el| drawn.contains(&el.id) && el.kind == DrawElementType::Arrow)
+        .expect("an arrow was drawn")
 }
 
 fn ends(arrow: &DrawElement) -> (Point, Point) {

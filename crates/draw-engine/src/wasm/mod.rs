@@ -428,7 +428,9 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
     }
     // One callback carries both shapes. A delta is tagged so the host can tell them
     // apart, and the full form is kept for the structural changes a delta cannot
-    // express — a reorder, a hard delete, an undo.
+    // express — a z-order command, a hard delete, an undo. A delta that moved the stack
+    // as well — elements placed beside another — carries `order`, every live id bottom
+    // first (`Scene::take_delta`).
     if let Some(cb) = cbs.4 {
         if let Some(delta) = events.scene_delta {
             #[derive(serde::Serialize)]
@@ -439,12 +441,15 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
                 version: u32,
                 updated: &'a [crate::scene::DrawElement],
                 removed: &'a [String],
+                #[serde(skip_serializing_if = "Option::is_none")]
+                order: Option<&'a [String]>,
             }
             let envelope = DeltaEnvelope {
                 kind: "osidraw-delta",
                 version: 1,
                 updated: &delta.updated,
                 removed: &delta.removed,
+                order: delta.order.as_deref(),
             };
             if let Ok(json) = serde_json::to_string(&envelope) {
                 let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));

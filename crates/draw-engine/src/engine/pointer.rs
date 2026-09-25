@@ -11,6 +11,9 @@ use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
     pub fn begin_pointer(&mut self, sx: f64, sy: f64, additive: bool, duplicate: bool) {
+        // What the press selects is settled on the release, as the oracle captures at
+        // pointer-up (`App.tsx@1118751f:12451-12464`): see `stamp.rs`.
+        self.pointer_open = true;
         self.begin_pointer_step(sx, sy, additive, duplicate);
         self.refresh_live();
     }
