@@ -82,6 +82,10 @@ const DOUBLE_TAP_PX: f64 = 35.0;
 const SNAP_PX: f64 = 6.0;
 const PASTE_OFFSET: f64 = 12.0;
 const MOTION_MS: f64 = 140.0;
+/// Excalidraw's `DEFAULT_TRANSFORM_HANDLE_SPACING * 2`: how far outside a multi-selection's
+/// own bounds a right-click still counts as landing on it, before `COLLISION_PX` is added
+/// on top (`isHittingCommonBoundingBoxOfSelectedElements`, `App.tsx@1118751f:9791-9812`).
+const COMMON_BOX_PADDING_PX: f64 = 4.0;
 
 pub struct DrawEngine {
     scene: Scene,
@@ -480,6 +484,31 @@ impl DrawEngine {
     /// the cost of a click scale with the size of the board.
     pub fn hit_test(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
         self.element_at(sx, sy, tolerance, |_| true).cloned()
+    }
+
+    /// Whether a screen point falls inside the padded common bounding box of the current
+    /// selection, with no element itself under it — a right-click there still opens the
+    /// element menu, not the board's (`isHittingCommonBoundingBoxOfSelectedElements`,
+    /// `App.tsx@1118751f:9791-9812`). `None` with fewer than two selected, as the oracle's
+    /// does: a single element is already caught by [`Self::hit_test`] itself.
+    pub fn hits_selection_box(&self, sx: f64, sy: f64) -> bool {
+        if self.selected_ids.len() < 2 {
+            return false;
+        }
+        let Some(bounds) = crate::scene::geometry::scene_bounds(
+            self.scene
+                .iter_ordered()
+                .filter(|element| self.selected_ids.contains(&element.id)),
+        ) else {
+            return false;
+        };
+        let at = self.screen_to_world(sx, sy);
+        let padding = COMMON_BOX_PADDING_PX / self.camera.scale;
+        let threshold = self.collision_tolerance();
+        at.x > bounds.min_x - padding - threshold
+            && at.x < bounds.max_x + padding + threshold
+            && at.y > bounds.min_y - padding - threshold
+            && at.y < bounds.max_y + padding + threshold
     }
 
     /// The topmost element under a screen point that `eligible` accepts, a label standing

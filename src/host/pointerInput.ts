@@ -185,9 +185,14 @@ export function attachPointerInput(session: HostSession): () => void {
     const { x, y } = localPoint(canvas, event);
     const hit = engine.hitTest(x, y, 4);
     // A selected element keeps the selection it is in, so the menu can act on all of
-    // it — binding a text to a shape takes both (`App.tsx@1118751f:13299-13319`).
-    if (!hit) engine.clearSelection();
-    else if (!engine.getSelection().includes(hit.id)) engine.select([hit.id]);
+    // it — binding a text to a shape takes both (`App.tsx@1118751f:13299-13319`). Nothing
+    // under the point but still inside the padded box around a multi-selection is a
+    // right-click on that selection too — the frame between shapes opens the element menu,
+    // not the board's (`isHittingCommonBoundingBoxOfSelectedElements`,
+    // `App.tsx@1118751f:13276-13279`); the selection is left exactly as it was, as the
+    // oracle leaves `state` untouched for that case.
+    if (!hit && !engine.hitsSelectionBox(x, y)) engine.clearSelection();
+    else if (hit && !engine.getSelection().includes(hit.id)) engine.select([hit.id]);
     callbacks.onContextMenu?.({ x, y });
   };
 
