@@ -95,6 +95,7 @@ impl DrawEngine {
         label.width = width;
         label.height = height;
         label.container_id = Some(container.id.clone());
+        let min_line = self.one_line_box(&label);
         // In its shape's groups and directly above it, as the oracle makes one
         // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
         // board instead, it was drawn over whatever covers its shape, and split the
@@ -102,12 +103,49 @@ impl DrawEngine {
         label.group_ids = container.group_ids.clone();
         let mut container = container.clone();
         container.bound_text_id = Some(label.id.clone());
+        if !is_linear_element(&container) {
+            grow_to_one_line(&mut container, min_line);
+        }
         self.scene.add(label.clone());
         self.scene
             .place_above(std::slice::from_ref(&label.id), &container.id);
         self.scene.put(container);
         self.apply_bindings();
         self.scene.get(&label.id).cloned().unwrap_or(label)
+    }
+
+    /// The smallest box a shape needs to hold one line of `label`: its widest capital or
+    /// digit and one line, each with the label's padding either side —
+    /// `getApproxMinLineWidth` and `getApproxMinLineHeight`
+    /// (`packages/element/src/textMeasurements.ts@1118751f:29-44`, `:99-104`).
+    ///
+    /// The oracle takes the widest character it happens to have measured so far, which
+    /// depends on what was typed before; this always takes its fallback, the capitals and
+    /// digits.
+    fn one_line_box(&self, label: &DrawElement) -> (f64, f64) {
+        const DUMMY_TEXT: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let font = layout::font_of(label);
+        let line_height = crate::scene::resolved_line_height(label);
+        let column = DUMMY_TEXT
+            .chars()
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (width, _) = self.with_measure(|measure| measure.size(&column, font, line_height));
+        let padding = 2.0 * layout::BOUND_TEXT_PADDING;
+        (width + padding, font.size() * line_height + padding)
+    }
+
+    /// Where a new free text's top goes for a press at `y`: its first line centred on the
+    /// pointer, as the oracle starts one from a point cursor (`App.tsx@1118751f:7019-7029`).
+    /// With the grid snapping, the oracle puts it on the nearest grid point instead
+    /// (`getTextCreationGridPoint`); ponytail: left on the point here, until text
+    /// creation snaps.
+    pub(crate) fn first_line_top(&self, text: &DrawElement, y: f64) -> f64 {
+        if self.grid.enabled && self.grid.snap {
+            return y;
+        }
+        y - layout::font_size_of(text) * crate::scene::resolved_line_height(text) / 2.0
     }
 
     fn label_target_at(&self, wx: f64, wy: f64) -> Option<DrawElement> {
@@ -267,12 +305,13 @@ impl DrawEngine {
             }
         }
         let font_size = self.next_font_size;
-        let element = self.new_text_element(Geometry {
+        let mut element = self.new_text_element(Geometry {
             x: world.x,
             y: world.y,
             width: 4.0,
             height: font_size,
         });
+        element.y = self.first_line_top(&element, world.y);
         let id = element.id.clone();
         self.scene.add(element.clone());
         self.set_selection(vec![id]);
@@ -479,4 +518,18 @@ impl DrawEngine {
             self.request_draw();
         }
     }
+}
+
+/// A shape too small for one line of the label it is being given grows to hold one, from
+/// its top-left corner (`startTextEditing`, `App.tsx@1118751f:6983-7005`).
+fn grow_to_one_line(container: &mut DrawElement, (min_width, min_height): (f64, f64)) {
+    let rect =
+        crate::scene::normalize_rect(container.x, container.y, container.width, container.height);
+    if rect.width >= min_width && rect.height >= min_height {
+        return;
+    }
+    container.x = rect.x;
+    container.y = rect.y;
+    container.width = rect.width.max(min_width);
+    container.height = rect.height.max(min_height);
 }
