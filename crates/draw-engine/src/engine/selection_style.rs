@@ -72,6 +72,8 @@ impl Edges {
 #[serde(rename_all = "camelCase")]
 pub struct SelectionStyle {
     /// Live selected elements. Zero means the values are the next element's style.
+    /// Locked ones count — the layer, flip and group rows act on them — but everything
+    /// below reads only what a style would change ([`DrawEngine::restylable`]).
     pub count: usize,
     /// Types of the oracle's target elements: the selection plus the labels its shapes
     /// carry (`getTargetElements`), distinct. A label is what makes a labelled shape
@@ -158,6 +160,12 @@ impl DrawEngine {
             .filter(|label| !label.is_deleted)
     }
 
+    /// The label of a shape a style reaches, if a style may change it too.
+    fn styled_label(&self, element: &DrawElement) -> Option<&DrawElement> {
+        self.live_label(element)
+            .filter(|label| self.restylable(label))
+    }
+
     /// Whether `element` is the label of a shape that is selected too. Select All takes
     /// labels with their shapes, where the oracle's skips bound text
     /// (`actions/actionSelectAll.ts@1118751f:32-38`) and a marquee never takes one alone
@@ -184,6 +192,11 @@ impl DrawEngine {
         if selected.is_empty() {
             return self.next_selection_style();
         }
+        let styled: Vec<&DrawElement> = selected
+            .iter()
+            .copied()
+            .filter(|element| self.restylable(element))
+            .collect();
 
         let mut kinds = Vec::new();
         let mut filled_kinds = Vec::new();
@@ -225,14 +238,14 @@ impl DrawEngine {
                 }
             }
         };
-        for element in &selected {
+        for element in &styled {
             target(element);
-            if let Some(label) = self.live_label(element) {
+            if let Some(label) = self.styled_label(element) {
                 target(label);
             }
         }
 
-        for element in &selected {
+        for element in &styled {
             stroke_color.add(element.stroke_color.as_str());
             background_color.add(element.background_color.as_str());
             if has_fill_style(element.kind) {
@@ -253,7 +266,7 @@ impl DrawEngine {
             let text = if element.kind == DrawElementType::Text {
                 Some(*element)
             } else {
-                self.live_label(element)
+                self.styled_label(element)
             };
             if let Some(text) = text {
                 font_size.add(text.font_size.unwrap_or(super::DEFAULT_FONT_SIZE));
@@ -329,12 +342,13 @@ impl DrawEngine {
 
     /// Who a style patch reaches, and with what.
     ///
-    /// Every selected element takes the whole patch. The label of a selected shape takes
-    /// the stroke colour and the opacity and nothing else — the two properties whose
-    /// oracle actions pass `includeBoundText` (`actionProperties.tsx@1118751f:381-397`,
-    /// `:962-970`); a label has no use for a fill, a width, a dash or a sloppiness. So
-    /// does a label selected along with its shape: see [`Self::is_carried_label`]. A label
-    /// a peer is typing into, or a locked one, is not reached ([`Self::label_of`]).
+    /// Every selected element a style may change ([`Self::restylable`]) takes the whole
+    /// patch. The label of a selected shape takes the stroke colour and the opacity and
+    /// nothing else — the two properties whose oracle actions pass `includeBoundText`
+    /// (`actionProperties.tsx@1118751f:381-397`, `:962-970`); a label has no use for a
+    /// fill, a width, a dash or a sloppiness. So does a label selected along with its
+    /// shape: see [`Self::is_carried_label`]. A label a peer is typing into, or a locked
+    /// one, is not reached ([`Self::label_of`]).
     fn style_targets(
         &self,
         patch: &DrawElementStylePatch,
@@ -346,7 +360,7 @@ impl DrawEngine {
         };
         let reaches_labels = for_label.stroke_color.is_some() || for_label.opacity.is_some();
         let mut selected = self.get_selected_elements();
-        selected.retain(|element| !self.is_carried_label(element));
+        selected.retain(|element| !self.is_carried_label(element) && self.restylable(element));
         let ids: HashSet<&str> = selected.iter().map(|element| element.id.as_str()).collect();
         let mut labels = Vec::new();
         if reaches_labels {
@@ -444,7 +458,8 @@ impl DrawEngine {
     /// A label takes the copied label's style and is left alone when none was copied.
     /// A text also takes the font — or the defaults, when the source has none — and is
     /// measured again. An arrow takes the heads of an arrow; a frame stays clear and
-    /// square.
+    /// square. A locked element, and the label of a locked shape, keep their own
+    /// ([`Self::restylable`]).
     pub fn paste_styles(&mut self) {
         let Some(copied) = self.copied_styles.clone() else {
             return;
@@ -455,6 +470,7 @@ impl DrawEngine {
         let label_source = copied.get(1);
 
         let mut targets = self.get_selected_elements();
+        targets.retain(|element| self.restylable(element));
         let ids: HashSet<String> = targets.iter().map(|element| element.id.clone()).collect();
         let labels: Vec<DrawElement> = targets
             .iter()

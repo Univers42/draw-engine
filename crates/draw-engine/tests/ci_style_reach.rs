@@ -176,3 +176,69 @@ fn a_label_select_all_takes_is_still_carried_by_its_shape() {
     assert_eq!(label.background_color, before.background_color);
     assert_eq!(label.stroke_width, before.stroke_width);
 }
+
+/// Select All over a locked shape holding a label and a free shape, as this engine's
+/// takes locked elements — so they can be unlocked from the menu — where the oracle
+/// cannot select one at all (`shouldIgnoreElementFromSelection`,
+/// `packages/element/src/selection.ts@1118751f:33-34`).
+fn locked_box_and_a_free_one() -> DrawEngine {
+    let mut elements = labelled_box();
+    elements[0].locked = Some(true);
+    let mut free = box_at(300.0, 0.0, 100.0, 100.0);
+    free.id = "free".into();
+    free.stroke_color = "#2f9e44".into();
+    elements.push(free);
+    let mut engine = engine_with_measure(elements);
+    engine.select_all();
+    assert_eq!(engine.get_selection().len(), 3, "setup: all three are held");
+    engine
+}
+
+/// A locked element is never restyled, nor the label of a locked shape: what the oracle
+/// cannot select, no style of its reaches.
+#[test]
+fn a_style_chosen_after_select_all_passes_locked_elements_by() {
+    let mut engine = locked_box_and_a_free_one();
+    let (locked, label) = (element(&engine, "box"), element(&engine, "label"));
+
+    engine.apply_style(stroke_patch("#e03131"));
+    engine.set_font_size(36.0);
+
+    assert_eq!(element(&engine, "free").stroke_color, "#e03131");
+    let after = element(&engine, "box");
+    assert_eq!(
+        (after.stroke_color.as_str(), after.version),
+        (locked.stroke_color.as_str(), locked.version),
+        "the locked shape keeps its colour and its stamp"
+    );
+    assert_eq!(element(&engine, "label"), label, "and so does its label");
+}
+
+#[test]
+fn pasted_styles_pass_locked_elements_by() {
+    let mut engine = locked_box_and_a_free_one();
+    let (locked, label) = (element(&engine, "box"), element(&engine, "label"));
+    engine.select(vec!["free".into()]);
+    assert!(engine.copy_styles());
+    engine.select_all();
+
+    engine.paste_styles();
+
+    assert_eq!(element(&engine, "box"), locked);
+    assert_eq!(element(&engine, "label"), label);
+}
+
+/// The panel shows what a style would change: the free shape's colour, not "mixed" with
+/// the locked one's, and no text rows for the locked shape's label.
+#[test]
+fn the_panel_reads_only_what_a_style_would_change() {
+    let engine = locked_box_and_a_free_one();
+    let summary = engine.selection_style();
+    assert_eq!(summary.stroke_color.as_deref(), Some("#2f9e44"));
+    assert_eq!(summary.kinds, vec![DrawElementType::Rectangle]);
+    assert_eq!(summary.font_size, None);
+    assert_eq!(
+        summary.count, 2,
+        "the layer, flip and group rows still act on both"
+    );
+}

@@ -14,6 +14,18 @@ impl DrawEngine {
             .filter(|label| !label.is_deleted && !self.untouchable(label))
     }
 
+    /// Whether a style may change `element`: not a locked one, nor the label of a locked
+    /// shape. The oracle cannot select a locked element (`shouldIgnoreElementFromSelection`,
+    /// `packages/element/src/selection.ts@1118751f:33-34`), so none of its styles reaches
+    /// one. This engine's Select All takes locked elements, so they can be unlocked from
+    /// the menu; a style chosen then passes them by.
+    pub(super) fn restylable(&self, element: &DrawElement) -> bool {
+        !element.locked()
+            && self
+                .container_of(element)
+                .is_none_or(|container| !container.locked())
+    }
+
     pub fn set_arrowheads(
         &mut self,
         start: Option<crate::scene::Arrowhead>,
@@ -182,12 +194,16 @@ impl DrawEngine {
     /// A bound label is not separately selectable — clicking a shape with a label in it
     /// selects the shape — so following `bound_text_id` is not a convenience here, it is
     /// the difference between the control working on labels and being dead for all of
-    /// them. A label a peer holds is not followed ([`Self::label_of`]). Deduplicated by
-    /// id, because selecting a shape *and* a loose text must not visit anything twice.
+    /// them. A label a peer holds is not followed ([`Self::label_of`]), and nothing a
+    /// style may not change is taken ([`Self::restylable`]). Deduplicated by id, because
+    /// selecting a shape *and* a loose text must not visit anything twice.
     fn selected_texts(&self) -> Vec<crate::scene::DrawElement> {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for element in self.get_selected_elements() {
+            if !self.restylable(&element) {
+                continue;
+            }
             let candidate = if element.kind == crate::scene::DrawElementType::Text {
                 Some(element)
             } else {
