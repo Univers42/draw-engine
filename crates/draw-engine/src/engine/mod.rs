@@ -28,6 +28,7 @@ mod pointer;
 mod pointer_end;
 mod pointer_move;
 mod radius;
+mod selection_style;
 mod stamp;
 mod style;
 mod text;
@@ -37,6 +38,7 @@ pub mod vectorize;
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
+pub use selection_style::{Edges, SelectionStyle};
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
@@ -215,6 +217,10 @@ pub struct DrawEngine {
     peers: Vec<peers::Peer>,
     /// Element id to the index in `peers` of whoever holds it.
     held: HashMap<String, usize>,
+    /// Moves whenever the properties panel's summary may have. See `selection_style.rs`.
+    style_revision: u32,
+    /// What Copy styles took: an element, and the label it carried. See `selection_style.rs`.
+    copied_styles: Option<Vec<DrawElement>>,
 }
 
 impl Default for DrawEngine {
@@ -274,6 +280,8 @@ impl DrawEngine {
             events: EngineEvents::default(),
             peers: Vec::new(),
             held: HashMap::new(),
+            style_revision: 0,
+            copied_styles: None,
         }
     }
 
@@ -318,6 +326,7 @@ impl DrawEngine {
         self.scene.forget_pending();
         self.reset_history();
         self.revalidate_editing();
+        self.touch_style();
         self.request_draw();
     }
 
@@ -560,6 +569,7 @@ impl DrawEngine {
 
     pub fn set_next_style(&mut self, patch: DrawElementStylePatch) {
         self.next_style = merge_style_patch(&self.next_style, &patch);
+        self.touch_style();
     }
 
     pub fn get_next_style(&self) -> DrawElementStyle {
@@ -595,6 +605,7 @@ impl DrawEngine {
             }
         }
         self.revalidate_editing();
+        self.touch_style();
         self.events.selection = Some(self.get_selection());
         self.request_draw();
     }

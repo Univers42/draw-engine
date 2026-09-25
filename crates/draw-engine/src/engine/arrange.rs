@@ -80,7 +80,7 @@ impl DrawEngine {
     }
 
     /// How many units align and distribute would move — none with a frame selected.
-    fn arrange_units(&self) -> usize {
+    pub(super) fn arrange_units(&self) -> usize {
         crate::edit::units(
             self.scene.iter_ordered(),
             &self.carried_selection(),
@@ -225,7 +225,7 @@ impl DrawEngine {
 
     pub fn selection_is_group(&self) -> bool {
         is_single_group(
-            &self.scene.ordered_cloned(),
+            self.scene.iter_ordered(),
             &self.selected_ids,
             self.editing_group_id.as_deref(),
         )

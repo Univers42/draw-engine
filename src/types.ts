@@ -427,3 +427,61 @@ export interface DebugSnapshot {
     maxHitTestMs: number;
   };
 }
+
+/**
+ * The properties panel's one read of the selection — see the engine's
+ * `selection_style.rs`. Every value is `null` when the selection disagrees on it (the
+ * panel then marks nothing as current) or when nothing selected has it.
+ */
+export interface SelectionStyle {
+  /** Live selected elements. Zero means the values are the next element's style. */
+  count: number;
+  /** The selection's types plus the labels its shapes carry, distinct. */
+  kinds: DrawElementType[];
+  /** The subset of `kinds` whose background paints something. */
+  filledKinds: DrawElementType[];
+  textAlignable: boolean;
+  verticalAlignable: boolean;
+  canAlign: boolean;
+  canDistribute: boolean;
+  /** Only asked for a single element: from two up the group row shows regardless. */
+  isGroup: boolean;
+  strokeColor: string | null;
+  backgroundColor: string | null;
+  fillStyle: FillStyle | null;
+  strokeWidth: number | null;
+  strokeStyle: StrokeStyle | null;
+  roughness: number | null;
+  opacity: number | null;
+  edges: "sharp" | "round" | null;
+  startArrowhead: Arrowhead | null;
+  endArrowhead: Arrowhead | null;
+  fontSize: number | null;
+  textAlign: TextAlign | null;
+  verticalAlign: VerticalAlign | null;
+}
+
+/** What a panel shows before an engine exists: the default style, nothing selected. */
+export const EMPTY_SELECTION_STYLE: SelectionStyle = {
+  count: 0,
+  kinds: [],
+  filledKinds: [],
+  textAlignable: false,
+  verticalAlignable: false,
+  canAlign: false,
+  canDistribute: false,
+  isGroup: false,
+  strokeColor: DEFAULT_ELEMENT_STYLE.strokeColor,
+  backgroundColor: DEFAULT_ELEMENT_STYLE.backgroundColor,
+  fillStyle: DEFAULT_ELEMENT_STYLE.fillStyle,
+  strokeWidth: DEFAULT_ELEMENT_STYLE.strokeWidth,
+  strokeStyle: DEFAULT_ELEMENT_STYLE.strokeStyle,
+  roughness: DEFAULT_ELEMENT_STYLE.roughness,
+  opacity: DEFAULT_ELEMENT_STYLE.opacity,
+  edges: DEFAULT_ELEMENT_STYLE.roundness == null ? "sharp" : "round",
+  startArrowhead: "none",
+  endArrowhead: "arrow",
+  fontSize: 20,
+  textAlign: "left",
+  verticalAlign: "middle",
+};

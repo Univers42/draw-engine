@@ -278,7 +278,52 @@ fn reordering(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, duplicate, erase, moving, painting, reordering);
+/// The properties panel's read of the selection, asked once per `style_revision`.
+///
+/// Proportional to the selection, and paid once per change rather than once per row or
+/// per frame — so the number to watch is the whole board selected. `json` adds what the
+/// wasm boundary costs on top: the host receives it serialised. `one_of_n` is the other
+/// end, where the group check for a single element walks the board. `in_pairs` is the
+/// whole board grouped two by two, so every align unit is found by its group.
+fn selection_style(c: &mut Criterion) {
+    let mut group = c.benchmark_group("selection_style");
+    for n in [1000usize, 5000] {
+        let mut engine = engine_of(n);
+        engine.select_all();
+        group.bench_function(format!("all_of_{n}"), |b| {
+            b.iter(|| black_box(engine.selection_style()));
+        });
+        group.bench_function(format!("all_of_{n}_json"), |b| {
+            b.iter(|| black_box(serde_json::to_string(&engine.selection_style()).unwrap()));
+        });
+        let first = engine.get_scene()[0].id.clone();
+        engine.select(vec![first]);
+        group.bench_function(format!("one_of_{n}"), |b| {
+            b.iter(|| black_box(engine.selection_style()));
+        });
+
+        let mut paired = board_of(n);
+        for (i, element) in paired.iter_mut().enumerate() {
+            element.group_ids = vec![format!("pair-{}", i / 2)];
+        }
+        engine.set_scene(Scene::new(paired));
+        engine.select_all();
+        group.bench_function(format!("all_of_{n}_in_pairs"), |b| {
+            b.iter(|| black_box(engine.selection_style()));
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    duplicate,
+    erase,
+    moving,
+    painting,
+    reordering,
+    selection_style
+);
 criterion_main!(benches);
 
 /// Screen-sized shapes, hundreds of them, each a copy of the last.

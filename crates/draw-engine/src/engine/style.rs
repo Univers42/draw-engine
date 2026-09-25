@@ -1,56 +1,12 @@
 use crate::engine::DrawEngine;
-use crate::scene::{
-    apply_style_patch, bump_version, is_linear_element, DrawElement, DrawElementStylePatch,
-};
+use crate::scene::{bump_version, is_linear_element, DrawElement};
 
 impl DrawEngine {
-    /// Styles the selection. Stamped by the commit (`push_history`), and only what the
-    /// patch really changed: a colour picked again is not an edit (`newElementWith`
-    /// returns the element unchanged when no value differs,
-    /// `packages/element/src/mutateElement.ts@1118751f:149-181`).
-    pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
-        let selected = self.get_selected_elements();
-        if selected.is_empty() {
-            self.set_next_style(patch);
-            return;
-        }
-        // A shape's label is drawn in the shape's stroke colour and fades with it: the
-        // oracle applies both to the bound text of what is selected
-        // (`changeProperty(…, includeBoundText = true)` in `actionChangeStrokeColor` and
-        // `actionChangeOpacity`, `actions/actionProperties.tsx@1118751f`). Nothing else in
-        // a style patch means anything to a text.
-        let label_patch = DrawElementStylePatch {
-            stroke_color: patch.stroke_color.clone(),
-            opacity: patch.opacity,
-            ..DrawElementStylePatch::default()
-        };
-        let reaches_labels = label_patch.stroke_color.is_some() || label_patch.opacity.is_some();
-        let selected_ids: std::collections::HashSet<String> =
-            selected.iter().map(|el| el.id.clone()).collect();
-        let mut labels = Vec::new();
-        for mut element in selected {
-            if reaches_labels {
-                labels.extend(
-                    self.label_of(&element)
-                        .filter(|label| !selected_ids.contains(&label.id))
-                        .cloned(),
-                );
-            }
-            apply_style_patch(&mut element, &patch);
-            self.scene.put(element);
-        }
-        for mut label in labels {
-            apply_style_patch(&mut label, &label_patch);
-            self.scene.put(label);
-        }
-        self.push_history();
-        self.request_draw();
-    }
-
     /// The live label of `container` that is ours to change: not one a peer holds —
     /// typing into a label holds the label alone, and its shape stays selectable — nor a
-    /// locked one (`untouchable`).
-    fn label_of(&self, container: &DrawElement) -> Option<&DrawElement> {
+    /// locked one (`untouchable`). Every write that reaches a label through its shape goes
+    /// through here: the style panel's (`selection_style.rs`) and the text rows' below.
+    pub(super) fn label_of(&self, container: &DrawElement) -> Option<&DrawElement> {
         container
             .bound_text_id
             .as_deref()
@@ -87,6 +43,7 @@ impl DrawEngine {
 
     pub fn set_font_size(&mut self, size: f64) {
         self.next_font_size = size;
+        self.touch_style();
         // Through `selected_texts` rather than the raw selection, so resizing works with
         // a labelled shape selected — which is the only thing you *can* select once a
         // shape has a label.
@@ -251,6 +208,7 @@ impl DrawEngine {
     /// button.
     pub fn set_text_align(&mut self, align: crate::scene::TextAlign) {
         self.next_text_align = Some(align);
+        self.touch_style();
         let texts = self.selected_texts();
         if texts.is_empty() {
             return;
@@ -271,6 +229,7 @@ impl DrawEngine {
     /// the label stays where it was until something unrelated moves it.
     pub fn set_vertical_align(&mut self, align: crate::scene::VerticalAlign) {
         self.next_vertical_align = Some(align);
+        self.touch_style();
         let texts = self.selected_texts();
         if texts.is_empty() {
             return;
