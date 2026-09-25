@@ -512,6 +512,32 @@ mod several {
         assert_close(element(&engine, &pair[1].0).x, 200.0);
     }
 
+    /// A shape can still name a label someone else deleted: each element's newest copy
+    /// wins on its own, so one person's deletion of the label and another's edit of the
+    /// shape both stand. Resized with another shape, it is resized as a shape with no label
+    /// — the tombstone is not laid out, not stamped, and grows nothing.
+    #[test]
+    fn a_deleted_label_is_left_out_of_a_resize_of_several() {
+        let mut shape = box_at(0.0, 0.0, 300.0, 50.0);
+        let other = box_at(400.0, 0.0, 300.0, 50.0);
+        let mut gone = free_text(100.0, 12.5, WORDS);
+        gone.container_id = Some(shape.id.clone());
+        gone.is_deleted = true;
+        shape.bound_text_id = Some(gone.id.clone());
+        let (shape_id, other_id, gone_id) = (shape.id.clone(), other.id.clone(), gone.id.clone());
+        let before = gone.clone();
+        let mut engine = engine_selecting(vec![shape, other, gone], &[&shape_id, &other_id]);
+
+        let grab = (700.0 + HANDLE, 50.0 + HANDLE);
+        drag(&mut engine, grab, (350.0 + HANDLE, 50.0 + HANDLE), 4, false);
+
+        let shape = element(&engine, &shape_id);
+        assert_close(shape.width, 150.0);
+        assert_close(shape.height, 50.0);
+        let gone = element(&engine, &gone_id);
+        assert_eq!(gone, before, "the tombstone is untouched");
+    }
+
     /// Grouped, they scale as one (`isInGroup`, `:1376`), and so do their labels' fonts
     /// (`:1505-1510`).
     #[test]

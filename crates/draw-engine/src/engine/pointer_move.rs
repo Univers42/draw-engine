@@ -747,6 +747,9 @@ impl DrawEngine {
     /// anchor. A label too wide for its room widens the shape the same way from the side a
     /// west handle holds.
     fn relay_resized_label(&mut self, label: DrawElement, handle: HandleKind, flips: (bool, bool)) {
+        if label.is_deleted {
+            return;
+        }
         let Some(container) = label
             .container_id
             .as_deref()
