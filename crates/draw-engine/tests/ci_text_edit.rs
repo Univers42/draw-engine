@@ -638,6 +638,17 @@ mod entry {
         let (x, y) = middle(&element(&engine, &label));
         engine.begin_pointer(x, y, false, false);
         engine.end_pointer();
-        assert_eq!(engine.get_selection(), vec![shape_id]);
+        assert_eq!(engine.get_selection(), vec![shape_id.clone()]);
+
+        // The context menu's hit, locked shapes included (`openContextMenu`,
+        // `App.tsx@1118751f:13276-13279`), finds the shape through its label too.
+        engine.clear_selection();
+        assert_eq!(
+            engine.hit_test(x, y, 4.0).map(|el| el.id),
+            Some(shape_id.clone())
+        );
+        engine.select(vec![shape_id.clone()]);
+        engine.toggle_lock_selection();
+        assert_eq!(engine.hit_test(x, y, 4.0).map(|el| el.id), Some(shape_id));
     }
 }

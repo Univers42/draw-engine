@@ -446,18 +446,45 @@ impl DrawEngine {
         crate::screen_to_world(self.camera, sx, sy)
     }
 
-    /// Topmost element under the pointer, locked ones included.
+    /// Topmost element under the pointer, locked ones included, a label standing for its
+    /// shape — what a right-click selects (`openContextMenu`, `App.tsx@1118751f:13276-13279`).
     ///
     /// By reference, like [`Self::selectable_hit`]: this is called from JS on hover and
     /// on every click, and cloning the document to answer one question about one element
     /// made the cost of a click scale with the size of the board.
     pub fn hit_test(&self, sx: f64, sy: f64, tolerance: f64) -> Option<DrawElement> {
-        let world = self.screen_to_world(sx, sy);
-        self.scene
-            .iter_ordered()
-            .rev()
-            .find(|el| crate::hit_test_element(el, world.x, world.y, tolerance))
-            .cloned()
+        self.element_at(sx, sy, tolerance, |_| true).cloned()
+    }
+
+    /// The topmost element under a screen point that `eligible` accepts, a label standing
+    /// for its shape. The oracle leaves bound text out of what a point hits and hits a
+    /// shape through its label instead (`getElementsAtPosition`, `hitElement`,
+    /// `App.tsx@1118751f:6713-6737`, `:6784-6829`), so a press or a right-click on a label
+    /// picks up the shape — which a command then acts on whole, as a label on its own
+    /// moves only with its shape.
+    pub(crate) fn element_at(
+        &self,
+        sx: f64,
+        sy: f64,
+        tolerance: f64,
+        eligible: impl Fn(&DrawElement) -> bool,
+    ) -> Option<&DrawElement> {
+        let at = self.screen_to_world(sx, sy);
+        let hits = |element: &DrawElement| crate::hit_test_element(element, at.x, at.y, tolerance);
+        self.scene.iter_ordered().rev().find(|element| {
+            if !eligible(element)
+                || (element.kind == crate::scene::DrawElementType::Text
+                    && self.container_of(element).is_some())
+            {
+                return false;
+            }
+            hits(element)
+                || element
+                    .bound_text_id
+                    .as_deref()
+                    .and_then(|id| self.scene.get(id))
+                    .is_some_and(|label| !label.is_deleted && hits(label))
+        })
     }
 
     fn selectable(&self) -> Vec<DrawElement> {

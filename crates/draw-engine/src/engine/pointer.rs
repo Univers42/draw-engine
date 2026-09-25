@@ -405,7 +405,9 @@ impl DrawEngine {
             }
         }
 
-        if let Some(hit) = self.press_target(sx, sy) {
+        let tolerance = self.collision_tolerance();
+        let pressed = self.element_at(sx, sy, tolerance, |element| !self.untouchable(element));
+        if let Some(hit) = pressed.cloned() {
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
@@ -467,7 +469,7 @@ impl DrawEngine {
         //
         // It matters because a shape with no fill is hit on its outline only, so the
         // middle of a selected empty rectangle is a hole, movable otherwise only by
-        // aiming at a two-pixel line. Checked *after* `press_target` so a shape lying
+        // aiming at a two-pixel line. Checked *after* `element_at` so a shape lying
         // over the selection can still be clicked and selected in the normal way.
         if !additive && self.pointer_is_inside_selection(world) {
             if duplicate {
@@ -488,38 +490,6 @@ impl DrawEngine {
             base: self.selected_ids.clone(),
         });
         self.request_draw();
-    }
-
-    /// What a press of the selection tool lands on: the topmost element under it that may
-    /// be touched, a label standing for its shape. The oracle leaves bound text out of what
-    /// a press can hit and hits a shape through its label instead (`getElementsAtPosition`,
-    /// `hitElement`, `App.tsx@1118751f:6713-6737`, `:6784-6829`), so a click on a label
-    /// picks up the shape — which a command then acts on whole, as a label on its own
-    /// moves only with its shape.
-    fn press_target(&self, sx: f64, sy: f64) -> Option<crate::scene::DrawElement> {
-        let at = self.screen_to_world(sx, sy);
-        let tolerance = self.collision_tolerance();
-        let hits = |element: &crate::scene::DrawElement| {
-            crate::hit_test_element(element, at.x, at.y, tolerance)
-        };
-        self.scene
-            .iter_ordered()
-            .rev()
-            .find(|element| {
-                if self.untouchable(element)
-                    || (element.kind == DrawElementType::Text
-                        && self.container_of(element).is_some())
-                {
-                    return false;
-                }
-                hits(element)
-                    || element
-                        .bound_text_id
-                        .as_deref()
-                        .and_then(|id| self.scene.get(id))
-                        .is_some_and(|label| !label.is_deleted && hits(label))
-            })
-            .cloned()
     }
 
     /// Whether a world point falls within the frame drawn around the current selection.
