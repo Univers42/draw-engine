@@ -1,6 +1,7 @@
 use crate::edit::{
-    align_elements, distribute_elements, flip_elements, gather, group_patches, is_single_group,
-    reorder_positions, ungroup_patches, AlignMode, FlipAxis, ZOrderMode,
+    align_elements, can_toggle_polygon, distribute_elements, flip_elements, gather, group_patches,
+    is_single_group, reorder_positions, toggle_polygon, ungroup_patches, AlignMode, FlipAxis,
+    ZOrderMode,
 };
 use std::collections::HashMap;
 
@@ -109,6 +110,28 @@ impl DrawEngine {
         let flipped = self.moving_selection();
         self.forget_original_heights(&flipped);
         self.apply_patches(flip_elements(&self.scene.ordered_cloned(), &flipped, axis));
+    }
+
+    /// Whether the polygon toggle would do anything to the current selection — a line
+    /// with at least four points, and only lines (`actionLinearEditor.tsx@1118751f:127-138`).
+    pub fn can_toggle_polygon(&self) -> bool {
+        let targets: Vec<&DrawElement> = self
+            .selected_ids
+            .iter()
+            .filter_map(|id| self.scene.get(id))
+            .collect();
+        can_toggle_polygon(&targets)
+    }
+
+    /// Closes the selected line(s) into a filled polygon, or opens them back up — the
+    /// panel toggle and its keyboard shortcut (`actionTogglePolygon`).
+    pub fn toggle_polygon_selection(&mut self) {
+        let targets: Vec<DrawElement> = self
+            .selected_ids
+            .iter()
+            .filter_map(|id| self.scene.get(id).cloned())
+            .collect();
+        self.apply_patches(toggle_polygon(&targets));
     }
 
     pub(super) fn apply_patches(&mut self, patches: Vec<DrawElement>) {

@@ -532,6 +532,31 @@ pub fn is_path_a_loop_within(points: &[[f64; 2]], tolerance: f64) -> bool {
     (first[0] - last[0]).hypot(first[1] - last[1]) <= tolerance
 }
 
+/// Whether a line's points meet every condition for `polygon: true` — closed **exactly**,
+/// not merely within the confirm tolerance, and with at least three distinct vertices.
+///
+/// `isValidPolygon`, `packages/element/src/typeChecks.ts@1118751f:391-401`: a triangle is
+/// three vertices plus the first point repeated, four points in all, so `length > 3` is
+/// the same test as "more than three vertices". This is a shape check, not a permission
+/// check — see [`can_become_polygon`] for whether points are *eligible* to become one.
+pub fn is_valid_polygon(points: &[[f64; 2]]) -> bool {
+    points.len() > 3 && points_equal(points[0], points[points.len() - 1])
+}
+
+/// Whether a line's points are eligible to be turned into a polygon by the toggle.
+///
+/// `canBecomePolygon`, `packages/element/src/typeChecks.ts@1118751f:403-410`: four points
+/// or more always qualify — the toggle closes the loop itself — and exactly three qualify
+/// unless they already close a loop, since three coincident-ended points cannot enclose
+/// anything (all three would sit on one point).
+pub fn can_become_polygon(points: &[[f64; 2]]) -> bool {
+    points.len() > 3 || (points.len() == 3 && !points_equal(points[0], points[points.len() - 1]))
+}
+
+fn points_equal(a: [f64; 2], b: [f64; 2]) -> bool {
+    (a[0] - b[0]).abs() <= PRECISION && (a[1] - b[1]).abs() <= PRECISION
+}
+
 /// Whether a point-based element encloses a region that belongs to it.
 ///
 /// `shouldTestInside`, `packages/element/src/collision.ts@1118751f:85-105`: a line is grabbable

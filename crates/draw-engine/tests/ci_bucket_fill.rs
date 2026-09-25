@@ -33,12 +33,14 @@ fn poly(points: &[(f64, f64)]) -> DrawElement {
     element
 }
 
-/// A closed ring: the first point repeated at the end, which is what makes a line element
-/// read as a polygon.
+/// A closed ring: the first point repeated at the end, and `polygon: true` — what a line
+/// closed by drawing, the toggle, or the bucket tool itself all leave behind.
 fn ring(points: &[(f64, f64)]) -> DrawElement {
     let mut closed = points.to_vec();
     closed.push(points[0]);
-    poly(&closed)
+    let mut element = poly(&closed);
+    element.polygon = Some(true);
+    element
 }
 
 /// A rectangle with a visible stroke, so it is an eligible boundary.
@@ -752,6 +754,7 @@ fn clicking_the_same_region_twice_restyles_rather_than_stacks() {
     paint.y = filled.scene_points[0].y;
     paint.background_color = "#ffec99".into();
     paint.stroke_color = "transparent".into();
+    paint.polygon = Some(true);
 
     assert!(
         is_restylable_fill(&paint, &filled.scene_points),

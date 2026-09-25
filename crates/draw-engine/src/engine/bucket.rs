@@ -155,6 +155,10 @@ impl DrawEngine {
             },
         );
         element.points = Some(points);
+        // A closed ring is exactly the shape `polygon: true` names — and, now that the
+        // toggle exists, `is_bucket_fill_compatible` requires it explicitly rather than
+        // inferring "paint" from the ring's geometry alone.
+        element.polygon = Some(true);
         let style = self.get_next_style();
         element.background_color = fill_color(&style.background_color);
         element.fill_style = paint_fill_style(style.fill_style);

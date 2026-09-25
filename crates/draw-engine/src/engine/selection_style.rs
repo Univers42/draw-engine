@@ -128,6 +128,9 @@ pub struct SelectionStyle {
     pub vertical_alignable: bool,
     pub can_align: bool,
     pub can_distribute: bool,
+    /// Whether the polygon toggle would do anything: every selected element a line with
+    /// four points or more, and at least one selected (`DrawEngine::can_toggle_polygon`).
+    pub can_toggle_polygon: bool,
     /// Only asked for a single element: from two up the group row shows regardless.
     pub is_group: bool,
     pub stroke_color: Option<String>,
@@ -142,6 +145,10 @@ pub struct SelectionStyle {
     pub end_arrowhead: Option<Arrowhead>,
     /// Read off arrows alone; the Edges row reads everything else.
     pub arrow_type: Option<ArrowType>,
+    /// Whether the selected lines are already closed polygons — `None` for a mixed
+    /// selection, or one holding nothing the polygon toggle applies to. Read off lines
+    /// alone, the same way `arrow_type` reads off arrows alone.
+    pub is_polygon: Option<bool>,
     pub font_size: Option<f64>,
     /// The family the texts share — 0 for the system stack a text with none is drawn in.
     pub font_family: Option<u8>,
@@ -334,6 +341,7 @@ impl DrawEngine {
         let mut start_arrowhead = Common::Empty;
         let mut end_arrowhead = Common::Empty;
         let mut arrow_type = Common::Empty;
+        let mut is_polygon = Common::Empty;
         let mut font_size = Common::Empty;
         let mut font_family = Common::Empty;
         let mut text_align = Common::Empty;
@@ -383,6 +391,9 @@ impl DrawEngine {
             stroke_style.add(element.stroke_style);
             roughness.add(element.roughness);
             opacity.add(element.opacity);
+            if element.kind == DrawElementType::Line {
+                is_polygon.add(element.is_polygon());
+            }
             if element.kind == DrawElementType::Arrow {
                 start_arrowhead.add(default_arrowhead(element, "start"));
                 end_arrowhead.add(default_arrowhead(element, "end"));
@@ -439,6 +450,7 @@ impl DrawEngine {
             vertical_alignable,
             can_align: units > 1,
             can_distribute: units > 2,
+            can_toggle_polygon: self.can_toggle_polygon(),
             is_group: selected.len() == 1 && self.selection_is_group(),
             stroke_color: stroke_color.get().map(str::to_owned),
             background_color: background_color.get().map(str::to_owned),
@@ -451,6 +463,7 @@ impl DrawEngine {
             start_arrowhead: start_arrowhead.get(),
             end_arrowhead: end_arrowhead.get(),
             arrow_type: arrow_type.get(),
+            is_polygon: is_polygon.get(),
             font_size: font_size.get(),
             font_family: font_family.get(),
             text_align: text_align.get(),
@@ -488,6 +501,9 @@ impl DrawEngine {
             vertical_alignable: false,
             can_align: false,
             can_distribute: false,
+            // Nothing is selected, and the toggle only ever acts on selected lines — the
+            // line tool being merely active offers no polygon to close.
+            can_toggle_polygon: false,
             is_group: false,
             stroke_color: Some(next.stroke_color),
             background_color: Some(next.background_color),
@@ -501,6 +517,7 @@ impl DrawEngine {
             start_arrowhead: Some(self.next_start_arrowhead.unwrap_or(Arrowhead::None)),
             end_arrowhead: Some(self.next_end_arrowhead.unwrap_or(Arrowhead::Arrow)),
             arrow_type: Some(self.next_arrow_type),
+            is_polygon: None,
             font_size: Some(self.next_font_size),
             font_family: Some(self.next_font_family),
             text_align: Some(self.next_text_align.unwrap_or(TextAlign::Left)),
