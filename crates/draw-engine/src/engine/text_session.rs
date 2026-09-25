@@ -133,6 +133,9 @@ impl DrawEngine {
             return false;
         };
         let Some(element) = self.live_element(&session.id) else {
+            // Gone from under the editor, a session left open would keep undo off.
+            self.drop_text_session(None);
+            self.refresh_live();
             return false;
         };
         self.type_into(&element, text, session.original_container_height);
@@ -233,9 +236,19 @@ impl DrawEngine {
     /// Marks the open text changed again after a step taken while it is typed — a style
     /// set from the panel commits it as typed so far — so a peer's copy of it is still
     /// refused until the edit ends.
+    ///
+    /// A step that deleted it — `delete_selection` from a host that ends an edit the way
+    /// it did before the session — ends the session instead: nothing is left to type
+    /// into, and a session left open would keep undo and redo off.
     pub(crate) fn keep_text_session_pending(&mut self) {
-        if let Some(id) = self.editing_text_id().map(str::to_owned) {
+        let Some(id) = self.editing_text_id().map(str::to_owned) else {
+            return;
+        };
+        if self.live_element(&id).is_some() {
             self.scene.update(&id, |_| {});
+        } else {
+            self.drop_text_session(None);
+            self.refresh_live();
         }
     }
 

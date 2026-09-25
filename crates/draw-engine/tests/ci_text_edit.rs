@@ -432,6 +432,29 @@ mod ending {
         );
     }
 
+    /// A text deleted while open — by a host that ends an edit the old way, with
+    /// `delete_selection` — ends its session: nothing is left to type into, and undo and
+    /// redo work again.
+    #[test]
+    fn a_text_deleted_while_open_ends_its_session() {
+        let mut engine = engine_with_measure(Vec::new());
+        open_at(&mut engine, (400.0, 300.0));
+        engine.delete_selection();
+        assert!(engine.text_edit_session().is_none(), "a new one");
+        assert!(!engine.update_text_edit("x"));
+
+        let id = open_at(&mut engine, (100.0, 100.0));
+        engine.commit_text_edit("keep", true);
+        assert!(engine.edit_selected_text());
+        engine.delete_selection();
+        assert!(engine.text_edit_session().is_none(), "an existing one");
+        assert!(engine.debug_live().is_empty());
+        engine.undo();
+        let back = element(&engine, &id);
+        assert!(!back.is_deleted, "undo works again");
+        assert_eq!(back.text.as_deref(), Some("keep"));
+    }
+
     /// An existing text emptied is deleted: a tombstone, one step, its shape unbound.
     #[test]
     fn an_existing_text_emptied_is_deleted() {
