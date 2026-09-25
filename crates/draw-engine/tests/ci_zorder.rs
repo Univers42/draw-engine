@@ -24,7 +24,7 @@ use std::collections::HashSet;
 
 use ZOrderMode::{Back, Backward, Forward, Front};
 
-/// One `assertZindex` call (`zindex.test.tsx:137-160`): a stack, the group being edited,
+/// One `assertZindex` call (`zindex.test.tsx@1118751f:137-160`): a stack, the group being edited,
 /// and each command with the stack it must leave, applied one after another.
 struct Case {
     /// The line of the oracle's `assertZindex` (or `assertReorderPreservesElements`).
@@ -34,7 +34,7 @@ struct Case {
     editing: Option<&'static str>,
     ops: &'static [(ZOrderMode, &'static str)],
     /// The broken-contiguity block applies each command to a fresh copy of the stack
-    /// (`zindex.test.tsx:1578-1597`) rather than one after another.
+    /// (`zindex.test.tsx@1118751f:1578-1597`) rather than one after another.
     fresh: bool,
 }
 
@@ -253,7 +253,7 @@ const CASES: &[Case] = &[
 
 /// One stack token: `id`, then any of `*` selected, `-` deleted, `#` a frame,
 /// `/g2,g1` its groups (innermost first), `>C` the shape it labels, `@F` its frame.
-/// The fields of `populateElements`, `zindex.test.tsx:45-129`.
+/// The fields of `populateElements`, `zindex.test.tsx@1118751f:45-129`.
 struct Token {
     id: String,
     selected: bool,
@@ -304,7 +304,7 @@ fn parse(token: &str) -> Token {
 
 /// The stack and the selection, as `populateElements` builds them: a text for an element
 /// with a container, a frame for `#`, a rectangle otherwise, and a container's bound text
-/// set only when the text lies directly above it (`zindex.test.tsx:97-113`).
+/// set only when the text lies directly above it (`zindex.test.tsx@1118751f:97-113`).
 fn populate(stack: &str) -> (Vec<DrawElement>, HashSet<String>) {
     let tokens: Vec<Token> = stack.split_whitespace().map(parse).collect();
     let mut selected = HashSet::new();
@@ -435,7 +435,7 @@ fn framed(members: &[(&'static str, &[&str], bool)]) -> (DrawEngine, Cast) {
 }
 
 /// The oracle keeps a frame child inside its frame's range: to the front of that range,
-/// not of the board (`shiftElementsAccountingForFrames`, `zindex.ts:543-621`).
+/// not of the board (`shiftElementsAccountingForFrames`, `zindex.ts@1118751f:531-609`).
 #[test]
 fn a_frame_child_brought_to_the_front_stays_in_its_frame() {
     let (mut engine, cast) = framed(&[
@@ -467,7 +467,7 @@ fn a_frame_child_sent_to_the_back_stays_in_its_frame() {
 }
 
 /// A frame and its children are one block to step over (`getTargetIndex`,
-/// `zindex.ts:256-267`), so nothing lands between a frame's members.
+/// `zindex.ts@1118751f:244-255`), so nothing lands between a frame's members.
 #[test]
 fn stepping_forward_from_below_a_frame_steps_over_all_of_it() {
     let (mut engine, cast) = framed(&[
@@ -499,7 +499,7 @@ fn stepping_backward_from_above_a_frame_steps_under_all_of_it() {
 }
 
 /// A selected frame takes its children with it (`includeElementsInFrames`,
-/// `packages/element/src/selection.ts:196-210`).
+/// `packages/element/src/selection.ts@1118751f:196-210`).
 #[test]
 fn a_selected_frame_takes_its_children_to_the_front() {
     let (mut engine, cast) = framed(&[
@@ -531,7 +531,7 @@ fn a_selected_frame_takes_its_children_one_step_back() {
 }
 
 /// A child steps to the next element of its own frame, over what else lies in the frame's
-/// range (`indexFilter`, `zindex.ts:211-213`), and a group there is still one block to
+/// range (`indexFilter`, `zindex.ts@1118751f:199-201`), and a group there is still one block to
 /// step over (`:269-296`): Y, not in the frame, is passed, the group taken whole.
 #[test]
 fn inside_a_frame_a_group_is_stepped_over_whole() {
@@ -552,7 +552,7 @@ fn inside_a_frame_a_group_is_stepped_over_whole() {
 
 /// A label carries no `frameId` here — its shape holds the membership for both
 /// (`scene/frame.rs`, `can_belong_to_frame`) — where the oracle's bound text carries its
-/// container's (`addElementsToFrame`, `frame.ts:562-583`). Read through its shape, the
+/// container's (`addElementsToFrame`, `frame.ts@1118751f:562-583`). Read through its shape, the
 /// label stays on its shape and inside the frame.
 #[test]
 fn a_frame_childs_label_stays_on_it_inside_the_frame() {
@@ -573,7 +573,7 @@ fn a_frame_childs_label_stays_on_it_inside_the_frame() {
 }
 
 /// A locked element in the selection stays where it is. The oracle never holds a loose
-/// locked element — Select All skips them (`actionSelectAll.ts:32-38`) — but this
+/// locked element — Select All skips them (`actionSelectAll.ts@1118751f:32-38`) — but this
 /// engine's does, so they can be unlocked from the menu; the carried set is the one the
 /// oracle would have.
 #[test]
@@ -589,7 +589,7 @@ fn a_locked_element_in_the_selection_stays_where_it_is() {
     assert_eq!(stack(&engine, &cast), vec!["L", "A", "B"]);
 }
 
-/// A group is one thing, locked member and all (`groups.ts:94-132` selects it with no lock
+/// A group is one thing, locked member and all (`groups.ts@1118751f:94-132` selects it with no lock
 /// filter), so the member goes where its group goes — beside a loose locked element in
 /// the same selection, which stays.
 #[test]
@@ -614,7 +614,7 @@ fn a_locked_group_member_goes_with_its_group() {
 /// R, filled, with its label T, then X: bottom first. What `hold` does to R — locks it,
 /// or has a peer hold it — is done before Select All, which here takes locked elements
 /// and labels (`DrawEngine::select_all`) where the oracle's takes neither
-/// (`actionSelectAll.ts:32-38`).
+/// (`actionSelectAll.ts@1118751f:32-38`).
 fn labelled_under_select_all(hold: fn(&mut DrawEngine, &Cast)) -> (DrawEngine, Cast) {
     let (mut engine, mut cast) = framed(&[("R", &[], false), ("X", &[], false)]);
     let mut scene = engine.get_scene();

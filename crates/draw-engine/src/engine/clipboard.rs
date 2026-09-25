@@ -127,7 +127,7 @@ impl DrawEngine {
     fn after_history_step(&mut self, selected: &super::stamp::SelectionState) {
         // What the step recorded as selected, through `set_selection`: the step may have
         // taken the group being edited away (the oracle then drops it,
-        // `packages/element/src/delta.ts:806-818`); kept behind its back, it named a group
+        // `packages/element/src/delta.ts@1118751f:806-818`); kept behind its back, it named a group
         // nothing carried, and no click anywhere on the board expanded to a group.
         self.restore_selection(selected);
         // A drag carries on over the scene the step left, and what it remembered of the
@@ -222,7 +222,7 @@ impl DrawEngine {
 
         // Elements this client has changed and not yet committed — a drag in progress,
         // a path being placed. A peer's copy of one is refused, as Excalidraw refuses
-        // it while the element is being edited (`data/reconcile.ts:31-33`): taking it
+        // it while the element is being edited (`data/reconcile.ts@1118751f:31-33`): taking it
         // would hand the gesture's final state the peer's stamp, and the two copies
         // would then carry one stamp and different content forever. The commit stamps
         // above the refused version instead, so the later edit — this one — wins.
@@ -398,8 +398,8 @@ impl DrawEngine {
         // is how a board full of one shape gets made) was quadratic in its own output.
         // Ctrl+D and Alt-drag both come through here, and both copy inside the group being
         // edited: `duplicateElements` is handed the app state's `editingGroupId`, by
-        // `packages/excalidraw/actions/actionDuplicateSelection.tsx:63-72` and by
-        // `packages/excalidraw/components/App.duplicate.ts:195-199`.
+        // `packages/excalidraw/actions/actionDuplicateSelection.tsx@1118751f:63-72` and by
+        // `packages/excalidraw/components/App.duplicate.ts@1118751f:195-199`.
         let editing = self.editing_group_id.as_deref();
         let copied =
             crate::edit::expand_for_copy_among(self.scene.iter_ordered(), &self.selected_ids);
@@ -450,7 +450,7 @@ impl DrawEngine {
         }
         let now = self.now_ms;
         // Deleting a frame deletes the frame, not the work in it, as Excalidraw's does
-        // (`packages/excalidraw/actions/actionDeleteSelected.tsx:57-73,115-122`): its
+        // (`packages/excalidraw/actions/actionDeleteSelected.tsx@1118751f:57-73,115-122`): its
         // children stay — even one selected along with it, since deleting the frame is
         // taken to mean the frame — leave it, and become the selection, so a second
         // Delete takes them too if that was what was meant. This used to take them with

@@ -222,7 +222,7 @@ pub fn materialize(
 /// [`materialize`] for a copy made inside `editing`, the group being edited, which the
 /// copy stays in. A paste uses [`materialize`], as the oracle pastes through
 /// `duplicateElements` with `type: "everything"` and no group,
-/// `packages/excalidraw/components/App.duplicate.ts:101-111` — a paste is new content,
+/// `packages/excalidraw/components/App.duplicate.ts@1118751f:101-111` — a paste is new content,
 /// not a copy of something inside the group.
 pub fn materialize_within(
     source: Vec<DrawElement>,
@@ -250,7 +250,7 @@ pub fn materialize_within(
                 // A fresh id for every level inside the group being edited — every level,
                 // when none is — and that group and all around it kept, so a copy made
                 // inside a group stays in it: `getNewGroupIdsForDuplication`,
-                // `packages/element/src/groups.ts:397-413`. Regenerating the edited group
+                // `packages/element/src/groups.ts@1118751f:397-413`. Regenerating the edited group
                 // too put the copy in a group of its own, outside the one it was made in.
                 //
                 // Two elements that shared a group still share its copy — the map is keyed

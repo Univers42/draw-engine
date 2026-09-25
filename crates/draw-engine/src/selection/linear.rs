@@ -42,9 +42,9 @@ pub struct LinearHandlePoint {
 /// box like any other shape.
 ///
 /// Excalidraw draws the line the same place: `hasBoundingBox` is
-/// `element.points.length > 2` for a linear element (`transformHandles.ts:352`), and the
+/// `element.points.length > 2` for a linear element (`transformHandles.ts@1118751f:352`), and the
 /// point circles appear only while the line editor is open or the line has exactly two
-/// points (`interactiveScene.ts:1256`).
+/// points (`interactiveScene.ts@1118751f:1198`).
 ///
 /// This used to be a kind alone, so every line and arrow was grabbed by its points
 /// however many it had. The element that made it matter is the bucket fill — a closed
@@ -164,7 +164,7 @@ pub fn to_local(element: &DrawElement, world: Point) -> [f64; 2] {
 /// you could see.
 ///
 /// Excalidraw forks on exactly this, `LinearElementEditor.getSegmentMidPoint`
-/// (`element/linearElementEditor.ts:971-1012`): the chord centre for a path built of
+/// (`element/linearElementEditor.ts@1118751f:976-1017`): the chord centre for a path built of
 /// straight segments, `curvePointAtLength(segment, 0.5)` for one built of curves.
 ///
 /// The curve is rebuilt from the **world** points rather than the local ones, which is

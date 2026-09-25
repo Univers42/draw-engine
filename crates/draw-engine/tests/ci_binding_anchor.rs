@@ -221,7 +221,7 @@ fn near_a_side_midpoint_the_end_snaps_to_it() {
     assert_eq!(a.mode, BindMode::Orbit);
 }
 
-/// Inside a shape the end is exactly where it was let go (`binding.ts:838-845`).
+/// Inside a shape the end is exactly where it was let go (`binding.ts@1118751f:847-854`).
 #[test]
 fn inside_a_shape_the_end_is_exactly_where_let_go() {
     let mut engine = engine_with_scene(vec![target()]);
@@ -259,7 +259,7 @@ fn ctrl_binds_nothing() {
 }
 
 /// Starting inside a shape and ending beside the same shape puts both ends inside it —
-/// orbiting a shape from inside it has no side to arrive on (`binding.ts:767-817`).
+/// orbiting a shape from inside it has no side to arrive on (`binding.ts@1118751f:776-826`).
 #[test]
 fn both_ends_on_one_shape_sit_where_they_were_put() {
     let mut engine = engine_with_scene(vec![target()]);
@@ -368,7 +368,7 @@ fn the_press_keeps_the_hovers_promise() {
 // ------------------------------------------------------------ what can be bound
 
 /// A filled shape hides whatever is under it from an arrow end, however small that is
-/// (`collision.ts:323-357`). An empty one does not.
+/// (`collision.ts@1118751f:356-414`). An empty one does not.
 #[test]
 fn a_filled_shape_hides_what_is_beneath_it() {
     let small = shape("small", filled(box_at(320.0, 320.0, 20.0, 20.0)));
@@ -615,7 +615,7 @@ fn a_hostile_anchor_is_made_safe() {
 
 /// A frame — a slide, in a presentation — is bound from outside, near its border. Inside
 /// it, an arrow is aimed at what the frame holds, never at the frame
-/// (`collision.ts:275-322`).
+/// (`collision.ts@1118751f:301-334`).
 #[test]
 fn a_frame_is_bound_from_outside_only() {
     let slide = shape(
@@ -830,7 +830,7 @@ fn the_midpoint_dot_promises_only_the_snap_a_drop_makes() {
 }
 
 /// Grid snapping holds the end to the grid, so the midpoint snap is off
-/// (`binding.ts:876-878`): pulled onto B's midpoint, the arrow bent off its row.
+/// (`binding.ts@1118751f:885-887`): pulled onto B's midpoint, the arrow bent off its row.
 #[test]
 fn on_the_grid_an_end_is_not_pulled_onto_a_midpoint() {
     let b = shape(B, filled(box_at(300.0, 300.0, 100.0, 90.0)));

@@ -66,7 +66,7 @@ impl DrawEngine {
         // painted one after another, and a selection left on the last one puts handles
         // over the paint, takes the next Delete, and keeps the overlay non-empty so every
         // frame has to be composited again. Excalidraw leaves nothing selected for the
-        // same reason (`App.bucketFill.ts:281-284`).
+        // same reason (`App.bucketFill.ts@1118751f:281-284`).
         //
         // This used to select the fill, and that was load-bearing for the wrong reason:
         // the style panel offered nothing while the bucket was the active tool, so the
@@ -132,7 +132,7 @@ impl DrawEngine {
         // The origin is the ring's *first* point and deliberately not its top-left corner:
         // a point-based element is anchored so that `points[0]` is `[0, 0]`, so the rest
         // of the ring may well be negative. Excalidraw anchors it the same way and does
-        // not normalise either (`App.bucketFill.ts:216-222`).
+        // not normalise either (`App.bucketFill.ts@1118751f:216-222`).
         let origin = fill.scene_points[0];
         let points: Vec<[f64; 2]> = fill
             .scene_points
@@ -171,7 +171,7 @@ impl DrawEngine {
         // Paint follows the region it was traced from, exactly. Roughness would wobble the
         // ring away from the strokes that bound it, at precisely the edges the eye checks,
         // and the ring is already a faithful trace of those strokes.
-        // `App.bucketFill.ts:245-265` sets the same.
+        // `App.bucketFill.ts@1118751f:245-265` sets the same.
         element.roughness = 0.0;
         element.stroke_width = 1.0;
         self.inherit_belonging(&mut element, fill);
@@ -192,7 +192,7 @@ impl DrawEngine {
     /// travel with a frame that is dragged, and with a group that is moved — without it,
     /// paint inside a frame is abandoned the instant the frame moves, which reads as the
     /// colour coming unstuck from the drawing. Excalidraw inherits these two and nothing
-    /// else (`App.bucketFill.ts:227-243`).
+    /// else (`App.bucketFill.ts@1118751f:227-243`).
     fn inherit_belonging(&self, element: &mut DrawElement, fill: &BucketFill) {
         if let Some(owner) = fill.owner_id.as_ref().and_then(|id| self.scene.get(id)) {
             // A frame is a container, so paint filling one belongs *inside* it rather
@@ -246,7 +246,7 @@ impl DrawEngine {
     /// A click on bare canvas is deliberately silent, and so is one whose fallback search
     /// found nothing: aiming at empty space is not a mistake worth interrupting someone
     /// over, and a tool that complains every time the pointer slips is one people stop
-    /// reading. Excalidraw draws the line in the same place (`App.bucketFill.ts:197`).
+    /// reading. Excalidraw draws the line in the same place (`App.bucketFill.ts@1118751f:197`).
     ///
     /// Everything else means the person aimed at something and it did not work, which is
     /// the case where silence reads as a broken tool.
@@ -358,7 +358,7 @@ fn span_of(points: &[[f64; 2]]) -> (f64, f64) {
 /// Default paint for the bucket, for when nothing else is chosen.
 ///
 /// Excalidraw's green swatch, which is what their bucket falls back to when the shared
-/// background colour is transparent (`App.bucketFill.ts:293-300`) — not the first swatch
+/// background colour is transparent (`App.bucketFill.ts@1118751f:293-300`) — not the first swatch
 /// in the picker, which is what this used to be.
 pub const DEFAULT_BUCKET_FILL_COLOR: &str = "#b2f2bb";
 

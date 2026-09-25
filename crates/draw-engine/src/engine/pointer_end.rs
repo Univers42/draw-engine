@@ -120,7 +120,7 @@ impl DrawEngine {
     }
 
     /// Part of the edited group dragged into a frame, or out of one, leaves the group:
-    /// `updateGroupIdsAfterEditingGroup` (`App.tsx:11941-12067`), through
+    /// `updateGroupIdsAfterEditingGroup` (`App.tsx@1118751f:11949-12075`), through
     /// [`crate::edit::leave_edited_group`].
     ///
     /// Judged as membership always is here, by where the dragged part lies — the oracle
@@ -131,7 +131,7 @@ impl DrawEngine {
     /// what a drag holds, so read without them it stayed in the group its shape left —
     /// keeping that group alive as the rest plus those words — and a whole labelled group
     /// counted its labels as members left behind. The oracle hands its surgery the
-    /// selection without bound text (`App.tsx:12001`) and shares the first half of that.
+    /// selection without bound text (`App.tsx@1118751f:12009`) and shares the first half of that.
     ///
     /// What a peer holds is theirs, as it is to `group_selection`: a member left behind
     /// under their hands keeps the group id rather than be rewritten and restamped, and a
@@ -210,8 +210,8 @@ impl DrawEngine {
 
     /// What the commit in progress created is judged where it lands — drawn, typed,
     /// pasted, duplicated, dropped in — as the oracle gives a new element the frame it
-    /// is created in (`createGenericElementOnPointerDown`, `App.tsx:10442-10465`; a
-    /// paste, `App.duplicate.ts:124-135`). Nothing else judges it: membership is
+    /// is created in (`createGenericElementOnPointerDown`, `App.tsx@1118751f:10451-10474`; a
+    /// paste, `App.duplicate.ts@1118751f:124-135`). Nothing else judges it: membership is
     /// re-judged only for what a commit touches, so a shape drawn inside a frame stayed
     /// out of it — and was left behind when the frame moved — and a pasted copy kept the
     /// frame of an original it lay far from.

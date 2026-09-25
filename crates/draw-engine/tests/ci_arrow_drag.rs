@@ -6,7 +6,7 @@
 //! `apply_bindings`, which re-resolves every bound arrow's ends onto its shapes. So each
 //! frame of the drag put the arrow back. From the outside that reads as "blocked".
 //!
-//! Excalidraw's rule, `packages/element/src/dragElements.ts:110-167`:
+//! Excalidraw's rule, `packages/element/src/dragElements.ts@1118751f:110-157`:
 //!
 //! - Moving an arrow **unbinds each end whose shape is not moving with it** — "otherwise
 //!   we would have weird situations, like 0 length arrow when the user moves the arrow
@@ -23,7 +23,7 @@ use draw_engine::*;
 ///
 /// The arrow runs along y = 40 from where it was pressed inside the left box (x = 50) to
 /// where it was let go inside the right one (x = 400): an end drawn inside a shape binds
-/// inside it, exactly there (`packages/element/src/binding.ts:838-845`). Its midpoint
+/// inside it, exactly there (`packages/element/src/binding.ts@1118751f:847-854`). Its midpoint
 /// handle sits at x = 225 — a press there bends the arrow, as Excalidraw's does, rather
 /// than moving it — so every grab below is on the shaft well clear of it and of both ends.
 fn bound_arrow() -> (DrawEngine, String, String, String) {

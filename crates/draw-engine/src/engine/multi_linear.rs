@@ -8,9 +8,9 @@
 //! point, and a click back on the point just placed — or back on the very first one —
 //! ends it.
 //!
-//! Transcribed from Excalidraw's `multiElement` handling (`App.tsx:7975-8060` for the
+//! Transcribed from Excalidraw's `multiElement` handling (`App.tsx@1118751f:7981-8066` for the
 //! preview, `10108-10215` for the press, `11705-11745` for the fork on release,
-//! `actionFinalize.tsx:250-325` for the end) at the SHA pinned in
+//! `actionFinalize.tsx@1118751f:250-325` for the end) at the SHA pinned in
 //! `scripts/oracle-sha.txt`.
 //!
 //! # The preview point
@@ -100,11 +100,11 @@ impl DrawEngine {
 
         // Back on the first point: the path has closed on itself. Only a line closes —
         // an arrow that met its own tail would be a loop with a head on it, and
-        // Excalidraw guards the same way (`App.tsx:10117`).
+        // Excalidraw guards the same way (`App.tsx@1118751f:10125`).
         if element.kind == DrawElementType::Line && is_path_a_loop_within(&points, tolerance) {
             // Commit the preview before finishing, so the closing point survives the
             // trim. Excalidraw does this explicitly for the same reason
-            // (`App.tsx:10120-10134`).
+            // (`App.tsx@1118751f:10128-10142`).
             self.commit_multi_point();
             self.finish_by_press(&state.id, screen);
             return;
@@ -114,7 +114,7 @@ impl DrawEngine {
         // second click of a double click lands on.
         //
         // One divergence from the oracle, which requires `points.length > 1` here
-        // (`App.tsx:10204`): that guard makes a second click in the same spot do nothing
+        // (`App.tsx@1118751f:10211`): that guard makes a second click in the same spot do nothing
         // at all, so a double click on an empty board leaves a one-point path live and
         // invisible, and every later click extends it from there. Allowing it at one
         // point costs nothing — the only way to be inside the commit zone with no
@@ -355,7 +355,7 @@ impl DrawEngine {
     ///
     /// The same constant three other things already turn on — whether a path paints its
     /// background, whether a fill treats it as a wall, whether a click inside it belongs
-    /// to it — divided by the zoom, as Excalidraw divides it (`utils.ts:520-522`). The
+    /// to it — divided by the zoom, as Excalidraw divides it (`utils.ts@1118751f:521-523`). The
     /// radius is about how accurately a hand can aim, which is a fact about the screen:
     /// left in world units it would be a tenth of a shape when zoomed in and would
     /// swallow the whole drawing when zoomed out.

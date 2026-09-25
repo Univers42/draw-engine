@@ -252,7 +252,7 @@ fn the_codes_are_stable() {
 /// move: saying "move" over its hollow middle would promise a drag that does not happen,
 /// and hide that the click belongs to whatever is drawn inside it. Once it is selected a
 /// press anywhere in its box does pick it up (`ci_grab_selected.rs`), and the cursor says
-/// so, as the oracle's does (`App.tsx:8280-8286`).
+/// so, as the oracle's does (`App.tsx@1118751f:8288-8294`).
 #[test]
 fn a_hollow_shape_offers_a_move_on_its_outline_until_it_is_selected() {
     let mut element = box_at(400.0, 300.0, 300.0, 200.0);

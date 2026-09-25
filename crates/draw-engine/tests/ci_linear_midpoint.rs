@@ -12,7 +12,7 @@
 //! so the place you have to click is not the place you can see.
 //!
 //! Excalidraw forks on exactly this case — `LinearElementEditor.getSegmentMidPoint`
-//! (`packages/element/src/linearElementEditor.ts:971-1012`) at the SHA pinned in
+//! (`packages/element/src/linearElementEditor.ts@1118751f:976-1017`) at the SHA pinned in
 //! `scripts/oracle-sha.txt`:
 //!
 //! ```ts

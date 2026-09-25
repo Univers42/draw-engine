@@ -16,9 +16,9 @@
 //! - a label's frame and groups are its shape's. Here a label carries no `frameId` — the
 //!   shape holds the membership for both (`scene/frame.rs`, `can_belong_to_frame`) — and
 //!   one saved before labels joined groups carries none; the oracle's bound text carries
-//!   its container's (`frame.ts:562-583`, `App.tsx:7081`);
+//!   its container's (`frame.ts@1118751f:562-583`, `App.tsx@1118751f:7083`);
 //! - a label whose shape is not in the stack (not live) is read as unlabelled, where the
-//!   oracle would still find the deleted shape (`zindex.ts:94-107`).
+//!   oracle would still find the deleted shape (`zindex.ts@1118751f:91-104`).
 //!
 //! The stack is rearranged as positions, never as elements: one pass per command and one
 //! clone of each element at the end, however many runs the selection is cut into.
@@ -82,12 +82,12 @@ pub fn reorder_within(
 }
 
 /// The new stack as indices into `elements`, bottom first: `moveOneLeft`, `moveOneRight`,
-/// `moveAllLeft`, `moveAllRight` (`zindex.ts:626-664`).
+/// `moveAllLeft`, `moveAllRight` (`zindex.ts@1118751f:614-652`).
 ///
 /// `ids` is the selection as the oracle holds it (`selectedElementIds`); the labels of
 /// selected shapes and the children of selected frames are read in here, as
 /// `getSelectedElements(…, { includeBoundTextElement, includeElementsInFrames })` does
-/// (`packages/element/src/selection.ts:161-213`).
+/// (`packages/element/src/selection.ts@1118751f:161-213`).
 pub fn reorder_positions(
     elements: &[&DrawElement],
     ids: &HashSet<String>,
@@ -126,7 +126,7 @@ struct Stack<'a> {
     frame: Vec<Option<&'a str>>,
     groups: Vec<&'a [String]>,
     /// The members of each group, and of each frame with the frame itself
-    /// (`isOfTargetFrame`, `zindex.ts:24-26`): a block's ends are found from its members
+    /// (`isOfTargetFrame`, `zindex.ts@1118751f:21-23`): a block's ends are found from its members
     /// rather than from a scan of the whole stack per step.
     group_members: HashMap<&'a str, Vec<usize>>,
     frame_members: HashMap<&'a str, Vec<usize>>,
@@ -188,7 +188,7 @@ impl<'a> Stack<'a> {
     }
 
     /// `getSelectedElements` with `includeBoundTextElement` and `includeElementsInFrames`
-    /// (`selection.ts:161-213`): the selected live elements, the live labels of selected
+    /// (`selection.ts@1118751f:161-213`): the selected live elements, the live labels of selected
     /// shapes, and every child of a selected frame.
     fn selected(&self, ids: &HashSet<String>) -> HashSet<usize> {
         let mut out: HashSet<usize> = HashSet::new();
@@ -213,7 +213,7 @@ impl<'a> Stack<'a> {
         out
     }
 
-    /// `getIndicesToMove` (`zindex.ts:36-70`): the positions of `moving`, and of deleted
+    /// `getIndicesToMove` (`zindex.ts@1118751f:33-67`): the positions of `moving`, and of deleted
     /// elements lying between two of them.
     ///
     /// Scanned from the lowest of them to the highest, where the oracle scans the whole
@@ -252,19 +252,19 @@ impl<'a> Stack<'a> {
         Some(positions.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p))))
     }
 
-    /// `getContiguousFrameRangeElements` (`zindex.ts:129-147`), as its first and last
+    /// `getContiguousFrameRangeElements` (`zindex.ts@1118751f:126-144`), as its first and last
     /// position.
     fn frame_range(&self, frame: &str) -> Option<(usize, usize)> {
         self.ends(self.frame_members.get(frame))
     }
 
-    /// `getElementsInGroup` (`packages/element/src/groups.ts:289-304`), as the first and
+    /// `getElementsInGroup` (`packages/element/src/groups.ts@1118751f:289-304`), as the first and
     /// last position of the group's members.
     fn group_range(&self, group: &str) -> Option<(usize, usize)> {
         self.ends(self.group_members.get(group))
     }
 
-    /// `getTargetIndexAccountingForBinding` (`zindex.ts:88-127`): a shape and its label
+    /// `getTargetIndexAccountingForBinding` (`zindex.ts@1118751f:85-124`): a shape and its label
     /// are one unit, so the step goes to the far one of the two.
     fn accounting_for_binding(&self, candidate: usize, direction: Direction) -> Option<usize> {
         let next = self.elements[self.order[candidate]];
@@ -279,7 +279,7 @@ impl<'a> Stack<'a> {
         })
     }
 
-    /// `getTargetIndex` (`zindex.ts:193-299`): where the run ending at `boundary` steps
+    /// `getTargetIndex` (`zindex.ts@1118751f:181-287`): where the run ending at `boundary` steps
     /// to, or `None` where the oracle returns -1.
     fn target_index(
         &self,
@@ -294,13 +294,13 @@ impl<'a> Stack<'a> {
                 && match (containing_frame, self.editing) {
                     (Some(frame), _) => self.frame[i] == Some(frame),
                     // Inside an entered group the closest member, whatever lies between
-                    // (`zindex.ts:214-218`).
+                    // (`zindex.ts@1118751f:202-206`).
                     (None, Some(group)) => self.in_group(i, group),
                     (None, None) => true,
                 }
         };
         // `findLastIndex` from `max(0, boundary - 1)`: at the bottom that is the boundary
-        // itself, and the step then comes to nothing (`zindex.ts:222-229`).
+        // itself, and the step then comes to nothing (`zindex.ts@1118751f:210-217`).
         let candidate = match direction {
             Direction::Left => (0..=boundary.saturating_sub(1)).rev().find(wanted),
             Direction::Right => (boundary + 1..self.order.len()).find(wanted),
@@ -312,7 +312,7 @@ impl<'a> Stack<'a> {
         };
 
         if let Some(group) = self.editing {
-            // `groupIds.join("")`, as the oracle compares them (`zindex.ts:240`).
+            // `groupIds.join("")`, as the oracle compares them (`zindex.ts@1118751f:228`).
             if self.groups[source].concat() == self.groups[next].concat() {
                 return binding();
             }
@@ -366,7 +366,7 @@ impl<'a> Stack<'a> {
         }
     }
 
-    /// `shiftElementsByOne` (`zindex.ts:345-429`): each contiguous run of what moves
+    /// `shiftElementsByOne` (`zindex.ts@1118751f:333-417`): each contiguous run of what moves
     /// changes places with the unit beyond it, the run nearest the end it heads for first.
     ///
     /// The positions of the runs are taken before any moves, as the oracle's are: a run
@@ -395,7 +395,7 @@ impl<'a> Stack<'a> {
                 Direction::Left => leading,
                 Direction::Right => trailing,
             };
-            // A child whose frame moves too is not confined to it (`zindex.ts:372-377`).
+            // A child whose frame moves too is not confined to it (`zindex.ts@1118751f:360-365`).
             let containing_frame = if run.clone().any(|p| {
                 self.frame[self.order[p]].is_some_and(|frame| selected_frames.contains(frame))
             }) {
@@ -420,7 +420,7 @@ impl<'a> Stack<'a> {
         }
     }
 
-    /// `shiftElementsToEnd` (`zindex.ts:431-541`): `moving` to the bottom or the top of
+    /// `shiftElementsToEnd` (`zindex.ts@1118751f:419-529`): `moving` to the bottom or the top of
     /// the stack — of its frame's range, or of the entered group — each side keeping its
     /// order. Refused, as the oracle's is, when something to move lies outside that range.
     fn shift_to_end(
@@ -436,7 +436,7 @@ impl<'a> Stack<'a> {
         let (leading, trailing) = match direction {
             Direction::Left => {
                 let leading = if let Some(frame) = containing_frame {
-                    // `-1` becomes `0`, `zindex.ts:493-495`.
+                    // `-1` becomes `0`, `zindex.ts@1118751f:481-483`.
                     self.frame_range(frame).map_or(0, |(first, _)| first)
                 } else if let Some(group) = self.editing {
                     let Some((first, _)) = self.group_range(group) else {
@@ -486,7 +486,7 @@ impl<'a> Stack<'a> {
         }
     }
 
-    /// `shiftElementsAccountingForFrames` (`zindex.ts:543-621`): the children of each
+    /// `shiftElementsAccountingForFrames` (`zindex.ts@1118751f:531-609`): the children of each
     /// frame that is not itself moving go to the end of that frame's range, then
     /// everything else to the end of the stack (or of the entered group).
     fn shift_accounting_for_frames(&mut self, moving: &HashSet<usize>, direction: Direction) {
@@ -525,7 +525,7 @@ impl<'a> Stack<'a> {
 }
 
 /// A new group's members, gathered directly under the topmost of them in the order they
-/// had — `packages/excalidraw/actions/actionGroup.tsx:170-186`.
+/// had — `packages/excalidraw/actions/actionGroup.tsx@1118751f:170-186`.
 ///
 /// A group is one run of the stack. Left apart, whatever lay between the members would be
 /// painted through the group, and stepping the group forward could only move its members

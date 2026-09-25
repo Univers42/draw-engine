@@ -162,7 +162,7 @@ impl DrawEngine {
             pointer,
             super::MIDPOINT_SNAP_PX / self.camera.scale,
         )?;
-        // Only the snap a drop would really make: none on the grid (`binding.ts:876-878`),
+        // Only the snap a drop would really make: none on the grid (`binding.ts@1118751f:885-887`),
         // and in a drag, the anchor it chose.
         let grid = self.grid.enabled && self.grid.snap;
         Some((mark, snaps && !grid && self.binding_snaps.unwrap_or(true)))

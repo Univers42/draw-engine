@@ -252,7 +252,7 @@ fn a_frame_is_hollow_because_its_middle_belongs_to_its_contents() {
 // ghost: visible, and clickable only along the edge it was traced from, where the
 // stroke it was derived from is already competing for the same click.
 //
-// Excalidraw's rule verbatim, `packages/element/src/collision.ts:82-102`:
+// Excalidraw's rule verbatim, `packages/element/src/collision.ts@1118751f:85-105`:
 //
 //     if (element.type === "line") {
 //       return isDraggableFromInside && isPathALoop(element.points);

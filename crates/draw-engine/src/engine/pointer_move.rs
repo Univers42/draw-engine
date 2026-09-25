@@ -243,8 +243,8 @@ impl DrawEngine {
                 if let Some(mut element) = self.scene.get(id).cloned() {
                     element.angle = rotate_element(&element, world.x, world.y);
                     // An arrow turned on its own lets go of both ends, as in Excalidraw
-                    // (`packages/element/src/resizeElements.ts:241-252`): its ends are being
-                    // placed by the turn, and holding them to shapes would fight it.
+                    // (`packages/element/src/resizeElements.ts@1118751f:241-252`): its ends are
+                    // being placed by the turn, and holding them to shapes would fight it.
                     if crate::scene::binding::is_binding_element(&element) {
                         set_anchor(&mut element, End::Start, None);
                         set_anchor(&mut element, End::End, None);
@@ -469,7 +469,7 @@ impl DrawEngine {
     ///
     /// For a group being resized or turned: its arrows move with it, rigidly, so an end
     /// bound to a shape left outside it can no longer be where that binding says. Excalidraw
-    /// unbinds it (`packages/element/src/resizeElements.ts:464-475`, `1550-1569`) rather
+    /// unbinds it (`packages/element/src/resizeElements.ts@1118751f:464-475`, `1550-1569`) rather
     /// than bend the arrow back to a shape the transform has carried it away from.
     fn release_ends_outside(&mut self, ids: &[String]) {
         let inside: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
@@ -534,7 +534,7 @@ impl DrawEngine {
     /// new, then `apply_bindings` re-resolved its ends onto the shapes they were bound to
     /// and put it straight back — every frame — so from the outside it read as blocked.
     ///
-    /// Excalidraw's rule, `packages/element/src/dragElements.ts:110-167`: an end whose
+    /// Excalidraw's rule, `packages/element/src/dragElements.ts@1118751f:110-157`: an end whose
     /// shape is also being dragged stays bound and the assembly moves as one; an end whose
     /// shape stays behind lets go, "otherwise we would have weird situations, like 0
     /// length arrow when the user moves the arrow outside a filled shape".
@@ -596,7 +596,7 @@ impl DrawEngine {
             return it;
         };
         // Any move makes the press a drag, even one that comes back to where it started:
-        // the oracle's `drag.hasOccurred` (`App.tsx:10918-10921`). Judged by where the
+        // the oracle's `drag.hasOccurred` (`App.tsx@1118751f:10926-10929`). Judged by where the
         // elements ended, a drag home — or one shorter than a grid cell — read as a click.
         self.narrow_on_click = None;
         self.reopen_text_on_click = None;
@@ -607,7 +607,7 @@ impl DrawEngine {
         // from the grid's. Running both makes the result depend on which won by a pixel,
         // so the grid takes precedence while it is snapping.
         //
-        // Otherwise Excalidraw's rule (`snapping.ts:180-183`): the preference, inverted
+        // Otherwise Excalidraw's rule (`snapping.ts@1118751f:180-183`): the preference, inverted
         // for as long as Ctrl/Cmd is held. Theirs also refuses the inverted case while the
         // grid is on; here the grid already wins outright, which covers it.
         let grid_snapping = self.grid().enabled && self.grid().snap;
@@ -742,7 +742,7 @@ impl DrawEngine {
             scale_ring(&mut element, points, &geom);
         }
         // Resizing an arrow by its box places its ends, so they let go of their shapes, as
-        // in Excalidraw (`packages/element/src/resizeElements.ts:930-946`).
+        // in Excalidraw (`packages/element/src/resizeElements.ts@1118751f:930-946`).
         if crate::scene::binding::is_binding_element(&element) {
             set_anchor(&mut element, End::Start, None);
             set_anchor(&mut element, End::End, None);

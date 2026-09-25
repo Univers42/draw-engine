@@ -51,7 +51,7 @@ impl DrawEngine {
         element.data_url = Some(data_url.to_string());
         element.roughness = 0.0;
         element.background_color = "transparent".into();
-        // Sharp, as Excalidraw inserts images (`App.tsx:10084`, `roundness: null`). The
+        // Sharp, as Excalidraw inserts images (`App.tsx@1118751f:10092`, `roundness: null`). The
         // default style would make it Round, and the panel would describe a corner the
         // square bitmap does not have.
         element.roundness = None;

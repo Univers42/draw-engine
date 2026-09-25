@@ -181,7 +181,7 @@ fn sent(engine: &mut DrawEngine) -> Vec<String> {
 /// arrow on the board instead rewrote a legacy arrow on the first nudge of anything,
 /// stamped it, sent it, and put it in that nudge's undo step. The oracle updates the
 /// arrows of the elements that changed (`updateBoundElements(changedElement)`,
-/// `packages/element/src/align.ts:45-48`).
+/// `packages/element/src/align.ts@1118751f:45-48`).
 #[test]
 fn a_legacy_arrow_is_not_restamped_by_an_unrelated_edit() {
     let (mut engine, arrow, [_, _, x]) = legacy_arrow();
@@ -239,7 +239,7 @@ fn tail_y(arrow: &DrawElement) -> f64 {
 
 /// Undo and redo re-route the arrows of what they put back, stamped with them, as the
 /// oracle redraws the bound arrows of what a history step changed (`ElementsDelta.
-/// applyTo`, `packages/element/src/delta.ts:2044-2047,2107-2114`). An arrow outside the
+/// applyTo`, `packages/element/src/delta.ts@1118751f:2044-2047,2107-2114`). An arrow outside the
 /// step — here one a peer drew after the move — kept the end the undone move had given
 /// it, and no later commit re-routed it: this engine drew it detached, and a peer that
 /// re-routed it on receiving R1 held other geometry under the same stamp.

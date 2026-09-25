@@ -319,7 +319,7 @@ fn the_anchor_holds_still_across_a_drag_that_turns_the_element_through() {
 /// Picking a tool that draws puts down what is held.
 ///
 /// `setActiveTool` clears `selectedElementIds` for every tool that is not the selection
-/// tool (`packages/excalidraw/components/App.tsx:6211-6226`), and the reason is the style
+/// tool (`packages/excalidraw/components/App.tsx@1118751f:6213-6228`), and the reason is the style
 /// panel: it offers the union of what the active *tool* can style and what the
 /// *selection* can, and a swatch applies to the selection when there is one. So a shape
 /// left selected from a moment ago silently captures the colour meant for the next thing

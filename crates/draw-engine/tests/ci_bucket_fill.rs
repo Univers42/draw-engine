@@ -1098,7 +1098,7 @@ fn aiming_at_a_shape_and_getting_nothing_says_so() {
 ///
 /// Three sides of a box enclose nothing and own nothing, so the fallback search comes
 /// back empty — which is `NoOwner`, the same answer as a click on bare canvas.
-/// Excalidraw draws the line in the same place (`App.bucketFill.ts:197`): with no owner
+/// Excalidraw draws the line in the same place (`App.bucketFill.ts@1118751f:197`): with no owner
 /// there is no evidence the person was aiming at anything in particular.
 #[test]
 fn an_open_shape_that_owns_nothing_stays_quiet() {
@@ -1119,7 +1119,7 @@ fn an_open_shape_that_owns_nothing_stays_quiet() {
 
 #[test]
 fn a_click_on_bare_canvas_says_nothing() {
-    // Excalidraw is deliberately silent here too (`App.bucketFill.ts:197`). Clicking
+    // Excalidraw is deliberately silent here too (`App.bucketFill.ts@1118751f:197`). Clicking
     // empty space is not a mistake worth interrupting someone over, and a tool that
     // complains every time the pointer slips is one people stop reading.
     let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 100.0, 100.0)]);
@@ -1157,7 +1157,7 @@ fn a_fill_that_works_says_nothing() {
 // travels with what it was painted inside: the frame it sits in, and the group its owner
 // belongs to. Group a shape with its paint's owner and the paint moves with the group;
 // put the owner in a frame and dragging the frame takes the paint along. Excalidraw
-// inherits exactly these two and nothing else (`App.bucketFill.ts:227-243`).
+// inherits exactly these two and nothing else (`App.bucketFill.ts@1118751f:227-243`).
 //
 // Without them a fill inside a frame is left behind the moment the frame moves, which
 // looks like the paint coming unstuck from the drawing.

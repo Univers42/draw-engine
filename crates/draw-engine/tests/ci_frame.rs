@@ -302,8 +302,8 @@ fn an_element_half_out_of_a_frame_does_not_belong_to_it() {
 fn deleting_a_frame_keeps_what_it_held() {
     // This pinned the opposite — the child went with its frame — under a comment that
     // claimed Excalidraw's behaviour. The oracle keeps the children, clears their frame
-    // and selects them (`actionDeleteSelected.tsx:115-122`, pinned by
-    // `actionDeleteSelected.test.tsx:11`): the frame goes, the work in it does not.
+    // and selects them (`actionDeleteSelected.tsx@1118751f:115-122`, pinned by
+    // `actionDeleteSelected.test.tsx@1118751f:11`): the frame goes, the work in it does not.
     let child = box_at(60.0, 60.0, 80.0, 60.0);
     let bystander = box_at(600.0, 60.0, 80.0, 60.0);
     let (child_id, bystander_id) = (child.id.clone(), bystander.id.clone());

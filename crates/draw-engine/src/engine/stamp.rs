@@ -13,7 +13,7 @@
 //!
 //! # Once per commit, against the element as it was first touched
 //!
-//! Excalidraw stamps on every mutation (`mutateElement.ts:142-144`), so a drag bumps
+//! Excalidraw stamps on every mutation (`mutateElement.ts@1118751f:142-144`), so a drag bumps
 //! once per pointer event. Here nothing leaves the engine between commits — the host is
 //! told at `push_history` — so one stamp per element per commit says the same thing.
 //! The scene records each element as it was before the first change since the last
@@ -35,7 +35,7 @@
 //! # A gesture in progress wins
 //!
 //! A peer's copy of an element with an uncommitted local change is refused, as
-//! Excalidraw refuses it while the element is being edited (`data/reconcile.ts:31-33`):
+//! Excalidraw refuses it while the element is being edited (`data/reconcile.ts@1118751f:31-33`):
 //! taking it would hand the gesture's final state the peer's stamp. The refused copy is
 //! kept. If the gesture changed the element, the commit stamps *above* it — the later
 //! edit wins, here and everywhere it is sent. If the gesture came to nothing, the copy
@@ -46,7 +46,7 @@
 //! Restoring a snapshot restored its *stamps* too, so an undone edit came back with a
 //! version lower than the one already sent — refused by the server and by every peer as
 //! stale. Excalidraw applies undo "as a new user action" with fresh stamps
-//! (`history.ts:24-34`, `delta.ts:1732-1781`), and so does this.
+//! (`history.ts@1118751f:24-34`, `delta.ts@1118751f:1732-1781`), and so does this.
 //!
 //! And each step records the elements it changed, before and after, so undo puts back
 //! those and nothing else — beyond the arrows bound to them, which follow them as they
@@ -353,7 +353,7 @@ impl DrawEngine {
 
         // What the replay put back takes the arrows bound to it along, and their labels,
         // as the oracle redraws the bound arrows of what a step changed
-        // (`ElementsDelta.applyTo`, `packages/element/src/delta.ts:2044-2047,2107-2114`).
+        // (`ElementsDelta.applyTo`, `packages/element/src/delta.ts@1118751f:2044-2047,2107-2114`).
         // An arrow outside the step — one a peer drew since — kept the end the undone
         // edit had given it: nothing else re-routes it, since a commit re-routes only
         // what it touches. Stamped as the replay is, or it would hold other geometry

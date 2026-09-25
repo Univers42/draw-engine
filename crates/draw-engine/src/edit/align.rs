@@ -32,17 +32,17 @@ impl AlignMode {
 
 /// What align and distribute move as one: each group a click at this level would
 /// select, or an element on its own — the oracle's `getSelectedElementsByGroup`
-/// (`packages/element/src/groups.ts:417-466`). A selection that is exactly one group is
+/// (`packages/element/src/groups.ts@1118751f:417-466`). A selection that is exactly one group is
 /// cut one level further in, so what lines up is what that group holds
-/// (`isSingleSelectedGroupCase`, `groups.ts:424-426`).
+/// (`isSingleSelectedGroupCase`, `groups.ts@1118751f:424-426`).
 ///
 /// A label is no unit: it follows its shape through the binding pass of the same commit.
 /// No lock filter — `ids` is what the selection carries, locked group members included,
 /// as a drag carries them (`crate::edit::carried_by`).
 ///
 /// Empty when a frame is among `ids`: neither action is offered for one
-/// (`actionAlign.tsx:39-52`, `actionDistribute.tsx:35-46`), since the frame would move
-/// without what it holds, or what it holds out from under it.
+/// (`actionAlign.tsx@1118751f:39-52`, `actionDistribute.tsx@1118751f:35-46`), since the frame
+/// would move without what it holds, or what it holds out from under it.
 pub fn units<'a>(
     elements: impl IntoIterator<Item = &'a DrawElement>,
     ids: &HashSet<String>,
@@ -100,7 +100,7 @@ fn shifted<'a>(
 }
 
 /// Lines the units up against the box around all of them, each moved whole
-/// (`alignElements`, `packages/element/src/align.ts:19-82`).
+/// (`alignElements`, `packages/element/src/align.ts@1118751f:19-82`).
 pub fn align_elements(
     elements: &[DrawElement],
     ids: &HashSet<String>,
@@ -136,7 +136,7 @@ pub fn align_elements(
 }
 
 /// Spaces the units along `axis` ('x' or 'y') with equal gaps between them, each moved
-/// whole — `distributeElements`, `packages/element/src/distribute.ts:19-114`.
+/// whole — `distributeElements`, `packages/element/src/distribute.ts@1118751f:19-114`.
 ///
 /// Units that overlap too much for gaps (their extents add up to more than the whole)
 /// fall back to the oracle's centre rule, transcribed with its quirk: the two units that

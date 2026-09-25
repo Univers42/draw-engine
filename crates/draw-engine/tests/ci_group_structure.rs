@@ -6,21 +6,21 @@
 //! - **Duplicating inside an entered group** regenerated every level of `group_ids`, so
 //!   the copy of something inside a group landed outside it. The oracle regenerates only
 //!   the levels *inside* the group being edited and keeps that group and everything
-//!   around it — `getNewGroupIdsForDuplication`, `packages/element/src/groups.ts:397-413`,
-//!   called by `duplicateElement`, `packages/element/src/duplicate.ts:123-132`, for both
+//!   around it — `getNewGroupIdsForDuplication`, `packages/element/src/groups.ts@1118751f:397-413`,
+//!   called by `duplicateElement`, `packages/element/src/duplicate.ts@1118751f:123-132`, for both
 //!   Ctrl+D and Alt-drag.
 //! - **Grouping** left the members wherever they were in the stack. The oracle gathers
 //!   them directly under the topmost one, so a group is one run of the z-order —
-//!   `packages/excalidraw/actions/actionGroup.tsx:170-186`.
+//!   `packages/excalidraw/actions/actionGroup.tsx@1118751f:170-186`.
 //! - **Z-order** was a plain array shuffle, blind to groups: stepping forward slid a shape
 //!   into the middle of a group, and bring-to-front inside an entered group carried the
 //!   element out of it. The oracle steps over a group as one block and, inside an entered
 //!   group, never leaves its range — `getTargetIndex` and `shiftElementsToEnd`,
-//!   `packages/element/src/zindex.ts:205-311` and `:443-553`.
+//!   `packages/element/src/zindex.ts@1118751f:193-299` and `:431-541`.
 //! - **A label** stayed out of the group its shape joined, and z-order left it behind its
 //!   shape. The oracle reads the selection with `includeBoundTextElement: true` for both —
-//!   `actionGroup.tsx:96-101`, `zindex.ts:51-54` — and steps over a shape and its label as
-//!   one, `zindex.ts:91-130`.
+//!   `actionGroup.tsx@1118751f:96-101`, `zindex.ts@1118751f:48-51` — and steps over a shape and
+//!   its label as one, `zindex.ts@1118751f:88-127`.
 //!
 //! Every board is a row of filled boxes, bottom of the stack first, so a stack reads left
 //! to right in the assertions. Filled, so the middle of each is a hit target.
@@ -181,7 +181,7 @@ fn a_copy_of_a_leaf_joins_the_group_it_was_made_in() {
     assert_eq!(copies[0].group_ids, vec!["g1", "g2"]);
 }
 
-/// Alt-drag duplicates through the same door as Ctrl+D, `App.duplicate.ts:195-199`.
+/// Alt-drag duplicates through the same door as Ctrl+D, `App.duplicate.ts@1118751f:195-199`.
 #[test]
 fn alt_drag_inside_a_group_leaves_the_copy_in_it() {
     let (mut engine, cast) = nested_beside_another();
@@ -315,7 +315,7 @@ fn a_group_steps_backward_under_another_group_as_one_block() {
 }
 
 /// Inside an entered group, "front" is the front of the group: `shiftElementsToEnd` takes
-/// the last member of the edited group as the end, `zindex.ts:489-497`.
+/// the last member of the edited group as the end, `zindex.ts@1118751f:477-485`.
 #[test]
 fn bring_to_front_inside_a_group_stops_at_the_groups_top() {
     let (mut engine, cast) = board(&[("A", &["g"]), ("B", &["g"]), ("X", &[])]);
@@ -341,7 +341,7 @@ fn send_to_back_inside_a_group_stops_at_the_groups_bottom() {
 }
 
 /// Already the top of its group, so a step forward has nowhere to go: inside an entered
-/// group only its members are candidates, `zindex.ts:226-230`.
+/// group only its members are candidates, `zindex.ts@1118751f:214-218`.
 #[test]
 fn bring_forward_inside_a_group_does_not_leave_it() {
     let (mut engine, cast) = board(&[("A", &["g"]), ("B", &["g"]), ("X", &[])]);
@@ -365,7 +365,7 @@ fn send_backward_inside_a_group_does_not_leave_it() {
 }
 
 /// Inside g2, the inner group g1 is a sibling like any other element, and a sibling
-/// group is stepped over whole — `zindex.ts:292-308`.
+/// group is stepped over whole — `zindex.ts@1118751f:280-296`.
 #[test]
 fn inside_a_group_an_inner_group_is_stepped_over_whole() {
     let (mut engine, cast) = board(&[("C", &["g2"]), ("A", &["g1", "g2"]), ("B", &["g1", "g2"])]);
@@ -619,7 +619,7 @@ fn a_labelled_shape_copied_inside_its_group_stays_there_with_its_label() {
 // Found in review
 // ---------------------------------------------------------------------------
 
-/// Select All leaves the group (`actionSelectAll.ts:49`), so a copy of the board made
+/// Select All leaves the group (`actionSelectAll.ts@1118751f:49`), so a copy of the board made
 /// from inside it is a copy of the board, not new members of the group.
 #[test]
 fn a_copy_of_everything_made_from_inside_a_group_does_not_join_it() {
@@ -653,7 +653,7 @@ fn a_copy_made_inside_a_group_lands_in_its_run_of_the_stack() {
 }
 
 /// Delete S from a group of R and S, and R with its label is what is left: still a group
-/// to the oracle (`allElementsInSameGroup`, `actionGroup.tsx:73-83`). Counted as one
+/// to the oracle (`allElementsInSameGroup`, `actionGroup.tsx@1118751f:73-83`). Counted as one
 /// shape, each Ctrl+G wrapped it in another level.
 #[test]
 fn a_labelled_shape_left_alone_in_its_group_is_still_that_group() {
@@ -675,7 +675,7 @@ fn a_labelled_shape_left_alone_in_its_group_is_still_that_group() {
 }
 
 /// A shape and its own words are one thing, not two to group (`enableActionGroup` reads
-/// the selection without labels, `actionGroup.tsx:73-83`).
+/// the selection without labels, `actionGroup.tsx@1118751f:73-83`).
 #[test]
 fn a_shape_and_its_label_alone_are_not_grouped() {
     let (mut engine, cast) = labelled();
@@ -687,7 +687,7 @@ fn a_shape_and_its_label_alone_are_not_grouped() {
 }
 
 /// A new label is made in its shape's groups and directly above it, as the oracle makes
-/// one (`App.tsx:7081`, `:7103-7108`).
+/// one (`App.tsx@1118751f:7083`, `:7105-7110`).
 #[test]
 fn a_new_label_joins_its_shape_in_its_group_and_in_the_stack() {
     let (mut engine, cast) = board(&[("R", &["g"]), ("S", &["g"]), ("X", &[])]);

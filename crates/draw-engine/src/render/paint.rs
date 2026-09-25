@@ -11,7 +11,7 @@ pub struct DrawTheme {
     #[serde(default = "default_binding_highlight", alias = "bindingHighlight")]
     pub binding_highlight: String,
     /// A side midpoint an arrow end is near but would not snap to yet. Excalidraw's
-    /// `BINDING_MIDPOINT_COLOR` (`interactiveScene.ts:128-131`).
+    /// `BINDING_MIDPOINT_COLOR` (`interactiveScene.ts@1118751f:128-131`).
     #[serde(default = "default_binding_midpoint", alias = "bindingMidpoint")]
     pub binding_midpoint: String,
     pub background: String,

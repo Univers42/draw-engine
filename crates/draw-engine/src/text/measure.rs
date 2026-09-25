@@ -2,7 +2,7 @@
 //!
 //! In the browser every measure is a `measureText` round trip across the wasm boundary,
 //! so what is measured twice should be measured once: char widths per font, as the oracle
-//! caches them (`textMeasurements.ts:179-208`), and whole wrapped hard lines, so that a
+//! caches them (`textMeasurements.ts@1118751f:179-208`), and whole wrapped hard lines, so that a
 //! keystroke re-wraps the line it touched and looks the others up.
 //!
 //! Only single chars are summed from the cache. Anything longer is measured whole, kerning
@@ -89,7 +89,7 @@ pub struct MeasureCache {
     memo_len: Cell<usize>,
     memo_bytes: Cell<usize>,
     /// The widths of lines as laid out — each rendered line of a text, measured whole
-    /// for its box (`measureText`, `textMeasurements.ts:12-27`). Only final lines go in,
+    /// for its box (`measureText`, `textMeasurements.ts@1118751f:12-27`). Only final lines go in,
     /// never the candidates the wrapper tries, so it holds what is on the board. Bounded
     /// by [`MEMO_BYTES`] of text like the wrap memo, and cleared wholesale when full.
     widths: RefCell<HashMap<FontKey, HashMap<Box<str>, f64>>>,
@@ -142,8 +142,8 @@ impl MeasureCache {
     }
 
     /// `line_width` for `font`, with char widths cached per full char. The oracle keys its
-    /// cache by the first UTF-16 unit (`textMeasurements.ts:183`), so astral chars sharing a
-    /// high surrogate share one width there; here each char has its own.
+    /// cache by the first UTF-16 unit (`textMeasurements.ts@1118751f:183`), so astral chars
+    /// sharing a high surrogate share one width there; here each char has its own.
     pub fn metrics<'a>(
         &'a self,
         font: FontKey,

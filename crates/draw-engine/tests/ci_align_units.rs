@@ -2,19 +2,19 @@
 //!
 //! A unit is what a click at the current level would select: a group, taken whole, or an
 //! element on its own. Each unit moves by one translation, so a group keeps its shape
-//! (`alignElements`, `packages/element/src/align.ts:19-50`, over
-//! `getSelectedElementsByGroup`, `packages/element/src/groups.ts:417-466`). A selection
+//! (`alignElements`, `packages/element/src/align.ts@1118751f:19-50`, over
+//! `getSelectedElementsByGroup`, `packages/element/src/groups.ts@1118751f:417-466`). A selection
 //! that is exactly one group is cut one level further in, so its inner units line up
-//! (`isSingleSelectedGroupCase`, `groups.ts:424-426`).
+//! (`isSingleSelectedGroupCase`, `groups.ts@1118751f:424-426`).
 //!
 //! Distribute spaces the units with **equal gaps** between them, and only when they
 //! overlap too much for that does it fall back to spacing their centres between the two
 //! units that reach the selection's ends (`distributeElements`,
-//! `packages/element/src/distribute.ts:19-114`).
+//! `packages/element/src/distribute.ts@1118751f:19-114`).
 //!
 //! Both are refused while a frame is selected, as the oracle hides them
-//! (`actionAlign.tsx:39-52`, `actionDistribute.tsx:35-46`): moving a frame without its
-//! children, or its children out from under it, is not what either action means.
+//! (`actionAlign.tsx@1118751f:39-52`, `actionDistribute.tsx@1118751f:35-46`): moving a frame
+//! without its children, or its children out from under it, is not what either action means.
 
 mod common;
 use common::*;
@@ -291,7 +291,7 @@ fn two_groups_are_two_units_and_distribute_nothing() {
 
 /// The host offers each action exactly when it would do something: counted in units,
 /// not elements, and never with a frame selected (`alignActionsPredicate`,
-/// `actionAlign.tsx:39-52`; `actionDistribute.tsx:35-46`).
+/// `actionAlign.tsx@1118751f:39-52`; `actionDistribute.tsx@1118751f:35-46`).
 #[test]
 fn the_host_is_offered_align_and_distribute_by_units() {
     let (mut engine, ids) = boxes(&[(100.0, 0.0), (250.0, 30.0), (0.0, 200.0), (400.0, 90.0)]);

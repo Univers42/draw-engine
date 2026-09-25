@@ -216,7 +216,7 @@ pub fn element_rotated_bounds(element: &DrawElement) -> WorldBounds {
 }
 
 /// The axis-aligned box around what a turned element draws — Excalidraw's
-/// `getElementBounds` (`packages/element/src/bounds.ts:147-240` at 1118751f): an ellipse
+/// `getElementBounds` (`packages/element/src/bounds.ts@1118751f:147-240` at 1118751f): an ellipse
 /// by its own curve, a diamond by its four corners, a line, arrow or freehand stroke by its
 /// turned points, anything else by its turned box.
 ///
@@ -464,7 +464,7 @@ pub(crate) fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -
 
 /// How close a path's ends must be for it to read as closed.
 ///
-/// Excalidraw's `LINE_CONFIRM_THRESHOLD` (`packages/common/src/constants.ts:23`). It lives
+/// Excalidraw's `LINE_CONFIRM_THRESHOLD` (`packages/common/src/constants.ts@1118751f:27`). It lives
 /// here, in the geometry, because three separate questions turn on it and they have to
 /// give the same answer: whether the renderer paints a path's background, whether a fill
 /// treats a stroke as a wall, and whether a click in the middle of a path belongs to it.
@@ -474,7 +474,7 @@ pub const LINE_CONFIRM_THRESHOLD: f64 = 8.0;
 
 /// Whether a path's ends are close enough that it reads — and paints — as closed.
 ///
-/// `isPathALoop`, `packages/element/src/utils.ts:511-525`. Asks about a path that already
+/// `isPathALoop`, `packages/element/src/utils.ts@1118751f:512-526`. Asks about a path that already
 /// exists, where the threshold is a plain world distance.
 pub fn is_path_a_loop(points: &[[f64; 2]]) -> bool {
     is_path_a_loop_within(points, LINE_CONFIRM_THRESHOLD)
@@ -503,7 +503,7 @@ pub fn is_path_a_loop_within(points: &[[f64; 2]], tolerance: f64) -> bool {
 
 /// Whether a point-based element encloses a region that belongs to it.
 ///
-/// `shouldTestInside`, `packages/element/src/collision.ts:82-102`: a line is grabbable
+/// `shouldTestInside`, `packages/element/src/collision.ts@1118751f:85-105`: a line is grabbable
 /// from the inside when it paints a background *and* its path is a loop, and an arrow
 /// never is — it points at something, so its middle is not a region however closed and
 /// however filled it happens to be.

@@ -5,7 +5,7 @@
 //! the engine the oracle's own regexes run on. Sorted, disjoint, inclusive code-point
 //! ranges, searched by `text::wrap`.
 
-/// `\s` — WhiteSpace and LineTerminator (COMMON.WHITESPACE, textWrapping.ts:70).
+/// `\s` — WhiteSpace and LineTerminator (COMMON.WHITESPACE, textWrapping.ts@1118751f:70).
 #[rustfmt::skip]
 pub(crate) const WHITESPACE: &[(u32, u32)] = &[
     (0x0009, 0x000D), (0x0020, 0x0020), (0x00A0, 0x00A0), (0x1680, 0x1680),
@@ -13,7 +13,7 @@ pub(crate) const WHITESPACE: &[(u32, u32)] = &[
     (0x3000, 0x3000), (0xFEFF, 0xFEFF),
 ];
 
-/// Han, Hiragana, Katakana and Hangul (the script half of CJK.CHAR, textWrapping.ts:95).
+/// Han, Hiragana, Katakana and Hangul (the script half of CJK.CHAR, textWrapping.ts@1118751f:95).
 #[rustfmt::skip]
 pub(crate) const CJK_SCRIPT: &[(u32, u32)] = &[
     (0x1100, 0x11FF), (0x2E80, 0x2E99), (0x2E9B, 0x2EF3), (0x2F00, 0x2FD5),
@@ -31,7 +31,7 @@ pub(crate) const CJK_SCRIPT: &[(u32, u32)] = &[
     (0x2EBF0, 0x2EE5D), (0x2F800, 0x2FA1D), (0x30000, 0x3134A), (0x31350, 0x33479),
 ];
 
-/// `\p{Emoji}` (EMOJI.ANY, textWrapping.ts:125).
+/// `\p{Emoji}` (EMOJI.ANY, textWrapping.ts@1118751f:125).
 #[rustfmt::skip]
 pub(crate) const EMOJI: &[(u32, u32)] = &[
     (0x0023, 0x0023), (0x002A, 0x002A), (0x0030, 0x0039), (0x00A9, 0x00A9),
@@ -74,7 +74,7 @@ pub(crate) const EMOJI: &[(u32, u32)] = &[
     (0x1FACD, 0x1FADC), (0x1FADF, 0x1FAEA), (0x1FAEF, 0x1FAF8),
 ];
 
-/// `[\p{Extended_Pictographic}\p{Emoji_Presentation}]` (EMOJI.MOST, textWrapping.ts:126).
+/// `[\p{Extended_Pictographic}\p{Emoji_Presentation}]` (EMOJI.MOST, textWrapping.ts@1118751f:126).
 #[rustfmt::skip]
 pub(crate) const EMOJI_START: &[(u32, u32)] = &[
     (0x00A9, 0x00A9), (0x00AE, 0x00AE), (0x203C, 0x203C), (0x2049, 0x2049),
@@ -118,13 +118,13 @@ pub(crate) const EMOJI_START: &[(u32, u32)] = &[
     (0x1FA58, 0x1FA5F), (0x1FA6E, 0x1FAFF), (0x1FC00, 0x1FFFD),
 ];
 
-/// `\p{Emoji_Modifier}` (EMOJI.JOINER, textWrapping.ts:122-123).
+/// `\p{Emoji_Modifier}` (EMOJI.JOINER, textWrapping.ts@1118751f:122-123).
 #[rustfmt::skip]
 pub(crate) const EMOJI_MODIFIER: &[(u32, u32)] = &[
     (0x1F3FB, 0x1F3FF),
 ];
 
-/// `\p{RI}` (EMOJI.FLAG, textWrapping.ts:121).
+/// `\p{RI}` (EMOJI.FLAG, textWrapping.ts@1118751f:121).
 #[rustfmt::skip]
 pub(crate) const REGIONAL_INDICATOR: &[(u32, u32)] = &[
     (0x1F1E6, 0x1F1FF),

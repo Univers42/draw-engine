@@ -2,7 +2,7 @@
 //!
 //! Not an Excalidraw feature — theirs offers only Sharp and Round — but it writes into a
 //! slot their model already has. `roundness` there is `{type, value?}` and
-//! `getCornerRadius` (`packages/element/src/utils.ts:527-548`) reads the value as a fixed
+//! `getCornerRadius` (`packages/element/src/utils.ts@1118751f:528-549`) reads the value as a fixed
 //! radius, with no UI anywhere to set it. So this is a handle for data the oracle already
 //! understands, not a new concept.
 //!

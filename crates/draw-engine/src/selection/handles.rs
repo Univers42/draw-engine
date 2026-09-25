@@ -158,7 +158,7 @@ impl HandleLayout {
             //
             // This is Excalidraw's reach, derived from their geometry: their corner grab
             // box is the handle's own 8px square, so it reaches 5.66px diagonally from
-            // its centre (`transformHandles.ts:138-200`).
+            // its centre (`transformHandles.ts@1118751f:138-200`).
             hit: (handle_px * std::f64::consts::SQRT_2 / 2.0) / scale,
             rotate_gap: rotate_gap_px / scale,
             min_side: 5.0 * handle_px / scale,

@@ -48,7 +48,7 @@ impl DrawEngine {
             font_size: layout::font_size_of(element),
             color: element.stroke_color.clone(),
             // What was typed, as the oracle's editor opens on `originalText`
-            // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx:488`): opened on the drawn
+            // (`packages/excalidraw/wysiwyg/textWysiwyg.tsx@1118751f:488`): opened on the drawn
             // text, every soft break would come back from the edit a hard one.
             text: crate::scene::source_text(element).to_owned(),
             width: wrap.map(|wrap| wrap * self.camera.scale),
@@ -196,7 +196,7 @@ impl DrawEngine {
         // The smallest a shape holding one line of it may be, which a resize stops at too.
         let min_line = self.with_measure(|measure| layout::min_container_size(&label, measure));
         // In its shape's groups and directly above it, as the oracle makes one
-        // (`packages/excalidraw/components/App.tsx:7081`, `:7103-7108`). On top of the
+        // (`packages/excalidraw/components/App.tsx@1118751f:7083`, `:7105-7110`). On top of the
         // board instead, it was drawn over whatever covers its shape, and split the
         // shape's group in the stack.
         label.group_ids = container.group_ids.clone();
@@ -277,8 +277,8 @@ impl DrawEngine {
             return false;
         };
         // A group of one — its other members deleted — has nothing inside to show. The
-        // oracle only steps into a group the click selected (`App.tsx:7310-7330`), which
-        // a group of one never is (`groups.ts:134-141`), so the double click does what it
+        // oracle only steps into a group the click selected (`App.tsx@1118751f:7312-7332`), which
+        // a group of one never is (`groups.ts@1118751f:134-141`), so the double click does what it
         // does on any lone shape.
         if !crate::edit::is_live_group(self.scene.iter_ordered(), group) {
             return false;
@@ -338,7 +338,7 @@ impl DrawEngine {
             .take()
             .filter(|(_, at)| is_double_tap(*at, sx, sy));
         // Only with the selection tools, as Excalidraw's `handleCanvasDoubleClick` has it
-        // (`App.tsx:7200-7209`): a double click with the eraser, say, put an empty text
+        // (`App.tsx@1118751f:7202-7211`): a double click with the eraser, say, put an empty text
         // box on the board and opened an editor on it.
         if !matches!(
             self.tool,

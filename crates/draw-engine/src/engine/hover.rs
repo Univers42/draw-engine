@@ -77,7 +77,7 @@ impl DrawEngine {
     /// Lights up the shape an arrow started here would attach to, before anything is drawn.
     ///
     /// Excalidraw suggests the binding as soon as the arrow tool is over a shape
-    /// (`packages/excalidraw/components/App.tsx:7939-7973`). Without it the outline only
+    /// (`packages/excalidraw/components/App.tsx@1118751f:7941-7979`). Without it the outline only
     /// lit once a drag had begun, so where an arrow would attach was a guess until it was
     /// already being drawn. Only the arrow tool, and only between gestures: a drag or a
     /// path being placed shows its own.
@@ -133,7 +133,7 @@ impl DrawEngine {
     }
 
     /// Ctrl/Cmd, as held for the pointer event about to be reported: while it is down an
-    /// arrow binds to nothing, as in Excalidraw (`App.tsx:5753-5761`).
+    /// arrow binds to nothing, as in Excalidraw (`App.tsx@1118751f:5754-5762`).
     pub fn set_ctrl_held(&mut self, held: bool) {
         self.ctrl_held = held;
     }
@@ -189,7 +189,7 @@ impl DrawEngine {
         }
 
         // Inside the selection's box a press picks the selection up, hit or hole, so it
-        // reads as movable there too (`App.tsx:8280-8286`).
+        // reads as movable there too (`App.tsx@1118751f:8288-8294`).
         if self.pointer_is_inside_selection(world) {
             return HoverCursor::Move;
         }

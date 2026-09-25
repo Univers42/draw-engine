@@ -50,7 +50,7 @@ const HANDLE_PX: f64 = 8.0;
 /// the point handles on a line or arrow, which sit *on* the geometry and so have no
 /// element interior to stay clear of.
 const HANDLE_HIT_PX: f64 = 10.0;
-/// Excalidraw's `MINIMUM_ARROW_SIZE` (`constants.ts:22`), used as they use it: the fork
+/// Excalidraw's `MINIMUM_ARROW_SIZE` (`constants.ts@1118751f:26`), used as they use it: the fork
 /// between the two gestures a linear tool offers.
 ///
 /// Below this the press and release was a **click**, which starts a path taken point by
@@ -58,7 +58,7 @@ const HANDLE_HIT_PX: f64 = 10.0;
 /// pixels, because it is a statement about the hand rather than about the drawing — the
 /// same wobble is the same wobble at every zoom.
 const LINEAR_CLICK_PX: f64 = 20.0;
-/// Excalidraw's `DRAGGING_THRESHOLD` (`packages/common/src/constants.ts:21`): how far a
+/// Excalidraw's `DRAGGING_THRESHOLD` (`packages/common/src/constants.ts@1118751f:25`): how far a
 /// bound arrow has to be dragged before the drag is allowed to detach it.
 ///
 /// The click that selects an arrow is never perfectly still, and without a floor that
@@ -69,7 +69,7 @@ const DRAGGING_THRESHOLD_PX: f64 = 10.0;
 const LINEAR_MIDPOINT_MIN_PX: f64 = 28.0;
 /// How close, in screen pixels, a dropped arrow end must come to a side midpoint to snap
 /// onto it. Excalidraw's reach is its binding distance, 15 scene units at ordinary zoom
-/// (`packages/element/src/utils.ts:634-695`); kept in pixels here so it feels the same at
+/// (`packages/element/src/utils.ts@1118751f:788-808`); kept in pixels here so it feels the same at
 /// every zoom, and capped per shape by `midpoint_snap_radius`.
 const MIDPOINT_SNAP_PX: f64 = 16.0;
 const ROTATE_GAP_PX: f64 = 26.0;
@@ -159,7 +159,7 @@ pub struct DrawEngine {
     ///
     /// A press on something already selected might start a drag of the whole selection,
     /// so it leaves the selection alone; released without moving anything, it was a click,
-    /// and a click selects what it hit — `App.tsx:12183-12190`, `:12322-12345`. Without
+    /// and a click selects what it hit — `App.tsx@1118751f:12191-12198`, `:12330-12353`. Without
     /// it, a click on one member of a multi-selection could never narrow it.
     narrow_on_click: Option<HashSet<String>>,
     /// A text (or the label of a shape) the press hit while it was already the sole
@@ -167,7 +167,7 @@ pub struct DrawEngine {
     /// than the whole-text selection every other entry point opens with
     /// (`App.tsx@1118751f:12402-12428`, `wasAddedToSelection`). Carries the world point
     /// the press landed at, to place the caret from. Cleared by any real move, the same
-    /// way [`Self::narrow_on_click`] is (`App.tsx:10918-10921`, "even one that comes back
+    /// way [`Self::narrow_on_click`] is (`App.tsx@1118751f:10926-10929`, "even one that comes back
     /// to where it started").
     reopen_text_on_click: Option<(String, Point)>,
     /// The path being placed point by point, if one is.
@@ -187,10 +187,10 @@ pub struct DrawEngine {
     snap_guides: Vec<SnapGuide>,
     /// Whether a moving selection snaps to other elements' edges and centres.
     ///
-    /// **Off by default**, as Excalidraw's `objectsSnapModeEnabled` is (`appState.ts:129`).
-    /// It used to be always on, and the guides pulled every drag a few pixels sideways
-    /// toward whatever happened to be near — with no way to turn that off short of
-    /// holding a modifier through every drag. Holding Ctrl/Cmd inverts it for one
+    /// **Off by default**, as Excalidraw's `objectsSnapModeEnabled` is
+    /// (`appState.ts@1118751f:129`). It used to be always on, and the guides pulled every drag a
+    /// few pixels sideways toward whatever happened to be near — with no way to turn that off
+    /// short of holding a modifier through every drag. Holding Ctrl/Cmd inverts it for one
     /// gesture either way; see `move_selection`.
     objects_snap: bool,
     /// The shape a dragged arrow endpoint would attach to, if released now.
@@ -234,7 +234,7 @@ pub struct DrawEngine {
     /// Alt, as of the last pointer move. See `set_alt_held`.
     alt_held: bool,
     /// Ctrl/Cmd, as of the last press or move: while held, an arrow end binds to nothing,
-    /// as in Excalidraw (`App.tsx:5753-5761`). See `set_ctrl_held`.
+    /// as in Excalidraw (`App.tsx@1118751f:5754-5762`). See `set_ctrl_held`.
     ctrl_held: bool,
     history: SnapshotHistory<stamp::HistoryEntry>,
     history_seq: u64,
@@ -613,7 +613,7 @@ impl DrawEngine {
         // The arrow tool's hover suggestion goes with it.
         self.clear_binding_suggestion();
         // Picking any tool but select puts down whatever was being held.
-        // `setActiveTool` does the same (`App.tsx:6211-6226`), and the reason is the
+        // `setActiveTool` does the same (`App.tsx@1118751f:6213-6228`), and the reason is the
         // style panel: it offers the union of what the active tool can style and what the
         // selection can, and a swatch applies to the selection whenever there is one. So
         // a shape left selected from a moment ago silently captures the colour meant for
@@ -739,7 +739,7 @@ impl DrawEngine {
     /// edited — the state Ctrl+G turns into groups that overlap instead of nesting.
     ///
     /// A deliberate divergence for a shift-drag that reaches outside the group: the oracle
-    /// keeps the group there and grows each side differently (`App.tsx:11331-11345`),
+    /// keeps the group there and grows each side differently (`App.tsx@1118751f:11339-11353`),
     /// which is that same state.
     fn select_caught(&mut self, ids: HashSet<String>) {
         if let Some(editing) = self.editing_group_id.as_deref() {
@@ -806,7 +806,7 @@ impl DrawEngine {
     }
 
     /// A top-level selection even when everything is inside the group being edited
-    /// (`actionSelectAll.ts:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
+    /// (`actionSelectAll.ts@1118751f:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
     /// the top rather than nesting a new level inside that group.
     pub fn select_all(&mut self) {
         self.editing_group_id = None;
@@ -850,7 +850,7 @@ impl DrawEngine {
     }
 
     /// Steps back out of the group being edited, **one** level: into the group directly
-    /// around it, or to the top from the outermost — `actionDeselect.ts:36-62`, `:72-111`.
+    /// around it, or to the top from the outermost — `actionDeselect.ts@1118751f:36-62`, `:72-111`.
     /// Leaving every level at once made three double clicks down a one-key trip back to
     /// nothing.
     ///

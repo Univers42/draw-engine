@@ -3,7 +3,7 @@
 //!
 //! Held to Excalidraw's `actionFlip.ts`, which flips through `resizeMultipleElements`
 //! with `flipByX | flipByY` and `shouldResizeFromCenter` (`packages/element/src/
-//! resizeElements.ts:1209-1569`). The deliberate divergences — fixed points mirrored for
+//! resizeElements.ts@1118751f:1209-1569`). The deliberate divergences — fixed points mirrored for
 //! every arrow, labels left out of the arrows-only check, a negative extent standing for
 //! an image's `scale` — are written down in `docs/reference/resize.md` › Flip.
 
@@ -57,9 +57,9 @@ fn mirrored(p: Point, axis: FlipAxis, mid: f64) -> Point {
     }
 }
 
-/// The middle of what `elements` draw, turned, on `axis` — the oracle's
-/// `getCommonBoundingBox` (`actionFlip.ts:131`, `bounds.ts:1005-1029`), with a line
-/// measured by its points rather than by its rendered path.
+/// The middle of what `elements` draw, turned, on `axis` — the oracle's `getCommonBoundingBox`
+/// (`actionFlip.ts@1118751f:131`, `bounds.ts@1118751f:1005-1029`), with a line measured by its
+/// points rather than by its rendered path.
 fn midline<'a>(elements: impl IntoIterator<Item = &'a DrawElement>, axis: FlipAxis) -> f64 {
     let (lo, hi) = elements.into_iter().map(element_outline_bounds).fold(
         (f64::INFINITY, f64::NEG_INFINITY),
@@ -163,7 +163,7 @@ fn flipping_shapes_with_their_arrow_mirrors_the_arrow() {
     }
 }
 
-/// Only bound arrows selected: the heads swap and nothing moves (`actionFlip.ts:116-129`).
+/// Only bound arrows selected: the heads swap and nothing moves (`actionFlip.ts@1118751f:116-129`).
 /// Before, the points were mirrored and the refresh put them straight back — the flip
 /// changed nothing visible, yet was saved as an edit.
 #[test]
@@ -208,7 +208,7 @@ fn flipping_only_bound_arrows_swaps_their_heads() {
 }
 
 /// A label does not count against the arrows-only rule: an arrow with words on it is still
-/// only an arrow. Excalidraw counts the label (`actionFlip.ts:87-94`), so there the same
+/// only an arrow. Excalidraw counts the label (`actionFlip.ts@1118751f:87-94`), so there the same
 /// arrow is mirrored and let go of both shapes instead — a divergence, written down.
 #[test]
 fn a_labelled_bound_arrow_alone_swaps_its_heads() {
@@ -232,7 +232,7 @@ fn a_labelled_bound_arrow_alone_swaps_its_heads() {
 }
 
 /// Flipped with something that is not its shapes, an arrow is mirrored and lets go of the
-/// shapes that stayed (`resizeElements.ts:1558-1569`). Before, it stayed bound, and the
+/// shapes that stayed (`resizeElements.ts@1118751f:1558-1569`). Before, it stayed bound, and the
 /// refresh snapped it back to where it had been.
 #[test]
 fn flipping_an_arrow_without_its_shapes_unbinds_it() {
@@ -310,7 +310,7 @@ fn an_arrow_left_out_follows_its_flipped_shape() {
 // ------------------------------------------------------------- what the flip carries
 
 /// A frame flips with what it holds (`getSelectedElements(…, includeElementsInFrames)`,
-/// `actionFlip.ts:87-94`), and nobody changes frame. Before, only the outline mirrored.
+/// `actionFlip.ts@1118751f:87-94`), and nobody changes frame. Before, only the outline mirrored.
 #[test]
 fn a_frame_flips_with_its_children() {
     let frame = named(
@@ -341,7 +341,7 @@ fn a_frame_flips_with_its_children() {
     );
 }
 
-/// A group is one thing, locked members included (`groups.ts:94-132` has no lock
+/// A group is one thing, locked members included (`groups.ts@1118751f:94-132` has no lock
 /// filter). Before, the locked member stayed put while the rest of its group mirrored.
 #[test]
 fn a_group_flips_with_its_locked_member() {
@@ -359,7 +359,7 @@ fn a_group_flips_with_its_locked_member() {
 
 // ------------------------------------------------------------------ boxes and text
 
-/// Text turns the other way like everything else (`resizeElements.ts:1417-1419` has no
+/// Text turns the other way like everything else (`resizeElements.ts@1118751f:1417-1419` has no
 /// text exception; excalidraw.com: 0.3 → 5.9832). Its glyphs are never mirrored.
 #[test]
 fn turned_text_turns_the_other_way() {
@@ -397,7 +397,7 @@ fn the_axis_is_the_turned_selection_box() {
 }
 
 /// Each kind reaches as far as what it draws, not as far as its box, once turned — the
-/// oracle's `getElementBounds` (`packages/element/src/bounds.ts:147-240` at 1118751f): an
+/// oracle's `getElementBounds` (`packages/element/src/bounds.ts@1118751f:147-240` at 1118751f): an
 /// ellipse by its own curve, a diamond by its four corners, a line or a freehand stroke by
 /// its turned points. Each is turned by π/4 beside a box at x 300..350, so the box lands on
 /// the kind's left edge. The turned box put all four further left, the line and the stroke
@@ -416,25 +416,25 @@ fn the_axis_is_what_each_kind_draws() {
     );
     stroke.points = Some(vec![[0.0, 0.0], [50.0, 50.0], [100.0, 100.0]]);
     let cases = [
-        // `cx - hypot(w/2 · cos, h/2 · sin)`, bounds.ts:202-209.
+        // `cx - hypot(w/2 · cos, h/2 · sin)`, bounds.ts@1118751f:202-209.
         (
             "ellipse",
             ellipse_at(0.0, 0.0, 200.0, 20.0),
             100.0 - (100.0 * cos).hypot(10.0 * sin),
         ),
-        // The corners on the long axis reach furthest, bounds.ts:176-201.
+        // The corners on the long axis reach furthest, bounds.ts@1118751f:176-201.
         (
             "diamond",
             diamond_at(0.0, 0.0, 200.0, 20.0),
             100.0 - 100.0 * cos,
         ),
-        // The turned points, bounds.ts:934-995.
+        // The turned points, bounds.ts@1118751f:934-995.
         (
             "line",
             connector(0.0, 0.0, 100.0, 100.0, DrawElementType::Line),
             50.0,
         ),
-        // The turned points, bounds.ts:157-173.
+        // The turned points, bounds.ts@1118751f:157-173.
         ("freehand", stroke, 50.0),
     ];
     for (kind, mut shape, left) in cases {
@@ -450,7 +450,7 @@ fn the_axis_is_what_each_kind_draws() {
 }
 
 /// The words on an arrow count toward the box, as the oracle adds an arrow's label to it
-/// (`resizeElements.ts:1280-1310`): a label wider than its arrow widens the selection.
+/// (`resizeElements.ts@1118751f:1280-1310`): a label wider than its arrow widens the selection.
 #[test]
 fn an_arrows_words_count_toward_the_axis() {
     let mut arrow = named(
@@ -512,7 +512,7 @@ fn image_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
 }
 
 /// Every box kind but a picture keeps a positive width and height, as the oracle's do
-/// (`resizeElements.ts:1409-1444`): a flip reflects where it is and turns it the other
+/// (`resizeElements.ts@1118751f:1409-1444`): a flip reflects where it is and turns it the other
 /// way, so a rectangle's hand-drawn stroke and hatching look the same as before, as they
 /// do on excalidraw.com. Before, the extent went negative and the painter mirrored them.
 #[test]
@@ -554,7 +554,7 @@ fn box_kinds_keep_a_positive_extent() {
 /// A flip that moves nothing is not an edit. A lone unturned box is its own mirror image,
 /// so it keeps its stamp — nothing to save or send — and leaves nothing to undo, as the
 /// oracle's `mutateElement` returns the element untouched when no value changed
-/// (`packages/element/src/mutateElement.ts:129-131` at 1118751f). Before, it was stamped
+/// (`packages/element/src/mutateElement.ts@1118751f:129-131` at 1118751f). Before, it was stamped
 /// all the same, and the next Ctrl+Z went to it: it undid nothing, and the edit before it
 /// stayed.
 #[test]
@@ -595,9 +595,10 @@ fn a_flip_that_changes_nothing_is_not_an_edit() {
 }
 
 /// A picture is the one box whose content mirrors: a negative extent does the job of the
-/// oracle's `scale` (`resizeElements.ts:1484-1489`, painted by `renderElement.ts:824-841`)
-/// on the canvas and in the export. An embed's page never mirrors — Excalidraw turns its
-/// iframe and nothing else (`App.tsx:2046-2051`) — so its frame keeps a positive box.
+/// oracle's `scale` (`resizeElements.ts@1118751f:1484-1489`, painted by
+/// `renderElement.ts@1118751f:820-837`) on the canvas and in the export. An embed's page never
+/// mirrors — Excalidraw turns its iframe and nothing else (`App.tsx@1118751f:2047-2052`) — so
+/// its frame keeps a positive box.
 #[test]
 fn an_image_mirrors_its_pixels_and_an_embed_does_not() {
     let mut engine = engine_with_scene(vec![named("img", image_at(0.0, 0.0, 200.0, 100.0))]);
