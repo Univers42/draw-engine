@@ -29,7 +29,7 @@ pub use edit::{
 };
 pub use engine::{
     DrawEngine, EmbedFrame, EngineEvents, HoverCursor, NoopPainter, Notice, PaintView, Painter,
-    Peer, PeerMark, TextEditRequest,
+    Peer, PeerMark, TextEditLayout, TextEditRequest, TextEditSession,
 };
 pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
 pub use freehand::points_bounds;

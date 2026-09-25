@@ -32,6 +32,7 @@ mod selection_style;
 mod stamp;
 mod style;
 mod text;
+mod text_session;
 mod types;
 pub mod vectorize;
 
@@ -39,6 +40,7 @@ pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub use selection_style::{Edges, SelectionStyle};
+pub use text_session::{TextEditLayout, TextEditSession};
 pub(crate) use types::{default_measure, Interaction};
 pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
 
@@ -224,6 +226,8 @@ pub struct DrawEngine {
     /// What the style preview in progress — the opacity slider mid-drag — has changed and
     /// not committed. Emptied by the commit. See `selection_style.rs` and `peers.rs`.
     style_preview: HashSet<String>,
+    /// The text open in the host's editor. See `text_session.rs`.
+    text_session: Option<TextEditSession>,
 }
 
 impl Default for DrawEngine {
@@ -286,6 +290,7 @@ impl DrawEngine {
             style_revision: 0,
             copied_styles: None,
             style_preview: HashSet::new(),
+            text_session: None,
         }
     }
 
@@ -328,6 +333,8 @@ impl DrawEngine {
         // five megabytes of JSON for one stroke on a board of 2,000, serialised here and
         // parsed twice more on the other side. The host supplied this scene; it has it.
         self.scene.forget_pending();
+        // Whatever was being typed was typed into the scene this replaced.
+        self.drop_text_session(None);
         self.reset_history();
         self.revalidate_editing();
         self.touch_style();

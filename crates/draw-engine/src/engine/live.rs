@@ -73,6 +73,11 @@ impl DrawEngine {
         if let Some(path) = self.linear_in_progress() {
             ids.insert(path);
         }
+        // So does a text being typed, and the shape it grows. See `text_session.rs`.
+        if let Some(text) = self.editing_text_id().and_then(|id| self.scene.get(id)) {
+            ids.insert(text.id.clone());
+            ids.extend(text.container_id.clone());
+        }
         if ids.is_empty() {
             return ids;
         }

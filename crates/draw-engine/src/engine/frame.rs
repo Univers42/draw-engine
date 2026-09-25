@@ -195,9 +195,13 @@ impl DrawEngine {
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
+        // The text being typed is the host's editor's to show: painted as well, it showed
+        // twice (`Renderer.ts@1118751f:259-267`). Nor is it framed — see `text_session.rs`.
+        let editing = self.editing_text_id();
         let selected: Vec<&DrawElement> = self
             .selected_ids
             .iter()
+            .filter(|id| editing != Some(id.as_str()))
             .filter_map(|id| self.scene.get(id))
             .filter(|el| !el.is_deleted)
             .collect();
@@ -300,7 +304,9 @@ impl DrawEngine {
                     .unwrap_or(element)
             })
             .filter(|element| {
-                !element.is_deleted && crate::render::bounds::intersects_viewport(element, &visible)
+                !element.is_deleted
+                    && editing != Some(element.id.as_str())
+                    && crate::render::bounds::intersects_viewport(element, &visible)
             })
             .collect();
         // What a peer is drawing that is not in the scene yet goes on top, where it will be.

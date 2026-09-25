@@ -17,6 +17,7 @@ import type {
   GridSettings,
   SelectionStyle,
   TextAlign,
+  TextEditLayout,
   VerticalAlign,
   ZOrderMode,
 } from "./types";
@@ -622,8 +623,31 @@ export class DrawEngine {
     this.inner.finishLinear();
   }
 
+  /** Writes `text` into the text `id` and commits it, in one call. See `updateTextEdit`. */
   setElementText(id: string, text: string): void {
     this.inner.setElementText(id, text);
+  }
+
+  /**
+   * The open text with `text` typed into it — laid out, its shape grown or shrunk —
+   * with no step and no stamp: peers see it through `gestureElements`. `false` when no
+   * text is open any more, and the editor should close.
+   */
+  updateTextEdit(text: string): boolean {
+    return this.inner.updateTextEdit(text);
+  }
+
+  /**
+   * Ends the edit with `text`, as one step; emptied, the text goes. `viaKeyboard`
+   * (Escape, Ctrl/Cmd+Enter) leaves it — or a label's shape — selected.
+   */
+  commitTextEdit(text: string, viaKeyboard: boolean): void {
+    this.inner.commitTextEdit(text, viaKeyboard);
+  }
+
+  /** Where the open text is and how it looks; null when none is open. */
+  textEditLayout(): TextEditLayout | null {
+    return parseJson<TextEditLayout | null>(this.inner.textEditLayoutJson(), null);
   }
 
   /**

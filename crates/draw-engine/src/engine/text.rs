@@ -57,6 +57,7 @@ impl DrawEngine {
             font_family: family.unwrap_or(crate::text::FontKey::LEGACY),
             line_height: crate::scene::resolved_line_height(element),
         });
+        self.open_text_session(element);
     }
 
     /// A new, empty text in the next style: the family chosen last, Excalifont until one
@@ -346,7 +347,16 @@ impl DrawEngine {
         self.set_element_text(id, &text);
     }
 
+    /// Writes `text` into the text `id` and commits it, in one call — the edit before
+    /// the typing session (`text_session.rs`), kept for hosts that write text whole. It
+    /// ends a session open on the same text, with no layout of its own.
     pub fn set_element_text(&mut self, id: &str, text: &str) {
+        self.drop_text_session(Some(id));
+        self.set_element_text_step(id, text);
+        self.refresh_live();
+    }
+
+    fn set_element_text_step(&mut self, id: &str, text: &str) {
         let Some(element) = self.scene.get(id).cloned() else {
             return;
         };
@@ -450,7 +460,7 @@ impl DrawEngine {
 
     /// `element` with `text` typed into it: laid out, and — a free text — kept on the
     /// edge its alignment anchors (`getAdjustedDimensions`).
-    fn with_text(&self, element: &DrawElement, text: &str) -> Laid {
+    pub(crate) fn with_text(&self, element: &DrawElement, text: &str) -> Laid {
         let mut typed = element.clone();
         typed.original_text = Some(text.to_owned());
         let mut laid = self.laid_out(&typed);

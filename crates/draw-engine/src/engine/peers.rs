@@ -85,6 +85,24 @@ impl DrawEngine {
             self.drop_local_change(id);
         }
 
+        // A text being typed whose label or shape someone else now holds is let go as a
+        // gesture on it is: what was typed goes back, and the host's editor closes at its
+        // next keystroke (`update_text_edit` answers `false`). See `text_session.rs`.
+        let text_taken = self
+            .editing_text_id()
+            .and_then(|id| self.scene.get(id))
+            .is_some_and(|text| {
+                self.held.contains_key(&text.id)
+                    || text
+                        .container_id
+                        .as_ref()
+                        .is_some_and(|container| self.held.contains_key(container))
+            });
+        if text_taken {
+            self.drop_text_session(None);
+            self.abandon_gesture();
+        }
+
         // What someone else now holds is no longer ours. A gesture on it is abandoned —
         // put back as it was — rather than committed over their work.
         let lost: Vec<String> = self
