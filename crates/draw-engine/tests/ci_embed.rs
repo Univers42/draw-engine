@@ -709,3 +709,49 @@ fn a_frame_says_what_it_is_and_how_far_the_board_is_zoomed() {
     assert_eq!(gist.kind, "generic");
     assert!(gist.srcdoc.is_some() && !gist.allow_same_origin);
 }
+
+// ------------------------------------------------------------------------ locking
+
+/// An embed locks as any element does: `toggle_lock_selection` has no kind filter. Locked,
+/// a press on it picks nothing up; a second toggle, from Select All, gives it back.
+#[test]
+fn a_locked_embed_stays_put_until_it_is_unlocked() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    let id = engine
+        .insert_embed("https://youtu.be/abc", 600.0, 450.0)
+        .expect("embed was not inserted");
+    let x_of = |engine: &DrawEngine| {
+        engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == id)
+            .expect("embed vanished")
+            .x
+    };
+    let drag = |engine: &mut DrawEngine| {
+        let embed = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == id)
+            .unwrap();
+        // On its top edge, which any shape is hit on.
+        let (x, y) = (embed.x + embed.width / 2.0, embed.y);
+        engine.begin_pointer(x, y, false, false);
+        engine.move_pointer(x + 100.0, y, false, false);
+        engine.end_pointer();
+    };
+    engine.select(vec![id.clone()]);
+    engine.toggle_lock_selection();
+    engine.clear_selection();
+    let before = x_of(&engine);
+
+    drag(&mut engine);
+    assert_close(x_of(&engine), before);
+
+    engine.select_all();
+    engine.toggle_lock_selection();
+    engine.clear_selection();
+    drag(&mut engine);
+    assert_close(x_of(&engine), before + 100.0);
+}
