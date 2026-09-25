@@ -96,6 +96,9 @@ impl DrawEngine {
                 if let Some(ids) = self.narrow_on_click.take() {
                     self.set_selection(ids);
                 }
+                if let Some((id, at)) = self.reopen_text_on_click.take() {
+                    self.reopen_text_at(&id, at);
+                }
             }
             _ => self.settle_gesture(),
         }
@@ -423,16 +426,18 @@ impl DrawEngine {
             element.height = crate::text::layout::font_size_of(&element)
                 * crate::scene::resolved_line_height(&element);
         } else {
-            // Put back the click-sized box `begin_text` could not commit to, its first
-            // line centred on the click.
-            element.x = start.x;
-            element.y = self.first_line_top(&element, start.y);
+            // Put back the click-sized box `begin_text` could not commit to — its first
+            // line centred on the click, or, with the grid on, its top-left grid point
+            // (`text_creation_point`).
+            let at = self.text_creation_point(&element, start);
+            element.x = at.x;
+            element.y = at.y;
             element.width = 4.0;
             element.height = crate::text::layout::font_size_of(&element);
         }
         self.scene.put(element.clone());
         self.set_selection(vec![id.to_string()]);
-        self.request_text_edit(&element);
+        self.request_text_edit(&element, None);
         self.settle_tool();
     }
 
@@ -523,6 +528,7 @@ impl DrawEngine {
         // A press Escape interrupted is no click, and what it would have narrowed to was
         // worked out at a level Escape may be about to leave.
         self.narrow_on_click = None;
+        self.reopen_text_on_click = None;
         // Escape ends an open path rather than throwing it away, which is Excalidraw's
         // binding too: both Escape and Enter run `actionFinalize`. A path of six points
         // lost to a reflexive Escape is six points of work gone, and undo is the thing

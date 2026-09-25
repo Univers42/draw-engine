@@ -41,6 +41,12 @@ pub struct TextEditRequest {
     /// Unitless, [`resolved_line_height`](crate::scene::resolved_line_height): the
     /// editor's lines are as far apart as the canvas's.
     pub line_height: f64,
+    /// Where the caret goes on open, a UTF-16 code unit offset into `text` — a click on a
+    /// text that was already the sole selection, at the click
+    /// (`getCaretIndexFromInitialSceneCoords`, `textWysiwyg.tsx@1118751f:491-538`). `None`
+    /// selects the whole text instead, as every other entry point opens it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caret: Option<usize>,
 }
 
 /// Something the person should be told, as a code rather than a sentence.

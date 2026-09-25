@@ -1112,6 +1112,44 @@ mod entry {
         assert_eq!((text.x, text.y), (300.0, 200.0 - 12.5));
     }
 
+    /// With the grid on, a new free text lands on the grid instead of centring its first
+    /// line on the pointer. A double click reaches `text_creation_point` with the raw
+    /// press, so it floors straight to the grid point below it, as the oracle's
+    /// `getTextCreationGridPoint` does. The text tool's click goes through the one snap
+    /// every gesture starts from (`begin_pointer_step`), which rounds to the *nearest*
+    /// intersection before `text_creation_point` ever sees it — flooring an already
+    /// on-grid point changes nothing, so the two can land in neighbouring cells;
+    /// documented in `docs/reference/text-model.md`.
+    #[test]
+    fn a_new_free_text_snaps_to_the_grid_when_it_is_on() {
+        let mut engine = engine_with_measure(Vec::new());
+        engine.set_grid(GridSettings {
+            enabled: true,
+            size: 20.0,
+            step: 5,
+            snap: true,
+        });
+
+        engine.handle_double_click(103.0, 97.0);
+        let id = engine.drain_events().text_edit.unwrap().id;
+        assert_eq!(
+            (element(&engine, &id).x, element(&engine, &id).y),
+            (100.0, 80.0)
+        );
+
+        engine.set_scene(Scene::new(Vec::new()));
+        engine.set_tool(DrawTool::Text);
+        engine.begin_pointer(103.0, 97.0, false, false);
+        engine.end_pointer();
+        let id = engine.drain_events().text_edit.unwrap().id;
+        let text = element(&engine, &id);
+        assert_eq!(
+            (text.x, text.y),
+            (100.0, 100.0),
+            "already rounded to the grid upstream"
+        );
+    }
+
     /// A click on a label selects its shape: bound text is not hit on its own, a shape is
     /// hit through it (`App.tsx@1118751f:6713-6737`, `:6784-6829`). The shape here has no
     /// fill, so only its outline would be hit without the label.
@@ -1139,5 +1177,87 @@ mod entry {
         engine.select(vec![shape_id.clone()]);
         engine.toggle_lock_selection();
         assert_eq!(engine.hit_test(x, y, 4.0).map(|el| el.id), Some(shape_id));
+    }
+
+    /// A click on a text that is already the sole selection reopens it with the caret at
+    /// the click, rather than the whole text selected — `wasAddedToSelection`
+    /// (`App.tsx@1118751f:12402-12428`, `textWysiwyg.tsx@1118751f:491-538`). Left-aligned,
+    /// so the click's world x maps straight onto the line; the test measurer gives each
+    /// of "abc"'s chars a 14-wide advance (`0.5·fontSize + 4`), so the boundaries are at
+    /// 0, 14, 28 and 42.
+    #[test]
+    fn a_click_on_the_sole_selected_text_reopens_it_at_the_caret() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.commit_text_edit("abc", true);
+        engine.drain_events();
+        assert_eq!(engine.get_selection(), vec![id.clone()], "left selected");
+
+        let text = element(&engine, &id);
+        assert_eq!(text.text_align, None, "default free text: resolves to Left");
+        engine.begin_pointer(text.x + 25.0, text.y + 5.0, false, false);
+        engine.end_pointer();
+        let request = engine.drain_events().text_edit.expect("reopened");
+        assert_eq!(request.id, id);
+        assert_eq!(
+            request.caret,
+            Some(2),
+            "nearest to 25 is the boundary at 28"
+        );
+    }
+
+    /// The same click, when the text was not already the selection, only selects it — a
+    /// second click, now that it is, is what reopens it.
+    #[test]
+    fn a_click_that_first_selects_a_text_does_not_reopen_it() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.commit_text_edit("abc", true);
+        engine.drain_events();
+        engine.clear_selection();
+
+        let text = element(&engine, &id);
+        engine.begin_pointer(text.x + 5.0, text.y + 5.0, false, false);
+        engine.end_pointer();
+        assert!(
+            engine.drain_events().text_edit.is_none(),
+            "selects, does not reopen"
+        );
+        assert_eq!(engine.get_selection(), vec![id]);
+    }
+
+    /// Dragging the sole selected text moves it instead of reopening it: only a press
+    /// that never moved reads as the click that does (`App.tsx:10918-10921`).
+    #[test]
+    fn dragging_the_sole_selected_text_moves_it_instead() {
+        let mut engine = engine_with_measure(Vec::new());
+        let id = open_at(&mut engine, (300.0, 200.0));
+        engine.commit_text_edit("abc", true);
+        engine.drain_events();
+
+        let text = element(&engine, &id);
+        engine.begin_pointer(text.x + 5.0, text.y + 5.0, false, false);
+        engine.move_pointer(text.x + 55.0, text.y + 5.0, false, false);
+        engine.end_pointer();
+        assert!(
+            engine.drain_events().text_edit.is_none(),
+            "moved, not reopened"
+        );
+        assert!(element(&engine, &id).x > text.x, "moved instead");
+    }
+
+    /// The same click on a label reopens *it*, not the shape — the label stands for its
+    /// shape for every other press, but once the shape alone is the selection, a click on
+    /// its label is `selectedTextEditingContainer` (`App.tsx@1118751f:12401`).
+    #[test]
+    fn a_click_on_a_selected_shapes_label_reopens_the_label() {
+        let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "hello");
+        engine.select(vec![shape.clone()]);
+        let at = middle(&element(&engine, &label));
+        engine.begin_pointer(at.0, at.1, false, false);
+        engine.end_pointer();
+        let request = engine.drain_events().text_edit.expect("reopened");
+        assert_eq!(request.id, label);
+        assert!(request.caret.is_some());
     }
 }

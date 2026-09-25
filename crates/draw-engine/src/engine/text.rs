@@ -4,10 +4,10 @@ use crate::interaction::DrawTool;
 use crate::scene::binding::linear_endpoints;
 use crate::scene::{
     bindable_at, create_element, default_element_style, is_bindable_element, is_linear_element,
-    merge_style, DrawElement, DrawElementType, Geometry,
+    merge_style, DrawElement, DrawElementType, Geometry, TextAlign,
 };
 use crate::text::layout::{self, Laid, Measure};
-use crate::text::FontKey;
+use crate::text::{FontKey, TextMetrics};
 
 impl DrawEngine {
     pub fn edit_selected_text(&mut self) -> bool {
@@ -18,7 +18,7 @@ impl DrawEngine {
             return false;
         }
         if single.kind == DrawElementType::Text {
-            self.request_text_edit(&single);
+            self.request_text_edit(&single, None);
             return true;
         }
         if !is_bindable_element(&single) && !is_linear_element(&single) {
@@ -28,7 +28,7 @@ impl DrawEngine {
         true
     }
 
-    pub(crate) fn request_text_edit(&mut self, element: &DrawElement) {
+    pub(crate) fn request_text_edit(&mut self, element: &DrawElement, caret: Option<usize>) {
         let text_align = crate::scene::resolved_text_align(element);
         // The editor is sent the box the lines are wrapped in, so it wraps where the
         // canvas does. It sits around the anchor the painter puts the lines on: a
@@ -56,8 +56,97 @@ impl DrawEngine {
             container_id: element.container_id.clone(),
             font_family: family.unwrap_or(crate::text::FontKey::LEGACY),
             line_height: crate::scene::resolved_line_height(element),
+            caret,
         });
         self.open_text_session(element);
+    }
+
+    /// Reopens `id` for typing with the caret nearest `at` — a click on a text, or a
+    /// shape's label, that was already the sole selection
+    /// ([`DrawEngine::reopen_text_on_click`]).
+    pub(crate) fn reopen_text_at(&mut self, id: &str, at: crate::camera::Point) {
+        let Some(element) = self.scene.get(id).filter(|el| !el.is_deleted).cloned() else {
+            return;
+        };
+        let caret = self.caret_index_at(&element, at);
+        self.type_in(&element, Some(caret));
+    }
+
+    /// The UTF-16 offset into `element`'s text nearest `world` — a port of
+    /// `getCaretIndexFromInitialSceneCoords` (`textWysiwyg.tsx@1118751f:491-538`): the
+    /// row `world` falls in, from the element's own unrotated box (already the label's
+    /// resolved box, not its container's — [`layout::bound_text_position`]), and the
+    /// character boundary in that row whose measured position is nearest. The oracle
+    /// measures with a `Range` mirror; this sums cached char widths instead — close
+    /// enough for where a caret lands, unlike a wrap decision, which the char-cache
+    /// docs on `MeasureCache` warn is not. Offsets inside `text` are bytes, but a
+    /// textarea's `selectionStart` counts UTF-16 units, so the boundary found is
+    /// converted before it is returned.
+    pub(crate) fn caret_index_at(
+        &self,
+        element: &DrawElement,
+        world: crate::camera::Point,
+    ) -> usize {
+        let text = crate::scene::source_text(element);
+        if text.is_empty() {
+            return 0;
+        }
+        let centre = crate::camera::Point {
+            x: element.x + element.width / 2.0,
+            y: element.y + element.height / 2.0,
+        };
+        let unrotated = crate::selection::handles::rotate_point(
+            world.x - centre.x,
+            world.y - centre.y,
+            -element.angle,
+        );
+        let local_x = unrotated.x + element.width / 2.0;
+        let local_y = unrotated.y + element.height / 2.0;
+        let line_height_px =
+            layout::font_size_of(element) * crate::scene::resolved_line_height(element);
+        let wrap_width = self.wrap_width(element).unwrap_or(f64::INFINITY);
+        let align = crate::scene::resolved_text_align(element);
+        let anchor_x = crate::render::text_anchor_x(align, element.width);
+        let family = crate::scene::resolved_font_family(element).unwrap_or(FontKey::LEGACY);
+        let font = FontKey::new(family, layout::font_size_of(element));
+        let byte_offset = self.with_measure(|measure| {
+            let line_fn = |s: &str| (measure.line_width)(s, font);
+            let metrics = measure.cache.metrics(font, &line_fn);
+            let lines = crate::text::wrap_lines(text, wrap_width, &metrics);
+            let Some(row) = lines
+                .get(((local_y / line_height_px).floor().max(0.0)) as usize)
+                .or_else(|| lines.last())
+            else {
+                return 0;
+            };
+            if row.text.is_empty() {
+                return row.start;
+            }
+            let line_w = metrics.line_width(&row.text);
+            let start_x = anchor_x
+                - match align {
+                    TextAlign::Left => 0.0,
+                    TextAlign::Center => line_w / 2.0,
+                    TextAlign::Right => line_w,
+                };
+            let target = local_x - start_x;
+            let mut best_offset = row.text.len();
+            let mut best_distance = f64::INFINITY;
+            let mut acc = 0.0;
+            for (i, ch) in row.text.char_indices() {
+                let distance = (acc - target).abs();
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_offset = i;
+                }
+                acc += metrics.char_width(ch);
+            }
+            if (acc - target).abs() < best_distance {
+                best_offset = row.text.len();
+            }
+            row.start + best_offset
+        });
+        text[..byte_offset.min(text.len())].encode_utf16().count()
     }
 
     /// A new, empty text in the next style: the family chosen last, Excalifont until one
@@ -116,16 +205,30 @@ impl DrawEngine {
         self.scene.get(&label.id).cloned().unwrap_or(label)
     }
 
-    /// Where a new free text's top goes for a press at `y`: its first line centred on the
-    /// pointer, as the oracle starts one from a point cursor (`App.tsx@1118751f:7019-7027`).
-    /// With the grid snapping, the oracle puts it on the nearest grid point instead
-    /// (`getTextCreationGridPoint`); ponytail: left on the point here, until text
-    /// creation snaps.
-    pub(crate) fn first_line_top(&self, text: &DrawElement, y: f64) -> f64 {
+    /// Where a new free text's box starts for a press at `world`: with the grid on, its
+    /// top-left floored to the grid — the oracle's `getTextCreationGridPoint`, which
+    /// floors both coordinates rather than rounding to the nearest one
+    /// (`App.tsx@1118751f:1524-1539`, `:7008-7021`) — otherwise `x` unmoved and the first
+    /// line centred on the pointer, as one starts from a point cursor
+    /// (`App.tsx@1118751f:7019-7027`).
+    pub(crate) fn text_creation_point(
+        &self,
+        text: &DrawElement,
+        world: crate::camera::Point,
+    ) -> crate::camera::Point {
+        use crate::camera::Point;
         if self.grid.enabled && self.grid.snap {
-            return y;
+            let size = self.grid.effective_size();
+            return Point {
+                x: (world.x / size).floor() * size,
+                y: (world.y / size).floor() * size,
+            };
         }
-        y - layout::font_size_of(text) * crate::scene::resolved_line_height(text) / 2.0
+        Point {
+            x: world.x,
+            y: world.y
+                - layout::font_size_of(text) * crate::scene::resolved_line_height(text) / 2.0,
+        }
     }
 
     fn label_target_at(&self, wx: f64, wy: f64) -> Option<DrawElement> {
@@ -206,16 +309,16 @@ impl DrawEngine {
         } else {
             self.create_label(container)
         };
-        self.type_in(&label);
+        self.type_in(&label, None);
     }
 
     /// Opens `element` for typing, and selects it while it is typed — after opening it,
     /// so the change pending from then on keeps that selection from being the one the
     /// edit's step of history begins with: that is what the press or the key left
     /// selected, a label's shape and not the label on its own (`stamp.rs`, "Undo puts the
-    /// selection back").
-    fn type_in(&mut self, element: &DrawElement) {
-        self.request_text_edit(element);
+    /// selection back"). `caret` places the caret there instead of selecting it all.
+    fn type_in(&mut self, element: &DrawElement, caret: Option<usize>) {
+        self.request_text_edit(element, caret);
         self.set_selection(vec![element.id.clone()]);
     }
 
@@ -283,7 +386,7 @@ impl DrawEngine {
         .cloned()
         {
             if hit.kind == DrawElementType::Text && !self.in_untouchable_shape(&hit) {
-                self.type_in(&hit);
+                self.type_in(&hit, None);
                 return;
             }
             // A path of more than two points selects to a box, because it is a shape.
@@ -306,9 +409,11 @@ impl DrawEngine {
             width: 4.0,
             height: font_size,
         });
-        element.y = self.first_line_top(&element, world.y);
+        let at = self.text_creation_point(&element, world);
+        element.x = at.x;
+        element.y = at.y;
         self.scene.add(element.clone());
-        self.type_in(&element);
+        self.type_in(&element, None);
     }
 
     /// Gives a text column a new width and re-wraps it to fit.
@@ -391,7 +496,7 @@ impl DrawEngine {
     /// typed into: the oracle locks a label with its shape (`actionToggleElementLock`,
     /// `actions/actionElementLock.ts@1118751f:49-54`), and a double click does not hit a
     /// locked one (`getTextElementAtPosition`, `App.tsx@1118751f:6588-6599`, `:6654-6677`).
-    fn in_untouchable_shape(&self, text: &DrawElement) -> bool {
+    pub(crate) fn in_untouchable_shape(&self, text: &DrawElement) -> bool {
         self.container_of(text)
             .is_some_and(|container| self.untouchable(container))
     }

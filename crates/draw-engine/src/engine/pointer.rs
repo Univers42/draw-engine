@@ -5,7 +5,8 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
-    create_element, default_element_style, element_bounds, merge_style, DrawElementType, Geometry,
+    create_element, default_element_style, element_bounds, merge_style, DrawElement,
+    DrawElementType, Geometry,
 };
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
@@ -400,6 +401,7 @@ impl DrawEngine {
 
     fn begin_select(&mut self, sx: f64, sy: f64, world: Point, additive: bool, duplicate: bool) {
         self.narrow_on_click = None;
+        self.reopen_text_on_click = None;
         // Handles are hit where the pointer is, as the hover cursor reads them and as the
         // oracle does (`pointerDownState.origin`, `App.tsx@1118751f:9220`, `:9366-9404`):
         // hit where the grid put the press, a handle a few pixels off a grid line could not
@@ -495,6 +497,20 @@ impl DrawEngine {
         let tolerance = self.collision_tolerance();
         let pressed = self.element_at(sx, sy, tolerance, |element| !self.untouchable(element));
         if let Some(hit) = pressed.cloned() {
+            // A press on a text, or the shape of a label, that was *already* the sole
+            // selection reopens it for typing at the click if the release turns out to be
+            // one — `wasAddedToSelection` (`App.tsx@1118751f:12402-12428`). Read from the
+            // selection as it is here, before anything below changes it: a hit this press
+            // is about to select for the first time was added *by* it, not already there.
+            if !additive
+                && !duplicate
+                && self.selected_ids.len() == 1
+                && self.selected_ids.contains(&hit.id)
+            {
+                if let Some(id) = self.text_reopen_target(&hit) {
+                    self.reopen_text_on_click = Some((id, world));
+                }
+            }
             // Pressing something outside the group being edited steps back out of it,
             // before the selection is worked out — otherwise the click would be resolved
             // relative to a group it has nothing to do with and select nothing at all.
@@ -710,5 +726,18 @@ impl DrawEngine {
             static_bounds,
         });
         self.request_draw();
+    }
+
+    /// The text a click on `hit` reopens for typing: `hit` itself if it already is one,
+    /// else its shape's label — filtered exactly as [`Self::edit_selected_text`] filters
+    /// (deleted, locked, held by a peer, or a label of a shape that is).
+    fn text_reopen_target(&self, hit: &DrawElement) -> Option<String> {
+        let text = if hit.kind == DrawElementType::Text {
+            hit.clone()
+        } else {
+            self.scene.get(hit.bound_text_id.as_deref()?)?.clone()
+        };
+        (!text.is_deleted && !self.untouchable(&text) && !self.in_untouchable_shape(&text))
+            .then_some(text.id)
     }
 }
