@@ -7,6 +7,7 @@
 
 mod common;
 use common::*;
+use draw_engine::engine::ArrowType;
 use draw_engine::*;
 
 fn p(x: f64, y: f64) -> Point {
@@ -491,6 +492,33 @@ fn drawing_an_arrow_freehand_leaves_an_arrow_pointing_the_right_way() {
     assert_eq!(points.len(), 2);
     // Pointing at the tip, not back at the barb the pen happened to stop on.
     assert!(points[1][0] > 280.0, "the arrow is short: {:?}", points[1]);
+}
+
+#[test]
+fn drawing_an_arrow_freehand_takes_the_next_arrow_type_and_heads() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, 900.0, 1.0);
+    // Neither the type nor the heads are the engine's defaults, so a recognised arrow that
+    // still carried them would be a clear miss, not a coincidence.
+    engine.set_arrow_type(ArrowType::Sharp);
+    engine.set_arrowheads(Some(Arrowhead::Diamond), Some(Arrowhead::Bar));
+    let element = draw_with_autoshape(&mut engine, &drawn_arrow(320.0)).expect("nothing was drawn");
+
+    assert_eq!(element.kind, DrawElementType::Arrow);
+    assert_eq!(
+        element.start_arrowhead,
+        Some(Arrowhead::Diamond),
+        "a recognised arrow should take the next arrow's start head, as a drawn one does"
+    );
+    assert_eq!(
+        element.end_arrowhead,
+        Some(Arrowhead::Bar),
+        "a recognised arrow should take the next arrow's end head, as a drawn one does"
+    );
+    assert_eq!(
+        element.roundness, None,
+        "a recognised arrow should take the next arrow's type (sharp), as a drawn one does"
+    );
 }
 
 #[test]

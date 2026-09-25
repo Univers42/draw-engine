@@ -64,9 +64,16 @@ impl DrawEngine {
                 next.width = tip.x - start.x;
                 next.height = tip.y - start.y;
                 next.points = Some(vec![[0.0, 0.0], [tip.x - start.x, tip.y - start.y]]);
-                // Deliberately not set here: an arrow's head comes from its type, via
-                // `render::default_arrowhead`. Baking one in would freeze it against a
-                // later change to the default.
+                // A recognized arrow takes the next arrow's type and heads, exactly as one
+                // drawn with the arrow tool does (`style_new_arrow`) — the oracle's
+                // recognizer sets `currentItemStartArrowhead` / `currentItemEndArrowhead`
+                // and the roundness of `currentItemArrowType` the same way
+                // (`convertToShape.ts@1118751f:647-666,680-685`), not whatever the
+                // freehand stroke that became it happened to carry. A recognized line gets
+                // neither: only an arrow has a type or heads.
+                if next.kind == DrawElementType::Arrow {
+                    self.style_new_arrow(&mut next);
+                }
             }
             RecognizedShape::Freedraw => unreachable!("handled above"),
         }
