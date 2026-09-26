@@ -200,7 +200,16 @@ impl DrawEngine {
         // board instead, it was drawn over whatever covers its shape, and split the
         // shape's group in the stack.
         label.group_ids = container.group_ids.clone();
-        let mut container = container.clone();
+        // The live copy, not `container` as the caller had it: `end_sticky` judges frame
+        // membership on its own commit, then opens the label with the local clone it took
+        // *before* that commit — putting that clone back here would silently undo what
+        // the commit had just decided, `frame_id` most visibly, since nothing revisits an
+        // already-committed element's membership on the typing commit that follows.
+        let mut container = self
+            .scene
+            .get(&container.id)
+            .cloned()
+            .unwrap_or_else(|| container.clone());
         container.bound_text_id = Some(label.id.clone());
         // Not a note, which is laid out by its own fit (`App.tsx@1118751f:6974-6979`).
         if !is_linear_element(&container) && !sticky {

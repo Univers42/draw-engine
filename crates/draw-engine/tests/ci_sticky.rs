@@ -1325,3 +1325,64 @@ mod the_file {
         assert!(svg.contains(">hi</text>"), "the label is exported too");
     }
 }
+
+mod frames {
+    use super::*;
+
+    /// A frame drawn by dragging from one corner to the other — `ci_frame.rs`'s own
+    /// `draw_frame`, repeated here since integration tests do not share fns across files.
+    fn draw_frame(engine: &mut DrawEngine, x1: f64, y1: f64, x2: f64, y2: f64) -> String {
+        engine.set_tool(DrawTool::Frame);
+        engine.begin_pointer(x1, y1, false, false);
+        engine.move_pointer(x2, y2, false, false);
+        engine.end_pointer();
+        engine
+            .get_scene()
+            .into_iter()
+            .rev()
+            .find(|el| el.kind == DrawElementType::Frame && !el.is_deleted)
+            .map(|el| el.id)
+            .expect("no frame was created")
+    }
+
+    /// A note left with no label is still judged into the frame it landed in on its own
+    /// commit (`end_sticky`'s `push_history`, before a label ever exists) — the control
+    /// the typed case below is held to.
+    #[test]
+    fn an_empty_note_inside_a_frame_is_captured() {
+        let mut engine = engine_with_measure(vec![]);
+        // A click's note is the default 250 square, centred on the press — the frame
+        // needs room on every side of (400, 400) to hold it whole.
+        let frame_id = draw_frame(&mut engine, 0.0, 0.0, 800.0, 800.0);
+        let (note, _) = place(&mut engine, (400.0, 400.0));
+        engine.commit_text_edit("", true);
+
+        assert_eq!(
+            element(&engine, &note).frame_id.as_deref(),
+            Some(frame_id.as_str())
+        );
+    }
+
+    /// A note given real text keeps the frame membership its placement earned. Typing a
+    /// label reopens the note's own element through `create_label` (to set
+    /// `bound_text_id`), which must not put back a copy taken before `push_history` had
+    /// judged it into the frame — a stale write would silently clobber `frame_id` with
+    /// the one the pre-commit clone never had, and only the commit that follows locks it
+    /// in for good, since nothing revisits an already-committed element's membership.
+    #[test]
+    fn a_note_given_real_text_is_still_captured() {
+        let mut engine = engine_with_measure(vec![]);
+        // A click's note is the default 250 square, centred on the press — the frame
+        // needs room on every side of (400, 400) to hold it whole.
+        let frame_id = draw_frame(&mut engine, 0.0, 0.0, 800.0, 800.0);
+        let (note, _) = place(&mut engine, (400.0, 400.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+
+        assert_eq!(
+            element(&engine, &note).frame_id.as_deref(),
+            Some(frame_id.as_str()),
+            "a typed label must not cost the note its frame"
+        );
+    }
+}
