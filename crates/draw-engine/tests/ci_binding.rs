@@ -224,9 +224,9 @@ fn default_arrowheads_resolution() {
 #[test]
 fn explicit_arrowhead_preservation() {
     let mut arrow = connector(0.0, 0.0, 10.0, 0.0, DrawElementType::Arrow);
-    arrow.start_arrowhead = Some(Arrowhead::Dot);
+    arrow.start_arrowhead = Some(Arrowhead::Circle);
     arrow.end_arrowhead = Some(Arrowhead::Diamond);
-    assert_eq!(default_arrowhead(&arrow, "start"), Arrowhead::Dot);
+    assert_eq!(default_arrowhead(&arrow, "start"), Arrowhead::Circle);
     assert_eq!(default_arrowhead(&arrow, "end"), Arrowhead::Diamond);
 }
 

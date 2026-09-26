@@ -53,15 +53,43 @@ pub enum StrokeStyle {
     Dotted,
 }
 
+/// Excalidraw's `Arrowhead` union (`packages/element/src/types.ts@1118751f:350-364`), plus
+/// `None` for "no head" — the outer `Option<Arrowhead>` on [`DrawElement`] is `None` for
+/// "unset, fall back to the type's default" (Excalidraw's `undefined`), so this variant is
+/// needed for "explicitly no head" (Excalidraw's `null`).
+///
+/// Wire names are `snake_case` to match the oracle's strings exactly
+/// (`triangle_outline`, `cardinality_one_or_many`, ...). Four legacy spellings are
+/// accepted on the way in and folded into their modern equivalent, exactly as the
+/// oracle's own `normalizeArrowhead` does (`packages/element/src/arrowheads.ts@1118751f:3-21`):
+/// `dot` was `circle` before it existed, and `crowfoot_one` / `crowfoot_many` /
+/// `crowfoot_one_or_many` were the cardinality markers before ER diagrams got their own
+/// name for them. Serialization never emits the legacy spelling — a board loads it once
+/// and is only ever saved back in the modern shape, the same contract `legacy_group_id`
+/// keeps for groups.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Arrowhead {
     None,
     Arrow,
     Triangle,
-    Dot,
+    TriangleOutline,
+    #[serde(alias = "dot")]
+    Circle,
+    CircleOutline,
     Diamond,
+    DiamondOutline,
     Bar,
+    /// "Exactly one" and "many" in an ER diagram's crow's-foot notation.
+    #[serde(alias = "crowfoot_one")]
+    CardinalityOne,
+    #[serde(alias = "crowfoot_many")]
+    CardinalityMany,
+    #[serde(alias = "crowfoot_one_or_many")]
+    CardinalityOneOrMany,
+    CardinalityExactlyOne,
+    CardinalityZeroOrOne,
+    CardinalityZeroOrMany,
 }
 
 /// How a bound arrow end sits against the shape it is bound to.
@@ -77,13 +105,26 @@ pub enum BindMode {
     Orbit,
 }
 
-pub const ARROWHEADS: [Arrowhead; 6] = [
+/// Picker order: the oracle's `getArrowheadOptions` (`actionProperties.tsx@1118751f:1830-1941`)
+/// — its visible section (none, arrow, triangle, triangle outline), then its hidden
+/// section (circle, circle outline, diamond, diamond outline, bar), then its cardinality
+/// section (one, many, one-or-many, exactly-one, zero-or-one, zero-or-many).
+pub const ARROWHEADS: [Arrowhead; 15] = [
     Arrowhead::None,
     Arrowhead::Arrow,
     Arrowhead::Triangle,
-    Arrowhead::Dot,
+    Arrowhead::TriangleOutline,
+    Arrowhead::Circle,
+    Arrowhead::CircleOutline,
     Arrowhead::Diamond,
+    Arrowhead::DiamondOutline,
     Arrowhead::Bar,
+    Arrowhead::CardinalityOne,
+    Arrowhead::CardinalityMany,
+    Arrowhead::CardinalityOneOrMany,
+    Arrowhead::CardinalityExactlyOne,
+    Arrowhead::CardinalityZeroOrOne,
+    Arrowhead::CardinalityZeroOrMany,
 ];
 
 /// Where a line of text sits across the width of its own box.

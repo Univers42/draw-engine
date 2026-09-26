@@ -193,7 +193,7 @@ fn flipping_only_bound_arrows_swaps_their_heads() {
         connector(105.0, 40.0, 305.0, 240.0, DrawElementType::Arrow),
     );
     bind(&mut arrow, End::Start, "A", [1.0, 0.5]);
-    arrow.start_arrowhead = Some(Arrowhead::Dot);
+    arrow.start_arrowhead = Some(Arrowhead::Circle);
     let mut engine = engine_with_scene(vec![a, arrow]);
     engine.select(vec!["A".into()]);
     engine.nudge_selection(0.0, 0.0);
@@ -203,7 +203,7 @@ fn flipping_only_bound_arrows_swaps_their_heads() {
     assert_eq!(world_points(&after), world_points(&before), "no geometry");
     assert_eq!(
         (after.start_arrowhead, after.end_arrowhead),
-        (Some(Arrowhead::Arrow), Some(Arrowhead::Dot))
+        (Some(Arrowhead::Arrow), Some(Arrowhead::Circle))
     );
 }
 

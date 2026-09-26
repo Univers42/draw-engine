@@ -1,16 +1,20 @@
 use std::collections::HashMap;
 
 use draw_rough::ops::{Op, OpSetKind};
-use draw_rough::Drawable;
+use draw_rough::{generator, Drawable, FillStyle as RoughFill, Options as RoughOptions};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{CanvasRenderingContext2d, Path2d};
 
 use crate::engine::{PaintView, Painter};
 use crate::interaction::Axis;
-use crate::render::arrowheads::ArrowheadGeometry;
+use crate::render::arrowheads::{
+    arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
+    ARROWHEAD_OUTLINE_FILL,
+};
 use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
-use crate::render::opts::dash_array;
+use crate::render::opts::{dash_array, generate_rough_options};
+use crate::scene::element::StrokeStyle;
 use crate::scene::{DrawElement, DrawElementType};
 use crate::selection::{selection_corners_padded, selection_handles, HandleKind};
 
@@ -1640,67 +1644,133 @@ fn paint_linear(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawEl
     });
 }
 
-/// Strokes the arrowhead geometry at each end that has one.
+/// `getDashArrayDotted(element.strokeWidth - 1)` then `[dash[0], dash[1] - 1]`
+/// (`packages/element/src/shape.ts@1118751f:332-335`): `[1.5, 6 + (strokeWidth - 1)] - 1`
+/// on the gap, i.e. `[1.5, 4 + strokeWidth]` — a denser dotted pattern than the body's
+/// own, so a dotted arrow's cap still reads as a mark rather than one more gap.
+fn arrowhead_dotted_dash(stroke_width: f64) -> [f64; 2] {
+    [1.5, 4.0 + stroke_width]
+}
+
+/// One rough-generated primitive's own options, `{...options, ...}` in the oracle
+/// (`shape.ts@1118751f:326-343,345-369,404-478`): the element's own rough options with
+/// roughness reclamped and, for a filled shape, `filled`/`fillStyle` turned on. Dash is
+/// deliberately not carried here — [`draw_rough::Options`] has no colour or dash field at
+/// all (this crate resolves both at paint time), so it is applied where each primitive is
+/// drawn, in `paint_arrowheads`.
+fn arrowhead_options(base: &RoughOptions, primitive: &ArrowheadPrimitive) -> RoughOptions {
+    let mut o = *base;
+    match primitive {
+        ArrowheadPrimitive::Line(_) => {
+            o.roughness = base.roughness.min(1.0);
+        }
+        ArrowheadPrimitive::Polygon(..) => {
+            o.roughness = base.roughness.min(1.0);
+            o.filled = true;
+            o.fill_style = RoughFill::Solid;
+        }
+        ArrowheadPrimitive::Circle { .. } => {
+            o.roughness = base.roughness.min(0.5);
+            o.filled = true;
+            o.fill_style = RoughFill::Solid;
+        }
+    }
+    o
+}
+
+fn fill_role_color(role: FillRole, element: &DrawElement) -> &str {
+    match role {
+        FillRole::Solid => &element.stroke_color,
+        FillRole::Outline => ARROWHEAD_OUTLINE_FILL,
+    }
+}
+
+/// Draws one arrowhead primitive: a rough shape generated fresh (see the seeding note on
+/// [`crate::render::arrowheads`]), then painted through the same `Op` → `Path2d` step the
+/// body uses ([`build_paths`]), so a `path` set is stroked and a `fillPath` filled —
+/// exactly [`replay`]'s own rule, just with the primitive's own colours instead of the
+/// element's.
+fn paint_arrowhead_primitive(
+    ctx: &CanvasRenderingContext2d,
+    element: &DrawElement,
+    base: &RoughOptions,
+    dotted_dash: Option<[f64; 2]>,
+    primitive: &ArrowheadPrimitive,
+) {
+    let o = arrowhead_options(base, primitive);
+    let drawable = match primitive {
+        ArrowheadPrimitive::Line([[x1, y1], [x2, y2]]) => generator::line(*x1, *y1, *x2, *y2, o),
+        ArrowheadPrimitive::Polygon(points, _) => generator::polygon(points, o),
+        ArrowheadPrimitive::Circle {
+            center: [cx, cy],
+            diameter,
+            ..
+        } => generator::ellipse(*cx, *cy, *diameter, *diameter, o),
+    };
+
+    for (kind, path) in build_paths(&drawable) {
+        match kind {
+            OpSetKind::Path => {
+                set_stroke(ctx, &element.stroke_color);
+                set_line_width_cached(ctx, element.stroke_width);
+                let dash = match primitive {
+                    ArrowheadPrimitive::Line(_) => dotted_dash,
+                    _ => None,
+                };
+                set_dash_cached(ctx, dash);
+                ctx.stroke_with_path(&path);
+            }
+            OpSetKind::FillPath => {
+                let role = match primitive {
+                    ArrowheadPrimitive::Polygon(_, role)
+                    | ArrowheadPrimitive::Circle { role, .. } => *role,
+                    ArrowheadPrimitive::Line(_) => FillRole::Solid,
+                };
+                set_fill(ctx, fill_role_color(role, element));
+                set_dash_cached(ctx, None);
+                ctx.fill_with_path_2d(&path);
+            }
+            // Neither shape is pattern-filled — always `Solid` (`arrowhead_options`).
+            OpSetKind::FillSketch => {}
+        }
+    }
+}
+
+/// Strokes (and, for a triangle/diamond/circle head, fills) the arrowhead at each end
+/// that has one.
 ///
 /// Runs inside the element transform, so the points are element-local — the same space
-/// the SVG exporter works in, which is what lets both consume one source.
+/// the SVG exporter works in, which is what lets both consume one source
+/// ([`arrowhead_shapes`]).
 fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     let points = element.points.as_deref().unwrap_or(&[]);
     if points.len() < 2 {
         return;
     }
 
-    set_stroke(ctx, &element.stroke_color);
-    set_line_width_cached(ctx, element.stroke_width);
-    // An arrowhead is always solid, even on a dashed arrow — a dashed head reads as
-    // noise at any realistic size.
-    set_dash_cached(ctx, None);
+    // The body's own rough curve was just drawn by `replay` — its ops are what
+    // `getArrowheadPoints` reads a head's tip and direction from, not the element's raw
+    // points (see the module doc on `crate::render::arrowheads`).
+    let ops: Vec<Op> = SHAPES
+        .with(|shapes| {
+            shapes
+                .borrow_mut()
+                .get(element)
+                .map(|drawable| curve_path_ops(drawable).to_vec())
+        })
+        .unwrap_or_default();
+    if ops.is_empty() {
+        return;
+    }
 
-    for (end, tip_idx, from_idx) in [
-        ("start", 0usize, 1usize),
-        ("end", points.len() - 1, points.len() - 2),
-    ] {
+    let base = generate_rough_options(element, false);
+    let dotted_dash = (element.stroke_style == StrokeStyle::Dotted)
+        .then(|| arrowhead_dotted_dash(element.stroke_width));
+
+    for (position, end) in [(Position::Start, "start"), (Position::End, "end")] {
         let kind = default_arrowhead(element, end);
-        let Some(head) = crate::render::arrowheads::arrowhead_geometry(
-            kind,
-            points[tip_idx],
-            points[from_idx],
-            element.stroke_width,
-        ) else {
-            continue;
-        };
-
-        match head {
-            ArrowheadGeometry::Polyline(pts) => {
-                ctx.begin_path();
-                ctx.move_to(pts[0][0], pts[0][1]);
-                for p in &pts[1..] {
-                    ctx.line_to(p[0], p[1]);
-                }
-                ctx.stroke();
-            }
-            ArrowheadGeometry::Polygon(pts) => {
-                set_fill(ctx, &element.stroke_color);
-                ctx.begin_path();
-                ctx.move_to(pts[0][0], pts[0][1]);
-                for p in &pts[1..] {
-                    ctx.line_to(p[0], p[1]);
-                }
-                ctx.close_path();
-                ctx.fill();
-            }
-            ArrowheadGeometry::Dot { center, radius } => {
-                set_fill(ctx, &element.stroke_color);
-                ctx.begin_path();
-                let _ = ctx.arc(
-                    center[0],
-                    center[1],
-                    radius,
-                    0.0,
-                    std::f64::consts::PI * 2.0,
-                );
-                ctx.fill();
-            }
+        for primitive in arrowhead_shapes(points, element.stroke_width, &ops, position, kind) {
+            paint_arrowhead_primitive(ctx, element, &base, dotted_dash, &primitive);
         }
     }
 }

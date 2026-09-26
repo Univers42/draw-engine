@@ -8,7 +8,7 @@
 //! shows at the viewport edge and is easy to ship.
 
 use crate::camera::WorldBounds;
-use crate::render::arrowheads::arrowhead_size;
+use crate::render::arrowheads::MAX_ARROWHEAD_REACH;
 use crate::scene::element::{DrawElement, DrawElementType};
 use crate::scene::geometry::Rect;
 
@@ -41,7 +41,7 @@ pub fn render_bounds(element: &DrawElement) -> WorldBounds {
 
     // An arrowhead reaches beyond the final point of the path.
     if element.kind == DrawElementType::Arrow {
-        pad += arrowhead_size(element.stroke_width);
+        pad += MAX_ARROWHEAD_REACH;
     }
 
     let (min_x, min_y, max_x, max_y) = if element.angle == 0.0 {

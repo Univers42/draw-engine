@@ -1,7 +1,13 @@
+use draw_rough::ops::Op;
+
 use crate::camera::WorldBounds;
+use crate::render::arrowheads::{
+    arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
+};
 use crate::render::default_arrowhead;
+use crate::render::shape::element_drawable;
 use crate::scene::binding::linear_endpoints;
-use crate::scene::element::{Arrowhead, DrawElement, DrawElementType, StrokeStyle};
+use crate::scene::element::{DrawElement, DrawElementType, StrokeStyle};
 use crate::scene::geometry::normalize_rect;
 
 fn dash(style: StrokeStyle) -> &'static str {
@@ -43,64 +49,57 @@ fn escape_xml(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn head_svg(
-    kind: Arrowhead,
-    tip_x: f64,
-    tip_y: f64,
-    angle: f64,
+/// One arrowhead's SVG, from the same [`arrowhead_shapes`] the canvas painter draws —
+/// crisp rather than rough-sketched, like the rest of this exporter (`element_svg`'s
+/// shapes are plain `<rect>`/`<polygon>`/`<ellipse>`, not sketched paths either).
+///
+/// `(dx, dy)` is the element-local-to-SVG-space translation: linear elements have no
+/// rotation in this exporter (`linear_endpoints` doesn't apply one either — a pre-existing
+/// SVG-export gap, not one this change introduces), so a translation is all that is
+/// needed to place a primitive computed in element-local space.
+fn arrowhead_svg(
     element: &DrawElement,
-    size: f64,
+    ops: &[Op],
+    position: Position,
     opacity: f64,
+    dx: f64,
+    dy: f64,
 ) -> String {
-    if kind == Arrowhead::None {
-        return String::new();
-    }
-    let rotate = format!(
-        " transform=\"rotate({} {tip_x} {tip_y}) translate({tip_x} {tip_y})\"",
-        (angle * 180.0) / std::f64::consts::PI
-    );
-    let stroke = format!(
-        "stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" opacity=\"{opacity}\"",
-        element.stroke_color, element.stroke_width
-    );
-    let solid = format!("fill=\"{}\" opacity=\"{opacity}\"", element.stroke_color);
-    match kind {
-        Arrowhead::Arrow => {
-            let spread = std::f64::consts::PI / 7.0;
-            let bx = -size * spread.cos();
-            let by = size * spread.sin();
-            format!(
-                "<polyline points=\"{bx},{} 0,0 {bx},{by}\" fill=\"none\" {stroke}{rotate}/>",
-                -by
-            )
-        }
-        Arrowhead::Triangle => {
-            format!(
-                "<polygon points=\"0,0 {0},{1} {0},{2}\" {solid}{rotate}/>",
-                -size,
-                -size * 0.42,
-                size * 0.42
-            )
-        }
-        Arrowhead::Diamond => format!(
-            "<polygon points=\"0,0 {0},{1} {2},0 {0},{3}\" {solid}{rotate}/>",
-            -size * 0.5,
-            -size * 0.42,
-            -size,
-            size * 0.42
-        ),
-        Arrowhead::Dot => format!(
-            "<circle cx=\"{}\" cy=\"0\" r=\"{}\" {solid}{rotate}/>",
-            -size * 0.3,
-            size * 0.32
-        ),
-        Arrowhead::Bar => format!(
-            "<line x1=\"0\" y1=\"{}\" x2=\"0\" y2=\"{}\" fill=\"none\" {stroke}{rotate}/>",
-            -size * 0.5,
-            size * 0.5
-        ),
-        Arrowhead::None => String::new(),
-    }
+    let end = if position == Position::Start {
+        "start"
+    } else {
+        "end"
+    };
+    let kind = default_arrowhead(element, end);
+    let points = element.points.as_deref().unwrap_or(&[[0.0, 0.0]]);
+    let shapes = arrowhead_shapes(points, element.stroke_width, ops, position, kind);
+
+    let fill_of = |role: FillRole| match role {
+        FillRole::Solid => element.stroke_color.as_str(),
+        FillRole::Outline => crate::render::arrowheads::ARROWHEAD_OUTLINE_FILL,
+    };
+    let pt = |[x, y]: [f64; 2]| format!("{},{}", x + dx, y + dy);
+
+    shapes
+        .into_iter()
+        .map(|shape| match shape {
+            ArrowheadPrimitive::Line([a, b]) => format!(
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" opacity=\"{opacity}\"/>",
+                a[0] + dx, a[1] + dy, b[0] + dx, b[1] + dy, element.stroke_color, element.stroke_width
+            ),
+            ArrowheadPrimitive::Polygon(pts, role) => format!(
+                "<polygon points=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"round\" opacity=\"{opacity}\"/>",
+                pts.into_iter().map(pt).collect::<Vec<_>>().join(" "),
+                fill_of(role),
+                element.stroke_color,
+                element.stroke_width
+            ),
+            ArrowheadPrimitive::Circle { center, diameter, role } => format!(
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" opacity=\"{opacity}\"/>",
+                center[0] + dx, center[1] + dy, diameter / 2.0, fill_of(role), element.stroke_color, element.stroke_width
+            ),
+        })
+        .collect()
 }
 
 /// A closed line's flat SVG shape — its full path as a filled `<polygon>`, the same shape
@@ -174,40 +173,31 @@ fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
 
 fn linear_body_svg(element: &DrawElement) -> String {
     let (start, end) = linear_endpoints(element);
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
-    let length = dx.hypot(dy);
+    let length = (end.x - start.x).hypot(end.y - start.y);
     if length < 0.5 {
         return String::new();
     }
-    let angle = dy.atan2(dx);
-    let size = 14.0_f64.max(element.stroke_width * 4.0);
     let opacity = element.opacity / 100.0;
     let shaft = format!(
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" fill=\"none\" opacity=\"{opacity}\"{}/>",
         start.x, start.y, end.x, end.y, element.stroke_color, element.stroke_width, dash(element.stroke_style)
     );
-    format!(
-        "{shaft}{}{}",
-        head_svg(
-            default_arrowhead(element, "end"),
-            end.x,
-            end.y,
-            angle,
-            element,
-            size,
-            opacity
-        ),
-        head_svg(
-            default_arrowhead(element, "start"),
-            start.x,
-            start.y,
-            angle + std::f64::consts::PI,
-            element,
-            size,
-            opacity
-        )
-    )
+
+    if element.kind != DrawElementType::Arrow {
+        return shaft;
+    }
+
+    // The same body ops `getArrowheadPoints` reads on canvas (see the module doc on
+    // `crate::render::arrowheads`) — read fresh rather than through the painter's cache,
+    // which is a WASM-canvas-only, per-frame concern this one-shot export does not share.
+    let drawable = element_drawable(element);
+    let ops: &[Op] = drawable.as_ref().map_or(&[] as &[Op], curve_path_ops);
+    let heads = format!(
+        "{}{}",
+        arrowhead_svg(element, ops, Position::End, opacity, element.x, element.y),
+        arrowhead_svg(element, ops, Position::Start, opacity, element.x, element.y),
+    );
+    format!("{shaft}{heads}")
 }
 
 fn element_svg<'a>(

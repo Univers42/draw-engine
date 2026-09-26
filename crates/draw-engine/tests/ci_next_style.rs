@@ -86,7 +86,7 @@ mod arrowheads {
     #[test]
     fn a_line_takes_no_heads() {
         let mut engine = engine_with_measure(Vec::new());
-        engine.set_arrowheads(Some(Arrowhead::Dot), Some(Arrowhead::Bar));
+        engine.set_arrowheads(Some(Arrowhead::Circle), Some(Arrowhead::Bar));
         let line = draw(&mut engine, DrawTool::Line, (100.0, 100.0), (300.0, 100.0));
         assert_eq!(line.kind, DrawElementType::Line);
         assert_eq!(line.start_arrowhead, None);
@@ -97,10 +97,13 @@ mod arrowheads {
     fn a_head_chosen_for_a_selection_is_the_next_arrows_too() {
         let arrow = with_id(connector(0.0, 0.0, 100.0, 0.0, DrawElementType::Arrow), "a");
         let mut engine = selected(vec![arrow], &["a"]);
-        engine.set_arrowheads(None, Some(Arrowhead::Dot));
-        assert_eq!(element(&engine, "a").end_arrowhead, Some(Arrowhead::Dot));
+        engine.set_arrowheads(None, Some(Arrowhead::Circle));
+        assert_eq!(element(&engine, "a").end_arrowhead, Some(Arrowhead::Circle));
         engine.clear_selection();
-        assert_eq!(engine.selection_style().end_arrowhead, Some(Arrowhead::Dot));
+        assert_eq!(
+            engine.selection_style().end_arrowhead,
+            Some(Arrowhead::Circle)
+        );
     }
 
     /// The wave-2 rule for every style: a loose locked element is passed by.

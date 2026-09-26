@@ -122,7 +122,7 @@ mod values {
     #[test]
     fn arrowheads_are_read_off_arrows_as_they_are_drawn() {
         let mut dotted = with_id(connector(0.0, 0.0, 100.0, 0.0, DrawElementType::Arrow), "a");
-        dotted.start_arrowhead = Some(Arrowhead::Dot);
+        dotted.start_arrowhead = Some(Arrowhead::Circle);
         let plain = with_id(
             connector(0.0, 50.0, 100.0, 50.0, DrawElementType::Arrow),
             "b",
@@ -834,7 +834,7 @@ mod copy_paste {
             connector(0.0, 0.0, 100.0, 0.0, DrawElementType::Arrow),
             "src",
         );
-        source.start_arrowhead = Some(Arrowhead::Dot);
+        source.start_arrowhead = Some(Arrowhead::Circle);
         source.end_arrowhead = Some(Arrowhead::Bar);
         let arrow = with_id(
             connector(0.0, 50.0, 100.0, 50.0, DrawElementType::Arrow),
@@ -851,7 +851,7 @@ mod copy_paste {
         engine.paste_styles();
         assert_eq!(
             element(&engine, "arrow").start_arrowhead,
-            Some(Arrowhead::Dot)
+            Some(Arrowhead::Circle)
         );
         assert_eq!(
             element(&engine, "arrow").end_arrowhead,
