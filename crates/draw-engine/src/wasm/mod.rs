@@ -317,6 +317,15 @@ impl WasmEngine {
                 c.raf = None;
             }
             paint_frame(&cloned);
+            // A self-driven frame — the camera easing a zoom/fit/reveal, `set_now`'s own
+            // `tick_camera_anim` — changes engine state the same way a host-invoked call
+            // does, but nothing else on this path ever drained the events it queued:
+            // `paint_frame` only paints. Without this, `on_camera` (and friends) fired once
+            // for the click that started the animation — before the ease had moved
+            // anything — and then never again until some unrelated host call happened to
+            // flush the by-then-stale queue, so a toolbar zoom readout sat frozen at the
+            // pre-click value for the whole 250ms ease.
+            emit_events(&cloned);
             let more = match cloned.try_borrow() {
                 Ok(cell) => cell.engine.needs_frame(),
                 // Busy: assume there is more to do rather than stalling the loop.
