@@ -12,6 +12,9 @@ import { wheelIntent } from "./wheel";
  */
 const PEN_ERASER_BUTTON = 5;
 
+/** How long after a middle-button pan's release its paste is still dropped (`App.pan.ts@1118751f:183-193`). */
+const PASTE_AFTER_PAN_MS = 100;
+
 function processMove(session: HostSession, event: PointerEvent): void {
   const { x, y } = localPoint(session.canvas, event);
   countEngineStep();
@@ -66,6 +69,24 @@ export function attachPointerInput(session: HostSession): () => void {
   const { canvas, engine, callbacks } = session;
   let intercepted = false;
 
+  // Linux pastes its primary selection on a middle release, and the one ending a
+  // middle-button pan is no exception — every pan pasted the last copied shapes. Once
+  // such a pan moves, the next paste is dropped until shortly after the release, as the
+  // oracle does (`App.pan.ts@1118751f:157-197`). On the window's capture phase, because
+  // the paste listeners here sit on the container and the host's above it.
+  const view = canvas.ownerDocument.defaultView ?? window;
+  let middleFrom: { x: number; y: number } | null = null;
+  let pasteTimer = 0;
+  const allowPaste = () => {
+    view.clearTimeout(pasteTimer);
+    view.removeEventListener("paste", dropPaste, true);
+  };
+  const dropPaste = (event: Event) => {
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    allowPaste();
+  };
+
   const onWheel = (event: WheelEvent) => {
     event.preventDefault();
     const intent = wheelIntent(event);
@@ -101,6 +122,7 @@ export function attachPointerInput(session: HostSession): () => void {
     // asking the host first let one start: the eraser drew its trail across a
     // space-drag, and the sticky-note tool claimed the press instead of panning.
     if (event.button === 1 || session.spaceHeld) {
+      if (event.button === 1) middleFrom = { x: event.clientX, y: event.clientY };
       intercepted = false;
       event.preventDefault();
       engine.beginPan(x, y);
@@ -134,6 +156,14 @@ export function attachPointerInput(session: HostSession): () => void {
     // (`App.tsx@1118751f:5477-5482`): a keyboard paste needs the pointer's last position
     // whether or not a button is held or a gesture is in progress.
     session.lastPointer = localPoint(canvas, event);
+    if (
+      middleFrom &&
+      (Math.abs(event.clientX - middleFrom.x) > 1 || Math.abs(event.clientY - middleFrom.y) > 1)
+    ) {
+      middleFrom = null;
+      allowPaste();
+      view.addEventListener("paste", dropPaste, true);
+    }
     if (!wantsMove()) {
       queueHover(session, event);
       return;
@@ -154,6 +184,10 @@ export function attachPointerInput(session: HostSession): () => void {
   };
 
   const onPointerUp = (event: PointerEvent) => {
+    if (event.button === 1) {
+      middleFrom = null;
+      pasteTimer = view.setTimeout(allowPaste, PASTE_AFTER_PAN_MS);
+    }
     const { x, y } = localPoint(canvas, event);
     callbacks.onPointerUp?.({ x, y }, event);
     if (intercepted) {
@@ -222,6 +256,7 @@ export function attachPointerInput(session: HostSession): () => void {
   return () => {
     clearPendingMove(session);
     clearPendingHover(session);
+    allowPaste();
     canvas.removeEventListener("wheel", onWheel);
     canvas.removeEventListener("pointerdown", onPointerDown);
     canvas.removeEventListener("pointermove", onPointerMove);
