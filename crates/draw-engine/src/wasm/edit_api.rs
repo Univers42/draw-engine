@@ -85,6 +85,12 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// How far one arrow key moves the selection — see `engine/arrange.rs`.
+    #[wasm_bindgen(js_name = nudgeStep)]
+    pub fn nudge_step(&self, shift: bool) -> f64 {
+        self.cell.borrow().engine.nudge_step(shift)
+    }
+
     #[wasm_bindgen(js_name = reorderSelection)]
     pub fn reorder_selection(&self, mode: &str) {
         if let Some(mode) = crate::ZOrderMode::parse(mode) {

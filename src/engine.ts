@@ -494,6 +494,11 @@ export class DrawEngine {
     this.inner.nudgeSelection(dx, dy);
   }
 
+  /** How far one arrow key moves the selection: 1, or 5 with Shift; by the grid when held to it. */
+  nudgeStep(shift: boolean): number {
+    return this.inner.nudgeStep(shift);
+  }
+
   reorderSelection(mode: ZOrderMode): void {
     this.inner.reorderSelection(mode);
   }

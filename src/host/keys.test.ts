@@ -47,6 +47,8 @@ function recording(
     deleteSelection: () => calls.push("deleteSelection"),
     getSelection: () => selection,
     nudgeSelection: (dx: number, dy: number) => calls.push(`nudge:${dx},${dy}`),
+    // The engine's own step without a grid: 1, or 5 with Shift (`engine/arrange.rs`).
+    nudgeStep: (shift: boolean) => (shift ? 5 : 1),
     redo: () => calls.push("redo"),
     undo: () => calls.push("undo"),
     selectAll: () => calls.push("selectAll"),
@@ -194,13 +196,13 @@ describe("dispatchKeyDown", () => {
     assert.deepEqual(calls, []);
   });
 
-  it("nudges one pixel, or ten with Shift", () => {
+  it("nudges by the engine's step: one, or five with Shift", () => {
     const a = recording(["id"]);
     assert.equal(dispatchKeyDown(session(a.engine), event({ key: "ArrowRight" })), "prevent");
     assert.deepEqual(a.calls, ["nudge:1,0"]);
     const b = recording(["id"]);
     assert.equal(dispatchKeyDown(session(b.engine), event({ key: "ArrowUp", shiftKey: true })), "prevent");
-    assert.deepEqual(b.calls, ["nudge:0,-10"]);
+    assert.deepEqual(b.calls, ["nudge:0,-5"]);
   });
 
   it("undoes on Ctrl+Z and redoes on Ctrl+Shift+Z / Ctrl+Y", () => {

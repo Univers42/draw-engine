@@ -24,6 +24,7 @@ export interface KeyEngine {
   deleteSelection(): void;
   getSelection(): string[];
   nudgeSelection(dx: number, dy: number): void;
+  nudgeStep(shift: boolean): number;
   redo(): void;
   undo(): void;
   selectAll(): void;
@@ -166,7 +167,7 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
   }
   if (event.key.startsWith("Arrow") && !(event.metaKey || event.ctrlKey)) {
     if (engine.getSelection().length === 0) return false;
-    const step = event.shiftKey ? 10 : 1;
+    const step = engine.nudgeStep(event.shiftKey);
     const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
     const dy = event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0;
     engine.nudgeSelection(dx, dy);

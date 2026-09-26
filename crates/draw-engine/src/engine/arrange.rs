@@ -10,6 +10,20 @@ use crate::scene::frame::FrameOwners;
 use crate::scene::{bump_version, is_frame, new_element_id, DrawElement};
 
 impl DrawEngine {
+    /// How far one arrow key moves the selection: a unit, or 5 with Shift — and while
+    /// the grid is held to, a grid step, or a unit with Shift
+    /// (`App.tsx@1118751f:5801-5810`, `ELEMENT_TRANSLATE_AMOUNT`,
+    /// `ELEMENT_SHIFT_TRANSLATE_AMOUNT`).
+    pub fn nudge_step(&self, shift: bool) -> f64 {
+        const STEP: f64 = 1.0;
+        const SHIFT_STEP: f64 = 5.0;
+        match (self.grid.enabled && self.grid.snap, shift) {
+            (true, false) => self.grid.size,
+            (true, true) | (false, false) => STEP,
+            (false, true) => SHIFT_STEP,
+        }
+    }
+
     /// The arrow keys: the same set a drag moves, so a locked group member and a
     /// frame's children come along — the oracle's arrow keys move every selected element
     /// and what their frames hold (`packages/excalidraw/components/App.tsx@1118751f:5771-5776`).
