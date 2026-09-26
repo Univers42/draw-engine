@@ -203,3 +203,46 @@ fn locking_a_frame_locks_what_it_holds() {
     engine.toggle_lock_selection();
     assert!(!locked(&engine, &frame_id) && !locked(&engine, &child_id));
 }
+
+// ---------------------------------------------------------------------------
+// Reaching a locked element again
+// ---------------------------------------------------------------------------
+
+/// A right-click selects what it lands on as a click would, grown to its group — locked
+/// or not (`openContextMenu` through `selectGroupsForSelectedElements`,
+/// `App.tsx@1118751f:13276-13319`). Selected alone, the menu's Unlock freed one member of
+/// a locked group and left the rest locked.
+#[test]
+fn a_right_click_on_a_locked_member_takes_its_group() {
+    let Probe {
+        mut engine, a, b, ..
+    } = probe();
+    click(&mut engine, 40.0, 40.0);
+    engine.toggle_lock_selection();
+
+    engine.select_element(&b);
+    assert_eq!(selection(&engine), set(&[&a, &b]));
+    assert!(engine.selection_locked(), "the menu reads Unlock");
+
+    engine.toggle_lock_selection();
+    assert!(!locked(&engine, &a) && !locked(&engine, &b));
+    drag(&mut engine, (40.0, 40.0), (40.0, 240.0));
+    assert_close(element(&engine, &a).y, 200.0);
+    assert_close(element(&engine, &b).y, 200.0);
+}
+
+/// Inside the group being edited, at that level (`editingGroupId`, `:13301-13306`).
+#[test]
+fn a_right_click_inside_the_edited_group_takes_that_level() {
+    let Probe {
+        mut engine, a, b, ..
+    } = probe();
+    click(&mut engine, 40.0, 40.0);
+    engine.handle_double_click(40.0, 40.0);
+    assert_eq!(selection(&engine), set(&[&a]), "setup: stepped in");
+
+    engine.select_element(&b);
+
+    assert_eq!(selection(&engine), set(&[&b]));
+    assert!(engine.editing_group_id().is_some());
+}

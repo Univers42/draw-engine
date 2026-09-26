@@ -238,6 +238,13 @@ impl WasmEngine {
         }
     }
 
+    /// What a right-click selects: `id` with its group (`DrawEngine::select_element`).
+    #[wasm_bindgen(js_name = selectElement)]
+    pub fn select_element(&self, id: &str) {
+        self.cell.borrow_mut().engine.select_element(id);
+        self.flush();
+    }
+
     #[wasm_bindgen(js_name = clearSelection)]
     pub fn clear_selection(&self) {
         self.cell.borrow_mut().engine.clear_selection();

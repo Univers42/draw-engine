@@ -203,7 +203,11 @@ export function attachPointerInput(session: HostSession): () => void {
     // clears it). The menu kind is still the hit's, independent of what stays selected —
     // "element" for the point or the box, "canvas" otherwise (`:13299`,
     // `const type = element || isHittingCommonBoundBox ? "element" : "canvas"`).
-    if (hit && !engine.getSelection().includes(hit.id)) engine.select([hit.id]);
+    //
+    // What is not selected yet is selected as a press selects it, with its group
+    // (`selectGroupsForSelectedElements`, `:13301-13306`) — the element alone left the
+    // rest of its group out of the menu's Unlock, Delete and Copy.
+    if (hit && !engine.getSelection().includes(hit.id)) engine.selectElement(hit.id);
     callbacks.onContextMenu?.({ x, y }, hit || onBox ? "element" : "canvas");
   };
 

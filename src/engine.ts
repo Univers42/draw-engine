@@ -404,6 +404,11 @@ export class DrawEngine {
     this.inner.selectJson(JSON.stringify(ids));
   }
 
+  /** Selects `id` as a press on it does — with its group — locked or not: a right-click. */
+  selectElement(id: string): void {
+    this.inner.selectElement(id);
+  }
+
   selectAll(): void {
     this.inner.selectAll();
   }

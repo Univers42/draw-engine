@@ -870,6 +870,15 @@ impl DrawEngine {
         self.set_selection(ids);
     }
 
+    /// Selects `id` as a press on it does — with its group, at the level being edited —
+    /// whatever it is, locked included: a right-click reaches every element, so the menu
+    /// can unlock one (`openContextMenu` through `selectGroupsForSelectedElements`,
+    /// `App.tsx@1118751f:13276-13319`). Selected on its own, a group member took the
+    /// menu's Unlock, Delete, Duplicate and Copy without the rest of its group.
+    pub fn select_element(&mut self, id: &str) {
+        self.select_caught(HashSet::from([id.to_string()]));
+    }
+
     /// A top-level selection even when everything is inside the group being edited
     /// (`actionSelectAll.ts@1118751f:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
     /// the top rather than nesting a new level inside that group.
