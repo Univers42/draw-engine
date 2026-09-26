@@ -54,6 +54,8 @@ const HOTKEYS: Record<string, DrawTool> = {
   // A letter and no digit, as the oracle has it.
   n: "stickynote",
   h: "hand",
+  // No oracle key to take: the Shapes picker's own.
+  u: "figure",
 };
 
 /** Tools that switch back to the previous tool when their own key is pressed again. */
