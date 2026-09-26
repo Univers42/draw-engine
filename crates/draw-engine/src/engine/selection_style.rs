@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use super::DrawEngine;
 use crate::render::default_arrowhead;
+use crate::scene::figure::{self, FigureKind};
 use crate::scene::{
     apply_style_patch, is_auto_resize, is_transparent, resolved_font_family, resolved_text_align,
     resolved_vertical_align, Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch,
@@ -169,6 +170,17 @@ pub struct SelectionStyle {
     pub can_bind_text: bool,
     /// "Unbind text": a selected shape carries a label a style may change (`:64-68`).
     pub can_unbind_text: bool,
+    /// The figure kind shared by the selection, or the next figure's with nothing
+    /// selected. `None` for a mixed selection, or one holding no figure at all.
+    pub figure_kind: Option<FigureKind>,
+    /// Resolved — a figure whose own `sides`/`ratio` is absent reads back as the kind's
+    /// default, the way it is actually drawn ([`figure::resolved_sides`]).
+    pub figure_sides: Option<u8>,
+    pub figure_ratio: Option<f64>,
+    /// Whether `figure_kind` — resolved to one kind, not mixed or absent — has a sides
+    /// stepper or a ratio slider at all ([`figure::has_sides`] / [`figure::has_ratio`]).
+    pub figure_has_sides: bool,
+    pub figure_has_ratio: bool,
     /// Whose colours a stroke pick sets: the notes', the other shapes', or both — which
     /// palette the panel offers and what it calls the row (`resolveColorTarget`,
     /// `actions/colorTargets.ts@1118751f:89-176`).
@@ -200,6 +212,7 @@ fn has_stroke_color(kind: DrawElementType) -> bool {
             | DrawElementType::Line
             | DrawElementType::Text
             | DrawElementType::Embed
+            | DrawElementType::Figure
     )
 }
 
@@ -214,6 +227,7 @@ fn has_background(kind: DrawElementType) -> bool {
             | DrawElementType::Diamond
             | DrawElementType::Line
             | DrawElementType::Freedraw
+            | DrawElementType::Figure
     )
 }
 
@@ -227,6 +241,7 @@ fn has_fill_style(kind: DrawElementType) -> bool {
             | DrawElementType::Diamond
             | DrawElementType::Line
             | DrawElementType::Freedraw
+            | DrawElementType::Figure
     )
 }
 
@@ -351,6 +366,9 @@ impl DrawEngine {
         let mut has_label = false;
         let mut label_wrap = Common::Empty;
         let mut can_unbind_text = false;
+        let mut figure_kind = Common::Empty;
+        let mut figure_sides = Common::Empty;
+        let mut figure_ratio = Common::Empty;
 
         // The oracle's targets: each selected element, then the label it carries.
         let mut target = |element: &DrawElement| {
@@ -386,6 +404,12 @@ impl DrawEngine {
             background_color.add(element.background_color.as_str());
             if has_fill_style(element.kind) {
                 fill_style.add(element.fill_style);
+            }
+            if element.kind == DrawElementType::Figure {
+                let params = element.figure.clone().unwrap_or_default();
+                figure_kind.add(params.kind);
+                figure_sides.add(figure::resolved_sides(params.kind, params.sides));
+                figure_ratio.add(figure::resolved_ratio(params.kind, params.ratio));
             }
             stroke_width.add(element.stroke_width);
             stroke_style.add(element.stroke_style);
@@ -442,6 +466,7 @@ impl DrawEngine {
         let units = self.arrange_units();
         kinds.sort_by_key(|kind| *kind as u8);
         filled_kinds.sort_by_key(|kind| *kind as u8);
+        let figure_kind = figure_kind.get();
         SelectionStyle {
             count: selected.len(),
             kinds,
@@ -474,6 +499,11 @@ impl DrawEngine {
             label_wrap: label_wrap.get(),
             can_bind_text: self.bind_pair(&selected, &carried).is_some(),
             can_unbind_text,
+            figure_kind,
+            figure_sides: figure_sides.get(),
+            figure_ratio: figure_ratio.get(),
+            figure_has_sides: figure_kind.is_some_and(figure::has_sides),
+            figure_has_ratio: figure_kind.is_some_and(figure::has_ratio),
             stroke_domain: self.color_domain(false),
             background_domain: self.color_domain(true),
         }
@@ -528,6 +558,17 @@ impl DrawEngine {
             label_wrap: None,
             can_bind_text: false,
             can_unbind_text: false,
+            figure_kind: Some(self.next_figure.kind),
+            figure_sides: Some(figure::resolved_sides(
+                self.next_figure.kind,
+                self.next_figure.sides,
+            )),
+            figure_ratio: Some(figure::resolved_ratio(
+                self.next_figure.kind,
+                self.next_figure.ratio,
+            )),
+            figure_has_sides: figure::has_sides(self.next_figure.kind),
+            figure_has_ratio: figure::has_ratio(self.next_figure.kind),
             stroke_domain: domain,
             background_domain: domain,
         }

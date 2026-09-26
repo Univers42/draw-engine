@@ -29,7 +29,10 @@ export type DrawElementType =
   | "frame"
   | "embed"
   /** A note: a filled pad with a shadow, its creation date, and a label it fits. */
-  | "stickynote";
+  | "stickynote"
+  /** A parametric shape — a polygon, a star, a parallelogram, a trapezoid, a cylinder or
+   *  a document — generated from [`FigureParams`]. See `docs/reference/figure.md`. */
+  | "figure";
 
 export type FillStyle = "hachure" | "cross-hatch" | "solid" | "zigzag";
 export type StrokeStyle = "solid" | "dashed" | "dotted";
@@ -70,7 +73,9 @@ export type DrawTool =
   /** Fills the region under the pointer. The click is the whole gesture. */
   | "bucketfill"
   /** Places a sticky note — a click, or a drag for its size — and opens its label. */
-  | "stickynote";
+  | "stickynote"
+  /** Draws a figure — the Shapes picker's kind, sides and ratio (`nextFigure`). */
+  | "figure";
 
 export type ZOrderMode = "front" | "back" | "forward" | "backward";
 export type AlignMode = "left" | "centerX" | "right" | "top" | "centerY" | "bottom";
@@ -115,6 +120,10 @@ export interface StylePatch extends Partial<DrawElementStyle> {
   fontFamily?: number;
   fontSize?: number;
   textAlign?: TextAlign;
+  /** A figure's own two controls — the inspector's sides stepper and ratio slider.
+   *  Ignored on anything that is not a figure, and on a kind with no such control. */
+  figureSides?: number;
+  figureRatio?: number;
 }
 
 export interface DrawElement extends DrawElementStyle {
@@ -217,11 +226,41 @@ export interface DrawElement extends DrawElementStyle {
    * Absent means `fontSize` is the ceiling. Meaningless on a text no note holds.
    */
   baseFontSize?: number | null;
+  /**
+   * A figure's parameters — its kind, and the sides/ratio that shape it. Absent on every
+   * element that is not a figure. Mirrors the engine's `FigureParams` (`scene/figure.rs`).
+   */
+  figure?: FigureParams;
   version: number;
   versionNonce: number;
   updated: number;
   isDeleted: boolean;
 }
+
+/** A figure's shape. Mirrors the engine's `FigureKind` (`scene/figure.rs`). */
+export type FigureKind =
+  | "polygon"
+  | "star"
+  | "parallelogram"
+  | "trapezoid"
+  | "cylinder"
+  | "document";
+
+/**
+ * A figure's own two controls — the inspector's sides stepper and ratio slider.
+ * `sides`/`ratio` absent falls back to `kind`'s own default (`resolvedSides`/
+ * `resolvedRatio` on the Rust side); a kind with no such control ignores the one it
+ * has none of.
+ */
+export interface FigureParams {
+  kind: FigureKind;
+  sides?: number;
+  ratio?: number;
+}
+
+/** A hexagon — a shape with a visible `sides` and no `ratio`. Mirrors the engine's
+ *  `FigureParams::default()`. */
+export const DEFAULT_FIGURE_PARAMS: FigureParams = { kind: "polygon", sides: 6 };
 
 /**
  * The canvas grid: whether it is drawn, how coarse, how often a line is emphasised, and
@@ -575,6 +614,17 @@ export interface SelectionStyle {
   canBindText: boolean;
   /** "Unbind text" is offered: a selected shape carries a label. */
   canUnbindText: boolean;
+  /** The figure kind shared by the selection, or the next figure's with nothing
+   *  selected. `null` for a mixed selection, or one holding no figure at all. */
+  figureKind: FigureKind | null;
+  /** Resolved — a figure whose own `sides`/`ratio` is absent reads back as the kind's
+   *  own default, the way it is actually drawn. */
+  figureSides: number | null;
+  figureRatio: number | null;
+  /** Whether `figureKind` — resolved to one kind, not mixed or absent — has a sides
+   *  stepper or a ratio slider at all. */
+  figureHasSides: boolean;
+  figureHasRatio: boolean;
   /**
    * Whose colours a stroke pick sets: sticky notes' (their own palette, no transparent,
    * the row reads "Text color"), the other elements', or both.
@@ -623,6 +673,11 @@ export const EMPTY_SELECTION_STYLE: SelectionStyle = {
   labelWrap: null,
   canBindText: false,
   canUnbindText: false,
+  figureKind: null,
+  figureSides: null,
+  figureRatio: null,
+  figureHasSides: false,
+  figureHasRatio: false,
   strokeDomain: "regular",
   backgroundDomain: "regular",
 };

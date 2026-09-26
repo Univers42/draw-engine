@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The seven parametric outlines a figure can take.
+/// The six parametric outlines a figure can take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FigureKind {

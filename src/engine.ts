@@ -1,6 +1,12 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
 import { readProbe, resetProbe, timeHitTest } from "./host/probe";
-import { DEFAULT_ELEMENT_STYLE, DEFAULT_GRID, EMPTY_SELECTION_STYLE, Scene } from "./types";
+import {
+  DEFAULT_ELEMENT_STYLE,
+  DEFAULT_FIGURE_PARAMS,
+  DEFAULT_GRID,
+  EMPTY_SELECTION_STYLE,
+  Scene,
+} from "./types";
 import { parseJson, wireCallbacks } from "./wasmLoad";
 import type {
   AlignMode,
@@ -14,6 +20,7 @@ import type {
   DrawPeer,
   DrawTheme,
   DrawTool,
+  FigureParams,
   FlipAxis,
   FlowchartDirection,
   FlowchartShape,
@@ -367,6 +374,16 @@ export class DrawEngine {
     return parseJson<DrawElementStyle>(this.inner.getNextStyleJson(), DEFAULT_ELEMENT_STYLE);
   }
 
+  /** What the Shapes picker sets: which figure the tool draws next. Never restyles a
+   *  selected figure — the inspector's own sides stepper and ratio slider do that. */
+  setNextFigure(figure: FigureParams): void {
+    this.inner.setNextFigureJson(JSON.stringify(figure));
+  }
+
+  getNextFigure(): FigureParams {
+    return parseJson<FigureParams>(this.inner.getNextFigureJson(), DEFAULT_FIGURE_PARAMS);
+  }
+
   getSelection(): string[] {
     return parseJson<string[]>(this.inner.getSelectionJson(), []);
   }
@@ -424,11 +441,16 @@ export class DrawEngine {
   }
 
   /**
-   * The command palette's "Add rectangle / diamond / ellipse": a default-sized shape
-   * centred on the **screen** point `(screenX, screenY)`, selected, as one step of undo —
-   * `insertImage`/`insertEmbed`'s own convention. `null` for any other kind.
+   * The command palette's "Add rectangle / diamond / ellipse / figure": a default-sized
+   * shape centred on the **screen** point `(screenX, screenY)`, selected, as one step of
+   * undo — `insertImage`/`insertEmbed`'s own convention. `"figure"` takes whatever
+   * `setNextFigure` last set (`nextFigure` if nothing was). `null` for any other kind.
    */
-  insertDefaultShape(kind: FlowchartShape, screenX: number, screenY: number): string | null {
+  insertDefaultShape(
+    kind: FlowchartShape | "figure",
+    screenX: number,
+    screenY: number,
+  ): string | null {
     return this.inner.insertDefaultShape(kind, screenX, screenY) ?? null;
   }
 
