@@ -301,6 +301,33 @@ fn element_svg<'a>(
             ),
             None => String::new(),
         },
+        DrawElementType::Figure => {
+            let params = element.figure.clone().unwrap_or_default();
+            let outline =
+                crate::scene::figure::outline(params.kind, params.sides, params.ratio);
+            let pts = |ring: &[(f64, f64)]| -> String {
+                ring.iter()
+                    .map(|&(u, v)| format!("{},{}", rect.x + u * rect.width, rect.y + v * rect.height))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let mut svg = format!(
+                "<polygon points=\"{}\" {common}{dash}{transform}/>",
+                pts(&outline.closed)
+            );
+            // The cylinder's open front rim: never filled, so it is its own stroked
+            // polyline rather than folded into the polygon above.
+            for stroke in &outline.extra {
+                svg.push_str(&format!(
+                    "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" opacity=\"{}\"{dash}{transform}/>",
+                    pts(stroke),
+                    element.stroke_color,
+                    element.stroke_width,
+                    element.opacity / 100.0
+                ));
+            }
+            svg
+        }
         _ => {
             // The same radius the canvas draws, from the same function. This used to be
             // `roundness.unwrap_or(0.0)` — the `8` every rounded shape carries and the

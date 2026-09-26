@@ -21,6 +21,7 @@
 
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{BindMode, DrawElement, DrawElementType};
+use crate::scene::figure;
 use crate::scene::geometry::{
     element_rotated_bounds, is_transparent, normalize_rect, rotation_center, to_element_local,
     within_shape,
@@ -95,6 +96,7 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
             | DrawElementType::StickyNote
             | DrawElementType::Diamond
             | DrawElementType::Ellipse
+            | DrawElementType::Figure
     )
 }
 
@@ -111,6 +113,7 @@ fn is_target_kind(element: &DrawElement) -> bool {
         | DrawElementType::StickyNote
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
+        | DrawElementType::Figure
         | DrawElementType::Image
         | DrawElementType::Embed
         | DrawElementType::Frame => true,
@@ -131,6 +134,7 @@ fn occludes(element: &DrawElement) -> bool {
         DrawElementType::Rectangle
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
+        | DrawElementType::Figure
         | DrawElementType::Embed => !is_transparent(&element.background_color),
         _ => false,
     }
@@ -451,6 +455,11 @@ fn outline_interval(shape: &DrawElement, a: Point, b: Point, gap: f64) -> Option
 
     match shape.kind {
         DrawElementType::Ellipse => ellipse_interval(p, d, (0.0, 0.0), hx + gap, hy + gap),
+        DrawElementType::Figure => {
+            let params = shape.figure.clone().unwrap_or_default();
+            let poly = figure::centered_vertices(params.kind, params.sides, params.ratio, hx, hy);
+            convex_polygon_interval(p, d, &poly, gap)
+        }
         DrawElementType::Diamond => {
             // |x|/hx + |y|/hy <= 1 pushed out by `gap` is the same diamond with its four
             // sides moved out along their normals: |x|/hx + |y|/hy <= 1 + gap·|n|.
@@ -504,6 +513,52 @@ fn outline_interval(shape: &DrawElement, a: Point, b: Point, gap: f64) -> Option
                 })
         }
     }
+}
+
+/// The parameter interval over which the line `p + t·d` lies inside the convex polygon
+/// `poly` (centred, local coordinates, wound clockwise — [`figure::centered_vertices`]'s
+/// own convention) pushed outward by `gap`: each edge's own half-plane, moved out along
+/// its normal, intersected — the diamond case above generalized from four edges to `n`.
+///
+/// ponytail: exact for a convex figure (polygon, parallelogram, trapezoid, cylinder); a
+/// star's inner points are reflex vertices, where two edges are pushed out independently
+/// instead of rounding the notch between them, very slightly widening the gap right at
+/// the notch. Upgrade: clip against the offset edges *and* a gap-radius disc at each
+/// vertex, as a true polygon Minkowski sum would.
+fn convex_polygon_interval(
+    p: (f64, f64),
+    d: (f64, f64),
+    poly: &[(f64, f64)],
+    gap: f64,
+) -> Option<(f64, f64)> {
+    let n = poly.len();
+    let mut lo = f64::NEG_INFINITY;
+    let mut hi = f64::INFINITY;
+    for i in 0..n {
+        let (ax, ay) = poly[i];
+        let (bx, by) = poly[(i + 1) % n];
+        let (ex, ey) = (bx - ax, by - ay);
+        let len = ex.hypot(ey);
+        if len < 1e-9 {
+            continue;
+        }
+        let (nx, ny) = (ey / len, -ex / len);
+        let at = nx * (p.0 - ax) + ny * (p.1 - ay);
+        let along = nx * d.0 + ny * d.1;
+        if along.abs() < 1e-300 {
+            if at > gap {
+                return None;
+            }
+            continue;
+        }
+        let t = (gap - at) / along;
+        if along > 0.0 {
+            hi = hi.min(t);
+        } else {
+            lo = lo.max(t);
+        }
+    }
+    (lo <= hi).then_some((lo, hi))
 }
 
 /// Where the segment `a → b` crosses `shape`'s outline pushed out by `gap`.

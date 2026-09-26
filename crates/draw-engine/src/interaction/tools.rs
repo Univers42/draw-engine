@@ -10,6 +10,10 @@ pub enum DrawTool {
     Rectangle,
     Diamond,
     Ellipse,
+    /// A parametric shape from the Shapes picker. Which one, and its own sides/ratio,
+    /// come from the engine's `next_figure` rather than a tool per kind — the same way an
+    /// arrow's curve comes from `next_arrow_type` rather than a second arrow tool.
+    Figure,
     Line,
     Arrow,
     Freedraw,
@@ -45,6 +49,7 @@ impl DrawTool {
             Self::Rectangle => "rectangle",
             Self::Diamond => "diamond",
             Self::Ellipse => "ellipse",
+            Self::Figure => "figure",
             Self::Line => "line",
             Self::Arrow => "arrow",
             Self::Freedraw => "freedraw",
@@ -64,7 +69,7 @@ impl DrawTool {
 pub fn is_shape_tool(tool: DrawTool) -> bool {
     matches!(
         tool,
-        DrawTool::Rectangle | DrawTool::Diamond | DrawTool::Ellipse
+        DrawTool::Rectangle | DrawTool::Diamond | DrawTool::Ellipse | DrawTool::Figure
     )
 }
 
@@ -127,6 +132,11 @@ pub fn tool_for_chord(key: &str, shift: bool) -> Option<DrawTool> {
         // already the line.
         "s" => Some(DrawTool::Lasso),
         "w" => Some(DrawTool::Embed),
+        // The Shapes picker: no natural letter was left (`f` is the frame, `s` the
+        // lasso; `g` is pinned unclaimed by `ci_recognize.rs`, autoshape's old key
+        // before Shift+X existed), so this is another one just claimed, like the two
+        // above.
+        "u" => Some(DrawTool::Figure),
         _ => None,
     }
 }
@@ -138,13 +148,14 @@ pub fn tool_for_key(key: &str) -> Option<DrawTool> {
 
 /// Every tool, in toolbar order. The one place that has to be updated when a tool is
 /// added, so a test can walk it and hold the rest of the engine to account.
-pub const ALL_TOOLS: [DrawTool; 18] = [
+pub const ALL_TOOLS: [DrawTool; 19] = [
     DrawTool::Select,
     DrawTool::Lasso,
     DrawTool::Hand,
     DrawTool::Rectangle,
     DrawTool::Diamond,
     DrawTool::Ellipse,
+    DrawTool::Figure,
     DrawTool::Line,
     DrawTool::Arrow,
     DrawTool::Freedraw,
@@ -167,6 +178,7 @@ pub fn tool_to_element_type(tool: DrawTool) -> Option<crate::scene::DrawElementT
         DrawTool::Rectangle => Some(DrawElementType::Rectangle),
         DrawTool::Diamond => Some(DrawElementType::Diamond),
         DrawTool::Ellipse => Some(DrawElementType::Ellipse),
+        DrawTool::Figure => Some(DrawElementType::Figure),
         DrawTool::Line => Some(DrawElementType::Line),
         DrawTool::Arrow => Some(DrawElementType::Arrow),
         DrawTool::Freedraw => Some(DrawElementType::Freedraw),

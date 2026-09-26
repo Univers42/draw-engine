@@ -69,6 +69,30 @@ pub fn diamond_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
     )
 }
 
+/// A figure element with the given kind/sides/ratio, at the given box. `sides`/`ratio`
+/// absent means the kind's own default, exactly as [`FigureParams`] documents.
+pub fn figure_at(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    kind: FigureKind,
+    sides: Option<u8>,
+    ratio: Option<f64>,
+) -> DrawElement {
+    let mut element = create_element_default(
+        DrawElementType::Figure,
+        Geometry {
+            x,
+            y,
+            width,
+            height,
+        },
+    );
+    element.figure = Some(FigureParams { kind, sides, ratio });
+    element
+}
+
 pub fn text_at(x: f64, y: f64, width: f64, height: f64) -> DrawElement {
     let mut element = create_element_default(
         DrawElementType::Text,

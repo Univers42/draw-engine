@@ -14,6 +14,7 @@ use draw_rough::{generator, Drawable, Options};
 
 use crate::render::opts::generate_rough_options;
 use crate::scene::element::{DrawElement, DrawElementType};
+use crate::scene::figure;
 
 /// `DEFAULT_PROPORTIONAL_RADIUS` / `DEFAULT_ADAPTIVE_RADIUS`
 /// (`packages/common/src/constants.ts`).
@@ -208,6 +209,24 @@ pub fn element_drawable(element: &DrawElement) -> Option<Drawable> {
 
         // Not rough-drawn: text is filled glyphs, freedraw is a stroke outline.
         DrawElementType::Text | DrawElementType::Freedraw => None,
+
+        DrawElementType::Figure => {
+            let params = element.figure.clone().unwrap_or_default();
+            let outline = figure::outline(params.kind, params.sides, params.ratio);
+            let scale = |&(u, v): &(f64, f64)| [u * w, v * h];
+            let o = generate_rough_options(element, false);
+            let mut drawable =
+                generator::polygon(&outline.closed.iter().map(scale).collect::<Vec<_>>(), o);
+            // Extra open strokes (the cylinder's front rim) are never filled, so they are
+            // generated separately and folded into the same drawable rather than through
+            // `polygon`, which would try to close and fill them too.
+            for stroke in &outline.extra {
+                let extra =
+                    generator::linear_path(&stroke.iter().map(scale).collect::<Vec<_>>(), o);
+                drawable.sets.extend(extra.sets);
+            }
+            Some(drawable)
+        }
     }
 }
 

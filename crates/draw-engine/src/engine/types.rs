@@ -308,5 +308,9 @@ pub fn merge_style_patch(
         font_family: None,
         font_size: None,
         text_align: None,
+        // Never carried either: a figure's sides/ratio edit only ever reaches an already
+        // selected figure. The next figure's own params live in the engine's `next_figure`.
+        figure_sides: None,
+        figure_ratio: None,
     }
 }

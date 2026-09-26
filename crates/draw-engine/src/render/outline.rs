@@ -17,6 +17,7 @@ use crate::render::shape::{
     corner_radius, diamond_points, rounded_diamond_segments, rounded_rect_segments,
 };
 use crate::scene::element::{DrawElement, DrawElementType};
+use crate::scene::figure;
 
 /// What to trace for one element.
 #[derive(Debug, PartialEq)]
@@ -72,6 +73,19 @@ pub fn element_outline(element: &DrawElement) -> Option<Outline> {
             }))
         }
         DrawElementType::Ellipse => (w > 0.0 || h > 0.0).then_some(Outline::Ellipse { w, h }),
+        DrawElementType::Figure => {
+            if w == 0.0 && h == 0.0 {
+                return None;
+            }
+            let params = element.figure.clone().unwrap_or_default();
+            let generated = figure::outline(params.kind, params.sides, params.ratio);
+            let scale = |&(u, v): &(f64, f64)| [u * w, v * h];
+            let mut path = polygon(&generated.closed.iter().map(scale).collect::<Vec<_>>());
+            for stroke in &generated.extra {
+                path.extend(polyline(&stroke.iter().map(scale).collect::<Vec<_>>()));
+            }
+            Some(Outline::Path(path))
+        }
         DrawElementType::Line | DrawElementType::Arrow => {
             let points = element.points.as_deref().unwrap_or(&[]);
             if points.len() < 2 {

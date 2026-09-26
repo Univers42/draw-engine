@@ -1,5 +1,6 @@
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{DrawElement, DrawElementType};
+use crate::scene::figure;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -353,6 +354,14 @@ pub fn element_outline(element: &DrawElement) -> Vec<Point> {
                 turn(rect.x, cy),
             ]
         }
+        DrawElementType::Figure => {
+            let params = element.figure.clone().unwrap_or_default();
+            figure::outline(params.kind, params.sides, params.ratio)
+                .closed
+                .into_iter()
+                .map(|(u, v)| turn(rect.x + u * rect.width, rect.y + v * rect.height))
+                .collect()
+        }
         _ => vec![
             turn(rect.x, rect.y),
             turn(rect.x + rect.width, rect.y),
@@ -462,7 +471,10 @@ fn has_solid_interior(element: &DrawElement) -> bool {
     }
     if !matches!(
         element.kind,
-        DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse
+        DrawElementType::Rectangle
+            | DrawElementType::Diamond
+            | DrawElementType::Ellipse
+            | DrawElementType::Figure
     ) {
         return true;
     }
@@ -489,6 +501,15 @@ pub(crate) fn within_shape(element: &DrawElement, wx: f64, wy: f64, grow: f64) -
     match element.kind {
         DrawElementType::Ellipse => nx * nx + ny * ny <= 1.0,
         DrawElementType::Diamond => nx.abs() + ny.abs() <= 1.0,
+        DrawElementType::Figure => {
+            let params = element.figure.clone().unwrap_or_default();
+            let poly: Vec<Point> =
+                figure::centered_vertices(params.kind, params.sides, params.ratio, 1.0, 1.0)
+                    .into_iter()
+                    .map(|(x, y)| Point { x, y })
+                    .collect();
+            polygon_includes_point_non_zero(Point { x: nx, y: ny }, &poly)
+        }
         _ => nx.abs() <= 1.0 && ny.abs() <= 1.0,
     }
 }

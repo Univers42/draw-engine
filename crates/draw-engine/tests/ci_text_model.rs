@@ -118,24 +118,24 @@ mod geometry {
     #[test]
     fn a_shape_grows_to_the_oracles_size() {
         assert_close(
-            container_dimension_for_bound_text(150.0, DrawElementType::Rectangle),
+            container_dimension_for_bound_text(150.0, DrawElementType::Rectangle, None, true),
             160.0,
         );
         assert_close(
-            container_dimension_for_bound_text(150.0, DrawElementType::Ellipse),
+            container_dimension_for_bound_text(150.0, DrawElementType::Ellipse, None, true),
             226.0,
         );
         assert_close(
-            container_dimension_for_bound_text(150.0, DrawElementType::Diamond),
+            container_dimension_for_bound_text(150.0, DrawElementType::Diamond, None, true),
             320.0,
         );
         assert_close(
-            container_dimension_for_bound_text(150.0, DrawElementType::Arrow),
+            container_dimension_for_bound_text(150.0, DrawElementType::Arrow, None, true),
             230.0,
         );
         // The dimension is rounded up first.
         assert_close(
-            container_dimension_for_bound_text(149.2, DrawElementType::Rectangle),
+            container_dimension_for_bound_text(149.2, DrawElementType::Rectangle, None, true),
             160.0,
         );
     }

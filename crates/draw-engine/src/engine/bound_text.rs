@@ -226,10 +226,14 @@ impl DrawEngine {
                     width: layout::container_dimension_for_bound_text(
                         text.width,
                         DrawElementType::Rectangle,
+                        None,
+                        true,
                     ),
                     height: layout::container_dimension_for_bound_text(
                         text.height,
                         DrawElementType::Rectangle,
+                        None,
+                        false,
                     ),
                 },
                 style.clone(),

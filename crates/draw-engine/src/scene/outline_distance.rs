@@ -14,7 +14,10 @@
 
 use crate::camera::Point;
 use crate::scene::element::{DrawElement, DrawElementType};
-use crate::scene::geometry::{distance_to_segment, normalize_rect, to_element_local};
+use crate::scene::figure;
+use crate::scene::geometry::{
+    distance_to_segment, normalize_rect, polygon_includes_point_non_zero, to_element_local,
+};
 
 /// The distance from `p` to `shape`'s outline: positive inside, negative outside, and
 /// `-0.0` exactly on it.
@@ -22,13 +25,18 @@ pub fn signed_outline_distance(shape: &DrawElement, p: Point) -> f64 {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     let (lx, ly) = to_element_local(shape, p.x, p.y);
     let (hx, hy) = (rect.width / 2.0, rect.height / 2.0);
-    let (qx, qy) = ((lx - rect.x - hx).abs(), (ly - rect.y - hy).abs());
+    let (sx, sy) = (lx - rect.x - hx, ly - rect.y - hy);
+    let (qx, qy) = (sx.abs(), sy.abs());
     let (distance, inside) = match shape.kind {
         DrawElementType::Ellipse => ellipse(qx, qy, hx, hy),
         // ponytail: the painted diamond's vertices are rounded (`rounded_diamond_segments`,
         // the oracle's `deconstructDiamondElement`); here they are sharp, which moves the
         // outline by at most w/32 at the tip. Upgrade: distance to those cubic corners.
         DrawElementType::Diamond => diamond(qx, qy, hx, hy),
+        // Not every figure is axis-symmetric (a parallelogram, a document's wavy bottom),
+        // so this one works in the full local frame instead of the folded quadrant the
+        // others share.
+        DrawElementType::Figure => figure_distance(shape, sx, sy, hx, hy),
         _ => rounded_box(
             qx,
             qy,
@@ -42,6 +50,28 @@ pub fn signed_outline_distance(shape: &DrawElement, p: Point) -> f64 {
     } else {
         -distance
     }
+}
+
+/// The exact distance to a figure's own outline and whether the point is inside it — a
+/// direct polygon test rather than a quadrant-folded formula, since a figure need not be
+/// symmetric about either of its own axes.
+fn figure_distance(shape: &DrawElement, sx: f64, sy: f64, hx: f64, hy: f64) -> (f64, bool) {
+    let params = shape.figure.clone().unwrap_or_default();
+    let poly: Vec<Point> =
+        figure::centered_vertices(params.kind, params.sides, params.ratio, hx, hy)
+            .into_iter()
+            .map(|(x, y)| Point { x, y })
+            .collect();
+    let inside = polygon_includes_point_non_zero(Point { x: sx, y: sy }, &poly);
+    let n = poly.len();
+    let distance = (0..n)
+        .map(|i| {
+            let a = poly[i];
+            let b = poly[(i + 1) % n];
+            distance_to_segment(sx, sy, a.x, a.y, b.x, b.y)
+        })
+        .fold(f64::INFINITY, f64::min);
+    (distance, inside)
 }
 
 /// The painted corner radius, capped so opposite corners cannot overlap. A line of text

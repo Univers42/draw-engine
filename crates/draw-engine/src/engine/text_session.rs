@@ -396,7 +396,13 @@ fn shrunk(mut shape: DrawElement, label: &DrawElement, floor: Option<f64>) -> Dr
     if height <= floor || label.height >= layout::bound_text_max_height(&shape, label.height) {
         return shape;
     }
-    let target = layout::container_dimension_for_bound_text(label.height, shape.kind).max(floor);
+    let target = layout::container_dimension_for_bound_text(
+        label.height,
+        shape.kind,
+        shape.figure.as_ref(),
+        false,
+    )
+    .max(floor);
     if target < height {
         let rect = crate::scene::normalize_rect(shape.x, shape.y, shape.width, shape.height);
         shape.x = rect.x;

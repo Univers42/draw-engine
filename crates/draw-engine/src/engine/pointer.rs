@@ -143,7 +143,7 @@ impl DrawEngine {
             return;
         };
         let style = merge_style(&default_element_style(), &self.next_style);
-        let element = create_element(
+        let mut element = create_element(
             kind,
             Geometry {
                 x: world.x,
@@ -154,6 +154,9 @@ impl DrawEngine {
             style,
             self.now_ms,
         );
+        if kind == DrawElementType::Figure {
+            element.figure = Some(self.next_figure.clone());
+        }
         let id = element.id.clone();
         self.scene.add(element);
         self.interaction = Some(Interaction::Draft {

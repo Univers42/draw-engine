@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::scene::figure::FigureParams;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DrawElementType {
@@ -18,6 +20,11 @@ pub enum DrawElementType {
     /// See `scene/sticky.rs`.
     #[serde(rename = "stickynote")]
     StickyNote,
+    /// A parametric shape generated inside its box from a small parameter set — a
+    /// polygon, a star, a parallelogram, a trapezoid, a cylinder or a document. Not a
+    /// free path: its outline comes from exactly one place, `scene::figure::outline`, and
+    /// its params live in [`DrawElement::figure`]. See `docs/reference/figure.md`.
+    Figure,
 }
 
 impl DrawElementType {
@@ -435,6 +442,11 @@ pub struct DrawElement {
     /// container: a label unbound from its note keeps a stale one, meaningless there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_font_size: Option<f64>,
+    /// A figure's parameters — its kind, and the sides/ratio that shape it. `None` on
+    /// every element that is not a figure, and on a figure whose kind carries no such
+    /// field (there is none: `kind` is always present when this is `Some`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure: Option<FigureParams>,
     pub version: u32,
     pub version_nonce: u32,
     pub updated: f64,
@@ -541,6 +553,7 @@ pub fn create_element(
         base_height: None,
         created: None,
         base_font_size: None,
+        figure: None,
         version: 1,
         version_nonce: rand_int(),
         updated: now,
@@ -617,6 +630,14 @@ pub struct DrawElementStylePatch {
     pub font_size: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_align: Option<TextAlign>,
+    /// A figure's own two controls — the inspector's sides stepper and ratio slider.
+    /// Ignored on anything that is not a [`DrawElementType::Figure`], and on a kind of
+    /// figure that has no such control ([`crate::scene::figure::has_sides`] /
+    /// [`crate::scene::figure::has_ratio`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure_sides: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure_ratio: Option<f64>,
 }
 
 /// Lets an explicit `null` mean "set this to nothing" rather than "say nothing about it".
@@ -655,6 +676,26 @@ pub fn apply_style_patch(element: &mut DrawElement, patch: &DrawElementStylePatc
     }
     if let Some(v) = patch.roundness {
         element.roundness = v;
+    }
+    if let Some(sides) = patch.figure_sides {
+        if let Some(params) = element.figure.as_mut() {
+            if crate::scene::figure::has_sides(params.kind) {
+                params.sides = Some(crate::scene::figure::resolved_sides(
+                    params.kind,
+                    Some(sides),
+                ));
+            }
+        }
+    }
+    if let Some(ratio) = patch.figure_ratio {
+        if let Some(params) = element.figure.as_mut() {
+            if crate::scene::figure::has_ratio(params.kind) {
+                params.ratio = Some(crate::scene::figure::resolved_ratio(
+                    params.kind,
+                    Some(ratio),
+                ));
+            }
+        }
     }
 }
 

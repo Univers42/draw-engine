@@ -2345,6 +2345,20 @@ fn paint_binding_highlight(ctx: &CanvasRenderingContext2d, view: &PaintView) {
             }
             ctx.close_path();
         }
+        DrawElementType::Figure => {
+            let params = element.figure.clone().unwrap_or_default();
+            let outline = crate::scene::figure::outline(params.kind, params.sides, params.ratio);
+            let mut points = outline.closed.iter();
+            if let Some(&(u, v)) = points.next() {
+                let first = to_screen(rect.x + u * rect.width, rect.y + v * rect.height);
+                ctx.move_to(first.x, first.y);
+                for &(u, v) in points {
+                    let s = to_screen(rect.x + u * rect.width, rect.y + v * rect.height);
+                    ctx.line_to(s.x, s.y);
+                }
+                ctx.close_path();
+            }
+        }
         _ => {
             if element.roundness.is_some() {
                 // The same path the shape itself is generated from, so the highlight

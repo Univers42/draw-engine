@@ -204,7 +204,11 @@ fn every_tool_can_be_reached_from_the_keyboard() {
     // key in the oracle — Excalidraw reaches the lasso through a selection-tool mode and
     // the embed through a menu — so ours are deliberate additions, listed here so that
     // adding a tool and forgetting its key fails instead of shipping.
-    let extra: &[(DrawTool, &str)] = &[(DrawTool::Lasso, "s"), (DrawTool::Embed, "w")];
+    let extra: &[(DrawTool, &str)] = &[
+        (DrawTool::Lasso, "s"),
+        (DrawTool::Embed, "w"),
+        (DrawTool::Figure, "u"),
+    ];
     for (tool, key) in extra {
         assert_eq!(tool_for_chord(key, false), Some(*tool));
     }

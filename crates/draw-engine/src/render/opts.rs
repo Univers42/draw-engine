@@ -118,6 +118,7 @@ pub fn generate_rough_options(element: &DrawElement, continuous_path: bool) -> O
         DrawElementType::Rectangle
         | DrawElementType::Diamond
         | DrawElementType::Ellipse
+        | DrawElementType::Figure
         | DrawElementType::Image
         | DrawElementType::Frame
         | DrawElementType::Embed => {

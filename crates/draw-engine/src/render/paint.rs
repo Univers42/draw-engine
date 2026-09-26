@@ -244,6 +244,9 @@ pub fn label_cut_reach(linear: &DrawElement) -> crate::scene::geometry::Rect {
 pub fn is_roughable(kind: DrawElementType) -> bool {
     matches!(
         kind,
-        DrawElementType::Rectangle | DrawElementType::Diamond | DrawElementType::Ellipse
+        DrawElementType::Rectangle
+            | DrawElementType::Diamond
+            | DrawElementType::Ellipse
+            | DrawElementType::Figure
     )
 }

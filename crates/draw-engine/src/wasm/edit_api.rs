@@ -203,6 +203,21 @@ impl WasmEngine {
             .unwrap_or_else(|_| "{}".into())
     }
 
+    /// The Shapes picker: which figure — kind, sides, ratio — the tool draws next.
+    #[wasm_bindgen(js_name = setNextFigureJson)]
+    pub fn set_next_figure_json(&self, json: &str) {
+        if let Ok(figure) = serde_json::from_str::<crate::scene::figure::FigureParams>(json) {
+            self.cell.borrow_mut().engine.set_next_figure(figure);
+            self.flush();
+        }
+    }
+
+    #[wasm_bindgen(js_name = getNextFigureJson)]
+    pub fn get_next_figure_json(&self) -> String {
+        serde_json::to_string(&self.cell.borrow().engine.next_figure())
+            .unwrap_or_else(|_| "{}".into())
+    }
+
     #[wasm_bindgen(js_name = getSelectionJson)]
     pub fn get_selection_json(&self) -> String {
         serde_json::to_string(&self.cell.borrow().engine.get_selection())

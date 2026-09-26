@@ -105,6 +105,7 @@ fn is_flowchart_node(element: &DrawElement) -> bool {
             | DrawElementType::Diamond
             | DrawElementType::Ellipse
             | DrawElementType::StickyNote
+            | DrawElementType::Figure
     )
 }
 
@@ -345,6 +346,12 @@ fn clone_flowchart_node(
     );
     if kind == DrawElementType::StickyNote {
         node.base_height = template.base_height;
+    }
+    if kind == DrawElementType::Figure {
+        // Only reachable extending a figure chain with no digit override — the digit
+        // picker never offers a figure (`flowchart_set_shape`) — so `template.figure` is
+        // always there to copy.
+        node.figure = template.figure.clone();
     }
     node
 }

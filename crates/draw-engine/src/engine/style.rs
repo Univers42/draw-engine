@@ -167,6 +167,22 @@ impl DrawEngine {
         arrow.end_arrowhead = self.next_end_arrowhead;
     }
 
+    /// What the Shapes picker sets: which figure the tool draws next. Only that — no
+    /// selected figure is restyled by picking a kind to draw, unlike [`Self::set_arrow_type`],
+    /// because choosing a tool and restyling a selection are different actions here; the
+    /// inspector's own sides stepper and ratio slider (`apply_style`'s `figure_sides` /
+    /// `figure_ratio`) are what change an already-drawn figure.
+    pub fn set_next_figure(&mut self, figure: crate::scene::figure::FigureParams) {
+        self.next_figure = figure;
+        self.touch_style();
+    }
+
+    /// The figure the Shapes picker currently has queued, for the toolbar to show which
+    /// one is pressed.
+    pub fn next_figure(&self) -> crate::scene::figure::FigureParams {
+        self.next_figure.clone()
+    }
+
     /// A size for the selected texts and the labels their shapes carry, or for the next
     /// text when nothing is selected — within what the contract stores; a size that is
     /// not a number is ignored.

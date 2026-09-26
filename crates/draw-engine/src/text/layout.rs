@@ -26,6 +26,7 @@ use crate::scene::element::{
     is_auto_resize, resolved_font_family, resolved_line_height, resolved_text_align,
     resolved_vertical_align, source_text, DrawElement, DrawElementType, TextAlign, VerticalAlign,
 };
+use crate::scene::figure::{self, FigureKind, FigureParams};
 
 use crate::scene::sticky::{
     label_ceiling, normalize_sticky_font_size, position_after_height_change, StickyLayoutOpts,
@@ -124,6 +125,49 @@ fn container_box(container: &DrawElement) -> (f64, f64, f64, f64) {
     (rect.x, rect.y, rect.width, rect.height)
 }
 
+/// Extra inset added to the base padding for a label's box in a `Figure`, along each
+/// axis — the ellipse and diamond cases beside this function's callers, generalized to a
+/// figure's own kinds.
+///
+/// Not exact for every one — a triangle's safe area really tapers to a point, which no
+/// single rectangular inset follows — but chosen so a centred label's box stays inside
+/// the silhouette everywhere it actually reaches: a many-sided polygon is close enough to
+/// a circle to earn the ellipse's own inset, a triangle or a star's points get the
+/// diamond's tighter quarter, and a parallelogram, trapezoid, cylinder or document is
+/// only distorted along one axis, so only that axis is inset at all.
+fn figure_text_inset(params: &FigureParams, width: f64, height: f64) -> (f64, f64) {
+    (
+        figure_text_inset_fraction(params, true) * width,
+        figure_text_inset_fraction(params, false) * height,
+    )
+}
+
+/// [`figure_text_inset`], as a fraction of the axis's own size rather than a pixel
+/// amount — what [`container_dimension_for_bound_text`] inverts to grow a figure to fit
+/// a label, since that has a dimension to solve *for* rather than one to inset.
+fn figure_text_inset_fraction(params: &FigureParams, axis_is_width: bool) -> f64 {
+    match params.kind {
+        FigureKind::Polygon if figure::resolved_sides(params.kind, params.sides) >= 5 => {
+            0.5 * (1.0 - std::f64::consts::FRAC_1_SQRT_2)
+        }
+        FigureKind::Polygon | FigureKind::Star => 0.25,
+        FigureKind::Parallelogram | FigureKind::Trapezoid => {
+            if axis_is_width {
+                figure::resolved_ratio(params.kind, params.ratio)
+            } else {
+                0.0
+            }
+        }
+        FigureKind::Cylinder | FigureKind::Document => {
+            if axis_is_width {
+                0.0
+            } else {
+                figure::resolved_ratio(params.kind, params.ratio)
+            }
+        }
+    }
+}
+
 /// `getContainerCoords`: the top-left corner of the box a label is laid out in.
 pub fn container_coords(container: &DrawElement) -> Point {
     let (x, y, width, height) = container_box(container);
@@ -142,6 +186,12 @@ pub fn container_coords(container: &DrawElement) -> Point {
             dx += width / 4.0;
             dy += height / 4.0;
         }
+        DrawElementType::Figure => {
+            let params = container.figure.clone().unwrap_or_default();
+            let (ix, iy) = figure_text_inset(&params, width, height);
+            dx += ix;
+            dy += iy;
+        }
         _ => {}
     }
     Point {
@@ -152,7 +202,7 @@ pub fn container_coords(container: &DrawElement) -> Point {
 
 /// `getBoundTextMaxWidth`: how wide a label's lines may be in `container`.
 pub fn bound_text_max_width(container: &DrawElement, font_size: f64) -> f64 {
-    let (_, _, width, _) = container_box(container);
+    let (_, _, width, height) = container_box(container);
     if crate::scene::is_linear_element(container) {
         return (ARROW_LABEL_WIDTH_FRACTION * width)
             .max(font_size * ARROW_LABEL_FONT_SIZE_TO_MIN_WIDTH_RATIO);
@@ -163,13 +213,18 @@ pub fn bound_text_max_width(container: &DrawElement, font_size: f64) -> f64 {
         }
         DrawElementType::Diamond => js_round(width / 2.0) - BOUND_TEXT_PADDING * 2.0,
         DrawElementType::StickyNote => width - STICKY_NOTE_PADDING * 2.0,
+        DrawElementType::Figure => {
+            let params = container.figure.clone().unwrap_or_default();
+            let (ix, _) = figure_text_inset(&params, width, height);
+            width - 2.0 * (BOUND_TEXT_PADDING + ix)
+        }
         _ => width - BOUND_TEXT_PADDING * 2.0,
     }
 }
 
 /// `getBoundTextMaxHeight`: how tall a label may be in `container` before it grows.
 pub fn bound_text_max_height(container: &DrawElement, label_height: f64) -> f64 {
-    let (_, _, _, height) = container_box(container);
+    let (_, _, width, height) = container_box(container);
     if crate::scene::is_linear_element(container) {
         return if height - BOUND_TEXT_PADDING * 8.0 * 2.0 <= 0.0 {
             label_height
@@ -184,13 +239,26 @@ pub fn bound_text_max_height(container: &DrawElement, label_height: f64) -> f64 
         DrawElementType::Diamond => js_round(height / 2.0) - BOUND_TEXT_PADDING * 2.0,
         // The label's body ends above the date's footer.
         DrawElementType::StickyNote => (height - STICKY_NOTE_BODY_INSET_Y).max(0.0),
+        DrawElementType::Figure => {
+            let params = container.figure.clone().unwrap_or_default();
+            let (_, iy) = figure_text_inset(&params, width, height);
+            height - 2.0 * (BOUND_TEXT_PADDING + iy)
+        }
         _ => height - BOUND_TEXT_PADDING * 2.0,
     }
 }
 
 /// `computeContainerDimensionForBoundText`: the width or height a container of `kind`
 /// needs to hold a label `dimension` across.
-pub fn container_dimension_for_bound_text(dimension: f64, kind: DrawElementType) -> f64 {
+///
+/// `figure`/`axis_is_width` matter only for [`DrawElementType::Figure`], whose inset is
+/// not the same fraction on both axes; every other kind ignores them.
+pub fn container_dimension_for_bound_text(
+    dimension: f64,
+    kind: DrawElementType,
+    figure: Option<&FigureParams>,
+    axis_is_width: bool,
+) -> f64 {
     let dimension = dimension.ceil();
     let padding = BOUND_TEXT_PADDING * 2.0;
     match kind {
@@ -199,6 +267,14 @@ pub fn container_dimension_for_bound_text(dimension: f64, kind: DrawElementType)
         }
         DrawElementType::Arrow | DrawElementType::Line => dimension + padding * 8.0,
         DrawElementType::Diamond => 2.0 * (dimension + padding),
+        DrawElementType::Figure => {
+            let params = figure.cloned().unwrap_or_default();
+            let k = figure_text_inset_fraction(&params, axis_is_width);
+            // ponytail: a parallelogram/trapezoid ratio near the contract's own 0.95 cap
+            // pushes `k` past a half, where the exact inverse blows up or goes negative;
+            // floored so the container only ever comes out generous, never nonsensical.
+            (dimension + padding) / (1.0 - 2.0 * k).max(0.1)
+        }
         _ => dimension + padding,
     }
 }
@@ -371,13 +447,23 @@ pub fn layout_text(text: &DrawElement, container: Option<&DrawElement>, measure:
             grow(
                 &mut target,
                 None,
-                Some(container_dimension_for_bound_text(height, container.kind)),
+                Some(container_dimension_for_bound_text(
+                    height,
+                    container.kind,
+                    container.figure.as_ref(),
+                    false,
+                )),
             );
         }
         if width > max_width {
             grow(
                 &mut target,
-                Some(container_dimension_for_bound_text(width, container.kind)),
+                Some(container_dimension_for_bound_text(
+                    width,
+                    container.kind,
+                    container.figure.as_ref(),
+                    true,
+                )),
                 None,
             );
         }

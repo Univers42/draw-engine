@@ -343,6 +343,7 @@ pub fn has_background(kind: DrawElementType) -> bool {
             | DrawElementType::StickyNote
             | DrawElementType::Ellipse
             | DrawElementType::Diamond
+            | DrawElementType::Figure
             | DrawElementType::Line
             | DrawElementType::Freedraw
             | DrawElementType::Embed
@@ -359,6 +360,7 @@ fn is_fill_boundary_type(kind: DrawElementType) -> bool {
         DrawElementType::Rectangle
             | DrawElementType::Diamond
             | DrawElementType::Ellipse
+            | DrawElementType::Figure
             | DrawElementType::Frame
             | DrawElementType::Line
             | DrawElementType::Freedraw

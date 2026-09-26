@@ -136,6 +136,10 @@ pub struct DrawEngine {
     next_end_arrowhead: Option<crate::scene::Arrowhead>,
     /// `currentItemArrowType`: curved until another is chosen. See `style.rs`.
     next_arrow_type: ArrowType,
+    /// What the next figure is drawn as, once a kind was chosen from the Shapes picker —
+    /// the same "next element's own type-specific state" role `next_arrow_type` has for
+    /// arrows. The default figure until then, same as a freshly-picked [`FigureParams`].
+    next_figure: crate::scene::figure::FigureParams,
     /// Each shape's height from before a text was bound into it, which unbinding gives
     /// back — the oracle's `originalContainerCache`. Session state. See `bound_text.rs`.
     original_container_heights: HashMap<String, f64>,
@@ -315,6 +319,7 @@ impl DrawEngine {
             next_start_arrowhead: None,
             next_end_arrowhead: None,
             next_arrow_type: ArrowType::Round,
+            next_figure: crate::scene::figure::FigureParams::default(),
             original_container_heights: HashMap::new(),
             interaction: None,
             editing_linear: None,

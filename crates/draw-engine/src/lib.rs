@@ -72,6 +72,10 @@ pub use scene::{
     RECOGNITION_MIN_SCREEN_SIZE, RESAMPLE_N,
 };
 pub use scene::{
+    centered_vertices, has_ratio, has_sides, outline as figure_outline, resolved_ratio,
+    resolved_sides, FigureKind, FigureOutline, FigureParams, RATIO_RANGE, SIDES_RANGE,
+};
+pub use scene::{
     compute_bucket_fill, is_bucket_fill_compatible, is_restylable_fill, polygon_includes_point,
     polygon_includes_point_non_zero, polygon_signed_area, renders_opaque_fill,
     segment_intersection_point, BucketFill, BucketFillFailure, BucketFillInsertion,
