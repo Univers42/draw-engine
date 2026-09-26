@@ -323,18 +323,23 @@ pub enum ArrowheadPrimitive {
 const CARDINALITY_ONE_OR_MANY_OFFSET: f64 = -0.25;
 const CARDINALITY_ZERO_CIRCLE_SCALE: f64 = 0.8;
 
-/// The page's own colour, an "outline" head is filled with so it reads as a hole punched
-/// through the arrow's stroke (`shape.ts@1118751f:386-389`'s `canvasBackgroundColor`, dark-
-/// mode filtered). Shared by the canvas painter and the SVG exporter — one colour choice,
-/// not two that can drift apart.
-///
-/// `ponytail: fixed white, not the board's actual background — this engine has no concept
-/// of a page colour at all (it paints on a transparent canvas; the page's own colour is
-/// CSS, outside WASM), and plumbing one in is a `PaintView`/export-signature change well
-/// past "arrowheads". White matches the oracle's own default `viewBackgroundColor` and
-/// every board this engine currently renders or exports. Upgrade path: a
-/// `background_color` parameter threaded from the web app's own CSS background.`
-pub const ARROWHEAD_OUTLINE_FILL: &str = "#ffffff";
+/// An "outline" head is filled with the page's own colour, so it reads as a hole punched
+/// through the arrow's stroke; a "solid" head is filled with the stroke colour itself
+/// (`shape.ts@1118751f:386-389`'s `canvasBackgroundColor` vs `element.strokeColor`, dark-
+/// mode filtered there — this engine keeps element colours literal and only the canvas
+/// changes, so the caller's own background already carries that). Shared by the canvas
+/// painter (the live `DrawTheme::background`) and the SVG exporter (the background rect
+/// the export itself paints) — one colour choice, not two that can drift apart.
+pub fn arrowhead_fill_color<'a>(
+    role: FillRole,
+    stroke_color: &'a str,
+    background: &'a str,
+) -> &'a str {
+    match role {
+        FillRole::Solid => stroke_color,
+        FillRole::Outline => background,
+    }
+}
 
 fn lines_to_tip(points: Option<Vec<f64>>) -> Vec<ArrowheadPrimitive> {
     // `generateArrowheadLinesToTip` (`shape.ts@1118751f:309-324`): [x2,y2,x3,y3,x4,y4] ->
@@ -557,6 +562,31 @@ mod tests {
             sets: vec![only.clone()],
         };
         assert_eq!(curve_path_ops(&drawable), only.ops.as_slice());
+    }
+
+    /// An outline head (`circle_outline`, `triangle_outline`, `diamond_outline`) is a hole
+    /// punched in the stroke, so it must follow whatever the caller is actually painting
+    /// on — a dark theme's background here, not a fixed white.
+    #[test]
+    fn outline_head_follows_the_background() {
+        assert_eq!(
+            arrowhead_fill_color(FillRole::Outline, "#1e1e1e", "#121212"),
+            "#121212",
+        );
+        assert_eq!(
+            arrowhead_fill_color(FillRole::Outline, "#1e1e1e", "#ffffff"),
+            "#ffffff",
+        );
+    }
+
+    /// A solid head (`triangle`, `diamond`, `circle`, the cardinality markers) is punched
+    /// out of nothing — it is filled with the stroke, regardless of the background.
+    #[test]
+    fn solid_head_uses_the_stroke_color() {
+        assert_eq!(
+            arrowhead_fill_color(FillRole::Solid, "#1e1e1e", "#121212"),
+            "#1e1e1e",
+        );
     }
 
     #[test]

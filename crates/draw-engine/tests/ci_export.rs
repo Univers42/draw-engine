@@ -137,6 +137,26 @@ fn scene_to_svg_linear_connector_render() {
     assert!(svg.contains("<line "));
 }
 
+/// An outline head (a hole punched through the stroke) is filled with the export's own
+/// background — the same colour `scene_to_svg`'s `<rect>` paints — not a fixed white, so a
+/// board exported over a dark background does not carry a white blob at the arrow's end.
+#[test]
+fn scene_to_svg_outline_arrowhead_follows_the_export_background() {
+    let mut arrow = connector(0.0, 0.0, 100.0, 0.0, DrawElementType::Arrow);
+    arrow.end_arrowhead = Some(Arrowhead::CircleOutline);
+    let bounds = WorldBounds {
+        min_x: 0.0,
+        min_y: 0.0,
+        max_x: 100.0,
+        max_y: 0.0,
+    };
+    let svg = scene_to_svg(&[arrow], bounds, 10.0, "#121212");
+    // The background `<rect>` is one occurrence; the outline head's own fill, on a
+    // `<circle>`, is what a regression to a fixed white would drop from this count.
+    assert_eq!(svg.matches("fill=\"#121212\"").count(), 2, "{svg}");
+    assert!(!svg.contains("fill=\"#ffffff\""), "{svg}");
+}
+
 #[test]
 fn scene_to_svg_freedraw_polyline_render() {
     let mut freedraw = create_element_default(

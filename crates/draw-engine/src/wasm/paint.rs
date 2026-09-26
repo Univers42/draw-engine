@@ -8,8 +8,7 @@ use web_sys::{CanvasRenderingContext2d, Path2d};
 use crate::engine::{PaintView, Painter};
 use crate::interaction::Axis;
 use crate::render::arrowheads::{
-    arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
-    ARROWHEAD_OUTLINE_FILL,
+    arrowhead_fill_color, arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
 };
 use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
@@ -1485,8 +1484,8 @@ fn paint_element(
 ) {
     match element.kind {
         DrawElementType::Line | DrawElementType::Arrow => match frame.linear_label(element) {
-            Some(label) => paint_linear_around(ctx, view, element, label),
-            None => paint_linear(ctx, view, element),
+            Some(label) => paint_linear_around(ctx, view, element, label, &frame.theme.background),
+            None => paint_linear(ctx, view, element, &frame.theme.background),
         },
         DrawElementType::Freedraw => paint_freedraw(ctx, view, element),
         DrawElementType::Image => paint_image(ctx, view, element),
@@ -1597,6 +1596,7 @@ fn paint_linear_around(
     view: [f64; 6],
     element: &DrawElement,
     label: &DrawElement,
+    background: &str,
 ) {
     let hole = crate::render::label_hole(label);
     let reach = crate::render::label_cut_reach(element);
@@ -1610,7 +1610,7 @@ fn paint_linear_around(
     ctx.line_to(hole.x + hole.width, hole.y);
     ctx.close_path();
     ctx.clip();
-    paint_linear(ctx, view, element);
+    paint_linear(ctx, view, element, background);
     ctx.restore();
     // `restore` put back what the caches believe was set inside.
     STATE.with(|s| s.borrow_mut().reset());
@@ -1635,11 +1635,16 @@ fn paint_shape(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawEle
 /// so a multi-point line rendered as a straight segment, dashes were ignored, and
 /// `default_arrowhead` was computed and discarded (`let _ = ...`) so arrows were
 /// indistinguishable from lines on screen while the SVG export drew them correctly.
-fn paint_linear(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
+fn paint_linear(
+    ctx: &CanvasRenderingContext2d,
+    view: [f64; 6],
+    element: &DrawElement,
+    background: &str,
+) {
     with_element_transform(ctx, view, element, || {
         replay(ctx, element);
         if element.kind == DrawElementType::Arrow {
-            paint_arrowheads(ctx, element);
+            paint_arrowheads(ctx, element, background);
         }
     });
 }
@@ -1678,13 +1683,6 @@ fn arrowhead_options(base: &RoughOptions, primitive: &ArrowheadPrimitive) -> Rou
     o
 }
 
-fn fill_role_color(role: FillRole, element: &DrawElement) -> &str {
-    match role {
-        FillRole::Solid => &element.stroke_color,
-        FillRole::Outline => ARROWHEAD_OUTLINE_FILL,
-    }
-}
-
 /// Draws one arrowhead primitive: a rough shape generated fresh (see the seeding note on
 /// [`crate::render::arrowheads`]), then painted through the same `Op` → `Path2d` step the
 /// body uses ([`build_paths`]), so a `path` set is stroked and a `fillPath` filled —
@@ -1696,6 +1694,7 @@ fn paint_arrowhead_primitive(
     base: &RoughOptions,
     dotted_dash: Option<[f64; 2]>,
     primitive: &ArrowheadPrimitive,
+    background: &str,
 ) {
     let o = arrowhead_options(base, primitive);
     let drawable = match primitive {
@@ -1726,7 +1725,10 @@ fn paint_arrowhead_primitive(
                     | ArrowheadPrimitive::Circle { role, .. } => *role,
                     ArrowheadPrimitive::Line(_) => FillRole::Solid,
                 };
-                set_fill(ctx, fill_role_color(role, element));
+                set_fill(
+                    ctx,
+                    arrowhead_fill_color(role, &element.stroke_color, background),
+                );
                 set_dash_cached(ctx, None);
                 ctx.fill_with_path_2d(&path);
             }
@@ -1742,7 +1744,7 @@ fn paint_arrowhead_primitive(
 /// Runs inside the element transform, so the points are element-local — the same space
 /// the SVG exporter works in, which is what lets both consume one source
 /// ([`arrowhead_shapes`]).
-fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
+fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement, background: &str) {
     let points = element.points.as_deref().unwrap_or(&[]);
     if points.len() < 2 {
         return;
@@ -1770,7 +1772,7 @@ fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement) {
     for (position, end) in [(Position::Start, "start"), (Position::End, "end")] {
         let kind = default_arrowhead(element, end);
         for primitive in arrowhead_shapes(points, element.stroke_width, &ops, position, kind) {
-            paint_arrowhead_primitive(ctx, element, &base, dotted_dash, &primitive);
+            paint_arrowhead_primitive(ctx, element, &base, dotted_dash, &primitive, background);
         }
     }
 }

@@ -57,6 +57,10 @@ fn escape_xml(value: &str) -> String {
 /// rotation in this exporter (`linear_endpoints` doesn't apply one either — a pre-existing
 /// SVG-export gap, not one this change introduces), so a translation is all that is
 /// needed to place a primitive computed in element-local space.
+///
+/// `background` is [`scene_to_svg`]'s own `background` argument, the colour its `<rect>`
+/// paints under everything else — this export is never actually transparent, so an
+/// outline head's fill always has a real colour to punch its hole in, not a fallback.
 fn arrowhead_svg(
     element: &DrawElement,
     ops: &[Op],
@@ -64,6 +68,7 @@ fn arrowhead_svg(
     opacity: f64,
     dx: f64,
     dy: f64,
+    background: &str,
 ) -> String {
     let end = if position == Position::Start {
         "start"
@@ -74,9 +79,8 @@ fn arrowhead_svg(
     let points = element.points.as_deref().unwrap_or(&[[0.0, 0.0]]);
     let shapes = arrowhead_shapes(points, element.stroke_width, ops, position, kind);
 
-    let fill_of = |role: FillRole| match role {
-        FillRole::Solid => element.stroke_color.as_str(),
-        FillRole::Outline => crate::render::arrowheads::ARROWHEAD_OUTLINE_FILL,
+    let fill_of = |role: FillRole| {
+        crate::render::arrowheads::arrowhead_fill_color(role, &element.stroke_color, background)
     };
     let pt = |[x, y]: [f64; 2]| format!("{},{}", x + dx, y + dy);
 
@@ -148,8 +152,8 @@ fn closed_line_svg(element: &DrawElement) -> Option<String> {
     ))
 }
 
-fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
-    let body = linear_body_svg(element);
+fn linear_svg(element: &DrawElement, label: Option<&DrawElement>, background: &str) -> String {
+    let body = linear_body_svg(element, background);
     let Some(label) = label.filter(|_| !body.is_empty()) else {
         return body;
     };
@@ -171,7 +175,7 @@ fn linear_svg(element: &DrawElement, label: Option<&DrawElement>) -> String {
     )
 }
 
-fn linear_body_svg(element: &DrawElement) -> String {
+fn linear_body_svg(element: &DrawElement, background: &str) -> String {
     let (start, end) = linear_endpoints(element);
     let length = (end.x - start.x).hypot(end.y - start.y);
     if length < 0.5 {
@@ -194,8 +198,24 @@ fn linear_body_svg(element: &DrawElement) -> String {
     let ops: &[Op] = drawable.as_ref().map_or(&[] as &[Op], curve_path_ops);
     let heads = format!(
         "{}{}",
-        arrowhead_svg(element, ops, Position::End, opacity, element.x, element.y),
-        arrowhead_svg(element, ops, Position::Start, opacity, element.x, element.y),
+        arrowhead_svg(
+            element,
+            ops,
+            Position::End,
+            opacity,
+            element.x,
+            element.y,
+            background
+        ),
+        arrowhead_svg(
+            element,
+            ops,
+            Position::Start,
+            opacity,
+            element.x,
+            element.y,
+            background
+        ),
     );
     format!("{shaft}{heads}")
 }
@@ -203,6 +223,7 @@ fn linear_body_svg(element: &DrawElement) -> String {
 fn element_svg<'a>(
     element: &DrawElement,
     lookup: impl Fn(&str) -> Option<&'a DrawElement>,
+    background: &str,
 ) -> String {
     if element.kind == DrawElementType::Line {
         if let Some(svg) = closed_line_svg(element) {
@@ -210,7 +231,11 @@ fn element_svg<'a>(
         }
     }
     if matches!(element.kind, DrawElementType::Line | DrawElementType::Arrow) {
-        return linear_svg(element, crate::render::linear_label(element, lookup));
+        return linear_svg(
+            element,
+            crate::render::linear_label(element, lookup),
+            background,
+        );
     }
     if element.kind == DrawElementType::StickyNote {
         return sticky_svg(element, crate::scene::sticky::wall_clock_ms());
@@ -446,7 +471,7 @@ pub fn scene_to_svg(
     let body = elements
         .iter()
         .filter(|el| !el.is_deleted)
-        .map(|el| element_svg(el, |id| labels.get(id).copied()))
+        .map(|el| element_svg(el, |id| labels.get(id).copied(), background))
         .collect::<Vec<_>>()
         .join("\n");
     format!(
