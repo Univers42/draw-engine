@@ -1,0 +1,13 @@
+{
+  "name": "arrowhead-oracle",
+  "private": true,
+  "type": "module",
+  "description": "Dumps the oracle's own getArrowheadPoints/getArrowheadSize/getArrowheadAngle (packages/element/src/bounds.ts) as fixtures the Rust arrowhead geometry is diffed against. Deliberately OUTSIDE the pnpm workspace, like rough-oracle: it pins roughjs to the exact version Excalidraw uses, which is the whole point, and must not inherit the workspace's minimumReleaseAge hold.",
+  "scripts": {
+    "generate": "node --import ./register.mjs generate.mjs"
+  },
+  "dependencies": {
+    "roughjs": "4.6.4",
+    "points-on-curve": "1.0.1"
+  }
+}
