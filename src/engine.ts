@@ -478,6 +478,15 @@ export class DrawEngine {
   }
 
   /**
+   * A scene made elsewhere — the Mermaid import — placed as `pasteJson` places it, centred
+   * on the **world** point `at`, but with every text laid out in this engine's fonts and
+   * every shape grown to hold its label. One step of undo; the clipboard is untouched.
+   */
+  insertJson(json: string, at?: { x: number; y: number }): boolean {
+    return this.inner.insertJson(json, at?.x, at?.y);
+  }
+
+  /**
    * The command palette's "Add rectangle / diamond / ellipse / figure": a default-sized
    * shape centred on the **screen** point `(screenX, screenY)`, selected, as one step of
    * undo — `insertImage`/`insertEmbed`'s own convention. `"figure"` takes whatever

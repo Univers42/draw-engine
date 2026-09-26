@@ -52,6 +52,18 @@ impl WasmEngine {
         ok
     }
 
+    /// [`DrawEngine::insert_json`]: a scene made elsewhere, placed with its labels laid out.
+    #[wasm_bindgen(js_name = insertJson)]
+    pub fn insert_json(&self, json: &str, x: Option<f64>, y: Option<f64>) -> bool {
+        let at = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        };
+        let ok = self.cell.borrow_mut().engine.insert_json(json, at);
+        self.flush();
+        ok
+    }
+
     /// Track B: the command palette's "Add rectangle / diamond / ellipse" — a default-sized
     /// shape centred at the **screen** point `(sx, sy)`, selected, one step of history
     /// (`DrawEngine::insert_default_shape`). `undefined` for any kind the palette does not

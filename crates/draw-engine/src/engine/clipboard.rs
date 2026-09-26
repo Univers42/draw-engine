@@ -7,6 +7,11 @@ use crate::export::scene_to_json;
 use crate::interaction::DrawTool;
 use crate::scene::geometry::scene_bounds;
 use crate::scene::{DrawElement, DrawElementType};
+use crate::text::layout::{self, Laid};
+
+/// The smallest an imported label is set to fit its shape: the converter's own floor
+/// (`MIN_VERTEX_LABEL_FONT_SIZE`, `@excalidraw/mermaid-to-excalidraw@2.2.2`).
+const MIN_IMPORTED_LABEL_SIZE: f64 = 12.0;
 
 /// Last-writer-wins between two versions of the same element.
 ///
@@ -364,10 +369,52 @@ impl DrawEngine {
         let Some(payload) = payload else {
             return false;
         };
+        if !self.place_json(&payload, at, false) {
+            return false;
+        }
+        self.clipboard_buffer = Some(payload);
+        true
+    }
+
+    /// Places a scene made elsewhere — the Mermaid import — as a paste does, but with every
+    /// text laid out from its source and every shape grown to hold its label: the oracle
+    /// puts a skeleton's labels through `redrawTextBoundingBox` the same way
+    /// (`convertToExcalidrawElements`, `packages/element/src/transform.ts@1118751f:259-298`),
+    /// since a text made elsewhere has no size measured in this font. One step of undo, and
+    /// the clipboard is left as it was: nothing was copied. The camera stays: the dialog's
+    /// Insert fits it afterwards, a pasted definition does not (`App.tsx@1118751f:4686-4702`).
+    pub fn insert_json(&mut self, json: &str, at: Option<(f64, f64)>) -> bool {
+        self.place_json(json, at, true)
+    }
+
+    /// `text` laid out, a point smaller at a time while at its size it would grow the shape it
+    /// labels, down to [`MIN_IMPORTED_LABEL_SIZE`] — past that the shape grows, as the oracle's
+    /// always does. Each size is wrapped anew, so the largest that fits is the one found.
+    ///
+    /// Divergence: the converter sets only a cylinder's label smaller to fit
+    /// (`computeVertexLabelFontSize`, `@excalidraw/mermaid-to-excalidraw@2.2.2`
+    /// `converter/types/flowchart.js`) and the oracle grows every other shape, so one long
+    /// label pushes its node over the next. Mermaid laid each node out to hold its label;
+    /// keeping that size keeps Mermaid's layout.
+    fn fitted(&self, text: &DrawElement) -> Laid {
+        let mut laid = self.laid_out(text);
+        let mut smaller = text.clone();
+        while laid.container.is_some() {
+            let size = layout::font_of(&smaller).size() - 1.0;
+            if size < MIN_IMPORTED_LABEL_SIZE {
+                break;
+            }
+            smaller.font_size = Some(size);
+            laid = self.laid_out(&smaller);
+        }
+        laid
+    }
+
+    fn place_json(&mut self, payload: &str, at: Option<(f64, f64)>, lay_out: bool) -> bool {
         let mut offset_x = super::PASTE_OFFSET;
         let mut offset_y = super::PASTE_OFFSET;
         if let Some((x, y)) = at {
-            if let Some(source) = materialize_elements(&payload, 0.0, 0.0, self.now_ms) {
+            if let Some(source) = materialize_elements(payload, 0.0, 0.0, self.now_ms) {
                 if let Some(bounds) = scene_bounds(&source) {
                     // The oracle's `duplicateAtSceneCoords`: half-width/height off the
                     // pointer gives the bounding box's new left/top edge, snapped to the
@@ -385,17 +432,25 @@ impl DrawEngine {
                 }
             }
         }
-        let Some(pasted) = materialize_elements(&payload, offset_x, offset_y, self.now_ms) else {
+        let Some(pasted) = materialize_elements(payload, offset_x, offset_y, self.now_ms) else {
             return false;
         };
         if pasted.is_empty() {
             return false;
         }
         let ids: Vec<String> = pasted.iter().map(|el| el.id.clone()).collect();
+        let texts: Vec<DrawElement> = pasted
+            .iter()
+            .filter(|el| lay_out && el.kind == DrawElementType::Text)
+            .cloned()
+            .collect();
         for element in pasted {
             self.scene.add(element);
         }
-        self.clipboard_buffer = Some(payload);
+        for text in texts {
+            let laid = self.fitted(&text);
+            self.put_laid(laid);
+        }
         self.set_tool(DrawTool::Select);
         self.set_selection(ids);
         self.apply_bindings();
