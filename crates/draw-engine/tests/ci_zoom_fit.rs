@@ -138,3 +138,18 @@ fn an_empty_board_is_fitted_as_the_origin_as_the_oracle_does() {
     engine.zoom_to_fit_selection();
     assert_camera(landed(&mut engine), 400.0, 300.0, MAX_ZOOM);
 }
+
+/// A host easing the camera itself asks where the engine's own ease is headed, so it can
+/// step aside rather than cancel it on its next frame.
+#[test]
+fn while_a_fit_eases_the_camera_target_is_where_it_lands() {
+    let mut engine = engine_with_scene(vec![box_at(2000.0, 0.0, 100.0, 60.0)]);
+    engine.set_now(0.0);
+    let start = engine.camera;
+    assert_eq!(engine.camera_target(), start);
+    engine.zoom_to_fit();
+    assert_eq!(engine.camera, start);
+    assert_camera(engine.camera_target(), -1650.0, 270.0, 1.0);
+    let landed = landed(&mut engine);
+    assert_eq!(engine.camera_target(), landed);
+}

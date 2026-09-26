@@ -70,6 +70,11 @@ export class DrawEngine {
     return parseJson<Camera>(this.inner.cameraJson(), { x: 0, y: 0, scale: 1 });
   }
 
+  /** Where the camera is headed: an eased move's end (a fit, a reveal) while one runs, else `camera`. */
+  get cameraTarget(): Camera {
+    return parseJson<Camera>(this.inner.cameraTargetJson(), this.camera);
+  }
+
   setScene(scene: Scene): void {
     this.inner.setSceneJson(JSON.stringify({ type: "osidraw", version: 1, elements: scene.toArray() }));
   }

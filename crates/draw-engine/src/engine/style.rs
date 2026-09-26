@@ -730,7 +730,7 @@ impl DrawEngine {
     /// `self.camera` mid-flight would compound onto wherever the ease had *visually*
     /// reached rather than onto the move already queued — a key held for repeat, or a
     /// fast double-click on the zoom-bar button, would spend a step doing nothing.
-    fn camera_target(&self) -> Camera {
+    pub fn camera_target(&self) -> Camera {
         self.camera_anim.map(|anim| anim.to).unwrap_or(self.camera)
     }
 

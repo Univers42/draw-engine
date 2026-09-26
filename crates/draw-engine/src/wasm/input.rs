@@ -861,4 +861,11 @@ impl WasmEngine {
     pub fn camera_json(&self) -> String {
         serde_json::to_string(&self.cell.borrow().engine.camera).unwrap_or_else(|_| "{}".into())
     }
+
+    /// Where the camera is headed: an eased move's end while one runs, else the camera.
+    #[wasm_bindgen(js_name = cameraTargetJson)]
+    pub fn camera_target_json(&self) -> String {
+        let target = self.cell.borrow().engine.camera_target();
+        serde_json::to_string(&target).unwrap_or_else(|_| "{}".into())
+    }
 }
