@@ -289,6 +289,11 @@ export interface DrawElement extends DrawElementStyle {
    * element that is not a figure. Mirrors the engine's `FigureParams` (`scene/figure.rs`).
    */
   figure?: FigureParams;
+  /**
+   * A frame's place on the presentation path (`setPresentationPath`). Absent on everything
+   * else, and on a frame nobody has placed.
+   */
+  pathStep?: number;
   version: number;
   versionNonce: number;
   updated: number;

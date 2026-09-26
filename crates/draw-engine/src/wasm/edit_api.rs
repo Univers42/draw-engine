@@ -374,6 +374,16 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Numbers the frames `json` lists (a JSON array of ids) 0, 1, 2… on the presentation
+    /// path, as one step. See `DrawEngine::set_presentation_path`.
+    #[wasm_bindgen(js_name = setPresentationPath)]
+    pub fn set_presentation_path(&self, json: &str) {
+        if let Ok(ids) = serde_json::from_str::<Vec<String>>(json) {
+            self.cell.borrow_mut().engine.set_presentation_path(&ids);
+            self.flush();
+        }
+    }
+
     /// Commits a frame's name, trimmed, as one step — the host's input over the name
     /// label calls this on Enter, blur or Escape alike. Emptied, the name falls back to
     /// the generic default. See `FrameRenameRequest`.

@@ -33,6 +33,7 @@ mod peers;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
+mod present_path;
 mod radius;
 mod selection_style;
 mod stamp;

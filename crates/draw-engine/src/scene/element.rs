@@ -468,6 +468,12 @@ pub struct DrawElement {
     /// A frame's label. Nothing else carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// A frame's place on the presentation path, set by the path editor
+    /// ([`DrawEngine::set_presentation_path`](crate::DrawEngine::set_presentation_path)).
+    /// `None` on everything else, and on a frame nobody has placed: the host presents those
+    /// after the placed ones, in the order they were made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_step: Option<u32>,
     /// The image itself, as a `data:` URL.
     ///
     /// Carried on the element rather than keyed into a separate file store, which is
@@ -610,6 +616,7 @@ pub fn create_element(
         legacy_group_id: None,
         frame_id: None,
         name: None,
+        path_step: None,
         data_url: None,
         embed_url: None,
         locked: None,

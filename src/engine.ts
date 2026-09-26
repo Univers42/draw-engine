@@ -773,6 +773,14 @@ export class DrawEngine {
   }
 
   /**
+   * Numbers the frames `ids` lists 0, 1, 2… on the presentation path, in that order, as
+   * one step. Ids that are not live frames are skipped; frames not listed keep their step.
+   */
+  setPresentationPath(ids: readonly string[]): void {
+    this.inner.setPresentationPath(JSON.stringify(ids));
+  }
+
+  /**
    * The open text with `text` typed into it — laid out, its shape grown or shrunk —
    * with no step and no stamp: peers see it through `gestureElements`. `false` when no
    * text is open any more, and the editor should close.
