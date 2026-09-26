@@ -707,10 +707,13 @@ impl DrawEngine {
             return;
         }
         // The arrow key again, with the arrow tool already out, moves the next arrow on to
-        // the next type (`App.tsx@1118751f:5706-5714`).
+        // the next type (`App.tsx@1118751f:5706-5714`). The tool is announced again, as
+        // the oracle sets it again (`:5735-5737`): nothing else tells the host its panel
+        // is stale.
         if tool == DrawTool::Arrow && self.tool == DrawTool::Arrow {
             self.next_arrow_type = self.next_arrow_type.cycled();
             self.touch_style();
+            self.events.tool = Some(tool);
             return;
         }
         self.set_tool(tool);

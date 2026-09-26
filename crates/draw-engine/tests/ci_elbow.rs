@@ -434,8 +434,14 @@ fn the_arrow_key_again_cycles_sharp_round_elbow() {
         Some(ArrowType::Round),
         "the oracle's default"
     );
+    engine.drain_events();
     engine.activate_tool(DrawTool::Arrow);
     assert_eq!(next(&engine), Some(ArrowType::Elbow));
+    assert_eq!(
+        engine.drain_events().tool,
+        Some(DrawTool::Arrow),
+        "announced, so the host re-reads its panel"
+    );
     engine.activate_tool(DrawTool::Arrow);
     assert_eq!(next(&engine), Some(ArrowType::Sharp));
     engine.activate_tool(DrawTool::Arrow);
