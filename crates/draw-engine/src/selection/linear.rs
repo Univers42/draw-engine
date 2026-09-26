@@ -55,15 +55,19 @@ pub struct LinearHandlePoint {
 ///
 /// The midpoints of a longer path are put behind a double click; the engine adds that to
 /// this rule in [`crate::DrawEngine::shows_point_handles`].
+///
+/// An elbow arrow of any length is edited by its ends and segments, never by a box: the
+/// oracle gives one selected alone no transform handles (`App.tsx@1118751f:13559`).
 pub fn is_point_edited(element: &DrawElement) -> bool {
     matches!(
         element.kind,
         crate::scene::element::DrawElementType::Line
             | crate::scene::element::DrawElementType::Arrow
-    ) && element
+    ) && (element
         .points
         .as_deref()
         .is_none_or(|points| points.len() <= 2)
+        || crate::scene::elbow::is_elbow(element))
 }
 
 /// The element's points in world space.
@@ -213,6 +217,40 @@ pub fn handle_points(element: &DrawElement, min_segment: f64) -> Vec<LinearHandl
         });
     }
 
+    out
+}
+
+/// An elbow arrow's handles: its two ends, and the middle of each segment at least
+/// `min_segment` long, which drags that segment across (`interactiveScene.ts@1118751f:1112-1185`).
+/// Its corners are the router's, so they offer nothing.
+pub fn elbow_handle_points(element: &DrawElement, min_segment: f64) -> Vec<LinearHandlePoint> {
+    let points = world_points(element);
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return Vec::new();
+    };
+    let mut out = vec![
+        LinearHandlePoint {
+            handle: LinearHandle::Point(0),
+            x: first.x,
+            y: first.y,
+        },
+        LinearHandlePoint {
+            handle: LinearHandle::Point(points.len() - 1),
+            x: last.x,
+            y: last.y,
+        },
+    ];
+    for (i, pair) in points.windows(2).enumerate() {
+        let (a, b) = (pair[0], pair[1]);
+        if (b.x - a.x).hypot(b.y - a.y) < min_segment {
+            continue;
+        }
+        out.push(LinearHandlePoint {
+            handle: LinearHandle::Midpoint(i),
+            x: (a.x + b.x) / 2.0,
+            y: (a.y + b.y) / 2.0,
+        });
+    }
     out
 }
 

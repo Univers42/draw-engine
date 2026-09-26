@@ -233,12 +233,17 @@ impl DrawEngine {
             self.style_new_arrow(&mut element);
         }
         element.points = Some(vec![[0.0, 0.0], [0.0, 0.0]]);
-        // The tail binds on the same terms the head will, as Excalidraw's initial binding
-        // does (`packages/excalidraw/components/App.tsx@1118751f:10325-10347`): inside a shape it
-        // sits exactly where the press was, near one it orbits from there.
-        let (start, _) = self.drop_binding(&element, End::Start, world, false);
-        set_anchor(&mut element, End::Start, start);
-        set_anchor(&mut element, End::End, None);
+        if crate::scene::elbow::is_elbow(&element) {
+            self.begin_elbow(&mut element, world);
+        } else {
+            // The tail binds on the same terms the head will, as Excalidraw's initial
+            // binding does (`packages/excalidraw/components/App.tsx@1118751f:10325-10347`):
+            // inside a shape it sits exactly where the press was, near one it orbits from
+            // there.
+            let (start, _) = self.drop_binding(&element, End::Start, world, false);
+            set_anchor(&mut element, End::Start, start);
+            set_anchor(&mut element, End::End, None);
+        }
         self.bind_drag_origin = None;
         let id = element.id.clone();
         self.scene.add(element);
@@ -746,7 +751,8 @@ impl DrawEngine {
     }
 
     fn begin_move(&mut self, world: Point) {
-        let moving = self.moving_selection();
+        let mut moving = self.moving_selection();
+        self.pin_elbows(&mut moving);
         let origins: std::collections::HashMap<String, Point> = moving
             .iter()
             .filter_map(|id| {

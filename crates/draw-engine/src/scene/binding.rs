@@ -1300,12 +1300,24 @@ pub fn refresh_bindings_in_place(
     let mut moved: Vec<DrawElement> = Vec::new();
     {
         let lookup = |id: &str| scene.get(id);
+        let mut elbows: Vec<&DrawElement> = Vec::new();
         for element in scene.iter_ordered() {
             // Arrows only. A line carries no binding to refresh, and asking anyway would
             // resurrect one saved by an older build that did bind them.
             if !is_binding_element(element)
                 || (element.start_binding.is_none() && element.end_binding.is_none())
             {
+                continue;
+            }
+            // An elbow arrow is routed, and only when a shape it is bound to changed;
+            // one it is carried along with is moved as it is (`binding.ts@1118751f:1374-1377`).
+            if crate::scene::elbow::is_elbow(element) {
+                if (touches(element.start_binding.as_deref())
+                    || touches(element.end_binding.as_deref()))
+                    && !carried_along(scene, element)
+                {
+                    elbows.push(element);
+                }
                 continue;
             }
             if !touches(Some(&element.id))
@@ -1333,6 +1345,16 @@ pub fn refresh_bindings_in_place(
             let next = linear_retarget(element.clone(), next_start, next_end);
             if &next != element {
                 moved.push(next);
+            }
+        }
+        if !elbows.is_empty() {
+            let board = crate::scene::elbow::Board::new(scene.iter_ordered());
+            for element in elbows {
+                let mut next = element.clone();
+                crate::scene::elbow::reroute(&mut next, &board);
+                if &next != element {
+                    moved.push(next);
+                }
             }
         }
     }
@@ -1379,6 +1401,35 @@ pub fn refresh_bindings_in_place(
     linear_labels
 }
 
+/// Whether `arrow` moved as one with every shape it is bound to since the last commit:
+/// all by the same offset, with its route and their boxes as they were. That is a drag
+/// that carries them all, where the oracle moves the arrow with the rest rather than
+/// route it again (`simultaneouslyUpdated`, `binding.ts@1118751f:1374-1377`).
+fn carried_along(scene: &crate::scene::store::Scene, arrow: &DrawElement) -> bool {
+    // How far `element` moved, if moving is all that happened to its box.
+    let offset = |element: &DrawElement| match scene.committed(&element.id) {
+        None => Some((0.0, 0.0)),
+        Some(None) => None,
+        Some(Some(base)) => (base.width == element.width
+            && base.height == element.height
+            && base.angle == element.angle
+            && base.points == element.points)
+            .then_some((element.x - base.x, element.y - base.y)),
+    };
+    let Some((dx, dy)) = offset(arrow) else {
+        return false;
+    };
+    [&arrow.start_binding, &arrow.end_binding]
+        .into_iter()
+        .flatten()
+        .all(|id| {
+            scene
+                .get(id)
+                .and_then(offset)
+                .is_some_and(|(x, y)| same_point(Point { x, y }, Point { x: dx, y: dy }))
+        })
+}
+
 /// Equal but for the rounding of a world ↔ local round trip.
 fn same_point(a: Point, b: Point) -> bool {
     let scale = 1.0 + a.x.abs().max(a.y.abs());
@@ -1400,7 +1451,10 @@ pub fn refresh_binding_of(scene: &mut crate::scene::store::Scene, id: &str) -> O
         let lookup = |id: &str| scene.get(id);
         scene
             .get(id)
-            .filter(|element| is_binding_element(element))
+            // An elbow arrow's gestures route it themselves (`crate::engine`'s `elbow`).
+            .filter(|element| {
+                is_binding_element(element) && !crate::scene::elbow::is_elbow(element)
+            })
             .and_then(|element| {
                 let (start, end) = resolve_endpoints(element, &lookup)?;
                 let next = linear_retarget(element.clone(), start, end);

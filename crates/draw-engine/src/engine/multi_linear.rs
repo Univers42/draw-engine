@@ -73,6 +73,16 @@ impl DrawEngine {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
+        // An elbow arrow is placed by its two ends only; the router makes the corners
+        // (`App.tsx@1118751f:10146-10157`). It keeps the route its press gave it.
+        if crate::scene::elbow::is_elbow(&element) {
+            self.multi_linear = Some(MultiLinear {
+                id: id.to_string(),
+                committed: 1,
+            });
+            self.request_draw();
+            return;
+        }
         element.points = Some(vec![[0.0, 0.0]]);
         element.width = 0.0;
         element.height = 0.0;
@@ -95,6 +105,13 @@ impl DrawEngine {
             self.multi_linear = None;
             return;
         };
+        // An elbow arrow's second click is its end, bound to whatever is there.
+        if crate::scene::elbow::is_elbow(&element) {
+            let shape = self.elbow_target_at(world);
+            self.drop_elbow_end(&state.id, End::End, shape.as_deref());
+            self.finish_by_press(&state.id, screen);
+            return;
+        }
         let points = element.points.clone().unwrap_or_default();
         let local = [world.x - element.x, world.y - element.y];
         let tolerance = self.confirm_tolerance();
@@ -232,6 +249,10 @@ impl DrawEngine {
             self.multi_linear = None;
             return;
         };
+        if crate::scene::elbow::is_elbow(&element) {
+            self.drag_elbow_end(&state.id, End::End, world, constrain);
+            return;
+        }
 
         // Live suggestion for the point about to be placed — the painter outlines
         // whatever shape a click would attach to, the same as a dragged arrow's
@@ -296,6 +317,15 @@ impl DrawEngine {
         let Some(mut element) = self.scene.get(&state.id).cloned() else {
             return false;
         };
+        if crate::scene::elbow::is_elbow(&element) {
+            self.clear_binding_suggestion();
+            if !self.discard_invisible_elbow(&state.id) {
+                self.set_selection(vec![state.id]);
+                self.push_history();
+            }
+            self.request_draw();
+            return true;
+        }
         let mut points = element.points.clone().unwrap_or_default();
 
         // The preview followed the cursor and was never placed.

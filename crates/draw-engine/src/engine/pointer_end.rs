@@ -24,6 +24,8 @@ impl DrawEngine {
     }
 
     fn end_pointer_step(&mut self) {
+        // Where an elbow arrow's end was dragged to, which its release binds on.
+        let released_at = self.binding_point;
         // The binding hint belongs to the drag, not to the document.
         self.clear_binding_suggestion();
         let Some(it) = self.interaction.take() else {
@@ -104,7 +106,17 @@ impl DrawEngine {
                 }
                 self.select_caught(ids);
             }
+            Interaction::LinearPoint { id, handle }
+                if self
+                    .scene
+                    .get(&id)
+                    .is_some_and(crate::scene::elbow::is_elbow) =>
+            {
+                self.end_elbow_handle(&id, handle, released_at);
+                self.settle_gesture();
+            }
             Interaction::Move { ids, .. } => {
+                self.renormalize_elbows_of(&ids);
                 self.leave_edited_group_across_a_frame(&ids);
                 // Still pending only if the pointer never moved: a click.
                 self.settle_gesture();
@@ -540,6 +552,19 @@ impl DrawEngine {
         if travelled < super::LINEAR_CLICK_PX {
             self.begin_multi_linear(id);
             return;
+        }
+        if self
+            .scene
+            .get(id)
+            .is_some_and(crate::scene::elbow::is_elbow)
+        {
+            let shape = self.elbow_target_at(pointer);
+            self.drop_elbow_end(id, crate::scene::binding::End::End, shape.as_deref());
+            if self.discard_invisible_elbow(id) {
+                self.settle_tool();
+                self.request_draw();
+                return;
+            }
         }
         self.settle_tool();
         self.apply_bindings();

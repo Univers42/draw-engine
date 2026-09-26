@@ -148,6 +148,18 @@ impl DrawEngine {
                 self.request_draw();
                 Some(it)
             }
+            Interaction::LinearPoint { ref id, handle }
+                if self
+                    .scene
+                    .get(id)
+                    .is_some_and(crate::scene::elbow::is_elbow) =>
+            {
+                let handle = self.drag_elbow_handle(id, handle, world, square);
+                Some(Interaction::LinearPoint {
+                    id: id.clone(),
+                    handle,
+                })
+            }
             Interaction::LinearPoint { ref id, handle } => {
                 self.move_linear_point(id, handle, world, square);
                 // A midpoint drag inserts a point and then *becomes* a drag of that new
@@ -523,6 +535,10 @@ impl DrawEngine {
         let Some(mut element) = self.scene.get(id).cloned() else {
             return;
         };
+        if crate::scene::elbow::is_elbow(&element) {
+            self.drag_elbow_end(id, End::End, world, square);
+            return;
+        }
         let drag = linear_from_drag(start.x, start.y, world.x, world.y, square);
         element.x = drag.x;
         element.y = drag.y;

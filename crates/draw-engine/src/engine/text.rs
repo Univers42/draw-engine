@@ -363,6 +363,9 @@ impl DrawEngine {
             return;
         }
         let world = self.screen_to_world(sx, sy);
+        if finished.is_none() && self.release_elbow_segment_at(world) {
+            return;
+        }
         // The double click one of whose presses ended a path. Excalidraw's finished path
         // is then its one selected element (checked on excalidraw.com), so it is the only
         // container the double click can type into

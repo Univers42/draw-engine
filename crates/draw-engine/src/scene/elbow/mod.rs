@@ -115,6 +115,11 @@ impl<'a> Board<'a> {
         self.by_id.get(id).copied()
     }
 
+    /// The shape an elbow arrow's end at `p` binds to at `zoom`, if any.
+    pub fn shape_at(&self, p: [f64; 2], zoom: f64) -> Option<&'a DrawElement> {
+        self.hovered(p, zoom).map(|t| t.element)
+    }
+
     /// `getBindableElementForId`.
     fn bindable(&self, id: &str) -> Option<Target<'a>> {
         self.get(id).and_then(Target::of)
@@ -559,13 +564,13 @@ pub fn rounded_corners(points: &[[f64; 2]], radius: f64) -> Vec<[[f64; 2]; 3]> {
 
 /// Moves an elbow arrow's ends, as the oracle's `LinearElementEditor.movePoints` does:
 /// `start`/`end` are relative to its `x`/`y`, `None` leaves that end where it is. The
-/// route follows; while `dragging`, each end also snaps to the outline under it.
+/// route follows; while `options.is_dragging`, each end also snaps to the outline under it.
 pub fn move_ends(
     element: &mut DrawElement,
     board: &Board,
     start: Option<[f64; 2]>,
     end: Option<[f64; 2]>,
-    dragging: bool,
+    options: &Options,
 ) {
     let points = element.points.clone().unwrap_or_default();
     let (Some(&first), Some(&last)) = (points.first(), points.last()) else {
@@ -575,11 +580,7 @@ pub fn move_ends(
         points: Some(vec![start.unwrap_or(first), end.unwrap_or(last)]),
         ..Updates::default()
     };
-    let options = Options {
-        is_dragging: dragging,
-        ..Options::default()
-    };
-    mutate(element, board, updates, &options);
+    mutate(element, board, updates, options);
 }
 
 /// The anchor an elbow arrow's `end` gets on `shape` where it is now:
@@ -660,16 +661,23 @@ pub fn reroute(element: &mut DrawElement, board: &Board) {
     };
     let start = at(&arrow.start_binding, first);
     let end = at(&arrow.end_binding, last);
-    move_ends(element, board, Some(start), Some(end), false);
+    move_ends(element, board, Some(start), Some(end), &Options::default());
 }
 
 /// Drags segment `index` (the one ending at point `index`) through `(x, y)`:
 /// `LinearElementEditor.moveFixedSegment`. The segment keeps its orientation, so only
-/// the coordinate across it moves.
-pub fn move_segment(element: &mut DrawElement, board: &Board, index: usize, x: f64, y: f64) {
+/// the coordinate across it moves. Returns the segment's index in the new route, which
+/// the rest of the drag goes on moving: the route can gain or lose corners before it.
+pub fn move_segment(
+    element: &mut DrawElement,
+    board: &Board,
+    index: usize,
+    x: f64,
+    y: f64,
+) -> Option<usize> {
     let points = element.points.clone().unwrap_or_default();
     if index == 0 || index >= points.len() {
-        return;
+        return None;
     }
     let horizontal = heading::heading_for_point_is_horizontal(points[index], points[index - 1]);
     let mut fixed: Vec<FixedSegment> = element.fixed_segments.clone().unwrap_or_default();
@@ -703,22 +711,29 @@ pub fn move_segment(element: &mut DrawElement, board: &Board, index: usize, x: f
     });
     // `Object.values` of an index-keyed record, then sorted by index.
     fixed.sort_by_key(|s| s.index);
+    let before = fixed.iter().filter(|s| s.index < index).count();
     let updates = Updates {
         fixed_segments: Some(Some(fixed)),
         ..Updates::default()
     };
     mutate(element, board, updates, &Options::default());
+    element
+        .fixed_segments
+        .as_ref()
+        .and_then(|list| list.get(before))
+        .map(|s| s.index)
 }
 
 /// Lets go of fixed segment `index`: `LinearElementEditor.deleteFixedSegment`. The route
-/// between its neighbours is worked out afresh.
+/// between its neighbours is worked out afresh. An arrow with no fixed segments is left as
+/// it is: the oracle's update then carries an `undefined`, which routes nothing.
 pub fn release_segment(element: &mut DrawElement, board: &Board, index: usize) {
-    let fixed = element
-        .fixed_segments
-        .clone()
-        .map(|list| list.into_iter().filter(|s| s.index != index).collect());
+    let Some(list) = element.fixed_segments.clone() else {
+        return;
+    };
+    let fixed = list.into_iter().filter(|s| s.index != index).collect();
     let updates = Updates {
-        fixed_segments: Some(fixed),
+        fixed_segments: Some(Some(fixed)),
         ..Updates::default()
     };
     mutate(element, board, updates, &Options::default());
@@ -814,7 +829,7 @@ pub fn bind_and_route(
 ) {
     bind(arrow, start, End::Start, zoom, true);
     bind(arrow, end, End::End, zoom, true);
-    move_ends(arrow, board, None, None, false);
+    move_ends(arrow, board, None, None, &Options::default());
     let updates = Updates {
         points: arrow.points.clone(),
         ..Updates::default()
