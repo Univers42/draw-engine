@@ -58,6 +58,8 @@ function recording(
     toggleGroupSelection: () => calls.push("toggleGroupSelection"),
     toggleLockSelection: () => calls.push("toggleLockSelection"),
     reorderSelection: (mode: string) => calls.push(`reorder:${mode}`),
+    alignSelection: (mode: string) => calls.push(`align:${mode}`),
+    canAlign: () => selection.length > 1,
     zoomIn: () => calls.push("zoomIn"),
     zoomOut: () => calls.push("zoomOut"),
     zoomReset: () => calls.push("zoomReset"),
@@ -324,6 +326,20 @@ describe("dispatchKeyDown", () => {
       assert.equal(dispatchKeyDown(session(engine), event(chord)), "prevent", JSON.stringify(chord));
       assert.deepEqual(calls, [call], JSON.stringify(chord));
     }
+  });
+
+  it("aligns on Ctrl/Cmd+Shift+Arrow, and leaves the key alone with nothing to align (actionAlign.tsx)", () => {
+    const edges = { ArrowUp: "top", ArrowDown: "bottom", ArrowLeft: "left", ArrowRight: "right" };
+    for (const [key, edge] of Object.entries(edges)) {
+      for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+        const { engine, calls } = recording(["a", "b"]);
+        assert.equal(dispatchKeyDown(session(engine), event({ key, shiftKey: true, ...mod })), "prevent");
+        assert.deepEqual(calls, [`align:${edge}`]);
+      }
+    }
+    const lone = recording(["a"]);
+    assert.equal(dispatchKeyDown(session(lone.engine), event({ key: "ArrowUp", ctrlKey: true, shiftKey: true })), "pass");
+    assert.deepEqual(lone.calls, []);
   });
 
   it("toggles the tool lock on Q", () => {

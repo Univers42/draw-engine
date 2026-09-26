@@ -4,7 +4,14 @@
  */
 
 import { toolForChord } from "../tools";
-import type { DrawTool, FlipAxis, FlowchartDirection, FlowchartShape, ZOrderMode } from "../types";
+import type {
+  AlignMode,
+  DrawTool,
+  FlipAxis,
+  FlowchartDirection,
+  FlowchartShape,
+  ZOrderMode,
+} from "../types";
 import type { HostCallbacks } from "./types";
 
 export type KeyResult = "prevent" | "pass";
@@ -34,6 +41,8 @@ export interface KeyEngine {
   toggleGroupSelection(): void;
   toggleLockSelection(): void;
   reorderSelection(mode: ZOrderMode): void;
+  alignSelection(mode: AlignMode): void;
+  canAlign(): boolean;
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
@@ -84,8 +93,23 @@ const FLOWCHART_SHAPE_KEYS: Partial<Record<string, FlowchartShape>> = {
   "3": "ellipse",
 };
 
+/** Ctrl/Cmd+Shift+Arrow: the edge the selection aligns to. */
+const ALIGN_ARROWS: Record<string, AlignMode> = {
+  ArrowUp: "top",
+  ArrowDown: "bottom",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+};
+
 function handleModChords(session: KeySession, event: KeyEvent, key: string): boolean {
   const { engine } = session;
+  // Only when there is something to align, as the oracle's `alignActionsPredicate`
+  // (`actionAlign.tsx@1118751f:96-199`): otherwise the key is not taken at all.
+  const edge = event.shiftKey ? ALIGN_ARROWS[event.key] : undefined;
+  if (edge && engine.canAlign()) {
+    engine.alignSelection(edge);
+    return true;
+  }
   if (key === "z") {
     if (event.shiftKey) engine.redo();
     else engine.undo();
