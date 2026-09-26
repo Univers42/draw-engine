@@ -34,6 +34,7 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     onToolChange: (tool) => callbacks.onToolChange?.(tool),
     onSelectionChange: (ids) => callbacks.onSelectionChange?.(ids),
     onRequestTextEdit: (request) => callbacks.onRequestTextEdit?.(request),
+    onRequestFrameRename: (request) => callbacks.onRequestFrameRename?.(request),
     onSceneChange: (json) => callbacks.onSceneChange?.(json),
     onNotice: (notice) => callbacks.onNotice?.(notice),
   });

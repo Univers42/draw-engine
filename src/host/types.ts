@@ -9,6 +9,7 @@ import type {
   DrawNotice,
   DrawTheme,
   DrawTool,
+  FrameRenameRequest,
   Scene,
   TextEditRequest,
 } from "../types";
@@ -32,6 +33,9 @@ export interface DrawCanvasProps {
    * ends the session too.
    */
   onRequestTextEdit?: (request: TextEditRequest) => void;
+  /** A double click landed on a frame's name label: open an input over it, following
+   *  how a text edit is opened above — the host commits with `renameFrame`. */
+  onRequestFrameRename?: (request: FrameRenameRequest) => void;
   /** `.osidraw` JSON after every scene mutation — persist it. */
   onSceneChange?: (json: string) => void;
   /** Something the person should be told, as a stable code. The host picks the words. */
@@ -71,6 +75,7 @@ export type HostCallbacks = Pick<
   | "onToolChange"
   | "onSelectionChange"
   | "onRequestTextEdit"
+  | "onRequestFrameRename"
   | "onSceneChange"
   | "onNotice"
   | "onContextMenu"

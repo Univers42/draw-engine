@@ -274,13 +274,13 @@ impl DrawEngine {
                 && !el.is_deleted
                 && crate::render::bounds::intersects_viewport(el, &visible)
         }) {
-            if let Some(name) = frame.name.clone() {
-                frame_names.push((
-                    crate::scene::frame_name_anchor(frame),
-                    name,
-                    frame.id.clone(),
-                ));
-            }
+            // Never blank: a rename emptied to nothing shows the generic default, exactly
+            // as the oracle's `getFrameLikeTitle` does.
+            frame_names.push((
+                crate::scene::frame_name_anchor(frame),
+                crate::scene::frame_display_name(frame),
+                frame.id.clone(),
+            ));
             let clip = crate::scene::frame_clip_bounds(frame);
             for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
                 if let Some(child) = self.scene.get(&child_id) {

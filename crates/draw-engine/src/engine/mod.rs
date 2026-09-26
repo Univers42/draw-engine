@@ -19,6 +19,7 @@ mod debug;
 mod eraser;
 mod flowchart;
 mod frame;
+mod frame_rename;
 mod hover;
 mod image;
 mod insert;
@@ -46,7 +47,7 @@ pub use hover::HoverCursor;
 pub use selection_style::{ArrowType, ColorDomain, Edges, SelectionStyle};
 pub use text_session::{TextEditLayout, TextEditSession};
 pub(crate) use types::{default_measure, Interaction};
-pub use types::{merge_style_patch, EngineEvents, Notice, TextEditRequest};
+pub use types::{merge_style_patch, EngineEvents, FrameRenameRequest, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
 /// Reach for the handles that are not laid out by [`crate::selection::HandleLayout`] —

@@ -358,6 +358,26 @@ export interface TextEditRequest {
 }
 
 /**
+ * A double click opened the input over a frame's name label — Excalidraw's
+ * `editingFrame` (`App.tsx@1118751f:2219-2261`, `:2334-2340`). Screen pixels, like
+ * `TextEditRequest`, but fixed rather than world units: a frame's name is never scaled
+ * by zoom, so the overlay needs no transform. The host commits with `renameFrame`, once,
+ * on Enter, blur or Escape alike.
+ */
+export interface FrameRenameRequest {
+  id: string;
+  /** What to open the input on: the stored name, or the generic default when there is
+   *  none (`getFrameLikeTitle`) — what is actually painted. */
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  color: string;
+}
+
+/**
  * The text open in the host's editor, where it is and how it looks — what the editor
  * reads to sit exactly over it (`engine/text_session.rs`). Re-read after every
  * keystroke, camera change and style change.
@@ -410,6 +430,9 @@ export interface DrawEngineOptions {
    * ends the session too.
    */
   onRequestTextEdit?: (request: TextEditRequest) => void;
+  /** A double click landed on a frame's name label: open an input over it. The host
+   *  commits with `renameFrame(id, name)`, once, whatever key or click ended it. */
+  onRequestFrameRename?: (request: FrameRenameRequest) => void;
   onSceneChange?: (json: string) => void;
   onNotice?: (notice: DrawNotice) => void;
 }

@@ -21,6 +21,7 @@
     onToolChange,
     onSelectionChange,
     onRequestTextEdit,
+    onRequestFrameRename,
     onSceneChange,
     onNotice,
     onContextMenu,
@@ -44,6 +45,7 @@
     callbacks.onToolChange = onToolChange;
     callbacks.onSelectionChange = onSelectionChange;
     callbacks.onRequestTextEdit = onRequestTextEdit;
+    callbacks.onRequestFrameRename = onRequestFrameRename;
     callbacks.onSceneChange = onSceneChange;
     callbacks.onNotice = onNotice;
     callbacks.onContextMenu = onContextMenu;

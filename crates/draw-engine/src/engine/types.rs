@@ -78,9 +78,32 @@ pub struct EngineEvents {
     pub tool: Option<DrawTool>,
     pub selection: Option<Vec<String>>,
     pub text_edit: Option<TextEditRequest>,
+    /// A double click on a frame's name label: see [`FrameRenameRequest`].
+    pub frame_rename: Option<FrameRenameRequest>,
     pub scene_json: Option<String>,
     /// Something to tell the person about, if anything.
     pub notice: Option<Notice>,
+}
+
+/// What the host needs to open an input over a frame's name label — Excalidraw's
+/// `editingFrame` (`App.tsx@1118751f:2219-2261`, `:2334-2340`). Screen space, like
+/// [`TextEditRequest`], but fixed pixels rather than world units: a frame's name is never
+/// scaled by zoom (`FRAME_STYLE`, `scene/frame.rs`), so the host needs no transform to
+/// place it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameRenameRequest {
+    pub id: String,
+    /// The name to open the input on: the stored name, or the generic default when there
+    /// is none — the oracle's `getFrameLikeTitle` (`frame.ts@1118751f:979-981`), what a
+    /// person actually reads on the board.
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub font_size: f64,
+    pub color: String,
 }
 
 pub(crate) enum Interaction {

@@ -28,8 +28,9 @@ pub use edit::{
     FlipAxis, ZOrderMode,
 };
 pub use engine::{
-    DrawEngine, EmbedFrame, EngineEvents, HoverCursor, LinkDirection, NoopPainter, Notice,
-    PaintView, Painter, Peer, PeerMark, TextEditLayout, TextEditRequest, TextEditSession,
+    DrawEngine, EmbedFrame, EngineEvents, FrameRenameRequest, HoverCursor, LinkDirection,
+    NoopPainter, Notice, PaintView, Painter, Peer, PeerMark, TextEditLayout, TextEditRequest,
+    TextEditSession,
 };
 pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
 pub use freehand::points_bounds;
@@ -85,11 +86,11 @@ pub use scene::{
 pub use scene::{
     default_frame_name, element_contains_frame, element_in_frame_bounds, element_intersects_frame,
     element_outline, element_overlaps_frame, elements_captured_by, fit_image, frame_children,
-    frame_clip_bounds, frame_for_element, frame_name_anchor, frame_style, is_frame, is_image,
-    locks_aspect_ratio, needs_frame_clip, outline_edges, outline_is_closed, segments_intersect,
-    ImageFit, FRAME_MIN_SIZE, FRAME_NAME_COLOR_DARK, FRAME_NAME_COLOR_LIGHT, FRAME_NAME_FONT_SIZE,
-    FRAME_NAME_LINE_HEIGHT, FRAME_NAME_OFFSET_Y, FRAME_RADIUS, FRAME_STROKE, FRAME_STROKE_WIDTH,
-    IMAGE_MIN_VIEWPORT_HEIGHT, IMAGE_VIEWPORT_FRACTION, IMAGE_VIEWPORT_MARGIN,
+    frame_clip_bounds, frame_display_name, frame_for_element, frame_name_anchor, frame_style,
+    is_frame, is_image, locks_aspect_ratio, needs_frame_clip, outline_edges, outline_is_closed,
+    segments_intersect, ImageFit, FRAME_MIN_SIZE, FRAME_NAME_COLOR_DARK, FRAME_NAME_COLOR_LIGHT,
+    FRAME_NAME_FONT_SIZE, FRAME_NAME_LINE_HEIGHT, FRAME_NAME_OFFSET_Y, FRAME_RADIUS, FRAME_STROKE,
+    FRAME_STROKE_WIDTH, IMAGE_MIN_VIEWPORT_HEIGHT, IMAGE_VIEWPORT_FRACTION, IMAGE_VIEWPORT_MARGIN,
 };
 pub use scene::{
     embed_link, embed_src_of, is_allowed_embed_host, parse_timestamp, EmbedKind, EmbedLink,

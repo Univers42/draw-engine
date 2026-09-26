@@ -702,6 +702,15 @@ export class DrawEngine {
   }
 
   /**
+   * Commits a frame's name, trimmed, as one step — the host's input over the name label
+   * (opened by `onRequestFrameRename`) calls this once, on Enter, blur or Escape alike.
+   * Emptied, the name falls back to the generic default.
+   */
+  renameFrame(id: string, name: string): void {
+    this.inner.renameFrame(id, name);
+  }
+
+  /**
    * The open text with `text` typed into it — laid out, its shape grown or shrunk —
    * with no step and no stamp: peers see it through `gestureElements`. `false` when no
    * text is open any more, and the editor should close.

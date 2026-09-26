@@ -336,6 +336,15 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// Commits a frame's name, trimmed, as one step — the host's input over the name
+    /// label calls this on Enter, blur or Escape alike. Emptied, the name falls back to
+    /// the generic default. See `FrameRenameRequest`.
+    #[wasm_bindgen(js_name = renameFrame)]
+    pub fn rename_frame(&self, id: &str, name: &str) {
+        self.cell.borrow_mut().engine.rename_frame(id, name);
+        self.flush();
+    }
+
     /// `[[colour, count], …]` over the live board, for the picker's most-used colours.
     #[wasm_bindgen(js_name = colorCountsJson)]
     pub fn color_counts_json(&self, background: bool) -> String {

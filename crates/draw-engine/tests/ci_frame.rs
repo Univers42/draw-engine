@@ -451,3 +451,130 @@ fn a_frame_is_grabbed_by_its_border_and_not_through_its_middle() {
     engine.end_pointer();
     assert_eq!(engine.get_selection(), vec![frame_id]);
 }
+
+// ------------------------------------------------------------------- rename
+//
+// Excalidraw parity for `editingFrame` (`App.tsx@1118751f:2166-2170` `resetEditingFrame`,
+// `:2219-2261` the input, `:2334-2340` the double click that opens it) and
+// `getFrameLikeTitle` (`packages/element/src/frame.ts@1118751f:974-980`).
+
+mod rename {
+    use super::*;
+
+    fn element(engine: &DrawEngine, id: &str) -> DrawElement {
+        engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == id)
+            .expect("the element is in the scene")
+    }
+
+    #[test]
+    fn the_name_label_is_hit_and_nothing_else_is() {
+        let frame = frame_at(100.0, 100.0, 400.0, 300.0);
+        let id = frame.id.clone();
+        let engine = engine_with_scene(vec![frame]);
+
+        // Just above the frame's top-left corner, where `frame_name_anchor` and
+        // `paint_frame_names` put the label's baseline.
+        assert_eq!(engine.frame_name_at(105.0, 95.0), Some(id));
+        // Inside the frame's own body: the label sits outside the frame, not on it.
+        assert_eq!(engine.frame_name_at(300.0, 250.0), None);
+        // Nowhere near either.
+        assert_eq!(engine.frame_name_at(-1000.0, -1000.0), None);
+    }
+
+    #[test]
+    fn a_double_click_on_the_name_requests_a_rename_and_not_a_text() {
+        let mut engine = engine_with_scene(vec![]);
+        let id = draw_frame(&mut engine, 100.0, 100.0, 500.0, 400.0);
+        engine.drain_events();
+        let before = engine.get_scene().len();
+
+        engine.handle_double_click(105.0, 95.0);
+        let events = engine.drain_events();
+        let request = events
+            .frame_rename
+            .expect("the double click opens a frame rename");
+        assert_eq!(request.id, id);
+        assert_eq!(request.name, "Frame 1");
+        assert!(events.text_edit.is_none(), "not a text edit");
+        assert!(engine.text_edit_session().is_none());
+        assert_eq!(
+            engine.get_scene().len(),
+            before,
+            "no stray text was created"
+        );
+    }
+
+    #[test]
+    fn rename_writes_the_trimmed_name_as_one_stamped_step() {
+        let frame = frame_at(50.0, 50.0, 300.0, 200.0);
+        let id = frame.id.clone();
+        let created_version = frame.version;
+        let mut engine = engine_with_scene(vec![frame]);
+
+        engine.rename_frame(&id, "  Clients  ");
+        let now = element(&engine, &id);
+        assert_eq!(now.name.as_deref(), Some("Clients"));
+        assert!(now.version > created_version, "the stamp moves");
+        let delta = engine
+            .drain_events()
+            .scene_delta
+            .expect("it syncs to peers and autosave like any edit");
+        assert!(delta.updated.iter().any(|el| el.id == id));
+
+        // One undo step: back to the original name, and no further.
+        engine.undo();
+        assert_eq!(element(&engine, &id).name.as_deref(), Some("Frame 1"));
+        engine.undo();
+        assert_eq!(
+            element(&engine, &id).name.as_deref(),
+            Some("Frame 1"),
+            "there was only one step to undo"
+        );
+    }
+
+    #[test]
+    fn an_emptied_name_falls_back_to_the_generic_default() {
+        let frame = frame_at(50.0, 50.0, 300.0, 200.0);
+        let id = frame.id.clone();
+        let mut engine = engine_with_scene(vec![frame]);
+
+        engine.rename_frame(&id, "   ");
+        let now = element(&engine, &id);
+        assert_eq!(now.name, None, "an empty name is stored as none, not blank");
+        assert_eq!(frame_display_name(&now), "Frame");
+
+        let painted = engine.paint_view().frame_names;
+        let shown = painted
+            .iter()
+            .find(|(_, _, painted_id)| *painted_id == id)
+            .map(|(_, name, _)| name.clone());
+        assert_eq!(
+            shown,
+            Some("Frame".to_string()),
+            "still painted, never blank"
+        );
+    }
+
+    #[test]
+    fn renaming_to_the_same_effective_name_is_not_a_step() {
+        let frame = frame_at(50.0, 50.0, 300.0, 200.0);
+        let id = frame.id.clone();
+        let mut engine = engine_with_scene(vec![frame]);
+
+        engine.rename_frame(&id, "Frame 1");
+        assert!(
+            engine.drain_events().scene_delta.is_none(),
+            "no change, no edit"
+        );
+    }
+
+    #[test]
+    fn renaming_a_missing_frame_does_nothing() {
+        let mut engine = engine_with_scene(vec![]);
+        engine.rename_frame("nope", "X");
+        assert!(engine.drain_events().scene_delta.is_none());
+    }
+}

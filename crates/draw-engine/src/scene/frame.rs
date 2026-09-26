@@ -287,6 +287,13 @@ pub fn default_frame_name<'a>(elements: impl Iterator<Item = &'a DrawElement>) -
     format!("Frame {}", highest + 1)
 }
 
+/// Excalidraw's `getFrameLikeTitle` (`packages/element/src/frame.ts@1118751f:979-981`): the
+/// stored name, or the generic default when a rename emptied it — a frame's label is never
+/// blank, only ever unnamed.
+pub fn frame_display_name(frame: &DrawElement) -> String {
+    frame.name.clone().unwrap_or_else(|| "Frame".to_string())
+}
+
 /// Where the frame's name sits: above its top-left corner, outside the frame.
 ///
 /// Outside, because a name drawn inside would sit on top of whatever the frame contains

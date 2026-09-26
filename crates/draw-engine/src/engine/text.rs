@@ -341,6 +341,13 @@ impl DrawEngine {
     }
 
     pub fn handle_double_click(&mut self, sx: f64, sy: f64) {
+        // A frame's name label, first and regardless of tool: the oracle's own name
+        // label is a DOM element that intercepts the click before it ever reaches the
+        // canvas or the active tool (`renderFrameNames`, `App.tsx@1118751f:2334-2340`).
+        if let Some(frame_id) = self.frame_name_at(sx, sy) {
+            self.request_frame_rename(&frame_id);
+            return;
+        }
         // Any double click ends what the press that finished a path could be half of.
         let finished = self
             .finished_by_press

@@ -4,6 +4,7 @@ import type {
   DrawEngineOptions,
   DrawNotice,
   DrawTool,
+  FrameRenameRequest,
   TextEditRequest,
 } from "./types";
 
@@ -42,6 +43,13 @@ export function wireCallbacks(
     const cb = options.onRequestTextEdit;
     inner.setOnRequestTextEdit((json: string) => {
       const req = parseJson<TextEditRequest | null>(json, null);
+      if (req) cb(req);
+    });
+  }
+  if (options.onRequestFrameRename) {
+    const cb = options.onRequestFrameRename;
+    inner.setOnRequestFrameRename((json: string) => {
+      const req = parseJson<FrameRenameRequest | null>(json, null);
       if (req) cb(req);
     });
   }

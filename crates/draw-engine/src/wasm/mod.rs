@@ -126,6 +126,7 @@ pub(crate) struct EngineCell {
     pub(crate) on_tool: Option<js_sys::Function>,
     pub(crate) on_selection: Option<js_sys::Function>,
     pub(crate) on_text: Option<js_sys::Function>,
+    pub(crate) on_frame_rename: Option<js_sys::Function>,
     pub(crate) on_scene: Option<js_sys::Function>,
     pub(crate) on_notice: Option<js_sys::Function>,
 }
@@ -216,6 +217,7 @@ impl WasmEngine {
             on_tool: None,
             on_selection: None,
             on_text: None,
+            on_frame_rename: None,
             on_scene: None,
             on_notice: None,
         }));
@@ -243,6 +245,13 @@ impl WasmEngine {
     #[wasm_bindgen(js_name = setOnRequestTextEdit)]
     pub fn set_on_request_text_edit(&self, cb: Option<js_sys::Function>) {
         self.cell.borrow_mut().on_text = cb;
+    }
+
+    /// A double click opened the input over a frame's name label — see
+    /// `FrameRenameRequest`. The host commits with `renameFrame`.
+    #[wasm_bindgen(js_name = setOnRequestFrameRename)]
+    pub fn set_on_request_frame_rename(&self, cb: Option<js_sys::Function>) {
+        self.cell.borrow_mut().on_frame_rename = cb;
     }
 
     #[wasm_bindgen(js_name = setOnSceneChange)]
@@ -412,6 +421,7 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
                 cell.on_text.clone(),
                 cell.on_scene.clone(),
                 cell.on_notice.clone(),
+                cell.on_frame_rename.clone(),
             ),
         )
     };
@@ -427,6 +437,10 @@ fn emit_events(cell: &Rc<RefCell<EngineCell>>) {
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
     }
     if let (Some(req), Some(cb)) = (events.text_edit, cbs.3) {
+        let json = serde_json::to_string(&req).unwrap_or_default();
+        let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
+    }
+    if let (Some(req), Some(cb)) = (events.frame_rename, cbs.6) {
         let json = serde_json::to_string(&req).unwrap_or_default();
         let _ = cb.call1(&JsValue::NULL, &JsValue::from_str(&json));
     }
