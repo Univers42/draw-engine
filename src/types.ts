@@ -120,6 +120,9 @@ export interface StylePatch extends Partial<DrawElementStyle> {
   fontFamily?: number;
   fontSize?: number;
   textAlign?: TextAlign;
+  /** The inspector's Shape row: unlike `figureSides`/`figureRatio` below, also picked
+   *  with a figure selected, and restyles it — see `scene::figure::change_kind`. */
+  figureKind?: FigureKind;
   /** A figure's own two controls — the inspector's sides stepper and ratio slider.
    *  Ignored on anything that is not a figure, and on a kind with no such control. */
   figureSides?: number;

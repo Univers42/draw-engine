@@ -111,6 +111,27 @@ pub fn has_sides(kind: FigureKind) -> bool {
     matches!(kind, FigureKind::Polygon | FigureKind::Star)
 }
 
+/// Applies a kind change to `params`, in place: `sides` is kept only when the old and the
+/// new kind both have one ([`has_sides`] — polygon and star are the only pair), since
+/// anywhere else it is a leftover count that means nothing on the new kind; `ratio` always
+/// resets to the new kind's own default ([`resolved_ratio`]), because it is a different
+/// axis on every kind that has one (a star's inner radius is not a trapezoid's inset). A
+/// no-op already at `kind`.
+///
+/// Shared by the two places a kind is picked: the inspector's patch
+/// (`scene::element::apply_style_patch`'s `figure_kind`) and the Shapes tool's own queued
+/// kind (`engine::selection_style::apply_style`), so a pick changes both the same way.
+pub fn change_kind(params: &mut FigureParams, kind: FigureKind) {
+    if params.kind == kind {
+        return;
+    }
+    if !(has_sides(params.kind) && has_sides(kind)) {
+        params.sides = None;
+    }
+    params.ratio = None;
+    params.kind = kind;
+}
+
 /// One vertex of an outline, in unit-box coordinates: `(0, 0)` is the box's top-left
 /// corner, `(1, 1)` its bottom-right, whatever the element's actual width and height are.
 pub type Vertex = (f64, f64);
@@ -380,6 +401,35 @@ mod tests {
         assert_eq!(outline[1], (1.0, 0.0));
         // The wave dips below the flat top's own baseline.
         assert!(outline.iter().any(|&(_, y)| y > 0.5));
+    }
+
+    #[test]
+    fn kind_change_keeps_sides_only_between_polygon_and_star() {
+        let mut params = FigureParams {
+            kind: FigureKind::Polygon,
+            sides: Some(7),
+            ratio: None,
+        };
+        change_kind(&mut params, FigureKind::Star);
+        assert_eq!(params.kind, FigureKind::Star);
+        assert_eq!(params.sides, Some(7), "polygon <-> star keeps sides");
+
+        change_kind(&mut params, FigureKind::Cylinder);
+        assert_eq!(
+            params.sides, None,
+            "sides drop leaving the polygon/star pair"
+        );
+    }
+
+    #[test]
+    fn kind_change_always_resets_ratio() {
+        let mut params = FigureParams {
+            kind: FigureKind::Trapezoid,
+            sides: None,
+            ratio: Some(0.4),
+        };
+        change_kind(&mut params, FigureKind::Cylinder);
+        assert_eq!(params.ratio, None);
     }
 
     #[test]

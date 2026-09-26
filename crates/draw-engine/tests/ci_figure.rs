@@ -7,6 +7,7 @@
 mod common;
 use common::*;
 use draw_engine::scene::BindMode;
+use draw_engine::selection::linear::world_points;
 use draw_engine::*;
 
 fn element(engine: &DrawEngine, id: &str) -> DrawElement {
@@ -253,6 +254,126 @@ fn a_ratio_edit_on_a_polygon_is_a_no_op() {
         ..Default::default()
     });
     assert_eq!(element(&engine, &id).figure.and_then(|p| p.ratio), None);
+}
+
+#[test]
+fn picking_a_kind_restyles_the_selection_and_the_next_figure_as_one_undo_step() {
+    let mut engine = engine_with_scene(vec![figure_at(
+        0.0,
+        0.0,
+        100.0,
+        100.0,
+        FigureKind::Polygon,
+        Some(7),
+        None,
+    )]);
+    let id = engine.get_scene()[0].id.clone();
+    engine.select(vec![id.clone()]);
+
+    engine.apply_style(DrawElementStylePatch {
+        figure_kind: Some(FigureKind::Star),
+        ..Default::default()
+    });
+
+    let after = element(&engine, &id).figure.expect("still a figure");
+    assert_eq!(after.kind, FigureKind::Star);
+    assert_eq!(after.sides, Some(7), "polygon <-> star keeps its sides");
+    assert_eq!(
+        after.ratio, None,
+        "ratio resets to the new kind's own default"
+    );
+    assert_eq!(
+        engine.next_figure().kind,
+        FigureKind::Star,
+        "the tool's next figure follows the pick too, like set_arrow_type"
+    );
+
+    engine.undo();
+    let before = element(&engine, &id).figure.expect("still a figure");
+    assert_eq!(
+        before.kind,
+        FigureKind::Polygon,
+        "one undo step reverts the kind"
+    );
+    assert_eq!(before.sides, Some(7));
+}
+
+#[test]
+fn a_ratio_change_relays_out_the_bound_label() {
+    let mut fig = figure_at(
+        0.0,
+        0.0,
+        200.0,
+        100.0,
+        FigureKind::Trapezoid,
+        None,
+        Some(0.4),
+    );
+    fig.id = "fig".into();
+    let mut label = text_at(0.0, 0.0, 24.0, 25.0);
+    label.id = "label".into();
+    label.text = Some("hi".into());
+    label.container_id = Some(fig.id.clone());
+    // Left, not the label default of Center once bound: `figure_text_inset_fraction`'s
+    // inset is symmetric, so a centred label's *position* would not move even though its
+    // available width does — this pins the axis that actually moves.
+    label.text_align = Some(TextAlign::Left);
+    // Already laid out correctly for the figure's *current* ratio (0.4) — what
+    // `container_coords` puts here: padding(5) + ratio(0.4) * width(200).
+    label.x = 85.0;
+    fig.bound_text_id = Some(label.id.clone());
+
+    let mut engine = engine_with_measure(vec![fig, label]);
+    engine.select(vec!["fig".into()]);
+
+    engine.apply_style(DrawElementStylePatch {
+        figure_ratio: Some(0.1),
+        ..Default::default()
+    });
+
+    let after = element(&engine, "label");
+    assert_close(after.x, 25.0); // padding(5) + ratio(0.1) * width(200), relaid out
+}
+
+#[test]
+fn a_bound_arrows_orbiting_end_follows_a_sides_change_onto_the_new_outline() {
+    let tri = triangle(0.0, 0.0, 100.0, 100.0);
+    let tri_id = tri.id.clone();
+    let mut engine = engine_with_scene(vec![tri]);
+    engine.set_tool(DrawTool::Arrow);
+    // Same drop as `a_point_in_the_box_corner_but_outside_the_silhouette_orbits...`:
+    // just clear of the triangle's slanted left edge, so the end orbits it.
+    engine.begin_pointer(-100.0, 10.0, false, false);
+    engine.move_pointer(42.0, 10.0, false, false);
+    engine.end_pointer();
+
+    let arrow_id = engine
+        .get_scene()
+        .into_iter()
+        .last()
+        .expect("an arrow was drawn")
+        .id;
+    let before = {
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(arrow.end_binding.as_deref(), Some(tri_id.as_str()));
+        assert_eq!(arrow.end_bind_mode, Some(BindMode::Orbit));
+        *world_points(&arrow).last().expect("an arrow has an end")
+    };
+
+    engine.select(vec![tri_id]);
+    engine.apply_style(DrawElementStylePatch {
+        figure_sides: Some(12),
+        ..Default::default()
+    });
+
+    let after = *world_points(&element(&engine, &arrow_id))
+        .last()
+        .expect("an arrow has an end");
+    let moved = (after.x - before.x).hypot(after.y - before.y);
+    assert!(
+        moved > 1.0,
+        "the orbiting end should re-resolve onto the 12-gon's outline, moved {moved} from {before:?} to {after:?}"
+    );
 }
 
 // ------------------------------------------------------------------------------ duplicate / copy-paste

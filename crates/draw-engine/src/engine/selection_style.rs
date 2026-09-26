@@ -268,6 +268,23 @@ fn push_kind(kinds: &mut Vec<DrawElementType>, kind: DrawElementType) {
     }
 }
 
+/// The figures among `targets` a patch's `figure_kind`/`figure_sides`/`figure_ratio`
+/// reaches — empty when the patch carries none of them, so a plain colour or opacity
+/// pick never pays for a label relayout or a bindings pass it cannot need.
+fn figure_target_ids(
+    targets: &[(DrawElement, DrawElementStylePatch)],
+    patch: &DrawElementStylePatch,
+) -> Vec<String> {
+    if patch.figure_kind.is_none() && patch.figure_sides.is_none() && patch.figure_ratio.is_none() {
+        return Vec::new();
+    }
+    targets
+        .iter()
+        .filter(|(element, _)| element.kind == DrawElementType::Figure)
+        .map(|(element, _)| element.id.clone())
+        .collect()
+}
+
 impl DrawEngine {
     /// Moves the counter the host keys the panel to. Wrapping: only inequality matters.
     pub(super) fn touch_style(&mut self) {
@@ -822,6 +839,11 @@ impl DrawEngine {
         if let Some(align) = patch.text_align {
             self.next_text_align = Some(align);
         }
+        // The Shapes tool's own queued kind follows the pick too, exactly as
+        // `set_arrow_type` moves `next_arrow_type` — see `set_next_figure`.
+        if let Some(kind) = patch.figure_kind {
+            figure::change_kind(&mut self.next_figure, kind);
+        }
         self.touch_style();
 
         // Resolved against the state the pick lands on, before it changes anything.
@@ -838,6 +860,11 @@ impl DrawEngine {
             .iter()
             .map(|(element, _)| (element.id.clone(), element.stroke_color.clone()))
             .collect();
+        // The figures a kind, sides or ratio change reaches: `figure_text_inset_fraction`
+        // (`text/layout.rs`) depends on all three, so a label's inner box moves with them,
+        // and an arrow bound to the outline needs it re-resolved (`relayout_figure_labels`,
+        // `apply_bindings` below).
+        let figure_ids = figure_target_ids(&targets, &patch);
         for (element, patch) in targets {
             self.put_styled(element, &patch);
         }
@@ -848,6 +875,10 @@ impl DrawEngine {
         // as ONE step of undo together with the rest of the patch above — `commit_style`
         // below is the only commit either makes.
         self.apply_style_font(&patch);
+        self.relayout_figure_labels(&figure_ids, false);
+        if !figure_ids.is_empty() {
+            self.apply_bindings();
+        }
         // The next element takes the style too, as the oracle's `currentItem*` do
         // (`actionProperties.tsx@1118751f:622`, `:971`; `colorTargets.ts@1118751f:178-192`).
         let rest = self.write_next_colors(patch, stroke, background);
@@ -896,17 +927,58 @@ impl DrawEngine {
     /// before the first preview, so the whole drag is one step. What a peer takes in the
     /// meantime is given back to them (`peers.rs`).
     pub fn preview_style(&mut self, patch: DrawElementStylePatch) {
+        let touches_figure_geometry = patch.figure_kind.is_some()
+            || patch.figure_sides.is_some()
+            || patch.figure_ratio.is_some();
         let mut changed = false;
+        let mut figure_ids: Vec<String> = Vec::new();
         for (element, patch) in self.style_targets(&patch) {
             let id = element.id.clone();
+            let is_figure = touches_figure_geometry && element.kind == DrawElementType::Figure;
             if self.put_styled(element, &patch) {
-                self.style_preview.entry(id).or_insert(None);
+                self.style_preview.entry(id.clone()).or_insert(None);
                 changed = true;
+                if is_figure {
+                    figure_ids.push(id);
+                }
             }
+        }
+        // The ratio slider previews live: its label and any bound arrow follow the
+        // outline mid-drag too, the same way the commit below makes them.
+        if !figure_ids.is_empty() {
+            self.relayout_figure_labels(&figure_ids, true);
+            self.apply_bindings();
         }
         if changed {
             self.touch_style();
             self.request_draw();
+        }
+    }
+
+    /// Relays out the label of each figure in `figure_ids` — [`Self::apply_style`]'s and
+    /// [`Self::preview_style`]'s own figures whose kind, sides or ratio just changed — the
+    /// way [`Self::bind_text`]'s own `laid_out`/`put_laid` relays one out for a container
+    /// change. `preview` registers a label this touches the way the caller already
+    /// registers the figure ([`Self::preview_style`]), so a cancelled preview gives it
+    /// back too ([`Self::give_back_style_preview`]).
+    fn relayout_figure_labels(&mut self, figure_ids: &[String], preview: bool) {
+        for id in figure_ids {
+            let Some(label) = self
+                .scene
+                .get(id)
+                .and_then(|figure| self.live_label(figure))
+                .cloned()
+            else {
+                continue;
+            };
+            let laid = self.laid_out(&label);
+            if laid.text == label && laid.container.is_none() {
+                continue;
+            }
+            if preview {
+                self.style_preview.entry(label.id.clone()).or_insert(None);
+            }
+            self.put_laid(laid);
         }
     }
 

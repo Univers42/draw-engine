@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::scene::figure::FigureParams;
+use crate::scene::figure::{FigureKind, FigureParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -630,6 +630,14 @@ pub struct DrawElementStylePatch {
     pub font_size: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_align: Option<TextAlign>,
+    /// The inspector's Shape row: unlike [`figure_sides`](Self::figure_sides) and
+    /// [`figure_ratio`](Self::figure_ratio), also picked with a figure selected and
+    /// nothing changes it — this is what makes that visible
+    /// (`engine::selection_style::apply_style`). Ignored on anything that is not a
+    /// [`DrawElementType::Figure`]; see [`crate::scene::figure::change_kind`] for what a
+    /// change carries over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub figure_kind: Option<FigureKind>,
     /// A figure's own two controls — the inspector's sides stepper and ratio slider.
     /// Ignored on anything that is not a [`DrawElementType::Figure`], and on a kind of
     /// figure that has no such control ([`crate::scene::figure::has_sides`] /
@@ -676,6 +684,11 @@ pub fn apply_style_patch(element: &mut DrawElement, patch: &DrawElementStylePatc
     }
     if let Some(v) = patch.roundness {
         element.roundness = v;
+    }
+    if let Some(kind) = patch.figure_kind {
+        if let Some(params) = element.figure.as_mut() {
+            crate::scene::figure::change_kind(params, kind);
+        }
     }
     if let Some(sides) = patch.figure_sides {
         if let Some(params) = element.figure.as_mut() {

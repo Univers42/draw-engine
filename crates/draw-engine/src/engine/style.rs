@@ -167,11 +167,16 @@ impl DrawEngine {
         arrow.end_arrowhead = self.next_end_arrowhead;
     }
 
-    /// What the Shapes picker sets: which figure the tool draws next. Only that — no
-    /// selected figure is restyled by picking a kind to draw, unlike [`Self::set_arrow_type`],
-    /// because choosing a tool and restyling a selection are different actions here; the
-    /// inspector's own sides stepper and ratio slider (`apply_style`'s `figure_sides` /
-    /// `figure_ratio`) are what change an already-drawn figure.
+    /// What the Shapes tool draws next: the toolbar's picker and the command palette's
+    /// "Add <kind>" (`insertFigure`) queue a kind here before drawing or inserting, and
+    /// this never touches whatever is selected — inserting a fresh shape must not restyle
+    /// one already on the board.
+    ///
+    /// The inspector's own kind row picks a figure's *kind* the way
+    /// [`Self::set_arrow_type`] picks an arrow's *type*: through the style patch instead
+    /// (`apply_style`'s `figure_kind`, next to its `figure_sides` / `figure_ratio`), which
+    /// restyles the selected figures **and** writes this same field, as one step of undo —
+    /// so picking a kind with figures selected is visible, unlike calling this directly.
     pub fn set_next_figure(&mut self, figure: crate::scene::figure::FigureParams) {
         self.next_figure = figure;
         self.touch_style();
