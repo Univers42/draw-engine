@@ -829,6 +829,30 @@ export class DrawEngine {
     this.inner.wrapTextInContainer();
   }
 
+  /** Whether Tab has a rectangle, diamond or ellipse selected to switch. */
+  canConvertSelection(): boolean {
+    return this.inner.canConvertSelection();
+  }
+
+  /** The shape switch opened: until `endConversion`, a label shrunk by a switch grows back. */
+  beginConversion(): void {
+    this.inner.beginConversion();
+  }
+
+  /** The shape switch closed. */
+  endConversion(): void {
+    this.inner.endConversion();
+  }
+
+  /**
+   * Switches the selected rectangles, diamonds and ellipses to `to`, or a step round from
+   * their type — forward for Tab, back for Shift+Tab. One step of undo. Whether anything
+   * changed.
+   */
+  convertSelection(to: FlowchartShape | null, forward = true): boolean {
+    return this.inner.convertSelection(to ?? undefined, forward);
+  }
+
   requestDraw(): void {
     /* WASM schedules its own rAF. */
   }

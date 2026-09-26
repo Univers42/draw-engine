@@ -28,6 +28,7 @@ pub use heading::Heading;
 pub use outline::{hypot, Target};
 pub use snap::{normalize_fixed_point, BASE_BINDING_GAP};
 
+use crate::camera::Point;
 use crate::scene::binding::{anchor, set_anchor, Anchor, End};
 use crate::scene::element::{Arrowhead, BindMode, DrawElement, DrawElementType};
 use outline::Pt;
@@ -514,6 +515,19 @@ fn apply(element: &mut DrawElement, routed: Routed) {
     if let Some(height) = routed.height {
         element.height = height;
     }
+}
+
+/// Where the segment `a`–`b` crosses `shape`'s outline, in the oracle's order —
+/// `intersectElementWithLineSegment` with no offset — for callers outside the router.
+/// Empty for anything an arrow cannot bind to.
+pub fn outline_intersections(shape: &DrawElement, a: Point, b: Point) -> Vec<Point> {
+    let Some(target) = Target::of(shape) else {
+        return Vec::new();
+    };
+    outline::intersect(&target, [[a.x, a.y], [b.x, b.y]], 0.0)
+        .into_iter()
+        .map(|[x, y]| Point { x, y })
+        .collect()
 }
 
 /// Whether `element` is an elbow arrow.

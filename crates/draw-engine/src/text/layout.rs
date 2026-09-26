@@ -387,6 +387,32 @@ pub struct Laid {
     pub container: Option<DrawElement>,
 }
 
+/// The font size at which `label`'s drawn lines fit `container`: its own, stepped down a
+/// point at a time until they do — `adjustBoundTextSize`
+/// (`ConvertElementTypePopup.tsx@1118751f:370-413`), which a shape switch runs so a label
+/// that filled a rectangle does not grow the diamond it becomes.
+///
+/// Measured as the oracle measures: the drawn lines wrapped to the new width first, then
+/// the drawn lines as they are at each smaller size. Never below
+/// [`crate::selection::transform::MIN_FONT_SIZE`], where the oracle's loop may reach 0 and
+/// leave a label nothing can draw.
+pub fn fitting_font_size(label: &DrawElement, container: &DrawElement, measure: &Measure) -> f64 {
+    const MIN: f64 = crate::selection::transform::MIN_FONT_SIZE;
+    let font = font_of(label);
+    let line_height = resolved_line_height(label);
+    let drawn = label.text.as_deref().unwrap_or("");
+    let max_width = bound_text_max_width(container, font.size());
+    let max_height = bound_text_max_height(container, label.height);
+    let wrapped = measure.wrap(drawn, max_width, font);
+    let (mut width, mut height) = measure.size(&wrapped, font, line_height);
+    let mut size = font.size();
+    while (width > max_width || height > max_height) && size > MIN {
+        size = (size - 1.0).max(MIN);
+        (width, height) = measure.size(drawn, FontKey::new(font.family(), size), line_height);
+    }
+    size
+}
+
 /// `redrawTextBoundingBox`: `text` re-wrapped from what was typed, measured, and — for a
 /// label — placed in `container`, which grows to hold it.
 ///

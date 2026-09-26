@@ -15,6 +15,7 @@ mod autoshape;
 mod bound_text;
 mod bucket;
 mod clipboard;
+mod convert;
 mod debug;
 mod elbow;
 mod eraser;
@@ -277,6 +278,9 @@ pub struct DrawEngine {
     flowchart_creator: Option<flowchart::FlowchartCreator>,
     /// Alt+Arrow's same-level exploration state. See `flowchart.rs`.
     flowchart_navigator: flowchart::FlowchartNavigator,
+    /// Each switched shape's label size while the shape switch is open, `None` while it
+    /// is closed. See `convert.rs`.
+    conversion_font_sizes: Option<HashMap<String, f64>>,
     /// An in-flight eased camera move. See `style.rs`.
     camera_anim: Option<style::CameraAnim>,
     /// The host's UI over each side of the canvas, which a reveal keeps clear of. See
@@ -361,6 +365,7 @@ impl DrawEngine {
             text_session: None,
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
+            conversion_font_sizes: None,
             camera_anim: None,
             viewport_offsets: crate::Offsets::default(),
             reduced_motion: false,

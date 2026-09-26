@@ -1160,6 +1160,71 @@ fn resolve_endpoints_from<'a>(
     Some(((next_start, next_end), (first, last)))
 }
 
+// ------------------------------------------------------------------------ reshaping
+
+/// `arrow` with its ends bound to `shape` aimed at `shape`'s outline again, after `shape`
+/// changed kind under them — `reanchorBindingsToOutline` (`binding.ts@1118751f:1219-1316`),
+/// which a shape switch runs. `None` when no end moved.
+///
+/// - An elbow arrow's end is placed as binding it would place it
+///   (`calculateFixedPointForElbowArrowBinding`).
+/// - Any other end is left alone while its anchor is still on the shape or inside it,
+///   within the binding gap (`hitElementItself` with the inside tested). Otherwise it
+///   moves to where the ray from the centre through its old anchor leaves the outline:
+///   the crossing nearest the old anchor.
+pub fn reanchor_to_outline(
+    arrow: &DrawElement,
+    shape: &DrawElement,
+    zoom: f64,
+) -> Option<DrawElement> {
+    if arrow.kind != DrawElementType::Arrow || arrow.is_deleted {
+        return None;
+    }
+    let center = element_center(shape);
+    let reach = shape.width.abs().max(shape.height.abs()) * 2.0;
+    let mut next = arrow.clone();
+    let mut moved = false;
+    for end in [End::Start, End::End] {
+        let Some(bound) = anchor(arrow, end).filter(|bound| bound.element_id == shape.id) else {
+            continue;
+        };
+        let fixed_point = if crate::scene::elbow::is_elbow(arrow) {
+            crate::scene::elbow::fixed_point_for(arrow, shape, end, zoom, true)
+        } else {
+            let focus = focus_point(shape, bound.fixed_point);
+            if signed_outline_distance(shape, focus) >= -binding_gap(shape) {
+                continue;
+            }
+            let (dx, dy) = (focus.x - center.x, focus.y - center.y);
+            let length = dx.hypot(dy);
+            if length == 0.0 {
+                continue;
+            }
+            let far = Point {
+                x: center.x + dx / length * reach,
+                y: center.y + dy / length * reach,
+            };
+            crate::scene::elbow::outline_intersections(shape, center, far)
+                .into_iter()
+                .min_by(|a, b| distance(*a, focus).total_cmp(&distance(*b, focus)))
+                .map(|on_outline| fixed_point_at(shape, on_outline))
+        };
+        let Some(fixed_point) = fixed_point else {
+            continue;
+        };
+        set_anchor(
+            &mut next,
+            end,
+            Some(Anchor {
+                fixed_point,
+                ..bound
+            }),
+        );
+        moved = true;
+    }
+    moved.then_some(next)
+}
+
 // -------------------------------------------------------------------------- linears
 
 pub fn linear_endpoints(element: &DrawElement) -> (Point, Point) {
