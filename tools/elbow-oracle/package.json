@@ -1,0 +1,19 @@
+{
+  "name": "elbow-oracle",
+  "private": true,
+  "type": "module",
+  "description": "Runs Excalidraw's own elbowArrow.ts, unmodified, and dumps its routes as fixtures for the Rust port. Deliberately OUTSIDE the pnpm workspace: these are the exact third-party versions the pinned oracle's module graph imports (packages/*/package.json at the pin), and must not inherit the workspace's minimumReleaseAge hold.",
+  "scripts": {
+    "generate": "node --experimental-transform-types --import ./register.mjs generate.mjs"
+  },
+  "dependencies": {
+    "@braintree/sanitize-url": "6.0.2",
+    "es6-promise-pool": "2.5.0",
+    "lodash.throttle": "4.1.1",
+    "nanoid": "3.3.3",
+    "perfect-freehand": "1.2.0",
+    "points-on-curve": "1.0.1",
+    "roughjs": "4.6.4",
+    "tinycolor2": "1.6.0"
+  }
+}
