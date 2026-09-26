@@ -135,6 +135,16 @@ impl DrawEngine {
     }
 
     pub(super) fn apply_patches(&mut self, patches: Vec<DrawElement>) {
+        self.apply_patches_then(patches, |_| {});
+    }
+
+    /// [`Self::apply_patches`], running `then` on the patched scene before the step is
+    /// recorded — so a selection it sets is the step's own, which undo and redo put back.
+    pub(super) fn apply_patches_then(
+        &mut self,
+        patches: Vec<DrawElement>,
+        then: impl FnOnce(&mut Self),
+    ) {
         // A patch that changes nothing is not an edit: stamped, it would be saved, sent to
         // every peer and take a step of undo that puts nothing back — a lone unturned box
         // flipped, shapes aligned already. The oracle's `mutateElement` keeps the version
@@ -154,6 +164,7 @@ impl DrawEngine {
         for element in patches {
             self.scene.put(bump_version(element, now));
         }
+        then(self);
         // No frame membership pass: outside a drag the oracle's align, distribute and
         // flip leave `frameId` alone (`isElementInFrame` is true unless the selection is
         // being dragged, `packages/element/src/frame.ts@1118751f:845-855`), and a lock has no frame
@@ -255,25 +266,59 @@ impl DrawEngine {
         )
     }
 
+    /// The menu's Lock / Unlock — `actionToggleElementLock` (`actionElementLock.ts@1118751f:
+    /// 26-150`). Locks when nothing it acts on is locked, and unlocks all of it otherwise
+    /// (`shouldLock`, `:22-23`): a group holding one locked member is unlocked whole, where
+    /// locking whatever was not locked yet left that member no way back but on its own.
+    ///
+    /// Locking lets go of the selection, as the oracle's does (`:108-110`): a locked
+    /// element is not there to be held, and still held it took the Delete, the Ctrl+D and
+    /// the style meant for whatever came next. Unlocking keeps it, so what was just freed
+    /// is in hand. Either way it is the step's own selection, which undo puts back.
     pub fn toggle_lock_selection(&mut self) {
-        let selected = self.get_selected_elements();
-        if selected.is_empty() {
+        let targets = self.lock_targets();
+        if targets.is_empty() {
             return;
         }
-        let lock = selected.iter().any(|el| !el.locked());
-        self.apply_patches(
-            selected
-                .into_iter()
-                .map(|mut el| {
-                    el.locked = Some(lock);
-                    el
-                })
-                .collect(),
-        );
+        let lock = !targets.iter().any(DrawElement::locked);
+        let patches = targets
+            .into_iter()
+            .filter(|el| el.locked() != lock)
+            .map(|mut el| {
+                el.locked = Some(lock);
+                el
+            })
+            .collect();
+        self.apply_patches_then(patches, |engine| {
+            if lock {
+                engine.clear_selection();
+            }
+        });
     }
 
+    /// Whether the toggle would unlock: something it acts on is locked, so the menu reads
+    /// Unlock (`label`, `actionElementLock.ts@1118751f:28-37`).
     pub fn selection_locked(&self) -> bool {
-        let selected = self.get_selected_elements();
-        !selected.is_empty() && selected.iter().all(DrawElement::locked)
+        self.lock_targets().iter().any(DrawElement::locked)
+    }
+
+    /// What Lock and Unlock act on: the selection, what its frames hold and the labels of
+    /// all of it — `getSelectedElements` with `includeElementsInFrames` and
+    /// `includeBoundTextElement` (`actionElementLock.ts@1118751f:52-56`). Left out, a locked
+    /// shape's words and a locked frame's children stayed free, and were picked up and
+    /// dragged out of the frame.
+    fn lock_targets(&self) -> Vec<DrawElement> {
+        let mut ids = self.selected_ids.clone();
+        for id in &self.selected_ids {
+            if self.scene.get(id).is_some_and(is_frame) {
+                ids.extend(crate::scene::frame_children(self.scene.iter_ordered(), id));
+            }
+        }
+        let ids = crate::edit::with_labels(self.scene.iter_ordered(), &ids);
+        self.scene
+            .iter_ordered()
+            .filter(|el| ids.contains(&el.id))
+            .cloned()
+            .collect()
     }
 }
