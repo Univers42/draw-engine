@@ -25,7 +25,7 @@
 //! This module decides; `wasm/paint.rs` carries it out. The decision is here because it
 //! is arithmetic, and because every host that mounts this engine wants the same answer.
 
-use crate::camera::Camera;
+use crate::camera::{Camera, WorldBounds};
 use crate::scene::geometry::Rect;
 
 /// Everything about a frame that, if it changes, invalidates the whole layer.
@@ -310,4 +310,60 @@ pub fn plan_motion(
     }
     let coverage = (covered_w * covered_h) / (device_width * device_height);
     (coverage >= MOTION_MIN_COVERAGE).then_some(MotionBlit { scale, dx, dy })
+}
+
+/// How much further out than the camera a picture repainted while zooming out is drawn —
+/// under [`MOTION_MAX_DRIFT`], so [`plan_motion`] takes it at once.
+const MOTION_AHEAD: f64 = 1.2;
+
+/// While zooming out, the camera to repaint the layer for — `None` means the camera the
+/// frame is at.
+///
+/// A picture drawn for the camera it is at covers the screen exactly, so a zoom out
+/// leaves its edges bare at the next step and [`plan_motion`] repaints it a few steps
+/// later. On a board of 2,000 shapes that was a full repaint in one frame of every
+/// sixteen, each one longer than a frame on a slow machine (`e2e/cameraBudget.spec.ts`).
+/// So it is drawn further out, about the point the zoom holds still: shown enlarged at
+/// first, then as drawn, then covering less and less until the next repaint — about
+/// three times as much zoom out between repaints. The frame after motion stops is drawn
+/// for its own camera, as every frame at rest is.
+pub fn motion_repaint_camera(
+    painted: Camera,
+    now: Camera,
+    width: f64,
+    height: f64,
+) -> Option<Camera> {
+    const ZOOMING_OUT: f64 = 0.99;
+    let ratio = now.scale / painted.scale;
+    if ratio.is_nan() || ratio >= ZOOMING_OUT {
+        return None;
+    }
+    // The screen point both cameras show the same world point at: the zoom's centre.
+    let still = |painted: f64, now: f64, size: f64| {
+        ((now - ratio * painted) / (1.0 - ratio)).clamp(0.0, size)
+    };
+    let (fx, fy) = (
+        still(painted.x, now.x, width),
+        still(painted.y, now.y, height),
+    );
+    let k = 1.0 / MOTION_AHEAD;
+    Some(Camera {
+        x: fx - (fx - now.x) * k,
+        y: fy - (fy - now.y) * k,
+        scale: now.scale * k,
+    })
+}
+
+/// What a frame in motion takes from the scene: `visible` and as much around it as a
+/// picture [`motion_repaint_camera`] draws can show, since that picture is painted from
+/// the same frame.
+pub fn motion_cull(visible: WorldBounds) -> WorldBounds {
+    let margin_x = (visible.max_x - visible.min_x) * (MOTION_AHEAD - 1.0);
+    let margin_y = (visible.max_y - visible.min_y) * (MOTION_AHEAD - 1.0);
+    WorldBounds {
+        min_x: visible.min_x - margin_x,
+        min_y: visible.min_y - margin_y,
+        max_x: visible.max_x + margin_x,
+        max_y: visible.max_y + margin_y,
+    }
 }

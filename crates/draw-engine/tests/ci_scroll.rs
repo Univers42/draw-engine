@@ -575,3 +575,78 @@ fn zooming_in_uncovers_nothing() {
     };
     assert!(blit.exposed(1280.0, 800.0).is_empty());
 }
+
+use draw_engine::camera::WorldBounds;
+use draw_engine::render::scroll::{motion_cull, motion_repaint_camera};
+
+/// `camera` zoomed by `factor` about the screen point `(fx, fy)`.
+fn zoomed(camera: Camera, factor: f64, fx: f64, fy: f64) -> Camera {
+    cam(
+        fx - (fx - camera.x) * factor,
+        fy - (fy - camera.y) * factor,
+        camera.scale * factor,
+    )
+}
+
+#[test]
+fn zooming_out_a_repaint_is_drawn_further_out_about_the_same_point() {
+    let painted = cam(0.0, 0.0, 1.0);
+    let now = zoomed(painted, 0.9, 400.0, 300.0);
+    let ahead = motion_repaint_camera(painted, now, 800.0, 600.0).expect("zooming out");
+    let expected = zoomed(painted, 0.75, 400.0, 300.0);
+    assert!((ahead.x - expected.x).abs() < 1e-9);
+    assert!((ahead.y - expected.y).abs() < 1e-9);
+    assert!((ahead.scale - expected.scale).abs() < 1e-12);
+    // Shown enlarged at once, and covering the whole screen.
+    let blit = plan_motion(ahead, now, 1.0, 800.0, 600.0).expect("taken at once");
+    assert!(blit.exposed(800.0, 600.0).is_empty());
+}
+
+#[test]
+fn zooming_in_or_panning_a_repaint_is_drawn_where_the_camera_is() {
+    let painted = cam(0.0, 0.0, 1.0);
+    let zooming_in = zoomed(painted, 1.3, 400.0, 300.0);
+    assert_eq!(
+        motion_repaint_camera(painted, zooming_in, 800.0, 600.0),
+        None
+    );
+    assert_eq!(
+        motion_repaint_camera(painted, cam(-300.0, 0.0, 1.0), 800.0, 600.0),
+        None
+    );
+}
+
+/// The painter's own loop: each step reuses the picture while `plan_motion` takes it and
+/// repaints it otherwise — for the camera it is at, or further out.
+#[test]
+fn a_long_zoom_out_repaints_a_third_as_often() {
+    let repaints = |ahead: bool| {
+        let (mut painted, mut now, mut count) = (cam(0.0, 0.0, 1.0), cam(0.0, 0.0, 1.0), 0);
+        while now.scale > 0.2 {
+            now = zoomed(now, 0.97, 500.0, 350.0);
+            if plan_motion(painted, now, 1.0, 1280.0, 800.0).is_none() {
+                count += 1;
+                painted = match ahead {
+                    true => motion_repaint_camera(painted, now, 1280.0, 800.0).unwrap_or(now),
+                    false => now,
+                };
+            }
+        }
+        count
+    };
+    let (before, after) = (repaints(false), repaints(true));
+    assert!(after * 3 <= before + 2, "{after} repaints against {before}");
+}
+
+#[test]
+fn a_frame_in_motion_takes_a_fifth_more_on_every_side() {
+    let visible = WorldBounds {
+        min_x: 0.0,
+        min_y: 0.0,
+        max_x: 100.0,
+        max_y: 50.0,
+    };
+    let culled = motion_cull(visible);
+    assert!((culled.min_x + 20.0).abs() < 1e-9 && (culled.max_x - 120.0).abs() < 1e-9);
+    assert!((culled.min_y + 10.0).abs() < 1e-9 && (culled.max_y - 60.0).abs() < 1e-9);
+}

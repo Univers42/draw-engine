@@ -1113,6 +1113,15 @@ fn paint_static(
             })
             .copied()
             .collect(),
+        // Moving, the frame holds what is around the screen too (`motion_cull`).
+        None if view.in_motion => {
+            let screen = crate::camera::visible_world_rect(view.camera, view.width, view.height);
+            view.elements
+                .iter()
+                .filter(|element| crate::render::bounds::intersects_viewport(element, &screen))
+                .copied()
+                .collect()
+        }
         None => view.elements.clone(),
     };
     paint_elements(ctx, view, &elements);
@@ -1179,19 +1188,49 @@ impl Painter for CanvasPainter<'_> {
                         && painted_key.dpr == key.dpr
                         && painted_key.width == key.width
                         && painted_key.height == key.height;
-                    let blit = same_picture
-                        .then(|| {
-                            crate::render::scroll::plan_motion(
-                                painted_camera,
-                                view.camera,
-                                dpr,
-                                f64::from(device.0),
-                                f64::from(device.1),
-                            )
-                        })
-                        .flatten();
+                    let motion = |from: crate::camera::Camera| {
+                        crate::render::scroll::plan_motion(
+                            from,
+                            view.camera,
+                            dpr,
+                            f64::from(device.0),
+                            f64::from(device.1),
+                        )
+                    };
+                    let mut blit = same_picture.then(|| motion(painted_camera)).flatten();
+                    // Zooming out, the repaint is drawn further out than the camera, so
+                    // the steps after this one are served by it too.
+                    let mut repainted = false;
+                    if same_picture && blit.is_none() {
+                        let ahead = crate::render::scroll::motion_repaint_camera(
+                            painted_camera,
+                            view.camera,
+                            view.width,
+                            view.height,
+                        );
+                        if let Some(ahead) = ahead {
+                            let ahead_view = PaintView {
+                                camera: ahead,
+                                ..view.clone()
+                            };
+                            count_plan(1, 0, 0);
+                            paint_static(&layers.front_ctx, &ahead_view, None);
+                            layers.base = Some((whole_picture(&ahead_view), chrome_digest(view)));
+                            layers.painted = Some((
+                                LayerKey {
+                                    scale: ahead.scale,
+                                    ..key
+                                },
+                                ahead,
+                            ));
+                            blit = motion(ahead);
+                            repainted = true;
+                        }
+                    }
                     if let Some(blit) = blit {
-                        count_plan(0, 1, 0);
+                        if !repainted {
+                            count_plan(0, 1, 0);
+                        }
                         STATE.with(|s| s.borrow_mut().reset());
                         FONT.with(|f| *f.borrow_mut() = None);
                         ctx.set_global_alpha(1.0);
@@ -1210,7 +1249,7 @@ impl Painter for CanvasPainter<'_> {
                             paint_static(ctx, view, Some(&exposed));
                         }
                         layers.overlay_drawn = true;
-                        return Some(false);
+                        return Some(repainted);
                     }
                 }
             }

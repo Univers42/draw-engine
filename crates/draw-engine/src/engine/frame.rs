@@ -12,6 +12,7 @@ use crate::selection::marquee_rect;
 /// a point vector per element — whether anything had changed or not. Borrowing makes a
 /// frame's setup cost proportional to the number of *visible* elements rather than to
 /// the size of the document.
+#[derive(Clone)]
 pub struct PaintView<'a> {
     /// The scene itself, for the painter's one question the rest cannot answer: what
     /// changed since the picture it holds — see [`crate::scene::Scene::changes_since`].
@@ -134,6 +135,7 @@ impl<'a> PaintView<'a> {
 }
 
 /// One peer's hold, as the painter draws it. See `peers.rs`.
+#[derive(Clone)]
 pub struct PeerMark<'a> {
     pub name: &'a str,
     pub color: &'a str,
@@ -227,6 +229,12 @@ impl DrawEngine {
             self.quality_dpr()
         };
         let visible = crate::camera::visible_world_rect(self.camera, self.width, self.height);
+        // Moving, a repaint may be drawn for a camera further out than this one.
+        let visible = if self.in_motion() {
+            crate::render::scroll::motion_cull(visible)
+        } else {
+            visible
+        };
         let scene_revision = self.scene.revision();
 
         // Computed before the struct literal takes ownership of `selected`.
