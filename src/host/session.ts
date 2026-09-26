@@ -23,6 +23,13 @@ export interface HostSession {
    * Null the rest of the time.
    */
   toolBeforePenEraser: DrawTool | null;
+  /**
+   * Where the pointer last was over the canvas, canvas-relative — Excalidraw's
+   * `viewport.lastPosition` (`App.tsx@1118751f:5477-5482`), which a keyboard paste centres
+   * the pasted selection on (`App.tsx@1118751f:4776-4839`). Null until the pointer has
+   * entered the canvas once.
+   */
+  lastPointer: { x: number; y: number } | null;
 }
 
 export function localPoint(canvas: HTMLCanvasElement, event: { clientX: number; clientY: number }): { x: number; y: number } {

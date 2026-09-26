@@ -20,7 +20,13 @@ export function attachKeyboardInput(session: HostSession): () => void {
 
   const onPaste = (event: ClipboardEvent) => {
     const text = event.clipboardData?.getData("text/plain") ?? "";
-    if (!engine.pasteJson(text || null)) engine.pasteJson(null);
+    // Centred on the pointer, like the oracle's Ctrl+V (`App.tsx@1118751f:4817-4839`) — not
+    // the engine's own offset fallback, which is Ctrl+D's fixed-offset placement and must
+    // stay Ctrl+D's alone. Null pointer (paste before the mouse ever entered the canvas)
+    // falls back to that offset, same as before.
+    const { lastPointer } = session;
+    const at = lastPointer ? engine.screenToWorld(lastPointer.x, lastPointer.y) : undefined;
+    if (!engine.pasteJson(text || null, at)) engine.pasteJson(null, at);
     event.preventDefault();
   };
 

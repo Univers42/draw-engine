@@ -51,6 +51,7 @@ export function bindCanvas(args: BindCanvasArgs): BindCanvasResult {
     hoverRaf: 0,
     pendingHover: null,
     toolBeforePenEraser: null,
+    lastPointer: null,
   };
 
   const applySize = () => {

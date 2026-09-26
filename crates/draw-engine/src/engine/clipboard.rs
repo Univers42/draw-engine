@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::camera::Point;
 use crate::edit::clipboard::{materialize_elements, serialize_selection};
 use crate::engine::DrawEngine;
 use crate::export::scene_to_json;
@@ -368,8 +369,19 @@ impl DrawEngine {
         if let Some((x, y)) = at {
             if let Some(source) = materialize_elements(&payload, 0.0, 0.0, self.now_ms) {
                 if let Some(bounds) = scene_bounds(&source) {
-                    offset_x = x - (bounds.min_x + bounds.max_x) / 2.0;
-                    offset_y = y - (bounds.min_y + bounds.max_y) / 2.0;
+                    // The oracle's `duplicateAtSceneCoords`: half-width/height off the
+                    // pointer gives the bounding box's new left/top edge, snapped to the
+                    // grid before it lands — not the pointer itself, and not this box's
+                    // true centre (`App.duplicate.ts@1118751f:87-99`). Read the shape once
+                    // more, not once per test, at `ci_paste.rs`.
+                    let half_width = (bounds.max_x - bounds.min_x) / 2.0;
+                    let half_height = (bounds.max_y - bounds.min_y) / 2.0;
+                    let snapped = self.snap(Point {
+                        x: x - half_width,
+                        y: y - half_height,
+                    });
+                    offset_x = snapped.x - bounds.min_x;
+                    offset_y = snapped.y - bounds.min_y;
                 }
             }
         }

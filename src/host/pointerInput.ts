@@ -130,6 +130,10 @@ export function attachPointerInput(session: HostSession): () => void {
     // Counted before the gate, so the ratio of events to engine steps is honest about
     // what the device actually sent rather than about what we chose to forward.
     countPointerEvent();
+    // Tracked unconditionally, like Excalidraw's `updateCurrentCursorPosition`
+    // (`App.tsx@1118751f:5477-5482`): a keyboard paste needs the pointer's last position
+    // whether or not a button is held or a gesture is in progress.
+    session.lastPointer = localPoint(canvas, event);
     if (!wantsMove()) {
       queueHover(session, event);
       return;
