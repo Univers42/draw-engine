@@ -293,6 +293,9 @@ pub fn materialize_within(
                     element.created = Some(crate::scene::sticky::wall_clock_ms());
                 }
                 element.is_deleted = false;
+                // A copy is a new frame: off the path, as one drawn now would be — never at
+                // the step of the frame it copies, nor at one from the board it came from.
+                element.path_step = None;
                 element
             })
             .collect(),

@@ -106,3 +106,25 @@ fn a_step_survives_the_scene_document() {
         "absent on a frame nobody placed"
     );
 }
+
+#[test]
+fn a_duplicated_frame_starts_off_the_path() {
+    let frame = frame_at(0.0);
+    let id = frame.id.clone();
+    let mut engine = engine_with_scene(vec![frame]);
+    engine.set_presentation_path(std::slice::from_ref(&id));
+
+    engine.select(vec![id.clone()]);
+    engine.duplicate_selection(10.0, 10.0);
+    let copies: Vec<_> = engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| is_frame(el) && el.id != id)
+        .collect();
+    assert_eq!(copies.len(), 1, "one copy");
+    assert_eq!(
+        copies[0].path_step, None,
+        "the copy is not given the original's step"
+    );
+    assert_eq!(step(&engine, &id), Some(0), "the original keeps its own");
+}
