@@ -1,5 +1,5 @@
-# CI — rustfmt, clippy -D warnings, cargo test, host node:test, shellcheck.
-# Same gate as `make quality` / `scripts/docker-run.sh quality`.
+# CI — rustfmt, clippy -D warnings, cargo test, host node:test, shellcheck, and the release
+# WASM build. Same gates as `make quality` and `make wasm`.
 name: CI
 
 on:
@@ -59,3 +59,30 @@ jobs:
 
       - name: rustfmt, clippy, cargo test, host tests
         run: bash scripts/docker-run.sh quality
+
+  wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust with the wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen-cli at the crate's pin
+        run: |
+          # The CLI must match `wasm-bindgen = "=<version>"` exactly, or the glue it writes
+          # disagrees with the binary and fails in the browser rather than here.
+          version="$(sed -n 's/^wasm-bindgen = "=\([0-9.]*\)".*/\1/p' crates/draw-engine/Cargo.toml)"
+          test -n "${version}"
+          curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/${version}/wasm-bindgen-${version}-x86_64-unknown-linux-musl.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin --strip-components=1
+          wasm-bindgen --version
+
+      - name: Build both modules into pkg/ (warnings are errors)
+        run: bash scripts/docker-run.sh wasm
