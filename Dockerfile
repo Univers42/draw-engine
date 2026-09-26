@@ -4,7 +4,9 @@
 # Debian + Node 22 + Rust stable + wasm32. Bind-mount the repo at /app.
 # Named volumes hold node_modules, pnpm store, and the cargo registry.
 
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim
+# Docker Hub, as in drawnosaurus. public.ecr.aws meters anonymous pulls per source IP, and
+# a shared network runs out of it ("429 toomanyrequests: Data limit exceeded").
+FROM node:22-bookworm-slim
 
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl git build-essential pkg-config \
