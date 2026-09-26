@@ -54,6 +54,7 @@ function recording(
     ungroupSelection: () => calls.push("ungroupSelection"),
     groupSelection: () => calls.push("groupSelection"),
     toggleGroupSelection: () => calls.push("toggleGroupSelection"),
+    toggleLockSelection: () => calls.push("toggleLockSelection"),
     reorderSelection: (mode: string) => calls.push(`reorder:${mode}`),
     zoomIn: () => calls.push("zoomIn"),
     zoomOut: () => calls.push("zoomOut"),
@@ -140,6 +141,25 @@ describe("dispatchKeyDown", () => {
       event({ key: "g", ctrlKey: true, shiftKey: true }),
     );
     assert.deepEqual(ungrouped.calls, ["ungroupSelection"]);
+  });
+
+  /**
+   * Ctrl/Cmd+Shift+L locks or unlocks the selection — `actionToggleElementLock`'s
+   * `keyTest` (`actionElementLock.ts@1118751f:151-160`) — and only with something
+   * selected: with nothing, the chord is left to the browser.
+   */
+  it("toggles the lock on Ctrl/Cmd+Shift+L with a selection", () => {
+    for (const mod of [{ ctrlKey: true }, { metaKey: true }]) {
+      const held = recording(["a"]);
+      const result = dispatchKeyDown(session(held.engine), event({ key: "L", shiftKey: true, ...mod }));
+      assert.equal(result, "prevent");
+      assert.deepEqual(held.calls, ["toggleLockSelection"]);
+    }
+
+    const empty = recording([]);
+    const result = dispatchKeyDown(session(empty.engine), event({ key: "L", ctrlKey: true, shiftKey: true }));
+    assert.equal(result, "pass");
+    assert.deepEqual(empty.calls, []);
   });
 
   it("deletes the selection on Delete and prevents default", () => {

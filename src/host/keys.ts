@@ -31,6 +31,7 @@ export interface KeyEngine {
   ungroupSelection(): void;
   groupSelection(): void;
   toggleGroupSelection(): void;
+  toggleLockSelection(): void;
   reorderSelection(mode: ZOrderMode): void;
   zoomIn(): void;
   zoomOut(): void;
@@ -107,6 +108,12 @@ function handleModChords(session: KeySession, event: KeyEvent, key: string): boo
     // Shift+G is left alone and still matches the oracle exactly.
     if (event.shiftKey) engine.ungroupSelection();
     else engine.toggleGroupSelection();
+    return true;
+  }
+  // Lock and unlock, as the context menu's toggle, with something selected
+  // (`actionToggleElementLock`'s `keyTest`, `actionElementLock.ts@1118751f:151-160`).
+  if (key === "l" && event.shiftKey && engine.getSelection().length > 0) {
+    engine.toggleLockSelection();
     return true;
   }
   // Zoom by the printed key, and before the brackets' physical-key fallback below: on a
