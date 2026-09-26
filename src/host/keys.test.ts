@@ -89,7 +89,7 @@ function recording(
 }
 
 describe("dispatchKeyDown", () => {
-  it("cancels the pointer and any pending flowchart on Escape without preventDefault", () => {
+  it("cancels the pointer on Escape without preventDefault", () => {
     const { engine, calls } = recording();
     const notified: boolean[] = [];
     const result = dispatchKeyDown(
@@ -97,7 +97,24 @@ describe("dispatchKeyDown", () => {
       event({ key: "Escape" }),
     );
     assert.equal(result, "pass");
-    assert.deepEqual(calls, ["cancelPointer", "flowchartCancel"]);
+    assert.deepEqual(calls, ["cancelPointer"]);
+    assert.deepEqual(notified, []);
+  });
+
+  /**
+   * The oracle's flowchart handler takes Escape ahead of everything else while a cluster
+   * is previewed (`App.tsx@1118751f:5574`): the cluster goes and nothing else happens —
+   * the node it grew from stays selected.
+   */
+  it("drops the previewed flowchart on Escape and takes the key", () => {
+    const { engine, calls } = recording(["node"], false, true);
+    const notified: boolean[] = [];
+    const result = dispatchKeyDown(
+      session(engine, { callbacks: { onFlowchartCreatingChange: (creating) => notified.push(creating) } }),
+      event({ key: "Escape" }),
+    );
+    assert.equal(result, "prevent");
+    assert.deepEqual(calls, ["flowchartCancel"]);
     assert.deepEqual(notified, [false]);
   });
 
@@ -307,7 +324,7 @@ describe("dispatchKeyDown", () => {
     assert.equal(state.spaceHeld, true);
   });
 
-  it("creates a flowchart node on Ctrl/Cmd+Arrow, in any of the four directions, and asks for a reveal", () => {
+  it("creates a flowchart node on Ctrl/Cmd+Arrow, in any of the four directions", () => {
     const cases: [string, string][] = [
       ["ArrowRight", "right"],
       ["ArrowLeft", "left"],
@@ -315,51 +332,56 @@ describe("dispatchKeyDown", () => {
       ["ArrowDown", "down"],
     ];
     for (const [key, direction] of cases) {
-      const { engine, calls } = recording();
-      let revealed = 0;
-      const notified: boolean[] = [];
-      const result = dispatchKeyDown(
-        session(engine, {
-          callbacks: {
-            onFlowchartReveal: () => revealed++,
-            onFlowchartCreatingChange: (creating) => notified.push(creating),
-          },
-        }),
-        event({ key, ctrlKey: true }),
-      );
-      assert.equal(result, "prevent");
-      assert.deepEqual(calls, [`flowchartCreate:${direction}`]);
-      assert.equal(revealed, 1);
-      assert.deepEqual(notified, [true]);
+      for (const chord of [{ ctrlKey: true }, { metaKey: true }]) {
+        const { engine, calls } = recording(["node"], false, true);
+        const notified: boolean[] = [];
+        const result = dispatchKeyDown(
+          session(engine, { callbacks: { onFlowchartCreatingChange: (creating) => notified.push(creating) } }),
+          event({ key, ...chord }),
+        );
+        assert.equal(result, "prevent");
+        assert.deepEqual(calls, [`flowchartCreate:${direction}`]);
+        assert.deepEqual(notified, [true]);
+      }
     }
   });
 
-  it("navigates the flowchart on Alt+Arrow instead of nudging, without asking the host to reveal", () => {
-    // Unlike Ctrl/Cmd+Arrow's still-pending preview, `flowchart_navigate` eases the
-    // camera itself (`DrawEngine::reveal`), so the host must not also pan — that would
-    // fight the engine's own in-flight animation every frame instead of cooperating.
-    const missed = recording(["id"], false, false, null);
-    let revealed = 0;
-    assert.equal(
-      dispatchKeyDown(
-        session(missed.engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
-        event({ key: "ArrowRight", altKey: true }),
-      ),
-      "prevent",
+  it("takes Ctrl/Cmd+Arrow even when there is nothing to grow from, and says nothing is pending", () => {
+    const { engine, calls } = recording([], false, false);
+    const notified: boolean[] = [];
+    const result = dispatchKeyDown(
+      session(engine, { callbacks: { onFlowchartCreatingChange: (creating) => notified.push(creating) } }),
+      event({ key: "ArrowRight", ctrlKey: true }),
     );
-    assert.deepEqual(missed.calls, ["flowchartNavigate:right"]);
-    assert.equal(revealed, 0);
+    assert.equal(result, "prevent");
+    assert.deepEqual(calls, ["flowchartCreate:right"]);
+    assert.deepEqual(notified, [false]);
+  });
 
-    const hit = recording(["id"], false, false, "sibling-id");
-    assert.equal(
-      dispatchKeyDown(
-        session(hit.engine, { callbacks: { onFlowchartReveal: () => revealed++ } }),
-        event({ key: "ArrowRight", altKey: true }),
-      ),
-      "prevent",
-    );
-    assert.deepEqual(hit.calls, ["flowchartNavigate:right"]);
-    assert.equal(revealed, 0, "the engine's own reveal covers a hit; the host must not double-pan");
+  it("leaves Ctrl/Cmd+Shift+Arrow alone: it is not creation", () => {
+    const { engine, calls } = recording(["node"]);
+    assert.equal(dispatchKeyDown(session(engine), event({ key: "ArrowRight", ctrlKey: true, shiftKey: true })), "pass");
+    assert.deepEqual(calls, []);
+  });
+
+  it("navigates the flowchart on Alt+Arrow with one element selected", () => {
+    const { engine, calls } = recording(["id"], false, false, "sibling-id");
+    assert.equal(dispatchKeyDown(session(engine), event({ key: "ArrowRight", altKey: true })), "prevent");
+    assert.deepEqual(calls, ["flowchartNavigate:right"]);
+
+    const nowhere = recording(["id"], false, false, null);
+    assert.equal(dispatchKeyDown(session(nowhere.engine), event({ key: "ArrowUp", altKey: true })), "prevent");
+    assert.deepEqual(nowhere.calls, ["flowchartNavigate:up"]);
+  });
+
+  it("nudges on Alt+Arrow with anything but one element selected, as the oracle does", () => {
+    const two = recording(["a", "b"]);
+    assert.equal(dispatchKeyDown(session(two.engine), event({ key: "ArrowLeft", altKey: true })), "prevent");
+    assert.deepEqual(two.calls, ["nudge:-1,0"]);
+
+    const none = recording([]);
+    assert.equal(dispatchKeyDown(session(none.engine), event({ key: "ArrowLeft", altKey: true })), "pass");
+    assert.deepEqual(none.calls, []);
   });
 
   it("picks the pending shape on Ctrl+1/2/3 only while a cluster is being created", () => {

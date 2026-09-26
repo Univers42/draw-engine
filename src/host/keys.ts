@@ -60,7 +60,7 @@ export interface KeyEngine {
 
 export interface KeySession {
   engine: KeyEngine;
-  callbacks: Pick<HostCallbacks, "onToolLockChange" | "onFlowchartReveal" | "onFlowchartCreatingChange">;
+  callbacks: Pick<HostCallbacks, "onToolLockChange" | "onFlowchartCreatingChange">;
   spaceHeld: boolean;
 }
 
@@ -225,9 +225,15 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
   const { engine } = session;
   const mod = event.metaKey || event.ctrlKey;
   if (event.key === "Escape") {
+    // A cluster being previewed is dropped and the key goes no further — the oracle's
+    // flowchart handler returns ahead of its other Escape handling
+    // (`App.tsx@1118751f:5574`), so the selection it grew from stays selected.
+    if (engine.isCreatingFlowchart()) {
+      engine.flowchartCancel();
+      session.callbacks.onFlowchartCreatingChange?.(false);
+      return "prevent";
+    }
     engine.cancelPointer();
-    engine.flowchartCancel();
-    session.callbacks.onFlowchartCreatingChange?.(false);
     return "pass";
   }
   // Enter ends a path being placed, the way Excalidraw's does — both keys run their
@@ -239,27 +245,21 @@ export function dispatchKeyDown(session: KeySession, event: KeyEvent): KeyResult
   }
   const flowchartDirection = FLOWCHART_ARROWS[event.key];
   if (flowchartDirection) {
-    // Ctrl/Cmd+Arrow grows the flowchart; Alt+Arrow walks it — same as the oracle's
-    // `App.flowchart.ts@1118751f`, checked here rather than as a `mod`/`handleModChords`
-    // chord because it must also fire held-and-repeated, and Alt alone never counts as
-    // `mod` for anything else this dispatcher does.
-    if (mod) {
-      // The engine only eases the camera at commit/navigate (`DrawEngine::reveal`), not
-      // while a cluster is still being previewed — a repeat press can grow it off screen
-      // before Ctrl is ever released, so the host reveals the pending preview itself.
+    // Ctrl/Cmd+Arrow grows the flowchart; Alt+Arrow walks it — the oracle's
+    // `App.flowchart.ts@1118751f:106-150`, checked ahead of the other chords because it
+    // must also fire held-and-repeated. Both reveal what they reach in the engine.
+    if (mod && !event.shiftKey) {
+      // Taken even with nothing to grow from, as the oracle's is: Ctrl+Arrow never nudges.
       engine.flowchartCreate(flowchartDirection);
-      session.callbacks.onFlowchartReveal?.();
-      session.callbacks.onFlowchartCreatingChange?.(true);
+      session.callbacks.onFlowchartCreatingChange?.(engine.isCreatingFlowchart());
       return "prevent";
     }
-    if (event.altKey) {
-      // No host-side reveal here: `flowchart_navigate` eases the camera itself
-      // (`engine/flowchart.rs`, `DrawEngine::reveal`) — a second, host-driven pan on top
-      // of the engine's own in-flight animation would fight it every frame instead of
-      // cooperating.
+    if (event.altKey && engine.getSelection().length === 1) {
       engine.flowchartNavigate(flowchartDirection);
       return "prevent";
     }
+    // With anything but one element selected, Alt+Arrow is a plain nudge in the oracle.
+    if (event.altKey && !mod) return handlePlainKeys(session, event) ? "prevent" : "pass";
   }
   const flowchartShape = FLOWCHART_SHAPE_KEYS[event.key];
   if (mod && flowchartShape && engine.isCreatingFlowchart()) {

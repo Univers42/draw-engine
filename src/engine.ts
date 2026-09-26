@@ -87,6 +87,15 @@ export class DrawEngine {
     this.inner.setViewport(width, height, dpr);
   }
 
+  /**
+   * How far the host's own UI reaches over each side of the canvas, in CSS pixels —
+   * Excalidraw's measured `[data-viewport-ui]` offsets. A reveal (Ctrl/Cmd+Arrow,
+   * Alt+Arrow) brings what it shows into the room they leave.
+   */
+  setViewportOffsets(offsets: { top: number; right: number; bottom: number; left: number }): void {
+    this.inner.setViewportOffsets(offsets.top, offsets.right, offsets.bottom, offsets.left);
+  }
+
   zoomAt(sx: number, sy: number, factor: number): void {
     this.inner.zoomAt(sx, sy, factor);
   }

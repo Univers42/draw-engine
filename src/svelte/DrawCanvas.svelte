@@ -26,7 +26,6 @@
     onNotice,
     onContextMenu,
     onToolLockChange,
-    onFlowchartReveal,
     onFlowchartCreatingChange,
     onPointerDown,
     onPointerMove,
@@ -50,7 +49,6 @@
     callbacks.onNotice = onNotice;
     callbacks.onContextMenu = onContextMenu;
     callbacks.onToolLockChange = onToolLockChange;
-    callbacks.onFlowchartReveal = onFlowchartReveal;
     callbacks.onFlowchartCreatingChange = onFlowchartCreatingChange;
     callbacks.onPointerDown = onPointerDown;
     callbacks.onPointerMove = onPointerMove;
