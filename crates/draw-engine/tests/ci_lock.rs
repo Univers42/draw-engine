@@ -288,9 +288,9 @@ fn select_all_takes_a_locked_member_with_its_group() {
     assert_eq!(selection(&engine), set(&[&a, &b, &c]));
 }
 
-/// The board menu's "Unlock all" (`actionUnlockAllElements`, `:161-217`): offered with
-/// nothing selected and something locked, it unlocks everything and selects it, grown
-/// to groups — one step of undo.
+/// The board menu's "Unlock all" (`actionUnlockAllElements`,
+/// `actionElementLock.ts@1118751f:161-217`): offered with nothing selected and something
+/// locked, it unlocks everything and selects it, grown to groups — one step of undo.
 #[test]
 fn unlock_all_frees_every_locked_element_and_selects_it() {
     let Probe {
@@ -313,4 +313,35 @@ fn unlock_all_frees_every_locked_element_and_selects_it() {
     assert_eq!(selection(&engine), set(&[&a, &b, &c]));
     engine.undo();
     assert!(locked(&engine, &b) && locked(&engine, &c));
+}
+
+// ---------------------------------------------------------------------------
+// A locked element in front
+// ---------------------------------------------------------------------------
+
+/// A locked element over another shields it: a press that lands on the locked one first
+/// picks nothing up, unless what lies under it is already selected
+/// (`hitElementMightBeLocked`, `App.tsx@1118751f:9488-9525`). It used to reach through and
+/// pick up whatever was behind, and the cursor promised as much.
+#[test]
+fn a_locked_element_in_front_shields_what_is_behind_it() {
+    let behind = filled(box_at(0.0, 0.0, 200.0, 200.0));
+    let mut front = filled(box_at(50.0, 50.0, 100.0, 100.0));
+    front.locked = Some(true);
+    let behind_id = behind.id.clone();
+    let mut engine = engine_with_scene(vec![behind, front]);
+    engine.set_tool(DrawTool::Select);
+
+    assert_eq!(engine.hover_cursor(100.0, 100.0), HoverCursor::Default);
+    drag(&mut engine, (100.0, 100.0), (100.0, 300.0));
+    assert_close(element(&engine, &behind_id).y, 0.0);
+    assert!(selection(&engine).is_empty(), "{:?}", selection(&engine));
+
+    // Beside the locked one it is still there to take, and once taken it can be dragged
+    // from under the locked one.
+    click(&mut engine, 20.0, 20.0);
+    assert_eq!(selection(&engine), set(&[&behind_id]));
+    assert_eq!(engine.hover_cursor(100.0, 100.0), HoverCursor::Move);
+    drag(&mut engine, (100.0, 100.0), (100.0, 300.0));
+    assert_close(element(&engine, &behind_id).y, 200.0);
 }

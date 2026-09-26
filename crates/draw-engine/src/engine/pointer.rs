@@ -533,9 +533,7 @@ impl DrawEngine {
             }
         }
 
-        let tolerance = self.collision_tolerance();
-        let pressed = self.element_at(sx, sy, tolerance, |element| !self.untouchable(element));
-        if let Some(hit) = pressed.cloned() {
+        if let Some(hit) = self.pressed_at(sx, sy).cloned() {
             // A press on a text, or the shape of a label, that was *already* the sole
             // selection reopens it for typing at the click if the release turns out to be
             // one — `wasAddedToSelection` (`App.tsx@1118751f:12402-12428`). Read from the
@@ -632,6 +630,31 @@ impl DrawEngine {
             base: self.selected_ids.clone(),
         });
         self.request_draw();
+    }
+
+    /// What a press at a screen point picks up: the topmost element under it that is ours
+    /// to move, a label standing for its shape ([`Self::element_at`]) — unless a locked
+    /// element lies over it and nothing under the point is selected. A locked element
+    /// shields what is behind it (`hitElementMightBeLocked`, `App.tsx@1118751f:9488-9525`);
+    /// reaching through, a press on a locked outline or text picked up whatever lay behind
+    /// it. Shared with the hover cursor, so the cursor promises what a press does.
+    pub(crate) fn pressed_at(&self, sx: f64, sy: f64) -> Option<&DrawElement> {
+        let tolerance = self.collision_tolerance();
+        let top = self.element_at(sx, sy, tolerance, |_| true)?;
+        if !self.untouchable(top) {
+            return Some(top);
+        }
+        let ours = |element: &DrawElement| !self.untouchable(element);
+        if top.locked()
+            && self
+                .element_at(sx, sy, tolerance, |el| {
+                    ours(el) && self.selected_ids.contains(&el.id)
+                })
+                .is_none()
+        {
+            return None;
+        }
+        self.element_at(sx, sy, tolerance, ours)
     }
 
     /// Whether a world point falls within the frame drawn around the current selection.

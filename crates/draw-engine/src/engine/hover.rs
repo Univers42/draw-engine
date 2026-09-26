@@ -192,15 +192,11 @@ impl DrawEngine {
             return HoverCursor::Move;
         }
 
-        // Anything grabbable under the pointer reads as movable, a label standing for its
-        // shape as a press reads it ([`Self::element_at`]). Locked elements deliberately
-        // do not: they are not draggable, so promising otherwise is worse than saying
-        // nothing — and neither does the label of one.
-        let reach = self.collision_tolerance();
-        if self
-            .element_at(sx, sy, reach, |el| !self.untouchable(el))
-            .is_some()
-        {
+        // Anything a press would pick up reads as movable, a label standing for its shape
+        // ([`Self::pressed_at`]). Locked elements deliberately do not: they are not
+        // draggable, so promising otherwise is worse than saying nothing — and neither
+        // does the label of one, nor what a locked one lies over.
+        if self.pressed_at(sx, sy).is_some() {
             return HoverCursor::Move;
         }
 
