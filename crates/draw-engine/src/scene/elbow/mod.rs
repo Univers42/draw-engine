@@ -111,6 +111,16 @@ impl<'a> Board<'a> {
         Self { elements, by_id }
     }
 
+    /// This board with `element` put in its place, or on top when it is new: a `Map.set`.
+    pub fn with(&self, element: &'a DrawElement) -> Self {
+        let mut elements = self.elements.clone();
+        match elements.iter().position(|e| e.id == element.id) {
+            Some(i) => elements[i] = element,
+            None => elements.push(element),
+        }
+        Self::new(elements)
+    }
+
     pub fn get(&self, id: &str) -> Option<&'a DrawElement> {
         self.by_id.get(id).copied()
     }
@@ -819,12 +829,20 @@ pub fn retype(element: &mut DrawElement, elbow: bool, board: &Board, zoom: f64) 
 /// Binds a new elbow arrow to `start` and `end` and routes it between them: the binding
 /// and routing half of the oracle's flowchart `createBindingArrow`
 /// (`flowchart.ts@1118751f:310-448`). `arrow` comes with its position and its two points
-/// already at the two shapes, and `elbowed` set; `board` must hold both shapes.
-pub fn bind_and_route(
+/// already at the two shapes, and `elbowed` set; `board` is the scene, which need not
+/// hold either shape yet.
+///
+/// Routed twice, as the oracle does: `movePoints` over the scene alone, where a new `end`
+/// is not yet — so an arrow that is already straight stays where it was put — then
+/// `updateElbowArrowPoints` over the scene with both shapes in it. The second pass starts
+/// from where the first left the ends, and an end further than a binding distance from
+/// its shape (a turned node's) heads away from the shape's middle rather than out of the
+/// side it is beside.
+pub fn bind_and_route<'a>(
     arrow: &mut DrawElement,
-    start: &DrawElement,
-    end: &DrawElement,
-    board: &Board,
+    start: &'a DrawElement,
+    end: &'a DrawElement,
+    board: &Board<'a>,
     zoom: f64,
 ) {
     bind(arrow, start, End::Start, zoom, true);
@@ -834,5 +852,10 @@ pub fn bind_and_route(
         points: arrow.points.clone(),
         ..Updates::default()
     };
-    mutate(arrow, board, updates, &Options::default());
+    mutate(
+        arrow,
+        &board.with(start).with(end),
+        updates,
+        &Options::default(),
+    );
 }

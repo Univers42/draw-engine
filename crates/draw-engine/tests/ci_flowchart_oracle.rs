@@ -9,13 +9,14 @@
 //! and where the camera landed; this replays each sequence through the engine the way
 //! `src/host/keys.ts` drives it and asks for the same, within 1e-9.
 //!
-//! Not compared, and why (the fixture's `note` says the same): the oracle's arrow is
-//! elbow-routed and this engine's is not yet (`engine/flowchart.rs`), so an arrow's points
-//! and the size they give it are never compared, and neither are an arrow's `x`/`y` and
-//! anchors where the oracle's elbow-only snapping put them — an end on a diamond or on a
-//! turned node. Which element each end binds, and how, is always compared. The camera is
-//! compared until a reveal takes in such an arrow; after that the two cameras have been
-//! told different bounds and nothing later about them is comparable.
+//! Arrows are compared whole: both are elbow-routed, so each arrow's position, size,
+//! points, anchors and bindings are the oracle's. Not compared, and why (the fixture's
+//! `note` says the same): the camera after a reveal that measured different bounds —
+//! `getElementBounds` takes an arrow by its rough path, which wobbles a pixel or so with
+//! the element's random seed, so such a step is not held to the oracle's camera, and ours
+//! is put where theirs landed for the steps after it — and the geometry of an arrow at a
+//! diamond with an explicit corner radius, which the engine reads past the oracle's cap
+//! on purpose ([`Replay::radius_beyond_the_oracle`]); its bindings are still compared.
 
 mod common;
 use common::*;
@@ -97,7 +98,8 @@ struct Replay<'a> {
 struct Counts {
     elements: usize,
     anchors: usize,
-    anchors_skipped: usize,
+    arrows: usize,
+    arrows_by_radius: usize,
     cameras: usize,
     cameras_skipped: usize,
 }
@@ -145,18 +147,6 @@ impl Replay<'_> {
                 .get(id)
                 .cloned()
                 .unwrap_or_else(|| panic!("{}: no element paired with {id}", self.at()))
-        })
-    }
-
-    /// Whether the oracle's anchors for `arrow` are the ones its elbow snapping leaves at
-    /// the middle of a side: both ends on a node that is neither turned nor a diamond.
-    fn plain_ends(&self, arrow: &Value) -> bool {
-        ["startBinding", "endBinding"].iter().all(|end| {
-            let Some(id) = arrow[end]["elementId"].as_str() else {
-                return true;
-            };
-            let node = &self.known[id];
-            node["type"] != "diamond" && num(&node["angle"]) == 0.0
         })
     }
 
@@ -245,6 +235,20 @@ impl Replay<'_> {
         self.compared.elements += 1;
     }
 
+    /// Whether an end of `arrow` is on a diamond with an explicit corner radius. The
+    /// oracle reads that radius through `getCornerRadius`, capped at a quarter of the
+    /// span; the engine's corner-radius handle takes it up to half the span on purpose
+    /// (`render/shape.rs` › `corner_radius`), so the rounded tip an anchor snaps to is a
+    /// different outline. A rectangle's side and an ellipse are untouched by it.
+    fn radius_beyond_the_oracle(&self, arrow: &Value) -> bool {
+        ["startBinding", "endBinding"].iter().any(|end| {
+            arrow[end]["elementId"].as_str().is_some_and(|id| {
+                let node = &self.known[id];
+                node["type"] == "diamond" && !node["roundness"]["value"].is_null()
+            })
+        })
+    }
+
     fn arrow(&mut self, what: &str, ours: &DrawElement, theirs: &Value) {
         let at = self.at();
         assert_eq!(
@@ -261,7 +265,40 @@ impl Replay<'_> {
             theirs["endArrowhead"],
             "{at}: {what} head"
         );
-        let plain = self.plain_ends(theirs);
+        assert_eq!(
+            ours.elbowed == Some(true),
+            theirs["elbowed"] == true,
+            "{at}: {what} elbowed"
+        );
+        let geometry = !self.radius_beyond_the_oracle(theirs);
+        if geometry {
+            self.close(&format!("{what} x"), ours.x, num(&theirs["x"]));
+            self.close(&format!("{what} y"), ours.y, num(&theirs["y"]));
+            self.close(&format!("{what} width"), ours.width, num(&theirs["width"]));
+            self.close(
+                &format!("{what} height"),
+                ours.height,
+                num(&theirs["height"]),
+            );
+            let points = ours.points.as_deref().unwrap_or_default();
+            let their_points = theirs["points"].as_array().unwrap();
+            assert_eq!(
+                points.len(),
+                their_points.len(),
+                "{at}: {what} has {} points, the oracle's {}: {:?} against {}",
+                points.len(),
+                their_points.len(),
+                points,
+                theirs["points"]
+            );
+            for (i, (o, t)) in points.iter().zip(their_points).enumerate() {
+                self.close(&format!("{what} point {i} x"), o[0], num(&t[0]));
+                self.close(&format!("{what} point {i} y"), o[1], num(&t[1]));
+            }
+            self.compared.arrows += 1;
+        } else {
+            self.compared.arrows_by_radius += 1;
+        }
         for (end, target, fixed_point, mode) in [
             (
                 "startBinding",
@@ -294,19 +331,13 @@ impl Replay<'_> {
                 binding["mode"],
                 "{at}: {what} {end} mode"
             );
-            if plain {
+            if geometry {
                 let fixed = binding["fixedPoint"].as_array().unwrap();
                 let ours = fixed_point.unwrap_or_else(|| panic!("{at}: {what} {end} anchor"));
                 self.close(&format!("{what} {end} anchor x"), ours[0], num(&fixed[0]));
                 self.close(&format!("{what} {end} anchor y"), ours[1], num(&fixed[1]));
                 self.compared.anchors += 1;
-            } else {
-                self.compared.anchors_skipped += 1;
             }
-        }
-        if plain {
-            self.close(&format!("{what} x"), ours.x, num(&theirs["x"]));
-            self.close(&format!("{what} y"), ours.y, num(&theirs["y"]));
         }
     }
 
@@ -449,9 +480,9 @@ fn replay(case: &Value, counts: &mut Counts) {
 
         // The same bounds must give the same camera. Only a reveal of the pending cluster
         // can measure differently — `getElementBounds` takes an arrow by its rough path,
-        // which bulges a pixel or so across each segment, and an elbow route can leave
-        // the nodes' box — so where the two disagree the step is not held to the oracle's
-        // camera, and ours is put where theirs landed for the steps after it.
+        // which wobbles a pixel or so with the seed — so where the two disagree the step is
+        // not held to the oracle's camera, and ours is put where theirs landed for the
+        // steps after it.
         let theirs = camera_of(&step["camera"]);
         let same_bounds = step.get("reveal").is_none_or(|reveal| {
             pending.is_empty()
@@ -476,7 +507,8 @@ fn replay(case: &Value, counts: &mut Counts) {
     }
     counts.elements += replay.compared.elements;
     counts.anchors += replay.compared.anchors;
-    counts.anchors_skipped += replay.compared.anchors_skipped;
+    counts.arrows += replay.compared.arrows;
+    counts.arrows_by_radius += replay.compared.arrows_by_radius;
     counts.cameras += replay.compared.cameras;
     counts.cameras_skipped += replay.compared.cameras_skipped;
 }
@@ -491,12 +523,18 @@ fn every_case_matches_the_oracle() {
         replay(case, &mut counts);
     }
     // What was actually held to the oracle, so a sweep that quietly compared nothing
-    // cannot pass: most anchors and cameras are comparable today, and every one is once
-    // the elbow switch lands.
+    // cannot pass.
     eprintln!(
-        "flowchart oracle: {} elements, {} anchors ({} elbow-only, skipped), {} cameras ({} skipped)",
-        counts.elements, counts.anchors, counts.anchors_skipped, counts.cameras, counts.cameras_skipped
+        "flowchart oracle: {} elements, {} arrows ({} at a radius past the oracle's, \
+         skipped), {} anchors, {} cameras ({} skipped)",
+        counts.elements,
+        counts.arrows,
+        counts.arrows_by_radius,
+        counts.anchors,
+        counts.cameras,
+        counts.cameras_skipped
     );
-    assert!(counts.anchors > 3 * counts.anchors_skipped);
+    assert!(counts.arrows > 1000 && counts.anchors == 2 * counts.arrows);
+    assert!(counts.arrows > 20 * counts.arrows_by_radius);
     assert!(counts.cameras > 5 * counts.cameras_skipped);
 }

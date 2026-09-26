@@ -173,9 +173,8 @@ class FakeApp {
 }
 
 // ---------------------------------------------------------------- recording
-/** The fields the port is held to, as the oracle has them. `points`, `width` and `height`
- *  of an arrow are recorded but not compared: they are the elbow route (see the fixture's
- *  `note`). */
+/** The fields the port is held to, as the oracle has them — an arrow's elbow route
+ *  included (see the fixture's `note`). */
 const snapshot = (el) => {
   const out = {
     id: el.id,
@@ -515,15 +514,14 @@ const fixture = {
   },
   note:
     "Replayed by tests/ci_flowchart_oracle.rs. The oracle's flowchart arrow is elbow-routed " +
-    "(flowchart.ts:383). Until this engine routes elbow arrows, an arrow's `points` (and so " +
-    "its width/height) are recorded but NOT compared, and neither are an arrow's x/y and " +
-    "fixed points where they come out of elbow-only snapping — an end on a diamond or on a " +
-    "turned shape (bindPointToSnapToElementOutline's elbow branch). Everything else — " +
-    "node geometry and style, frame membership, scene order, which element each end binds " +
-    "and how, arrowheads, selection, the pending cluster at every press, and the camera — " +
-    "is compared within 1e-9; the camera wherever a reveal measured the same bounds on both " +
-    "sides, which it does not when the oracle's include an arrow's rough-path wobble or " +
-    "elbow route.",
+    "(flowchart.ts:383), and so is the engine's: node geometry and style, frame membership, " +
+    "scene order, each arrow's position, size, points, anchors and bindings, arrowheads, " +
+    "selection, the pending cluster at every press, and the camera are compared within " +
+    "1e-9. Two exceptions. The camera is compared wherever a reveal measured the same " +
+    "bounds on both sides, which it does not when the oracle's include an arrow's " +
+    "rough-path wobble. And an arrow at a diamond with an explicit roundness value keeps " +
+    "only its bindings compared: the engine reads that radius past getCornerRadius's cap on " +
+    "purpose (its corner-radius handle), so the rounded tip an anchor snaps to differs.",
   cases: results.map(({ app, ...rest }) => rest),
 };
 writeFileSync(FIXTURE, `${JSON.stringify(fixture, null, 1)}\n`);

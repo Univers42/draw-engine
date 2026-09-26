@@ -29,10 +29,12 @@ Alt+Arrow key sequences — shapes, sizes, styles, turned nodes, frames, zooms, 
 offsets — with what the oracle holds after every key: the pending cluster, the scene, the
 selection and where the camera lands. `tests/ci_flowchart_oracle.rs` replays it.
 
-The oracle's flowchart arrows are elbow arrows, which this engine does not route yet, so
-the replay leaves out each arrow's points, and its x/y and anchors where an end is on a
-diamond or a turned node (the elbow-only snapping). Everything else is compared, bindings
-included. The fixture's `note` says the same.
+The oracle's flowchart arrows are elbow arrows, and so are the engine's: the replay
+compares each arrow whole — position, size, points, anchors, bindings. It leaves out the
+camera after a reveal that measured different bounds (the oracle's include an arrow's
+rough-path wobble), and the geometry of an arrow at a diamond with an explicit roundness
+value, which the engine's corner-radius handle reads past the oracle's cap on purpose. The
+fixture's `note` says the same.
 
 Output is deterministic. Regenerate only when the pin moves, never to turn a red test
 green.

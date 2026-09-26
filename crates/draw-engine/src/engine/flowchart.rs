@@ -28,18 +28,14 @@
 //! `sticky_cross_start` anchors an already-visible pending cluster so growing it does not
 //! shuffle the nodes already on screen (`flowchart.ts@1118751f:203-212`).
 //!
-//! # The arrow, and the elbow switch
+//! # The arrow
 //!
-//! The oracle's arrow is always elbow-routed (`createBindingArrow`, `flowchart.ts@1118751f:
-//! 310-450`); this engine does not route elbow arrows yet. [`binding_arrow`] is that one
-//! function, building everything the oracle's does — style, heads, both bindings and where
-//! each end is anchored — and drawing today's straight arrow between the two anchors. The
-//! anchors are the oracle's own for a node that is not turned and not a diamond: the middle
-//! of the facing side, a binding gap out ([`facing_fixed_point`]); on a diamond or a turned
-//! node the oracle snaps them with its elbow-only outline rules, which come with elbow
-//! routing. Switching over is `elbowed: true` and the elbow route in [`binding_arrow`], and
-//! [`is_flowchart_link`] narrowing to elbow arrows as the oracle's `isElbowArrow` does —
-//! until then every arrow counts, since every arrow here would have been elbow there.
+//! Every link is an elbow arrow, as the oracle's (`createBindingArrow`,
+//! `flowchart.ts@1118751f:310-450`): [`binding_arrow`] starts it a padding off the facing
+//! sides, binds both ends in orbit and routes it with the elbow router
+//! ([`crate::scene::elbow::bind_and_route`]), which also snaps each anchor to the node's
+//! outline — a diamond's and a turned node's included. Only elbow arrows link nodes
+//! ([`is_flowchart_link`]), for placement and for navigation alike.
 //!
 //! # Navigation
 //!
@@ -55,22 +51,27 @@
 //! One pass over the scene per press, whatever its size: the obstacle walk builds its
 //! adjacency once rather than rescanning every arrow per node reached, and a navigation
 //! step reads each arrow once per direction asked. The preview is painted over the cached
-//! board, which a press leaves alone. Measured in `benches/editing.rs` (`flowchart/*`):
-//! beside a 200-node diagram on a 20,000-shape board, a press costs about 90µs, a walk
-//! step 100µs and the release 190µs — mostly that one pass. The oracle reads each node's
-//! `boundElements` instead, which this scene does not index; one would take a press down
-//! to the diagram's size, should a tenth of a millisecond ever matter.
+//! board, which a press leaves alone. Each new arrow is routed as it is built, against
+//! its two nodes alone. Measured in `benches/editing.rs` (`flowchart/*`): beside a
+//! 200-node diagram on a 20,000-shape board, a press costs about 150µs, ten presses in a
+//! row — each laying out one more node than the last, 55 arrows routed in all — 3.8ms, a
+//! walk step 120µs and the release 7µs. The scene pass is most of a press on a large
+//! board; the oracle reads each node's `boundElements` instead, which this scene does
+//! not index.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::camera::{Point, WorldBounds};
 use crate::engine::DrawEngine;
 use crate::scene::{
-    create_element, element_overlaps_frame, element_rotated_bounds, focus_point, is_frame,
-    is_target_kind, linear_from_endpoints, normalize_fixed_point, scene_outline_bounds, set_anchor,
-    Anchor, Arrowhead, BindMode, DrawElement, DrawElementStyle, DrawElementType, End, FillStyle,
-    Geometry, Scene, BASE_BINDING_GAP,
+    create_element, elbow, element_overlaps_frame, element_rotated_bounds, is_frame,
+    is_target_kind, linear_from_endpoints, scene_outline_bounds, Arrowhead, DrawElement,
+    DrawElementStyle, DrawElementType, FillStyle, Geometry, Scene,
 };
+
+/// How far off a node's side a new link starts and ends, before routing moves it —
+/// `createBindingArrow`'s `PADDING` (`flowchart.ts@1118751f:318`).
+const ARROW_PADDING: f64 = 6.0;
 
 /// One gap in scene units, on both axes — Excalidraw's `VERTICAL_OFFSET` /
 /// `HORIZONTAL_OFFSET` (`flowchart.ts@1118751f:57-58`), both 100.
@@ -98,15 +99,6 @@ impl LinkDirection {
             _ => None,
         }
     }
-
-    fn opposite(self) -> Self {
-        match self {
-            Self::Up => Self::Down,
-            Self::Down => Self::Up,
-            Self::Left => Self::Right,
-            Self::Right => Self::Left,
-        }
-    }
 }
 
 /// Whether `element` can start or extend a flowchart — Excalidraw's
@@ -123,11 +115,10 @@ fn is_flowchart_node(element: &DrawElement) -> bool {
     )
 }
 
-/// Whether `element` links two flowchart nodes. The oracle's `isElbowArrow`
-/// (`flowchart.ts@1118751f:119`, `:595`); every arrow until this engine routes elbow
-/// arrows — see the module doc.
+/// Whether `element` links two flowchart nodes: the oracle's `isElbowArrow`
+/// (`flowchart.ts@1118751f:119`, `:595`).
 fn is_flowchart_link(element: &DrawElement) -> bool {
-    element.kind == DrawElementType::Arrow
+    crate::scene::elbow::is_elbow(element)
 }
 
 // --------------------------------------------------------------------------- placement
@@ -382,58 +373,19 @@ fn clone_flowchart_node(
     node
 }
 
-/// Which of `node`'s own sides faces `direction` on the board: for a turned node, the side
-/// whose outward normal turns nearest to it.
-fn facing_side(node: &DrawElement, direction: LinkDirection) -> LinkDirection {
-    if node.angle == 0.0 {
-        return direction;
-    }
-    let (dx, dy) = match direction {
-        LinkDirection::Right => (1.0, 0.0),
-        LinkDirection::Left => (-1.0, 0.0),
-        LinkDirection::Down => (0.0, 1.0),
-        LinkDirection::Up => (0.0, -1.0),
-    };
-    let (sin, cos) = (-node.angle).sin_cos();
-    vector_to_heading(dx * cos - dy * sin, dx * sin + dy * cos)
-}
-
-/// Where a flowchart arrow's end is anchored on `node`: the middle of the side facing
-/// `direction`, a binding gap out, as a ratio of the node's size.
-///
-/// What `calculateFixedPointForElbowArrowBinding` (`binding.ts@1118751f:2106-2170`) makes
-/// of `createBindingArrow`'s ends on a node that is neither turned nor a diamond: the snap
-/// lands on the outline grown by `getBindingGap` — 5 plus half the node's stroke, never
-/// capped — the ratio's divisor is floored at that gap, and a node under a unit across is
-/// anchored at its centre. On a turned node or a diamond the oracle's elbow snapping moves
-/// the anchor off the side's middle; see the module doc.
-fn facing_fixed_point(node: &DrawElement, direction: LinkDirection) -> [f64; 2] {
-    /// `MIN_BINDABLE_SIZE` (`binding.ts@1118751f:124`).
-    const MIN_BINDABLE_SIZE: f64 = 1.0;
-    let (w, h) = (node.width, node.height);
-    if w < MIN_BINDABLE_SIZE || h < MIN_BINDABLE_SIZE {
-        return normalize_fixed_point([0.5, 0.5]);
-    }
-    let gap = BASE_BINDING_GAP + node.stroke_width / 2.0;
-    let (px, py) = match facing_side(node, direction) {
-        LinkDirection::Right => (w + gap, h / 2.0),
-        LinkDirection::Left => (-gap, h / 2.0),
-        LinkDirection::Down => (w / 2.0, h + gap),
-        LinkDirection::Up => (w / 2.0, -gap),
-    };
-    normalize_fixed_point([px / w.max(gap), py / h.max(gap)])
-}
-
 /// The arrow joining `source` to a new node `target` placed toward `direction`.
 /// `createBindingArrow` (`flowchart.ts@1118751f:310-450`): the source's stroke colour,
 /// stroke style, stroke width, opacity and roughness; every other style the default a new
 /// arrow gets — a solid fill, no background, sharp; no tail, and the head the next arrow
-/// would get; bound at both ends in orbit. See the module doc for the elbow switch.
+/// would get. It starts [`ARROW_PADDING`] off the middle of `source`'s side facing
+/// `direction` and ends as far off `target`'s opposite side, then is bound at both ends in
+/// orbit and routed ([`crate::scene::elbow::bind_and_route`]) at `zoom`.
 fn binding_arrow(
     source: &DrawElement,
     target: &DrawElement,
     direction: LinkDirection,
     end_arrowhead: Arrowhead,
+    zoom: f64,
     now: f64,
 ) -> DrawElement {
     let style = DrawElementStyle {
@@ -446,30 +398,37 @@ fn binding_arrow(
         opacity: source.opacity,
         roundness: None,
     };
-    let start_fixed = facing_fixed_point(source, direction);
-    let end_fixed = facing_fixed_point(target, direction.opposite());
+    let pad = ARROW_PADDING;
+    let (s, t) = (source, target);
+    let at = |x, y| Point { x, y };
+    let start = match direction {
+        LinkDirection::Up => at(s.x + s.width / 2.0, s.y - pad),
+        LinkDirection::Down => at(s.x + s.width / 2.0, s.y + s.height + pad),
+        LinkDirection::Right => at(s.x + s.width + pad, s.y + s.height / 2.0),
+        LinkDirection::Left => at(s.x - pad, s.y + s.height / 2.0),
+    };
+    let end = match direction {
+        LinkDirection::Up => at(t.x + t.width / 2.0, t.y + t.height + pad),
+        LinkDirection::Down => at(t.x + t.width / 2.0, t.y - pad),
+        LinkDirection::Right => at(t.x - pad, t.y + t.height / 2.0),
+        LinkDirection::Left => at(t.x + t.width + pad, t.y + t.height / 2.0),
+    };
     let arrow = create_element(DrawElementType::Arrow, Geometry::default(), style, now);
-    let mut arrow = linear_from_endpoints(
-        arrow,
-        focus_point(source, start_fixed),
-        focus_point(target, end_fixed),
-    );
+    let mut arrow = linear_from_endpoints(arrow, start, end);
+    arrow.elbowed = Some(true);
     arrow.start_arrowhead = None;
     arrow.end_arrowhead = Some(end_arrowhead);
-    for (end, node, fixed_point) in [
-        (End::Start, source, start_fixed),
-        (End::End, target, end_fixed),
-    ] {
-        set_anchor(
-            &mut arrow,
-            end,
-            Some(Anchor {
-                element_id: node.id.clone(),
-                fixed_point,
-                mode: BindMode::Orbit,
-            }),
-        );
-    }
+    // The oracle routes over the scene, which holds `source` and not yet `target`. Its
+    // router reads nothing there but the shapes an arrow is bound to — the rest only while
+    // an end is dragged — so `source` alone is that scene, without indexing a whole board
+    // per arrow per press.
+    elbow::bind_and_route(
+        &mut arrow,
+        source,
+        target,
+        &elbow::Board::new([source]),
+        zoom,
+    );
     arrow
 }
 
@@ -812,7 +771,14 @@ impl DrawEngine {
         let mut pending = Vec::with_capacity(count * 2);
         for (x, y) in positions {
             let node = clone_flowchart_node(start, shape, x, y, self.now_ms);
-            let arrow = binding_arrow(start, &node, direction, head, self.now_ms);
+            let arrow = binding_arrow(
+                start,
+                &node,
+                direction,
+                head,
+                self.camera.scale,
+                self.now_ms,
+            );
             pending.push(node);
             pending.push(arrow);
         }
@@ -929,8 +895,10 @@ impl DrawEngine {
                 None => {}
             }
         }
+        // No binding pass: each arrow was routed against these very nodes when it was
+        // built, and `insertNewElements` routes nothing again. Re-routing from the anchors
+        // differs where an end starts off a turned node's outline.
         self.set_selection(vec![first_node_id.clone()]);
-        self.apply_bindings();
         // The cluster's frame was decided by overlap when it was built, not by where each
         // piece landed: a node straddling the frame's edge still joins it.
         self.push_history_keeping_frames(&created);
