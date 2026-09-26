@@ -120,7 +120,6 @@ pub fn generate_rough_options(element: &DrawElement, continuous_path: bool) -> O
         | DrawElementType::Ellipse
         | DrawElementType::Figure
         | DrawElementType::Image
-        | DrawElementType::Frame
         | DrawElementType::Embed => {
             options.fill_style = rough_fill_style(element.fill_style);
             options.filled = !is_transparent(&element.background_color);
@@ -138,8 +137,16 @@ pub fn generate_rough_options(element: &DrawElement, continuous_path: bool) -> O
             }
         }
         // Arrows are never filled, whatever the background is set to. A note is not
-        // drawn through rough at all (`shape::element_drawable`).
-        DrawElementType::Arrow | DrawElementType::Text | DrawElementType::StickyNote => {}
+        // drawn through rough at all (`shape::element_drawable`). Neither is a frame's
+        // `backgroundColor`: the oracle's frame case never reads that field, painting
+        // only a constant translucent highlight (`renderElement.ts@1118751f:1022-1058`).
+        // Left in the fillable branch above, a frame took a real rough fill — a second,
+        // independently sketchy polygon rough draws around the same corners the outline
+        // does — which is what let a frame's background bleed past its own border.
+        DrawElementType::Arrow
+        | DrawElementType::Text
+        | DrawElementType::StickyNote
+        | DrawElementType::Frame => {}
     }
 
     options
@@ -220,6 +227,20 @@ mod tests {
     #[test]
     fn arrows_never_fill() {
         let mut e = element(DrawElementType::Arrow, 100.0, 60.0);
+        e.background_color = "#ffc9c9".into();
+        assert!(!generate_rough_options(&e, false).filled);
+    }
+
+    /// A frame never fills either, whatever `backgroundColor` ends up holding — the
+    /// oracle's frame case (`renderElement.ts@1118751f:1022-1058`) never reads that
+    /// field at all, painting only a constant translucent highlight when one is shown.
+    /// Before this, a frame was grouped with `Rectangle`/`Image`/`Embed` and took a real
+    /// rough fill, which is what let a frame's background bleed past its own border: a
+    /// solid fill is a second, independently sketchy polygon rough draws around the same
+    /// corners (`draw-rough`'s `generator::rectangle`), not a clip of the outline.
+    #[test]
+    fn frames_never_fill() {
+        let mut e = element(DrawElementType::Frame, 300.0, 200.0);
         e.background_color = "#ffc9c9".into();
         assert!(!generate_rough_options(&e, false).filled);
     }
