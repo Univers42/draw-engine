@@ -153,6 +153,44 @@ fn a_group_holding_a_locked_member_is_unlocked() {
     );
 }
 
+/// Undo and redo walk a lock and a grouping back and forth in any order, each step
+/// taking back its own change and nothing else — the lock does not survive the undo of
+/// the grouping under it, nor the grouping the undo of the lock.
+#[test]
+fn undo_and_redo_walk_a_lock_and_a_grouping_in_any_order() {
+    let Probe {
+        mut engine,
+        a,
+        b,
+        c,
+    } = probe();
+    click(&mut engine, 40.0, 40.0);
+    engine.begin_pointer(340.0, 40.0, true, false);
+    engine.end_pointer();
+    engine.group_selection();
+    let depth = |engine: &DrawEngine| [&a, &b, &c].map(|id| element(engine, id).group_ids.len());
+    let locks = |engine: &DrawEngine| [&a, &b, &c].map(|id| locked(engine, id));
+    assert_eq!(depth(&engine), [2, 2, 1], "setup: [[A B] C]");
+    engine.toggle_lock_selection();
+    assert_eq!(locks(&engine), [true; 3]);
+
+    engine.undo();
+    assert_eq!((depth(&engine), locks(&engine)), ([2, 2, 1], [false; 3]));
+    engine.undo();
+    assert_eq!((depth(&engine), locks(&engine)), ([1, 1, 0], [false; 3]));
+    engine.redo();
+    engine.redo();
+    assert_eq!((depth(&engine), locks(&engine)), ([2, 2, 1], [true; 3]));
+
+    engine.select_element(&c);
+    engine.ungroup_selection();
+    assert_eq!((depth(&engine), locks(&engine)), ([1, 1, 0], [true; 3]));
+    engine.undo();
+    assert_eq!((depth(&engine), locks(&engine)), ([2, 2, 1], [true; 3]));
+    engine.undo();
+    assert_eq!((depth(&engine), locks(&engine)), ([2, 2, 1], [false; 3]));
+}
+
 /// A label is locked with its shape (`includeBoundTextElement: true`, `:52-56`), so the
 /// file says what the board does.
 #[test]
@@ -313,6 +351,29 @@ fn unlock_all_frees_every_locked_element_and_selects_it() {
     assert_eq!(selection(&engine), set(&[&a, &b, &c]));
     engine.undo();
     assert!(locked(&engine, &b) && locked(&engine, &c));
+}
+
+/// A lock is two fields of the elements, and travels as they do: a peer's lock arrives
+/// with the group it was made on, and is undone from here by the same right-click.
+#[test]
+fn a_peers_lock_arrives_with_its_group_and_is_undone_here() {
+    let Probe {
+        mut engine, a, b, ..
+    } = probe();
+    let mut peer = engine_with_scene(engine.get_scene());
+    peer.set_tool(DrawTool::Select);
+    click(&mut peer, 40.0, 40.0);
+    peer.toggle_lock_selection();
+
+    engine.apply_remote_patch(&scene_to_json(&peer.get_scene()));
+    assert!(locked(&engine, &a) && locked(&engine, &b));
+    click(&mut engine, 40.0, 40.0);
+    assert!(selection(&engine).is_empty());
+
+    engine.select_element(&a);
+    engine.toggle_lock_selection();
+    peer.apply_remote_patch(&scene_to_json(&engine.get_scene()));
+    assert!(!locked(&peer, &a) && !locked(&peer, &b));
 }
 
 // ---------------------------------------------------------------------------
