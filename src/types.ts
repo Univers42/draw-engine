@@ -585,6 +585,8 @@ export interface DebugSnapshot {
     medianBuildMs: number;
     medianPaintMs: number;
     p95PaintMs: number;
+    /** Build and paint of one frame together — what a 60Hz budget is held against. */
+    p95CpuMs: number;
     lastBuildMs: number;
     lastPaintMs: number;
     /** After culling. Against `scene.elementCount`, this says whether culling works. */

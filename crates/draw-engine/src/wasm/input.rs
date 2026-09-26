@@ -32,6 +32,8 @@ struct DebugRendering {
     median_build_ms: f64,
     median_paint_ms: f64,
     p95_paint_ms: f64,
+    /// Build and paint of one frame together — what a 60Hz budget is held against.
+    p95_cpu_ms: f64,
     last_build_ms: f64,
     last_paint_ms: f64,
     /// After viewport culling. Compare against `scene.elementCount` to see whether
@@ -562,6 +564,7 @@ impl WasmEngine {
                 median_build_ms: cell.frames.quantile(|f| f.build_ms, 0.5),
                 median_paint_ms: cell.frames.quantile(|f| f.paint_ms, 0.5),
                 p95_paint_ms: cell.frames.quantile(|f| f.paint_ms, 0.95),
+                p95_cpu_ms: cell.frames.quantile(|f| f.build_ms + f.paint_ms, 0.95),
                 last_build_ms: cell.stats.build_ms,
                 last_paint_ms: cell.stats.paint_ms,
                 elements_rendered: cell.stats.visible,
