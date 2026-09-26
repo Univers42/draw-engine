@@ -1,4 +1,4 @@
-//! Benchmarks for the editing loop: duplicate, move, erase.
+//! Benchmarks for the editing loop: duplicate, move, erase, grow a diagram.
 //!
 //! Each one measures a gesture a person actually repeats, on a board that is already
 //! large — which is the case that matters, because every cost here that is proportional
@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use draw_engine::render::cache::ShapeCache;
 use draw_engine::scene::element::{create_element_default, DrawElement, DrawElementType, Geometry};
-use draw_engine::{DrawEngine, DrawTool, Scene, ZOrderMode};
+use draw_engine::{DrawEngine, DrawTool, LinkDirection, Scene, ZOrderMode};
 
 /// `n` shapes in a grid, deterministic so a run measures the code and not the input.
 fn board_of(n: usize) -> Vec<DrawElement> {
@@ -455,10 +455,93 @@ fn remote(c: &mut Criterion) {
     group.finish();
 }
 
+/// A board of `n` shapes with a 200-node diagram beside it, built the way a person builds
+/// one — Ctrl+Right and release, 200 times — and the id of the node in its middle.
+fn diagram_on(n: usize) -> (Vec<DrawElement>, String) {
+    let mut start = create_element_default(
+        DrawElementType::Rectangle,
+        Geometry {
+            x: 0.0,
+            y: -400.0,
+            width: 120.0,
+            height: 60.0,
+        },
+    );
+    start.background_color = "#a5d8ff".into();
+    let mut engine = engine_of(n);
+    engine.set_scene(Scene::new(board_of(n).into_iter().chain([start.clone()])));
+    engine.select(vec![start.id]);
+    let mut chain = Vec::new();
+    for _ in 0..200 {
+        engine.flowchart_create(LinkDirection::Right);
+        engine.flowchart_commit();
+        chain.push(engine.get_selection()[0].clone());
+    }
+    (engine.get_scene(), chain[100].clone())
+}
+
+/// Ctrl+Arrow and Alt+Arrow beside a diagram on a large board. A press places the new
+/// nodes clear of the diagram the start node is linked into, and nothing else: if these
+/// track `n`, something is walking the board.
+fn flowchart(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flowchart");
+    group.sample_size(20);
+    for n in [1000usize, 5000, 20000] {
+        let (elements, middle) = diagram_on(n);
+        let mut engine = DrawEngine::new();
+        engine.set_viewport(1280.0, 800.0, 1.0);
+        engine.set_scene(Scene::new(elements.clone()));
+        engine.select(vec![middle.clone()]);
+
+        // The preview: what each press of Ctrl+Arrow costs while Ctrl is held.
+        group.bench_function(format!("press_on_{n}"), |b| {
+            b.iter(|| {
+                engine.flowchart_create(LinkDirection::Down);
+                black_box(engine.is_creating_flowchart());
+                engine.flowchart_cancel();
+            });
+        });
+        // The tenth press lays out ten nodes, each clear of the nine before it.
+        group.bench_function(format!("ten_presses_on_{n}"), |b| {
+            b.iter(|| {
+                for _ in 0..10 {
+                    engine.flowchart_create(LinkDirection::Down);
+                }
+                engine.flowchart_cancel();
+            });
+        });
+        group.bench_function(format!("navigate_on_{n}"), |b| {
+            b.iter(|| {
+                black_box(engine.flowchart_navigate(LinkDirection::Right));
+                engine.flowchart_navigation_end();
+                engine.select(vec![middle.clone()]);
+            });
+        });
+        // Releasing Ctrl: the cluster joins the scene as one undo step.
+        group.bench_function(format!("commit_on_{n}"), |b| {
+            b.iter_batched_ref(
+                || {
+                    let mut engine = DrawEngine::new();
+                    engine.set_viewport(1280.0, 800.0, 1.0);
+                    engine.set_scene(Scene::new(elements.clone()));
+                    engine.select(vec![middle.clone()]);
+                    engine.flowchart_create(LinkDirection::Down);
+                    let _ = engine.drain_events();
+                    engine
+                },
+                |engine| engine.flowchart_commit(),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     duplicate,
     erase,
+    flowchart,
     joining,
     moving,
     painting,
