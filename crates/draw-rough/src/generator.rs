@@ -24,6 +24,7 @@
 use crate::fillers::pattern_fill_polygons;
 use crate::ops::{Drawable, Op, OpSet, OpSetKind};
 use crate::options::{Ctx, FillStyle, Options};
+use crate::points_on_curve::{curve_to_bezier, points_on_bezier_curves};
 use crate::renderer;
 use crate::renderer::Segment;
 
@@ -137,15 +138,13 @@ pub fn ellipse(x: f64, y: f64, width: f64, height: f64, o: Options) -> Drawable 
 
 /// `generator.curve(points, options)`
 ///
-/// # Known gap: pattern fill
+/// A pattern fill is hatched inside the flattened curve,
+/// `pointsOnBezierCurves(curveToBezier(points), 10, (1 + roughness) / 2)`, exactly as
+/// rough does. It used to hatch the control polygon instead, and on a rounded closed
+/// line that showed as a straight-edged fill inside a bowed outline — the fill stopped
+/// short of every bulge and crossed it on every inward bend.
 ///
-/// Solid fill and the unfilled stroke are exact. A **pattern** fill is approximated:
-/// rough runs `curveToBezier` then `pointsOnBezierCurves` to flatten the curve before
-/// hatching it, and neither is ported, so the control polygon is hatched instead. The
-/// hachure lines are therefore clipped slightly inside the curve where it bows outward.
-/// Same trade, and the same reason, as the flattening in [`path`].
-///
-/// This used to abort instead, on the stated grounds that only a filled freedraw could
+/// This used to abort as well, on the stated grounds that only a filled freedraw could
 /// reach it and this engine produced none. That was wrong: a line with three or more
 /// points is drawn as a curve, so giving any hand-drawn polyline a background in the
 /// inspector reached it — and a `todo!()` in WASM is not an error, it is the module
@@ -177,8 +176,10 @@ pub fn curve(points: &[[f64; 2]], o: Options) -> Drawable {
                 ops: merged_shape(fill_shape.ops),
             });
         } else {
-            // The control polygon, not the flattened curve — see the note above.
-            paths.push(pattern_fill_polygons(&[points.to_vec()], &mut c));
+            let bcurve = curve_to_bezier(points, 0.0);
+            let poly_points =
+                points_on_bezier_curves(&bcurve, 10.0, Some((1.0 + c.o.roughness) / 2.0));
+            paths.push(pattern_fill_polygons(&[poly_points], &mut c));
         }
     }
 

@@ -254,6 +254,26 @@ for (const seed of [1, 12345]) {
   }
 }
 
+// Filled curves: a rounded closed line is `gen.curve` with a fill. A pattern fill is
+// hatched inside the curve flattened by points-on-curve, a solid one is a second curve.
+// The loop is what the line tool leaves when it closes on its start; three points is the
+// case points-on-curve special-cases.
+const CURVES = [
+  [[0, 0], [220, 0], [110, 180], [0, 0]],
+  [[0, 0], [60, -40], [140, 30], [200, -10], [260, 50]],
+  [[0, 0], [120, 90], [240, 0]],
+];
+for (const fillStyle of FILL_STYLES) {
+  for (const seed of [1, 12345]) {
+    for (const roughness of [0, 1, 2]) {
+      for (const points of CURVES) {
+        const base = { seed, roughness, fillStyle, fill: "#f00" };
+        emitDrawable("gen.curve", points, base, gen.curve(structuredClone(points), opts(base)));
+      }
+    }
+  }
+}
+
 // --- rounded paths ---------------------------------------------------------------
 //
 // Excalidraw's DEFAULT rectangle is rounded, and rounded shapes go through

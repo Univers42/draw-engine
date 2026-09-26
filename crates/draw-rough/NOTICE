@@ -22,6 +22,15 @@ This crate is a Rust transcription of rough.js 4.6.4.
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
+`src/points_on_curve.rs` is a transcription of points-on-curve 0.2.0, which rough.js
+4.6.4 depends on.
+
+  points-on-curve — https://github.com/pshihn/bezier-points
+  MIT License
+  Copyright (c) 2020 Preet Shihn
+
+  (same permission notice and disclaimer as above)
+
 The algorithms, constants and evaluation order are reproduced deliberately and
 exactly: this crate's purpose is to agree with rough.js bit for bit, which is what
 lets drawnosaurus render identically to Excalidraw (itself MIT, © 2020 Excalidraw)

@@ -36,6 +36,7 @@ pub mod hachure;
 pub mod jsnum;
 pub mod ops;
 pub mod options;
+pub mod points_on_curve;
 pub mod renderer;
 pub mod rng;
 
