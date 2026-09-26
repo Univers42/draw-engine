@@ -387,8 +387,7 @@ pub fn cross(a: Point, b: Point, p: Point) -> f64 {
 
 /// Whether two segments cross, touching included.
 ///
-/// Collinear touching counts, so a loop drawn exactly along an edge still catches it and
-/// an element laid exactly on a frame's border still counts as meeting it.
+/// Collinear touching counts, so a loop drawn exactly along an edge still catches it.
 pub fn segments_intersect(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
     let d1 = cross(p3, p4, p1);
     let d2 = cross(p3, p4, p2);
@@ -408,6 +407,17 @@ pub fn segments_intersect(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
             && p.y <= a.y.max(b.y)
     };
     on(p3, p4, p1, d1) || on(p3, p4, p2, d2) || on(p1, p2, p3, d3) || on(p1, p2, p4, d4)
+}
+
+/// Whether two segments cross at a point strictly inside both — Excalidraw's
+/// `segmentsIntersectAt` (`packages/math/src/segment.ts@1118751f:72-103`) up to its
+/// half-open ends: meeting at an end, or lying along each other, is not a crossing.
+pub fn segments_cross(p1: Point, p2: Point, p3: Point, p4: Point) -> bool {
+    let d1 = cross(p3, p4, p1);
+    let d2 = cross(p3, p4, p2);
+    let d3 = cross(p1, p2, p3);
+    let d4 = cross(p1, p2, p4);
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
 }
 
 /// The edges of an outline, respecting whether it closes.

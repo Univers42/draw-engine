@@ -1,20 +1,23 @@
 //! Build-a-diagram-by-keyboard: Ctrl/Cmd+Arrow grows a connected node off the selected
 //! shape, Alt+Arrow walks the connections. A port of Excalidraw's
 //! `packages/element/src/flowchart.ts` and `packages/excalidraw/components/App.flowchart.ts`
-//! (`@1118751f`), with one extra the oracle lacks: while Ctrl/Cmd is held, 1/2/3 chooses
-//! the pending nodes' shape.
+//! (`@1118751f`), held to the oracle's own output by `tests/ci_flowchart_oracle.rs`, which
+//! replays what that code produces (`tools/flowchart-oracle`). One extra the oracle lacks:
+//! while Ctrl/Cmd is held, 1/2/3 chooses the pending nodes' shape.
 //!
 //! # Preview, then one commit
 //!
 //! Ctrl/Cmd+Arrow computes a cluster of nodes and binding arrows and holds them in
-//! [`FlowchartCreator::pending`] — painted (`engine/frame.rs`, alongside a peer's preview)
-//! but **not** added to the scene, so `get_scene` and history never see them until Ctrl/Cmd
-//! is released. A repeat press in the same direction grows the cluster by one and
-//! recomputes it from scratch, as the oracle's `numberOfNodes` does; a different direction
-//! restarts it at one. [`DrawEngine::flowchart_commit`] adds every pending element with
-//! `Scene::add`, selects the first new node, and takes **one** step of history — the
-//! oracle's `captureUpdate: IMMEDIATELY` after `insertNewElements`. Escape
-//! ([`DrawEngine::flowchart_cancel`]) just drops what was never added: nothing to undo.
+//! [`FlowchartCreator::pending`] — painted at a fifth of their opacity over the board
+//! (`wasm/paint.rs`, as the oracle's `pendingFlowchartNodes`) but **not** added to the scene,
+//! so `get_scene` and history never see them until Ctrl/Cmd is released. A repeat press in
+//! the same direction grows the cluster by one and recomputes it from scratch, as the
+//! oracle's `numberOfNodes` does; a different direction restarts it at one. Every press
+//! reveals the cluster if any of it is off screen — the camera zooms out to hold it, or
+//! in, up to 100%, to a small one ([`DrawEngine::reveal_if_hidden`]). [`DrawEngine::
+//! flowchart_commit`] inserts the cluster as `insertNewElements` does — into its frame's
+//! children when it joined one —, selects the first new node, reveals it, and takes **one**
+//! step of history. Escape ([`DrawEngine::flowchart_cancel`]) drops what was never added.
 //!
 //! # Placement
 //!
@@ -25,42 +28,48 @@
 //! `sticky_cross_start` anchors an already-visible pending cluster so growing it does not
 //! shuffle the nodes already on screen (`flowchart.ts@1118751f:203-212`).
 //!
-//! # Binding, simplified
+//! # The arrow, and the elbow switch
 //!
-//! The oracle's arrow is always elbow-routed (`elbowed: true`) with an explicit padding of
-//! 6 units past each edge (`createBindingArrow`, `flowchart.ts@1118751f:310-450`). This
-//! engine does not route elbow arrows at all (`engine/selection_style.rs`) — an existing,
-//! documented gap — so [`binding_arrow`] builds an ordinary straight arrow, bound at both
-//! ends to each shape's centre in [`BindMode::Orbit`] and left to
-//! [`crate::scene::binding::refresh_bindings_in_place`] (already run for every other bound
-//! arrow) to resolve onto the outline at [`crate::scene::binding::binding_gap`] — the same
-//! rule a hand-drawn bound arrow gets. A deliberate divergence, not an oversight.
-//!
-//! Obstacle membership follows the oracle's `isElbowArrow` filter with the equivalent this
-//! engine has: **any** bound arrow, elbow or not, since every arrow here would have been
-//! elbow there. So two shapes joined by an ordinary drawn arrow are one flowchart for
-//! placement purposes too.
+//! The oracle's arrow is always elbow-routed (`createBindingArrow`, `flowchart.ts@1118751f:
+//! 310-450`); this engine does not route elbow arrows yet. [`binding_arrow`] is that one
+//! function, building everything the oracle's does — style, heads, both bindings and where
+//! each end is anchored — and drawing today's straight arrow between the two anchors. The
+//! anchors are the oracle's own for a node that is not turned and not a diamond: the middle
+//! of the facing side, a binding gap out ([`facing_fixed_point`]); on a diamond or a turned
+//! node the oracle snaps them with its elbow-only outline rules, which come with elbow
+//! routing. Switching over is `elbowed: true` and the elbow route in [`binding_arrow`], and
+//! [`is_flowchart_link`] narrowing to elbow arrows as the oracle's `isElbowArrow` does —
+//! until then every arrow counts, since every arrow here would have been elbow there.
 //!
 //! # Navigation
 //!
 //! [`FlowchartNavigator`] is `FlowChartNavigator` (`flowchart.ts@1118751f:452-680`): explore
 //! one direction, and a repeat press in the same direction cycles same-level nodes; run out
 //! and it falls back to an unvisited node in any other direction, for faster hopping around
-//! a diagram. [`heading_from_center`] classifies a neighbour by which side of the node's
-//! centre it falls on — the oracle instead classifies the *arrow's own endpoint* against the
-//! node's bounding box (`headingForPointFromElement`), which matters for a bent elbow arrow.
-//! Every arrow this engine draws is straight and every flowchart node is offset cleanly
-//! along one axis, so comparing centres lands the same answer without a second geometry
-//! primitive — a deliberate simplification, not a partial port.
+//! a diagram. A link's direction is the side of the node its arrow leaves or arrives at —
+//! [`heading_for_point_from_element`], `headingForPointFromElement` — successors first,
+//! then predecessors.
+//!
+//! # Cost
+//!
+//! One pass over the scene per press, whatever its size: the obstacle walk builds its
+//! adjacency once rather than rescanning every arrow per node reached, and a navigation
+//! step reads each arrow once per direction asked. The preview is painted over the cached
+//! board, which a press leaves alone. Measured in `benches/editing.rs` (`flowchart/*`):
+//! beside a 200-node diagram on a 20,000-shape board, a press costs about 90µs, a walk
+//! step 100µs and the release 190µs — mostly that one pass. The oracle reads each node's
+//! `boundElements` instead, which this scene does not index; one would take a press down
+//! to the diagram's size, should a tenth of a millisecond ever matter.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::camera::{Point, WorldBounds};
 use crate::engine::DrawEngine;
 use crate::scene::{
-    attach_point, binding_gap, create_element, element_center, element_rotated_bounds,
-    is_bindable_element, linear_from_endpoints, set_anchor, Anchor, BindMode, DrawElement,
-    DrawElementStyle, DrawElementType, End, Geometry, Scene,
+    create_element, element_overlaps_frame, element_rotated_bounds, focus_point, is_frame,
+    is_target_kind, linear_from_endpoints, normalize_fixed_point, scene_outline_bounds, set_anchor,
+    Anchor, Arrowhead, BindMode, DrawElement, DrawElementStyle, DrawElementType, End, FillStyle,
+    Geometry, Scene, BASE_BINDING_GAP,
 };
 
 /// One gap in scene units, on both axes — Excalidraw's `VERTICAL_OFFSET` /
@@ -68,12 +77,8 @@ use crate::scene::{
 const VERTICAL_OFFSET: f64 = 100.0;
 const HORIZONTAL_OFFSET: f64 = 100.0;
 
-/// Screen-space clearance a reveal keeps around the node, matching the oracle's own
-/// `revealIfHidden` under `offsets: { ui: true }` in spirit — this engine has no chrome
-/// layout to read, so a fixed margin stands in for it.
-const REVEAL_PADDING: f64 = 48.0;
-
-/// Which way an arrow points, or a person navigates — Excalidraw's `LinkDirection`.
+/// Which way an arrow points, or a person navigates — Excalidraw's `LinkDirection`, and
+/// its `Heading` too: the four are the same set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkDirection {
     Up,
@@ -93,11 +98,20 @@ impl LinkDirection {
             _ => None,
         }
     }
+
+    fn opposite(self) -> Self {
+        match self {
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
 }
 
 /// Whether `element` can start or extend a flowchart — Excalidraw's
-/// `isFlowchartNodeElement` (`typeChecks.ts@1118751f:286-293`): a rectangle, a diamond, an
-/// ellipse, or a sticky note.
+/// `isFlowchartNodeElement` (`typeChecks.ts@1118751f:286-295`): a rectangle, a diamond, an
+/// ellipse, or a sticky note — and here a figure, the parametric shape the oracle lacks.
 fn is_flowchart_node(element: &DrawElement) -> bool {
     matches!(
         element.kind,
@@ -109,6 +123,13 @@ fn is_flowchart_node(element: &DrawElement) -> bool {
     )
 }
 
+/// Whether `element` links two flowchart nodes. The oracle's `isElbowArrow`
+/// (`flowchart.ts@1118751f:119`, `:595`); every arrow until this engine routes elbow
+/// arrows — see the module doc.
+fn is_flowchart_link(element: &DrawElement) -> bool {
+    element.kind == DrawElementType::Arrow
+}
+
 // --------------------------------------------------------------------------- placement
 
 struct Interval {
@@ -118,7 +139,7 @@ struct Interval {
 
 /// Sorted, non-overlapping. `mergeIntervals` (`flowchart.ts@1118751f:62-76`).
 fn merge_intervals(mut intervals: Vec<Interval>) -> Vec<Interval> {
-    intervals.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+    intervals.sort_by(|a, b| a.start.total_cmp(&b.start));
     let mut merged: Vec<Interval> = Vec::with_capacity(intervals.len());
     for interval in intervals {
         match merged.last_mut() {
@@ -163,39 +184,39 @@ fn find_nearest_free_slot(ideal: f64, size: f64, occupied: &[Interval]) -> f64 {
     best
 }
 
-/// Every node reachable from `start` by a bound arrow — the connected component that acts
-/// as the obstacle set while placing a new cluster. `getConnectedFlowchartNodes`
-/// (`flowchart.ts@1118751f:115-151`); see the module doc for the `isElbowArrow` divergence.
+/// Every node reachable from `start` by a bound link — the connected component that acts
+/// as the obstacle set while placing a new cluster, each by its turned box
+/// (`aabbForElement`). `getConnectedFlowchartNodes` (`flowchart.ts@1118751f:115-151`): a
+/// neighbour is marked visited when first met, and walked on only if an arrow can bind it.
+///
+/// The adjacency is built in one pass over the scene; the oracle rescans every arrow for
+/// each node it reaches, which is quadratic on a large diagram. The walk and its order are
+/// the same.
 fn connected_flowchart_obstacles(scene: &Scene, start: &DrawElement) -> Vec<WorldBounds> {
-    let arrows: Vec<&DrawElement> = scene
-        .iter_ordered()
-        .filter(|el| el.kind == DrawElementType::Arrow)
-        .collect();
-    let mut visited: HashSet<String> = HashSet::from([start.id.clone()]);
-    let mut queue: Vec<String> = vec![start.id.clone()];
+    let mut neighbours: HashMap<&str, Vec<&str>> = HashMap::new();
+    for arrow in scene.iter_ordered().filter(|el| is_flowchart_link(el)) {
+        let (from, to) = (arrow.start_binding.as_deref(), arrow.end_binding.as_deref());
+        // An end bound to nothing is a neighbour of nothing: `!neighborId` in the oracle.
+        if let (Some(from), Some(to)) = (from, to) {
+            neighbours.entry(from).or_default().push(to);
+            // An arrow from a node to itself is met once, as `startId === currentId` first.
+            if from != to {
+                neighbours.entry(to).or_default().push(from);
+            }
+        }
+    }
+    let mut visited: HashSet<&str> = HashSet::from([start.id.as_str()]);
+    let mut queue: VecDeque<&str> = VecDeque::from([start.id.as_str()]);
     let mut obstacles = Vec::new();
-    let mut i = 0;
-    while i < queue.len() {
-        let current = queue[i].clone();
-        i += 1;
-        for arrow in &arrows {
-            let neighbor_id = if arrow.start_binding.as_deref() == Some(current.as_str()) {
-                arrow.end_binding.clone()
-            } else if arrow.end_binding.as_deref() == Some(current.as_str()) {
-                arrow.start_binding.clone()
-            } else {
-                None
-            };
-            let Some(neighbor_id) = neighbor_id else {
-                continue;
-            };
-            if !visited.insert(neighbor_id.clone()) {
+    while let Some(current) = queue.pop_front() {
+        for &neighbour in neighbours.get(current).map_or(&[][..], Vec::as_slice) {
+            if !visited.insert(neighbour) {
                 continue;
             }
-            if let Some(node) = scene.get(&neighbor_id) {
-                if !node.is_deleted {
+            if let Some(node) = scene.get(neighbour).filter(|el| !el.is_deleted) {
+                if is_target_kind(node) {
                     obstacles.push(element_rotated_bounds(node));
-                    queue.push(neighbor_id);
+                    queue.push_back(neighbour);
                 }
             }
         }
@@ -281,10 +302,11 @@ fn place_cluster(
             .into_iter()
             .filter(|&c| interval_is_free(c, cluster_cross_size, &occupied))
             .collect();
+        // Stable, as `Array.prototype.sort` is: a tie keeps `start` first.
         candidates.sort_by(|a, b| {
             let da = (a + cluster_cross_size / 2.0 - parent_cross_center).abs();
             let db = (b + cluster_cross_size / 2.0 - parent_cross_center).abs();
-            da.partial_cmp(&db).unwrap()
+            da.total_cmp(&db)
         });
         candidates.first().copied()
     });
@@ -314,8 +336,10 @@ fn place_cluster(
 // ----------------------------------------------------------------------------- building
 
 /// A new node at `(x, y)`, copying `template`'s size and style — `cloneFlowchartNode`
-/// (`flowchart.ts@1118751f:232-270`). `kind` need not match `template`'s: the digit-key
-/// shape choice clones the template's *style*, never its type.
+/// (`flowchart.ts@1118751f:232-270`): the size, the corners (`roundness`, radius included),
+/// roughness, colours, stroke, opacity and fill, a sticky note's base height; never the
+/// turn. `kind` need not match `template`'s: the digit-key shape choice clones the
+/// template's *style*, never its type.
 fn clone_flowchart_node(
     template: &DrawElement,
     kind: DrawElementType,
@@ -344,8 +368,10 @@ fn clone_flowchart_node(
         style,
         now,
     );
+    node.corner_radius = template.corner_radius;
     if kind == DrawElementType::StickyNote {
-        node.base_height = template.base_height;
+        // `newStickyNoteElement`'s `baseHeight ?? height` (`newElement.ts@1118751f:241`).
+        node.base_height = Some(template.base_height.unwrap_or(template.height));
     }
     if kind == DrawElementType::Figure {
         // Only reachable extending a figure chain with no digit override — the digit
@@ -356,71 +382,95 @@ fn clone_flowchart_node(
     node
 }
 
-/// A straight arrow from `source` to `target`, bound at both ends — see the module doc for
-/// why this engine draws a straight line where the oracle's is elbow-routed. The two ends
-/// are anchored at each shape's centre in [`BindMode::Orbit`]; the visible points here are
-/// only a bootstrap; the shape they settle at is whatever
-/// [`crate::scene::binding::refresh_bindings_in_place`] gives every other bound arrow, run
-/// once the cluster is committed to the scene ([`DrawEngine::flowchart_commit`]).
-fn binding_arrow(source: &DrawElement, target: &DrawElement, now: f64) -> DrawElement {
-    let start_pt = attach_point(source, element_center(target), binding_gap(source));
-    let end_pt = attach_point(target, element_center(source), binding_gap(target));
+/// Which of `node`'s own sides faces `direction` on the board: for a turned node, the side
+/// whose outward normal turns nearest to it.
+fn facing_side(node: &DrawElement, direction: LinkDirection) -> LinkDirection {
+    if node.angle == 0.0 {
+        return direction;
+    }
+    let (dx, dy) = match direction {
+        LinkDirection::Right => (1.0, 0.0),
+        LinkDirection::Left => (-1.0, 0.0),
+        LinkDirection::Down => (0.0, 1.0),
+        LinkDirection::Up => (0.0, -1.0),
+    };
+    let (sin, cos) = (-node.angle).sin_cos();
+    vector_to_heading(dx * cos - dy * sin, dx * sin + dy * cos)
+}
+
+/// Where a flowchart arrow's end is anchored on `node`: the middle of the side facing
+/// `direction`, a binding gap out, as a ratio of the node's size.
+///
+/// What `calculateFixedPointForElbowArrowBinding` (`binding.ts@1118751f:2106-2170`) makes
+/// of `createBindingArrow`'s ends on a node that is neither turned nor a diamond: the snap
+/// lands on the outline grown by `getBindingGap` — 5 plus half the node's stroke, never
+/// capped — the ratio's divisor is floored at that gap, and a node under a unit across is
+/// anchored at its centre. On a turned node or a diamond the oracle's elbow snapping moves
+/// the anchor off the side's middle; see the module doc.
+fn facing_fixed_point(node: &DrawElement, direction: LinkDirection) -> [f64; 2] {
+    /// `MIN_BINDABLE_SIZE` (`binding.ts@1118751f:124`).
+    const MIN_BINDABLE_SIZE: f64 = 1.0;
+    let (w, h) = (node.width, node.height);
+    if w < MIN_BINDABLE_SIZE || h < MIN_BINDABLE_SIZE {
+        return normalize_fixed_point([0.5, 0.5]);
+    }
+    let gap = BASE_BINDING_GAP + node.stroke_width / 2.0;
+    let (px, py) = match facing_side(node, direction) {
+        LinkDirection::Right => (w + gap, h / 2.0),
+        LinkDirection::Left => (-gap, h / 2.0),
+        LinkDirection::Down => (w / 2.0, h + gap),
+        LinkDirection::Up => (w / 2.0, -gap),
+    };
+    normalize_fixed_point([px / w.max(gap), py / h.max(gap)])
+}
+
+/// The arrow joining `source` to a new node `target` placed toward `direction`.
+/// `createBindingArrow` (`flowchart.ts@1118751f:310-450`): the source's stroke colour,
+/// stroke style, stroke width, opacity and roughness; every other style the default a new
+/// arrow gets — a solid fill, no background, sharp; no tail, and the head the next arrow
+/// would get; bound at both ends in orbit. See the module doc for the elbow switch.
+fn binding_arrow(
+    source: &DrawElement,
+    target: &DrawElement,
+    direction: LinkDirection,
+    end_arrowhead: Arrowhead,
+    now: f64,
+) -> DrawElement {
     let style = DrawElementStyle {
         stroke_color: source.stroke_color.clone(),
         background_color: "transparent".to_string(),
-        fill_style: source.fill_style,
+        fill_style: FillStyle::Solid,
         stroke_width: source.stroke_width,
         stroke_style: source.stroke_style,
         roughness: source.roughness,
         opacity: source.opacity,
         roundness: None,
     };
+    let start_fixed = facing_fixed_point(source, direction);
+    let end_fixed = facing_fixed_point(target, direction.opposite());
     let arrow = create_element(DrawElementType::Arrow, Geometry::default(), style, now);
-    let mut arrow = linear_from_endpoints(arrow, start_pt, end_pt);
-    set_anchor(
-        &mut arrow,
-        End::Start,
-        Some(Anchor {
-            element_id: source.id.clone(),
-            fixed_point: [0.5, 0.5],
-            mode: BindMode::Orbit,
-        }),
+    let mut arrow = linear_from_endpoints(
+        arrow,
+        focus_point(source, start_fixed),
+        focus_point(target, end_fixed),
     );
-    set_anchor(
-        &mut arrow,
-        End::End,
-        Some(Anchor {
-            element_id: target.id.clone(),
-            fixed_point: [0.5, 0.5],
-            mode: BindMode::Orbit,
-        }),
-    );
-    arrow
-}
-
-/// The pending cluster for one direction press: `count` node-and-arrow pairs
-/// (`[node0, arrow0, node1, arrow1, …]`, matching the oracle's interleaving so index 0 is
-/// always the first node), and the cross-axis start the next grow anchors to.
-fn build_pending(
-    scene: &Scene,
-    start: &DrawElement,
-    direction: LinkDirection,
-    count: usize,
-    shape: DrawElementType,
-    sticky_cross_start: Option<f64>,
-    now: f64,
-) -> (Vec<DrawElement>, f64) {
-    let obstacles = connected_flowchart_obstacles(scene, start);
-    let (positions, cross_start) =
-        place_cluster(start, direction, count, &obstacles, sticky_cross_start);
-    let mut pending = Vec::with_capacity(count * 2);
-    for (x, y) in positions {
-        let node = clone_flowchart_node(start, shape, x, y, now);
-        let arrow = binding_arrow(start, &node, now);
-        pending.push(node);
-        pending.push(arrow);
+    arrow.start_arrowhead = None;
+    arrow.end_arrowhead = Some(end_arrowhead);
+    for (end, node, fixed_point) in [
+        (End::Start, source, start_fixed),
+        (End::End, target, end_fixed),
+    ] {
+        set_anchor(
+            &mut arrow,
+            end,
+            Some(Anchor {
+                element_id: node.id.clone(),
+                fixed_point,
+                mode: BindMode::Orbit,
+            }),
+        );
     }
-    (pending, cross_start)
+    arrow
 }
 
 /// The cluster being previewed while Ctrl/Cmd is held. `FlowChartCreator`
@@ -435,52 +485,197 @@ pub(crate) struct FlowchartCreator {
 
 // ---------------------------------------------------------------------------- navigation
 
-/// Which side of `node`'s centre `other` falls on. See the module doc for why this stands
-/// in for the oracle's per-endpoint `headingForPointFromElement`.
-fn heading_from_center(node: &DrawElement, other: Point) -> LinkDirection {
-    let center = element_center(node);
-    let dx = other.x - center.x;
-    let dy = other.y - center.y;
-    if dx.abs() >= dy.abs() {
-        if dx >= 0.0 {
-            LinkDirection::Right
-        } else {
-            LinkDirection::Left
-        }
-    } else if dy >= 0.0 {
+/// `vectorToHeading` (`heading.ts@1118751f:38-50`), ties included.
+fn vector_to_heading(x: f64, y: f64) -> LinkDirection {
+    let (abs_x, abs_y) = (x.abs(), y.abs());
+    if x > abs_y {
+        LinkDirection::Right
+    } else if x <= -abs_y {
+        LinkDirection::Left
+    } else if y > abs_x {
         LinkDirection::Down
     } else {
         LinkDirection::Up
     }
 }
 
-/// Every node bound to `element` by an arrow, on either end, that lies in `direction` —
-/// the union of the oracle's `getSuccessors` and `getPredecessors`
-/// (`flowchart.ts@1118751f:582-679`): a link is walked either way.
-fn linked_nodes(element: &DrawElement, scene: &Scene, direction: LinkDirection) -> Vec<String> {
-    let mut result = Vec::new();
-    for arrow in scene
-        .iter_ordered()
-        .filter(|el| el.kind == DrawElementType::Arrow)
+fn heading_for_point(p: Point, origin: Point) -> LinkDirection {
+    vector_to_heading(p.x - origin.x, p.y - origin.y)
+}
+
+/// `pointRotateRads`, which skips a zero angle.
+fn rotate(p: Point, centre: Point, angle: f64) -> Point {
+    if angle == 0.0 {
+        return p;
+    }
+    let (sin, cos) = angle.sin_cos();
+    Point {
+        x: (p.x - centre.x) * cos - (p.y - centre.y) * sin + centre.x,
+        y: (p.x - centre.x) * sin + (p.y - centre.y) * cos + centre.y,
+    }
+}
+
+/// `vectorCross` of `a - b` and `c - d`.
+fn cross(a: Point, b: Point, c: Point, d: Point) -> f64 {
+    (a.x - b.x) * (c.y - d.y) - (c.x - d.x) * (a.y - b.y)
+}
+
+/// `triangleIncludesPoint` (`math/src/triangle.ts@1118751f:14-28`), edges included.
+fn triangle_includes_point([a, b, c]: [Point; 3], p: Point) -> bool {
+    let sign = |p1: Point, p2: Point, p3: Point| {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+    };
+    let (d1, d2, d3) = (sign(p, a, b), sign(p, b, c), sign(p, c, a));
+    let negative = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let positive = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+    !(negative && positive)
+}
+
+/// `headingForPointFromDiamondElement` (`heading.ts@1118751f:73-222`): the vertex regions
+/// first, then the sides, each side handing its point to whichever vertex the diamond's
+/// longer axis runs to.
+fn heading_for_point_from_diamond(
+    element: &DrawElement,
+    mid: Point,
+    point: Point,
+) -> LinkDirection {
+    /// Rounded elements tolerance.
+    const SHRINK: f64 = 0.95;
+    let corner = |x: f64, y: f64| {
+        let r = rotate(Point { x, y }, mid, element.angle);
+        Point {
+            x: (r.x - mid.x) * SHRINK + mid.x,
+            y: (r.y - mid.y) * SHRINK + mid.y,
+        }
+    };
+    let (x, y, w, h) = (element.x, element.y, element.width, element.height);
+    let top = corner(x + w / 2.0, y);
+    let right = corner(x + w, y + h / 2.0);
+    let bottom = corner(x + w / 2.0, y + h);
+    let left = corner(x, y + h / 2.0);
+
+    if cross(point, top, top, right) <= 0.0 && cross(point, top, top, left) > 0.0 {
+        return heading_for_point(top, mid);
+    } else if cross(point, right, right, bottom) <= 0.0 && cross(point, right, right, top) > 0.0 {
+        return heading_for_point(right, mid);
+    } else if cross(point, bottom, bottom, left) <= 0.0 && cross(point, bottom, bottom, right) > 0.0
     {
-        let other_id = if arrow.start_binding.as_deref() == Some(element.id.as_str()) {
-            arrow.end_binding.as_deref()
-        } else if arrow.end_binding.as_deref() == Some(element.id.as_str()) {
-            arrow.start_binding.as_deref()
+        return heading_for_point(bottom, mid);
+    } else if cross(point, left, left, top) <= 0.0 && cross(point, left, left, bottom) > 0.0 {
+        return heading_for_point(left, mid);
+    }
+
+    let wide = w > h;
+    let p = if cross(point, mid, top, mid) <= 0.0 && cross(point, mid, right, mid) > 0.0 {
+        if wide {
+            top
         } else {
-            None
+            right
+        }
+    } else if cross(point, mid, right, mid) <= 0.0 && cross(point, mid, bottom, mid) > 0.0 {
+        if wide {
+            bottom
+        } else {
+            right
+        }
+    } else if cross(point, mid, bottom, mid) <= 0.0 && cross(point, mid, left, mid) > 0.0 {
+        if wide {
+            bottom
+        } else {
+            left
+        }
+    } else if wide {
+        top
+    } else {
+        left
+    };
+    heading_for_point(p, mid)
+}
+
+/// Which side of `element` the point `p` is on. `headingForPointFromElement`
+/// (`heading.ts@1118751f:227-278`): four search cones from the centre of the node's turned
+/// box, twice its size; a diamond by its own rule.
+fn heading_for_point_from_element(element: &DrawElement, p: Point) -> LinkDirection {
+    /// `SEARCH_CONE_MULTIPLIER`.
+    const CONE: f64 = 2.0;
+    let aabb = element_rotated_bounds(element);
+    let mid = Point {
+        x: aabb.min_x + (aabb.max_x - aabb.min_x) / 2.0,
+        y: aabb.min_y + (aabb.max_y - aabb.min_y) / 2.0,
+    };
+    if element.kind == DrawElementType::Diamond {
+        return heading_for_point_from_diamond(element, mid, p);
+    }
+    let scaled = |x: f64, y: f64| Point {
+        x: mid.x + (x - mid.x) * CONE,
+        y: mid.y + (y - mid.y) * CONE,
+    };
+    let top_left = scaled(aabb.min_x, aabb.min_y);
+    let top_right = scaled(aabb.max_x, aabb.min_y);
+    let bottom_left = scaled(aabb.min_x, aabb.max_y);
+    let bottom_right = scaled(aabb.max_x, aabb.max_y);
+    if triangle_includes_point([top_left, top_right, mid], p) {
+        LinkDirection::Up
+    } else if triangle_includes_point([top_right, bottom_right, mid], p) {
+        LinkDirection::Right
+    } else if triangle_includes_point([bottom_right, bottom_left, mid], p) {
+        LinkDirection::Down
+    } else {
+        LinkDirection::Left
+    }
+}
+
+/// The nodes linked to `node` whose link leaves (`successors`) or arrives at (not) the
+/// side facing `direction`, in scene order. `getNodeRelatives` (`flowchart.ts@1118751f:
+/// 582-650`): a successor is the far end of an arrow starting at `node`, judged by the
+/// arrow's first point; a predecessor the near end of one finishing there, by its last.
+fn node_relatives(
+    successors: bool,
+    node: &DrawElement,
+    scene: &Scene,
+    direction: LinkDirection,
+) -> Vec<String> {
+    let mut relatives = Vec::new();
+    for arrow in scene.iter_ordered().filter(|el| is_flowchart_link(el)) {
+        let (own, opposite) = if successors {
+            (&arrow.start_binding, &arrow.end_binding)
+        } else {
+            (&arrow.end_binding, &arrow.start_binding)
         };
-        let Some(other_id) = other_id else {
+        let Some(opposite) = opposite else {
             continue;
         };
-        let Some(other) = scene.get(other_id).filter(|el| !el.is_deleted) else {
+        if own.as_deref() != Some(node.id.as_str()) {
+            continue;
+        }
+        let Some(relative) = scene.get(opposite).filter(|el| !el.is_deleted) else {
             continue;
         };
-        if heading_from_center(element, element_center(other)) == direction {
-            result.push(other.id.clone());
+        let points = arrow.points.as_deref().unwrap_or_default();
+        let edge = if successors {
+            Some([0.0, 0.0])
+        } else {
+            points.last().copied()
+        };
+        let Some([ex, ey]) = edge else {
+            continue;
+        };
+        let at = Point {
+            x: ex + arrow.x,
+            y: ey + arrow.y,
+        };
+        if heading_for_point_from_element(node, at) == direction {
+            relatives.push(relative.id.clone());
         }
     }
-    result
+    relatives
+}
+
+/// Successors, then predecessors — `[...getSuccessors, ...getPredecessors]`.
+fn linked_nodes(node: &DrawElement, scene: &Scene, direction: LinkDirection) -> Vec<String> {
+    let mut nodes = node_relatives(true, node, scene, direction);
+    nodes.extend(node_relatives(false, node, scene, direction));
+    nodes
 }
 
 /// Alt+Arrow's session state: which direction is being explored, the nodes at that level,
@@ -505,12 +700,16 @@ impl FlowchartNavigator {
     }
 
     /// One Alt+Arrow press: the id to select next, or `None` when there is nowhere to go.
+    /// `exploreByDirection` (`flowchart.ts@1118751f:470-580`).
     fn explore(
         &mut self,
         element: &DrawElement,
         scene: &Scene,
         direction: LinkDirection,
     ) -> Option<String> {
+        if !is_target_kind(element) {
+            return None;
+        }
         if Some(direction) != self.direction {
             self.clear();
         }
@@ -525,21 +724,18 @@ impl FlowchartNavigator {
 
         // Starting fresh in this direction: go to the first node there.
         let nodes = linked_nodes(element, scene, direction);
-        if !nodes.is_empty() {
+        if let Some(first) = nodes.first().cloned() {
             self.index = 0;
             self.exploring = true;
-            self.same_level = nodes.clone();
+            self.same_level = nodes;
             self.direction = Some(direction);
-            self.visited.insert(nodes[0].clone());
-            return Some(nodes[0].clone());
+            self.visited.insert(first.clone());
+            return Some(first);
         }
 
         // Nothing at this level: hop to any other unvisited linked node, for speedier
         // navigation without switching arrow keys.
         if Some(direction) == self.direction || !self.exploring {
-            if !self.exploring {
-                self.visited.insert(element.id.clone());
-            }
             for other in [
                 LinkDirection::Up,
                 LinkDirection::Right,
@@ -564,40 +760,91 @@ impl FlowchartNavigator {
 
 impl DrawEngine {
     /// Ctrl/Cmd+Arrow: previews a cluster of new nodes off the single selected flowchart
-    /// node, growing it by one on a repeat press in the same direction. No-op with no
-    /// exactly-one flowchart-eligible selection — the guard the oracle's
-    /// `resolveKeyboardEventToOperation` runs before calling `createNodes`
-    /// (`App.flowchart.ts@1118751f:112-131`).
+    /// node, growing it by one on a repeat press in the same direction, and reveals the
+    /// cluster if any of it is off screen. The key is the oracle's whether or not a node is
+    /// selected (`App.flowchart.ts@1118751f:112-131`): with no exactly-one flowchart node
+    /// selected nothing grows, and a cluster already pending is revealed again.
     pub fn flowchart_create(&mut self, direction: LinkDirection) {
         let selected = self.get_selected_elements();
-        let [start] = selected.as_slice() else {
-            return;
-        };
-        if !is_flowchart_node(start) {
-            return;
+        if let [start] = selected.as_slice() {
+            if is_flowchart_node(start) {
+                let (count, cross_start, shape) = match &self.flowchart_creator {
+                    Some(creator) if creator.direction == direction => (
+                        creator.number_of_nodes + 1,
+                        creator.cluster_cross_start,
+                        creator.shape,
+                    ),
+                    // A different direction restarts the cluster, as the oracle's does
+                    // (`flowchart.ts@1118751f:699-704`) — but keeps the shape already
+                    // chosen this gesture, rather than reverting to the start node's own.
+                    Some(creator) => (1, None, creator.shape),
+                    None => (1, None, start.kind),
+                };
+                self.set_pending_flowchart(start, direction, count, shape, cross_start);
+            }
         }
-        let (count, cross_start, shape) = match &self.flowchart_creator {
-            Some(creator) if creator.direction == direction => (
-                creator.number_of_nodes + 1,
-                creator.cluster_cross_start,
-                creator.shape,
-            ),
-            // A different direction restarts the cluster, as the oracle's does
-            // (`flowchart.ts@1118751f:699-704`) — but keeps the shape already chosen this
-            // gesture, rather than reverting to the start node's own.
-            Some(creator) => (1, None, creator.shape),
-            None => (1, None, start.kind),
-        };
-        let now = self.now_ms;
-        let (pending, cross_start) = build_pending(
-            &self.scene,
-            start,
-            direction,
-            count,
-            shape,
-            cross_start,
-            now,
-        );
+        let bounds = self
+            .flowchart_creator
+            .as_ref()
+            .and_then(|creator| scene_outline_bounds(&creator.pending));
+        if let Some(bounds) = bounds {
+            self.reveal_if_hidden(bounds);
+        }
+    }
+
+    /// The pending cluster for one direction press: `count` node-and-arrow pairs
+    /// (`[node0, arrow0, node1, arrow1, …]`, the oracle's interleaving, so index 0 is always
+    /// the first node), and the cross-axis start the next grow anchors to. `addNewNodes`
+    /// (`flowchart.ts@1118751f:272-308`), then `createNodes`' frame rule (`:720-744`): the
+    /// cluster joins the source's frame when every piece of it is inside or overlapping it.
+    fn build_pending(
+        &self,
+        start: &DrawElement,
+        direction: LinkDirection,
+        count: usize,
+        shape: DrawElementType,
+        sticky_cross_start: Option<f64>,
+    ) -> (Vec<DrawElement>, f64) {
+        let obstacles = connected_flowchart_obstacles(&self.scene, start);
+        let (positions, cross_start) =
+            place_cluster(start, direction, count, &obstacles, sticky_cross_start);
+        let head = self.next_end_arrowhead.unwrap_or(Arrowhead::Arrow);
+        let mut pending = Vec::with_capacity(count * 2);
+        for (x, y) in positions {
+            let node = clone_flowchart_node(start, shape, x, y, self.now_ms);
+            let arrow = binding_arrow(start, &node, direction, head, self.now_ms);
+            pending.push(node);
+            pending.push(arrow);
+        }
+        let frame = start
+            .frame_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|frame| !frame.is_deleted && is_frame(frame));
+        if let Some(frame) = frame {
+            if pending
+                .iter()
+                .all(|element| element_overlaps_frame(element, frame))
+            {
+                for element in &mut pending {
+                    element.frame_id = Some(frame.id.clone());
+                }
+            }
+        }
+        (pending, cross_start)
+    }
+
+    /// Computes and holds the pending cluster. Shared by a direction press and a shape pick.
+    fn set_pending_flowchart(
+        &mut self,
+        start: &DrawElement,
+        direction: LinkDirection,
+        count: usize,
+        shape: DrawElementType,
+        cross_start: Option<f64>,
+    ) {
+        let (pending, cross_start) =
+            self.build_pending(start, direction, count, shape, cross_start);
         self.flowchart_creator = Some(FlowchartCreator {
             direction,
             number_of_nodes: count,
@@ -634,47 +881,66 @@ impl DrawEngine {
         if !is_flowchart_node(start) {
             return;
         }
-        let now = self.now_ms;
-        let (pending, cross_start) = build_pending(
-            &self.scene,
-            start,
-            direction,
-            count,
-            shape,
-            cross_start,
-            now,
-        );
-        self.flowchart_creator = Some(FlowchartCreator {
-            direction,
-            number_of_nodes: count,
-            cluster_cross_start: Some(cross_start),
-            shape,
-            pending,
-        });
-        self.request_draw();
+        self.set_pending_flowchart(start, direction, count, shape, cross_start);
     }
 
-    /// Releasing Ctrl/Cmd: adds the pending cluster to the scene, selects the first new
-    /// node, records **one** step of history — `insertNewElements` followed by
-    /// `captureUpdate: IMMEDIATELY` (`App.flowchart.ts@1118751f:78-90`) — and eases the
-    /// camera to the new node if it landed off screen (`App.flowchart.ts@1118751f:86`'s own
-    /// `selectAndReveal`).
+    /// Releasing Ctrl/Cmd: inserts the pending cluster, selects the first new node,
+    /// reveals it, and records **one** step of history — `insertNewElements`, then
+    /// `selectAndReveal`, then `captureUpdate: IMMEDIATELY` (`App.flowchart.ts@1118751f:
+    /// 78-90`).
+    ///
+    /// Inserted in runs of one frame: a run that joined a frame goes where
+    /// `getFrameChildrenInsertionIndex` puts it (`frame.ts@1118751f:521-537`) — above the
+    /// frame's topmost child, or directly under the frame when it has none — and any other
+    /// on top of the board (`App.tsx@1118751f:7754-7782`).
     pub fn flowchart_commit(&mut self) {
         let Some(creator) = self.flowchart_creator.take() else {
             return;
         };
-        if creator.pending.is_empty() {
+        let Some(first) = creator.pending.first() else {
+            self.request_draw();
             return;
+        };
+        let first_node_id = first.id.clone();
+        let created: Vec<String> = creator.pending.iter().map(|el| el.id.clone()).collect();
+        let mut runs: Vec<(Option<String>, Vec<String>)> = Vec::new();
+        for element in &creator.pending {
+            match runs.last_mut() {
+                Some((frame, ids)) if *frame == element.frame_id => ids.push(element.id.clone()),
+                _ => runs.push((element.frame_id.clone(), vec![element.id.clone()])),
+            }
         }
-        let first_node_id = creator.pending[0].id.clone();
-        let first_node_bounds = element_rotated_bounds(&creator.pending[0]);
-        for element in creator.pending {
-            self.scene.add(element);
+        for (frame, ids) in runs {
+            let anchor = frame.as_deref().and_then(|frame| {
+                self.scene
+                    .iter_ordered()
+                    .rev()
+                    .find(|el| el.id == frame || el.frame_id.as_deref() == Some(frame))
+                    .map(|el| (el.id.clone(), el.id == frame))
+            });
+            for id in &ids {
+                if let Some(element) = creator.pending.iter().find(|el| &el.id == id) {
+                    self.scene.add(element.clone());
+                }
+            }
+            match anchor {
+                Some((frame, true)) => self.scene.place_below(&ids, &frame),
+                Some((child, false)) => self.scene.place_above(&ids, &child),
+                None => {}
+            }
         }
-        self.set_selection(vec![first_node_id]);
+        self.set_selection(vec![first_node_id.clone()]);
         self.apply_bindings();
-        self.push_history();
-        self.reveal(first_node_bounds, REVEAL_PADDING);
+        // The cluster's frame was decided by overlap when it was built, not by where each
+        // piece landed: a node straddling the frame's edge still joins it.
+        self.push_history_keeping_frames(&created);
+        if let Some(bounds) = self
+            .scene
+            .get(&first_node_id)
+            .and_then(|node| scene_outline_bounds([node]))
+        {
+            self.reveal_if_hidden(bounds);
+        }
         self.request_draw();
     }
 
@@ -699,29 +965,26 @@ impl DrawEngine {
             .unwrap_or_default()
     }
 
-    /// Alt+Arrow: selects the node connected in that direction, cycling same-level nodes on
-    /// a repeat press, and eases the camera to it if it is off screen. Returns the id
-    /// selected, or `None` with no exactly-one bindable selection or nothing linked that way.
+    /// Alt+Arrow: selects the node linked in that direction, cycling same-level nodes on a
+    /// repeat press, and reveals it if it is off screen — `selectAndReveal`
+    /// (`App.flowchart.ts@1118751f:166-176`). Returns the id selected, or `None` with no
+    /// exactly-one selection an arrow can bind to, or nothing linked that way.
     pub fn flowchart_navigate(&mut self, direction: LinkDirection) -> Option<String> {
         let selected = self.get_selected_elements();
         let [element] = selected.as_slice() else {
             return None;
         };
-        if !is_bindable_element(element) {
-            return None;
-        }
-        let element = element.clone();
         let id = self
             .flowchart_navigator
-            .explore(&element, &self.scene, direction);
-        if let Some(id) = &id {
-            self.set_selection(vec![id.clone()]);
-            let bounds = self.scene.get(id).map(element_rotated_bounds);
-            if let Some(bounds) = bounds {
-                self.reveal(bounds, REVEAL_PADDING);
-            }
+            .explore(element, &self.scene, direction)?;
+        let node = self.scene.get(&id).filter(|el| !el.is_deleted)?;
+        let bounds = scene_outline_bounds([node]);
+        self.set_selection(vec![id.clone()]);
+        if let Some(bounds) = bounds {
+            self.reveal_if_hidden(bounds);
         }
-        id
+        self.request_draw();
+        Some(id)
     }
 
     /// Alt released: ends the exploration, so the next Alt+Arrow starts fresh rather than

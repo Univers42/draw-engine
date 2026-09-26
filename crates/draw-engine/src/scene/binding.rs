@@ -107,7 +107,7 @@ pub fn is_bindable_element(element: &DrawElement) -> bool {
 /// to its container, and never a line or arrow. A locked one is not a target, but it
 /// still stands in the way of what is behind it, so the lock is [`arrow_target_among`]'s
 /// to judge.
-fn is_target_kind(element: &DrawElement) -> bool {
+pub fn is_target_kind(element: &DrawElement) -> bool {
     match element.kind {
         DrawElementType::Rectangle
         | DrawElementType::StickyNote
@@ -273,6 +273,22 @@ pub fn set_anchor(arrow: &mut DrawElement, end: End, anchor: Option<Anchor>) {
             arrow.end_bind_mode = mode;
         }
     }
+}
+
+/// Excalidraw's `normalizeFixedPoint` (`binding.ts@1118751f:2728-2750`): bounded like
+/// [`clean_fixed_point`], and never exactly the middle of an axis — a ratio within 0.0001
+/// of 0.5 is written 0.5001, so a later heading taken from it cannot flip on rounding.
+/// What the oracle stores for every elbow arrow's end.
+pub fn normalize_fixed_point(fixed: [f64; 2]) -> [f64; 2] {
+    const EPSILON: f64 = 0.0001;
+    if !fixed.iter().all(|r| r.is_finite()) {
+        return [0.5001, 0.5001];
+    }
+    let clamped = fixed.map(|r| r.clamp(-FIXED_POINT_BOUND, FIXED_POINT_BOUND));
+    if clamped.iter().any(|r| (r - 0.5).abs() < EPSILON) {
+        return clamped.map(|r| if (r - 0.5).abs() < EPSILON { 0.5001 } else { r });
+    }
+    clamped
 }
 
 /// A stored anchor made safe to use: a document is data from anywhere, and a NaN here

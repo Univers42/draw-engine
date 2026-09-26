@@ -466,8 +466,9 @@ thread_local! {
     static ERASE_FADE: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
-/// How visible an element marked by the eraser stays: Excalidraw's
-/// `ELEMENT_READY_TO_ERASE_OPACITY` (20), multiplied into the element's own.
+/// How visible an element marked by the eraser stays — and a flowchart node not yet
+/// added: Excalidraw's `ELEMENT_READY_TO_ERASE_OPACITY` (20), multiplied into the
+/// element's own (`renderElement.ts@1118751f:185-192`).
 const READY_TO_ERASE_OPACITY: f64 = 0.2;
 
 fn set_line_width_cached(ctx: &CanvasRenderingContext2d, width: f64) {
@@ -990,6 +991,16 @@ fn paint_layer(
 ///
 /// The context's transform is left as the last element set it.
 fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[&DrawElement]) {
+    paint_elements_faded(ctx, view, elements, false);
+}
+
+/// [`paint_elements`], every element faded as a marked one is when `faded`.
+fn paint_elements_faded(
+    ctx: &CanvasRenderingContext2d,
+    view: &PaintView,
+    elements: &[&DrawElement],
+    faded: bool,
+) {
     let dpr = view.dpr;
     DETAIL_LEVEL.with(|level| {
         level.set(crate::render::path_data::lod_level(view.detail_scale));
@@ -1027,7 +1038,8 @@ fn paint_elements(ctx: &CanvasRenderingContext2d, view: &PaintView, elements: &[
         }
         // Faded while the eraser has it marked — or has marked the frame it is in, which
         // takes it too — as Excalidraw's `resolveElementRenderState` does.
-        let marked = view.erasing.contains(&element.id)
+        let marked = faded
+            || view.erasing.contains(&element.id)
             || element
                 .frame_id
                 .as_ref()
@@ -1204,7 +1216,7 @@ impl Painter for CanvasPainter<'_> {
             let appended = paint_on_top(layers, view, key, digest);
             let plan = plan_layer(layers.painted, key, view.camera);
             let bare = crate::render::scroll::overlay_is_empty(
-                view.selected.len() + view.peer_marks.len(),
+                view.selected.len() + view.peer_marks.len() + view.flowchart_pending.len(),
                 view.marquee.is_some(),
                 view.lasso.len(),
                 view.laser.len() + view.peer_lasers.len(),
@@ -1285,6 +1297,7 @@ impl Painter for CanvasPainter<'_> {
             evict_images(&view.elements);
         }
 
+        paint_flowchart_pending(ctx, view);
         STATE.with(|s| s.borrow_mut().reset());
         FONT.with(|f| *f.borrow_mut() = None);
         let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
@@ -1293,6 +1306,21 @@ impl Painter for CanvasPainter<'_> {
         // pointing at the board, so nothing on the board should cover it.
         paint_laser(ctx, view);
     }
+}
+
+/// The flowchart cluster previewed while Ctrl/Cmd is held, faded as Excalidraw paints its
+/// `pendingFlowchartNodes` (`renderElement.ts@1118751f:185-192`). Over the cached layer
+/// rather than in it: the cluster changes on every press and the board beneath it does
+/// not, so a press on a board of any size repaints a handful of shapes, not the board.
+fn paint_flowchart_pending(ctx: &CanvasRenderingContext2d, view: &PaintView) {
+    if view.flowchart_pending.is_empty() {
+        return;
+    }
+    STATE.with(|s| s.borrow_mut().reset());
+    FONT.with(|f| *f.borrow_mut() = None);
+    ctx.save();
+    paint_elements_faded(ctx, view, &view.flowchart_pending, true);
+    ctx.restore();
 }
 
 /// Frame names, written above each frame.

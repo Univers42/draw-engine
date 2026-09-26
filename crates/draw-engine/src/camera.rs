@@ -207,3 +207,59 @@ pub fn visible_world_rect(camera: Camera, width: f64, height: f64) -> WorldBound
         max_y: bottom_right.y,
     }
 }
+
+/// Screen space, in CSS pixels, kept clear on each side of the canvas — Excalidraw's
+/// `Offsets`: what its own UI covers there, and a margin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Offsets {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+/// The camera that centres `bounds` in the room `offsets` leave on a `width` x `height`
+/// canvas, at the zoom that fits it there but never past 100%: zoomed out to hold what is
+/// too big, and in, up to 100%, on what is small. Excalidraw's `zoomToFitBounds` with
+/// `fit: "scale-down"`, then `centerScrollOn` (`packages/excalidraw/viewport.ts@1118751f:
+/// 262-368`, `:397-424`), in its own order of operations; its `scrollX` is `x / scale` here.
+pub fn scale_down_fit(bounds: WorldBounds, width: f64, height: f64, offsets: Offsets) -> Camera {
+    let room_w = width - offsets.left - offsets.right;
+    let room_h = height - offsets.top - offsets.bottom;
+    let zoom = normalize_zoom(
+        (room_w / (bounds.max_x - bounds.min_x))
+            .min(room_h / (bounds.max_y - bounds.min_y))
+            .min(1.0),
+    );
+    let center_x = (bounds.min_x + bounds.max_x) / 2.0;
+    let center_y = (bounds.min_y + bounds.max_y) / 2.0;
+    let scroll_x = (width - offsets.right) / 2.0 / zoom - center_x + offsets.left / 2.0 / zoom;
+    let scroll_y = (height - offsets.bottom) / 2.0 / zoom - center_y + offsets.top / 2.0 / zoom;
+    Camera {
+        x: scroll_x * zoom,
+        y: scroll_y * zoom,
+        scale: zoom,
+    }
+}
+
+/// Where a camera move is `factor` of the way (already eased) from `from` to `to`.
+/// Excalidraw's `interpolateViewport` (`components/App.viewport.ts@1118751f:262-301`): the
+/// zoom moves geometrically, and the pan by the share of the zoom change made so far, so
+/// every point on the board travels a straight line on screen; a pure pan moves by
+/// `factor`. Lands exactly on `to` at 1.
+pub fn interpolate_camera(from: Camera, to: Camera, factor: f64) -> Camera {
+    if factor >= 1.0 {
+        return to;
+    }
+    let scale = from.scale * (to.scale / from.scale).powf(factor);
+    let m = if to.scale == from.scale {
+        factor
+    } else {
+        (scale - from.scale) / (to.scale - from.scale)
+    };
+    Camera {
+        x: (1.0 - m) * from.x + m * to.x,
+        y: (1.0 - m) * from.y + m * to.y,
+        scale,
+    }
+}

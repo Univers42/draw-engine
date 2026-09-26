@@ -1,7 +1,8 @@
 //! Ctrl/Cmd+Arrow builds a connected diagram; Alt+Arrow walks it. Port of Excalidraw's
 //! `packages/element/src/flowchart.ts` and `packages/excalidraw/components/App.flowchart.ts`
 //! (`@1118751f`) — see `engine/flowchart.rs` for what is ported and what deliberately
-//! diverges (no elbow routing, a simplified navigation heading).
+//! diverges (no elbow routing yet). `ci_flowchart_oracle.rs` holds the results to the
+//! oracle's own; these pin the behaviour around them.
 
 mod common;
 use common::*;
@@ -375,7 +376,11 @@ fn commit_eases_the_camera_to_an_offscreen_node() {
 
 #[test]
 fn commit_does_not_move_the_camera_when_the_node_is_already_visible() {
-    let (mut engine, _rect) = one_rect();
+    // Clear of the 24px margin Excalidraw keeps inside the viewport: a node touching the
+    // edge counts as hidden and is scrolled into the room past it.
+    let rect = filled(box_at(100.0, 100.0, 100.0, 60.0));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id.clone()]);
     engine.set_now(0.0);
     let before = engine.camera;
 
@@ -388,4 +393,93 @@ fn commit_does_not_move_the_camera_when_the_node_is_already_visible() {
     );
     engine.take_dirty();
     assert!(!engine.needs_frame());
+}
+
+#[test]
+fn the_pending_cluster_is_painted_over_the_scene() {
+    // It is not in the scene, so the cached scene layer never draws it: the view carries
+    // it separately, to be painted faded on top without repainting the board per press.
+    let (mut engine, rect) = one_rect();
+    engine.flowchart_create(LinkDirection::Right);
+    let pending = engine.pending_flowchart_elements();
+    let view = engine.paint_view();
+    let painted: Vec<&str> = view
+        .flowchart_pending
+        .iter()
+        .map(|el| el.id.as_str())
+        .collect();
+    assert_eq!(painted.len(), pending.len(), "node and arrow");
+    assert!(pending.iter().all(|el| painted.contains(&el.id.as_str())));
+    assert!(view.elements.iter().all(|el| el.id == rect.id));
+}
+
+#[test]
+fn a_reveal_zooms_in_up_to_full_size() {
+    // `zoomToFitBounds` with `fitToViewport: false` is a scale-down fit: a cluster that
+    // fits at 100% is shown at 100%, so a board zoomed far out is zoomed back in.
+    let rect = filled(box_at(3000.0, 100.0, 100.0, 60.0));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.set_camera(Camera {
+        x: 0.0,
+        y: 0.0,
+        scale: 0.25,
+    });
+    engine.select(vec![rect.id.clone()]);
+    engine.set_now(0.0);
+
+    engine.flowchart_create(LinkDirection::Right);
+    engine.set_now(1000.0);
+
+    assert_eq!(engine.camera.scale, 1.0);
+    let visible = visible_world_rect(engine.camera, 800.0, 600.0);
+    let cluster = scene_outline_bounds(engine.pending_flowchart_elements().iter()).unwrap();
+    assert!(visible.min_x <= cluster.min_x && cluster.max_x <= visible.max_x);
+}
+
+#[test]
+fn the_reveal_leaves_room_for_the_ui_over_the_canvas() {
+    // The new node lands above the screen; it is centred in the room below the 70px
+    // toolbar, not in the canvas behind it.
+    let rect = filled(box_at(300.0, 40.0, 100.0, 60.0));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.set_viewport_offsets(Offsets {
+        top: 70.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
+    engine.select(vec![rect.id.clone()]);
+    engine.set_now(0.0);
+
+    engine.flowchart_create(LinkDirection::Up);
+    engine.set_now(1000.0);
+
+    let cluster = scene_outline_bounds(engine.pending_flowchart_elements().iter()).unwrap();
+    let centre = world_to_screen(
+        engine.camera,
+        (cluster.min_x + cluster.max_x) / 2.0,
+        (cluster.min_y + cluster.max_y) / 2.0,
+    );
+    assert!((centre.x - 400.0).abs() < 1e-9, "{}", centre.x);
+    assert!(
+        (centre.y - (70.0 + 600.0) / 2.0).abs() < 1e-9,
+        "{}",
+        centre.y
+    );
+}
+
+#[test]
+fn panning_cancels_a_reveal_in_flight() {
+    let rect = filled(box_at(750.0, 0.0, 100.0, 60.0));
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id.clone()]);
+    engine.set_now(0.0);
+    engine.flowchart_create(LinkDirection::Right);
+    engine.flowchart_commit();
+
+    engine.pan_by(10.0, 0.0);
+    let panned = engine.camera;
+    engine.set_now(1000.0);
+
+    assert_eq!(engine.camera, panned, "the user's pan wins over the ease");
 }

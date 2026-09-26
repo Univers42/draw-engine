@@ -51,6 +51,10 @@ pub struct PaintView<'a> {
     pub erasing: &'a std::collections::HashSet<String>,
     /// Changes whenever `erasing` does. The painter keys its cached layer on it.
     pub erasing_revision: u64,
+    /// The flowchart cluster previewed while Ctrl/Cmd is held (`engine/flowchart.rs`),
+    /// culled to the viewport. Not in `elements`: it is painted faded over the cached
+    /// picture of the board, which it changes on every press without touching.
+    pub flowchart_pending: Vec<&'a DrawElement>,
     pub selected: Vec<&'a DrawElement>,
     /// Where a multi-selection's box and handles go: around what a transform carries,
     /// the same box the handles are hit on. `None` when fewer than two are carried.
@@ -323,15 +327,12 @@ impl DrawEngine {
         }
         // The flowchart cluster being previewed while Ctrl/Cmd is held: not in the scene
         // either, until the commit adds it. See `engine/flowchart.rs`.
-        if let Some(creator) = &self.flowchart_creator {
-            for element in &creator.pending {
-                if !element.is_deleted
-                    && crate::render::bounds::intersects_viewport(element, &visible)
-                {
-                    elements.push(element);
-                }
-            }
-        }
+        let flowchart_pending: Vec<&DrawElement> = self
+            .flowchart_creator
+            .iter()
+            .flat_map(|creator| &creator.pending)
+            .filter(|element| crate::render::bounds::intersects_viewport(element, &visible))
+            .collect();
         let peer_marks = self
             .peers()
             .iter()
@@ -375,6 +376,7 @@ impl DrawEngine {
             static_revision: self.scene.static_revision(),
             erasing: &self.erasing,
             erasing_revision: self.erasing_revision,
+            flowchart_pending,
             selected,
             group_box,
             marquee,

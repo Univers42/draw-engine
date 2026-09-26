@@ -496,6 +496,21 @@ impl WasmEngine {
         self.cell.borrow_mut().engine.set_reduced_motion(on);
     }
 
+    /// How far the host's own UI reaches over each side of the canvas, in CSS pixels —
+    /// measured by the host, which has the layout. A flowchart reveal keeps clear of it.
+    #[wasm_bindgen(js_name = setViewportOffsets)]
+    pub fn set_viewport_offsets(&self, top: f64, right: f64, bottom: f64, left: f64) {
+        self.cell
+            .borrow_mut()
+            .engine
+            .set_viewport_offsets(crate::Offsets {
+                top,
+                right,
+                bottom,
+                left,
+            });
+    }
+
     #[wasm_bindgen(js_name = zoomAt)]
     pub fn zoom_at(&self, sx: f64, sy: f64, factor: f64) {
         self.cell.borrow_mut().engine.zoom_at(sx, sy, factor);

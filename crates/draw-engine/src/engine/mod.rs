@@ -276,8 +276,11 @@ pub struct DrawEngine {
     flowchart_creator: Option<flowchart::FlowchartCreator>,
     /// Alt+Arrow's same-level exploration state. See `flowchart.rs`.
     flowchart_navigator: flowchart::FlowchartNavigator,
-    /// An in-flight eased camera move, started by `reveal`. See `style.rs`.
+    /// An in-flight eased camera move. See `style.rs`.
     camera_anim: Option<style::CameraAnim>,
+    /// The host's UI over each side of the canvas, which a reveal keeps clear of. See
+    /// `style.rs` › `set_viewport_offsets`.
+    viewport_offsets: crate::Offsets,
     /// `prefers-reduced-motion`, set once by the host (`bindCanvas.ts`) and kept current on
     /// change. An eased camera move lands at once rather than animating; see `style.rs` ›
     /// `animate_camera_to`.
@@ -358,6 +361,7 @@ impl DrawEngine {
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
             camera_anim: None,
+            viewport_offsets: crate::Offsets::default(),
             reduced_motion: false,
         }
     }

@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use crate::camera::{Point, WorldBounds};
 use crate::scene::element::{DrawElement, DrawElementType};
 use crate::scene::geometry::{
-    element_outline, element_rotated_bounds, outline_edges, outline_is_closed, segments_intersect,
+    element_outline, element_rotated_bounds, outline_edges, outline_is_closed, segments_cross,
 };
 
 /// Excalidraw's `FRAME_STYLE`. A frame is chrome, not a drawing: it is always this grey,
@@ -88,7 +88,10 @@ fn within(inner: WorldBounds, outer: WorldBounds) -> bool {
 /// Whether the element's outline crosses the frame's border.
 ///
 /// Boxes are not enough here. A long diagonal arrow has a box that overlaps a frame it
-/// passes nowhere near, and judging by boxes would capture it.
+/// passes nowhere near, and judging by boxes would capture it. Only a real crossing
+/// counts, as in Excalidraw's `isElementIntersectingFrame`
+/// (`packages/element/src/frame.ts@1118751f:75-91`): a shape resting against the border
+/// from outside does not meet the frame.
 pub fn element_intersects_frame(element: &DrawElement, frame: &DrawElement) -> bool {
     let frame_edges = outline_edges(&element_outline(frame), true);
     let element_shape = element_outline(element);
@@ -97,7 +100,7 @@ pub fn element_intersects_frame(element: &DrawElement, frame: &DrawElement) -> b
     element_edges.iter().any(|(a, b)| {
         frame_edges
             .iter()
-            .any(|(c, d)| segments_intersect(*a, *b, *c, *d))
+            .any(|(c, d)| segments_cross(*a, *b, *c, *d))
     })
 }
 

@@ -1,0 +1,19 @@
+{
+  "name": "flowchart-oracle",
+  "private": true,
+  "type": "module",
+  "description": "Runs Excalidraw's own flowchart.ts / App.flowchart.ts / viewport.ts, unmodified, and dumps what they produce as fixtures for the Rust port. Deliberately OUTSIDE the pnpm workspace: the packages below are the exact versions Excalidraw's own package.json files pin at the oracle SHA, and must not inherit the workspace's minimumReleaseAge hold.",
+  "scripts": {
+    "generate": "node --import ./register.mjs generate.mjs"
+  },
+  "dependencies": {
+    "@braintree/sanitize-url": "6.0.2",
+    "es6-promise-pool": "2.5.0",
+    "lodash.throttle": "4.1.1",
+    "nanoid": "3.3.3",
+    "perfect-freehand": "1.2.0",
+    "points-on-curve": "1.0.1",
+    "roughjs": "4.6.4",
+    "tinycolor2": "1.6.0"
+  }
+}

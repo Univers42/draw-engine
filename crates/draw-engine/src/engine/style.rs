@@ -5,7 +5,6 @@ use super::ArrowType;
 use crate::camera::{Camera, WorldBounds};
 use crate::engine::DrawEngine;
 use crate::interaction::ease_out;
-use crate::math::lerp;
 use crate::scene::{is_linear_element, Arrowhead, DrawElement, DrawElementType};
 
 /// The font sizes the contract stores (`fontSize`, `packages/contract/src/element.ts`).
@@ -37,8 +36,14 @@ const CAMERA_REVEAL_MS: f64 = 300.0;
 /// rather than sluggish, the way `CAMERA_REVEAL_MS` already does for the flowchart reveal.
 const CAMERA_ZOOM_MS: f64 = 250.0;
 
-/// An in-flight camera move: linear in `x`/`y`/`scale`, eased in time. `DrawEngine::set_now`
-/// ticks it; [`DrawEngine::reveal`] is the one place that starts one.
+/// The margin Excalidraw keeps inside the UI it measures before revealing anything —
+/// `getOffsets`' default `padding` (`components/App.viewport.ts@1118751f:586`).
+const REVEAL_PADDING: f64 = 24.0;
+
+/// An in-flight camera move, eased in time and interpolated as Excalidraw's
+/// ([`crate::interpolate_camera`]). `DrawEngine::set_now` ticks it; a pan or zoom by the
+/// person cancels it, as a gesture takes over from an animated `setViewport`
+/// (`components/App.viewport.ts@1118751f:737-757`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CameraAnim {
     from: Camera,
@@ -622,6 +627,7 @@ impl DrawEngine {
     }
 
     pub fn zoom_at(&mut self, sx: f64, sy: f64, factor: f64) {
+        self.camera_anim = None;
         self.set_camera(crate::zoom_at(self.camera, sx, sy, factor));
         self.bump_motion();
     }
@@ -641,6 +647,7 @@ impl DrawEngine {
         if next == self.camera.scale {
             return;
         }
+        self.camera_anim = None;
         self.set_camera(crate::zoom_to(self.camera, sx, sy, next));
         self.bump_motion();
     }
@@ -652,6 +659,7 @@ impl DrawEngine {
     }
 
     pub fn pan_by(&mut self, dx_screen: f64, dy_screen: f64) {
+        self.camera_anim = None;
         self.set_camera(crate::pan_by(self.camera, dx_screen, dy_screen));
         self.bump_motion();
     }
@@ -737,31 +745,43 @@ impl DrawEngine {
         self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
-    /// Pans (and, only if it would not otherwise fit, zooms out) so `bounds` is on screen,
-    /// eased over [`CAMERA_REVEAL_MS`] rather than jumping — the flowchart's commit and its
-    /// Alt+Arrow navigation both land here (`engine/flowchart.rs`). A no-op when `bounds` is
-    /// already fully visible, so following a chain of nodes that are all in view never
-    /// nudges the camera.
-    pub(crate) fn reveal(&mut self, bounds: WorldBounds, padding: f64) {
-        let visible = crate::visible_world_rect(self.camera, self.width, self.height);
-        let already_visible = bounds.min_x >= visible.min_x
-            && bounds.max_x <= visible.max_x
-            && bounds.min_y >= visible.min_y
-            && bounds.max_y <= visible.max_y;
-        if already_visible {
+    /// The host's UI over each side of the canvas, in CSS pixels, measured the way
+    /// Excalidraw measures its `[data-viewport-ui]` panels (`App.viewport.ts@1118751f:
+    /// 502-566`) — `apps/web`'s `viewportOffsets.ts`. What [`Self::reveal_if_hidden`]
+    /// keeps clear of.
+    pub fn set_viewport_offsets(&mut self, offsets: crate::Offsets) {
+        self.viewport_offsets = offsets;
+    }
+
+    /// Brings `bounds` into view unless it is already wholly there, clear of the host's UI
+    /// and a margin: the camera eases over [`CAMERA_REVEAL_MS`] to centre it, zoomed out to
+    /// hold it or in, up to 100%, on something small. Excalidraw's `revealIfHidden`
+    /// (`components/App.tsx@1118751f:5197-5222`) — `isElementCompletelyInViewport`, then
+    /// `setViewport({ fit: "scale-down", animation: { duration: 300 }, offsets: { ui:
+    /// true } })` — which the flowchart runs on every press and at its commit and every
+    /// Alt+Arrow step (`engine/flowchart.rs`).
+    pub(crate) fn reveal_if_hidden(&mut self, bounds: WorldBounds) {
+        let ui = self.viewport_offsets;
+        let offsets = crate::Offsets {
+            top: ui.top + REVEAL_PADDING,
+            right: ui.right + REVEAL_PADDING,
+            bottom: ui.bottom + REVEAL_PADDING,
+            left: ui.left + REVEAL_PADDING,
+        };
+        let top_left = crate::screen_to_world(self.camera, offsets.left, offsets.top);
+        let bottom_right = crate::screen_to_world(
+            self.camera,
+            self.width - offsets.right,
+            self.height - offsets.bottom,
+        );
+        if bounds.min_x >= top_left.x
+            && bounds.min_y >= top_left.y
+            && bounds.max_x <= bottom_right.x
+            && bounds.max_y <= bottom_right.y
+        {
             return;
         }
-        let fit = crate::fit_bounds(bounds, self.width, self.height, padding);
-        // Scale down to fit only when the bounds do not already fit at the current zoom —
-        // never in, so revealing a small new node does not also zoom in on it.
-        let scale = fit.scale.min(self.camera.scale);
-        let center_x = (bounds.min_x + bounds.max_x) / 2.0;
-        let center_y = (bounds.min_y + bounds.max_y) / 2.0;
-        let target = Camera {
-            scale,
-            x: self.width / 2.0 - center_x * scale,
-            y: self.height / 2.0 - center_y * scale,
-        };
+        let target = crate::scale_down_fit(bounds, self.width, self.height, offsets);
         self.animate_camera_to(target, CAMERA_REVEAL_MS);
     }
 
@@ -782,7 +802,7 @@ impl DrawEngine {
         self.request_draw();
     }
 
-    /// Advances an in-flight [`reveal`](Self::reveal), if any. Called from `set_now` every
+    /// Advances an in-flight camera move, if any. Called from `set_now` every
     /// frame the host owes one — `needs_frame` answers `true` for as long as this holds
     /// `Some`, so the host's loop keeps ticking until the ease finishes.
     pub(crate) fn tick_camera_anim(&mut self, now_ms: f64) {
@@ -791,12 +811,7 @@ impl DrawEngine {
         };
         let span = (anim.end_ms - anim.start_ms).max(1.0);
         let t = ((now_ms - anim.start_ms) / span).clamp(0.0, 1.0);
-        let eased = ease_out(t);
-        self.set_camera(Camera {
-            x: lerp(anim.from.x, anim.to.x, eased),
-            y: lerp(anim.from.y, anim.to.y, eased),
-            scale: lerp(anim.from.scale, anim.to.scale, eased),
-        });
+        self.set_camera(crate::interpolate_camera(anim.from, anim.to, ease_out(t)));
         if t >= 1.0 {
             self.camera_anim = None;
         }
