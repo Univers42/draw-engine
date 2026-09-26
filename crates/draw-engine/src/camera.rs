@@ -218,19 +218,35 @@ pub struct Offsets {
     pub left: f64,
 }
 
+/// How [`zoom_to_fit_bounds`] picks the zoom: Excalidraw's `SetViewportOptions["fit"]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewportFit {
+    /// Zoomed out to hold what is too big, and in, up to 100%, on what is small.
+    ScaleDown,
+    /// Whatever zoom fills the room, however far in.
+    Contain,
+}
+
 /// The camera that centres `bounds` in the room `offsets` leave on a `width` x `height`
-/// canvas, at the zoom that fits it there but never past 100%: zoomed out to hold what is
-/// too big, and in, up to 100%, on what is small. Excalidraw's `zoomToFitBounds` with
-/// `fit: "scale-down"`, then `centerScrollOn` (`packages/excalidraw/viewport.ts@1118751f:
-/// 262-368`, `:397-424`), in its own order of operations; its `scrollX` is `x / scale` here.
-pub fn scale_down_fit(bounds: WorldBounds, width: f64, height: f64, offsets: Offsets) -> Camera {
+/// canvas, at the zoom `fit` picks there. Excalidraw's `zoomToFitBounds`, then
+/// `centerScrollOn` (`packages/excalidraw/viewport.ts@1118751f:262-368`, `:397-424`), in
+/// its own order of operations; its `scrollX` is `x / scale` here. Empty bounds divide by
+/// zero as the oracle's do: `ScaleDown` lands on 100%, `Contain` on the zoom limit.
+pub fn zoom_to_fit_bounds(
+    bounds: WorldBounds,
+    width: f64,
+    height: f64,
+    offsets: Offsets,
+    fit: ViewportFit,
+) -> Camera {
     let room_w = width - offsets.left - offsets.right;
     let room_h = height - offsets.top - offsets.bottom;
-    let zoom = normalize_zoom(
-        (room_w / (bounds.max_x - bounds.min_x))
-            .min(room_h / (bounds.max_y - bounds.min_y))
-            .min(1.0),
-    );
+    let fills =
+        (room_w / (bounds.max_x - bounds.min_x)).min(room_h / (bounds.max_y - bounds.min_y));
+    let zoom = normalize_zoom(match fit {
+        ViewportFit::ScaleDown => fills.min(1.0),
+        ViewportFit::Contain => fills,
+    });
     let center_x = (bounds.min_x + bounds.max_x) / 2.0;
     let center_y = (bounds.min_y + bounds.max_y) / 2.0;
     let scroll_x = (width - offsets.right) / 2.0 / zoom - center_x + offsets.left / 2.0 / zoom;

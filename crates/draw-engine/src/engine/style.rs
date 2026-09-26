@@ -29,7 +29,7 @@ pub(super) fn storable_font_size(size: f64) -> Option<f64> {
 /// `animation: { duration: 300 }` (`App.tsx@1118751f`, `revealIfHidden`).
 const CAMERA_REVEAL_MS: f64 = 300.0;
 
-/// How long a discrete zoom/fit move (Shift+1, Shift+2, zoom in/out/reset, the zoom-bar
+/// How long a discrete zoom/fit move (Shift+1/2/3, zoom in/out/reset, the zoom-bar
 /// buttons) takes to ease — the oracle jumps for all of these (`actionCanvas.tsx@1118751f:
 /// 378-407` computes `zoomToFitBounds` and applies it in the same tick, no `animation`), so
 /// this is a deliberate divergence rather than a ported number; picked to read as brisk
@@ -781,13 +781,7 @@ impl DrawEngine {
     /// true } })` — which the flowchart runs on every press and at its commit and every
     /// Alt+Arrow step (`engine/flowchart.rs`).
     pub(crate) fn reveal_if_hidden(&mut self, bounds: WorldBounds) {
-        let ui = self.viewport_offsets;
-        let offsets = crate::Offsets {
-            top: ui.top + REVEAL_PADDING,
-            right: ui.right + REVEAL_PADDING,
-            bottom: ui.bottom + REVEAL_PADDING,
-            left: ui.left + REVEAL_PADDING,
-        };
+        let offsets = self.room_offsets();
         let top_left = crate::screen_to_world(self.camera, offsets.left, offsets.top);
         let bottom_right = crate::screen_to_world(
             self.camera,
@@ -801,8 +795,71 @@ impl DrawEngine {
         {
             return;
         }
-        let target = crate::scale_down_fit(bounds, self.width, self.height, offsets);
+        let target = crate::zoom_to_fit_bounds(
+            bounds,
+            self.width,
+            self.height,
+            offsets,
+            crate::ViewportFit::ScaleDown,
+        );
         self.animate_camera_to(target, CAMERA_REVEAL_MS);
+    }
+
+    /// What a fit keeps clear of: the host's chrome ([`Self::set_viewport_offsets`]) and
+    /// a margin on every side — the oracle's `getOffsets()` (`App.viewport.ts@1118751f:
+    /// 586-606`).
+    fn room_offsets(&self) -> crate::Offsets {
+        let ui = self.viewport_offsets;
+        crate::Offsets {
+            top: ui.top + REVEAL_PADDING,
+            right: ui.right + REVEAL_PADDING,
+            bottom: ui.bottom + REVEAL_PADDING,
+            left: ui.left + REVEAL_PADDING,
+        }
+    }
+
+    /// Shift+1: everything on the board, zoomed out to hold it or in, up to 100% —
+    /// `actionZoomToFit` (`actions/actionCanvas.tsx@1118751f:378-410`).
+    pub fn zoom_to_fit(&mut self) {
+        self.fit_to_view(false, crate::ViewportFit::ScaleDown);
+    }
+
+    /// Shift+2: the selection, or everything when nothing is selected, no closer than
+    /// 100% — `actionZoomToFitSelectionInViewport` (`actionCanvas.tsx@1118751f:290-334`).
+    pub fn zoom_to_fit_selection_in_viewport(&mut self) {
+        self.fit_to_view(true, crate::ViewportFit::ScaleDown);
+    }
+
+    /// Shift+3: the selection, or everything, at whatever zoom fills the room —
+    /// `actionZoomToFitSelection` (`actionCanvas.tsx@1118751f:336-376`).
+    pub fn zoom_to_fit_selection(&mut self) {
+        self.fit_to_view(true, crate::ViewportFit::Contain);
+    }
+
+    /// The three fits' shared body: `getCommonBounds` of the selection when asked and
+    /// there is one, else of every element — `[0, 0, 0, 0]` on an empty board, as the
+    /// oracle's is — through `zoomToFitBounds` into the room. Eased where the oracle
+    /// jumps, like every discrete camera move here ([`CAMERA_ZOOM_MS`]).
+    fn fit_to_view(&mut self, selection: bool, fit: crate::ViewportFit) {
+        let selected = if selection {
+            self.get_selected_elements()
+        } else {
+            Vec::new()
+        };
+        let bounds = if selected.is_empty() {
+            crate::scene::scene_outline_bounds(self.scene.iter_ordered())
+        } else {
+            crate::scene::scene_outline_bounds(selected.iter())
+        }
+        .unwrap_or(WorldBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 0.0,
+            max_y: 0.0,
+        });
+        let target =
+            crate::zoom_to_fit_bounds(bounds, self.width, self.height, self.room_offsets(), fit);
+        self.animate_camera_to(target, CAMERA_ZOOM_MS);
     }
 
     fn animate_camera_to(&mut self, target: Camera, duration_ms: f64) {

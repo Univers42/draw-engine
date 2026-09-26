@@ -613,6 +613,27 @@ impl WasmEngine {
         self.flush();
     }
 
+    #[wasm_bindgen(js_name = zoomToFit)]
+    pub fn zoom_to_fit(&self) {
+        self.cell.borrow_mut().engine.zoom_to_fit();
+        self.flush();
+    }
+
+    #[wasm_bindgen(js_name = zoomToFitSelectionInViewport)]
+    pub fn zoom_to_fit_selection_in_viewport(&self) {
+        self.cell
+            .borrow_mut()
+            .engine
+            .zoom_to_fit_selection_in_viewport();
+        self.flush();
+    }
+
+    #[wasm_bindgen(js_name = zoomToFitSelection)]
+    pub fn zoom_to_fit_selection(&self) {
+        self.cell.borrow_mut().engine.zoom_to_fit_selection();
+        self.flush();
+    }
+
     /// Move by a screenful. `pages_x`/`pages_y` are counts, so -1 is one page back.
     #[wasm_bindgen(js_name = pageBy)]
     pub fn page_by(&self, pages_x: f64, pages_y: f64) {

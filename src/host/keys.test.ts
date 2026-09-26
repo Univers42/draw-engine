@@ -67,8 +67,9 @@ function recording(
       calls.push("cutSelection");
       return null;
     },
-    fit: () => calls.push("fit"),
-    zoomToSelection: () => calls.push("zoomToSelection"),
+    zoomToFit: () => calls.push("zoomToFit"),
+    zoomToFitSelectionInViewport: () => calls.push("zoomToFitSelectionInViewport"),
+    zoomToFitSelection: () => calls.push("zoomToFitSelection"),
     pageBy: (x: number, y: number) => calls.push(`pageBy:${x},${y}`),
     editSelectedText: () => {
       calls.push("editSelectedText");
@@ -221,24 +222,39 @@ describe("dispatchKeyDown", () => {
     assert.deepEqual(calls, []);
   });
 
-  it("fits on Shift+1 and leaves Ctrl+chords to the page", () => {
+  it("fits everything on Shift+1 and leaves Ctrl+chords to the page", () => {
     const fit = recording();
     assert.equal(dispatchKeyDown(session(fit.engine), event({ key: "!", shiftKey: true, code: "Digit1" })), "prevent");
-    assert.deepEqual(fit.calls, ["fit"]);
+    assert.deepEqual(fit.calls, ["zoomToFit"]);
     const chord = recording();
     assert.equal(dispatchKeyDown(session(chord.engine), event({ key: "k", altKey: true })), "pass");
     assert.deepEqual(chord.calls, []);
   });
 
-  it("zooms to the selection on Shift+2", () => {
+  it("fits the selection on Shift+2, no closer than 100%, and fills the view with it on Shift+3", () => {
     // Matched on `code`, like Shift+1: `key` for a shifted digit is a punctuation mark
-    // that differs per layout — "@" on a US keyboard, "é" on a French one.
+    // that differs per layout — "@" on a US keyboard, "é" on a French one. The oracle's
+    // own pairing, which its source notes is the other way round from Figma's
+    // (`actionCanvas.tsx@1118751f:328`, `:370`).
     const zoom = recording(["id"]);
     assert.equal(
       dispatchKeyDown(session(zoom.engine), event({ key: "@", shiftKey: true, code: "Digit2" })),
       "prevent",
     );
-    assert.deepEqual(zoom.calls, ["zoomToSelection"]);
+    assert.equal(
+      dispatchKeyDown(session(zoom.engine), event({ key: "#", shiftKey: true, code: "Digit3" })),
+      "prevent",
+    );
+    assert.deepEqual(zoom.calls, ["zoomToFitSelectionInViewport", "zoomToFitSelection"]);
+    const withAlt = recording(["id"]);
+    assert.equal(
+      dispatchKeyDown(
+        session(withAlt.engine),
+        event({ key: "#", shiftKey: true, altKey: true, code: "Digit3" }),
+      ),
+      "pass",
+    );
+    assert.deepEqual(withAlt.calls, []);
   });
 
   it("pages the canvas on Page Up and Page Down, sideways with shift", () => {

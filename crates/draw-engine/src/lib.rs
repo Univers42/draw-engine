@@ -17,9 +17,9 @@ pub mod text;
 pub mod wasm;
 
 pub use camera::{
-    fit_bounds, interpolate_camera, normalize_zoom, pan_by, scale_down_fit, screen_to_world,
-    visible_world_rect, wheel_zoom_scale, world_to_screen, zoom_at, zoom_to, Camera, Offsets,
-    Point, WorldBounds, IDENTITY, MAX_ZOOM, MIN_ZOOM, ZOOM_STEP,
+    fit_bounds, interpolate_camera, normalize_zoom, pan_by, screen_to_world, visible_world_rect,
+    wheel_zoom_scale, world_to_screen, zoom_at, zoom_to, zoom_to_fit_bounds, Camera, Offsets,
+    Point, ViewportFit, WorldBounds, IDENTITY, MAX_ZOOM, MIN_ZOOM, ZOOM_STEP,
 };
 pub use edit::{
     align_elements, distribute_elements, expand_for_copy, expand_for_copy_among, expand_to_groups,

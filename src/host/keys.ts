@@ -38,8 +38,9 @@ export interface KeyEngine {
   zoomReset(): void;
   copySelection(): string | null;
   cutSelection(): string | null;
-  fit(): void;
-  zoomToSelection(): void;
+  zoomToFit(): void;
+  zoomToFitSelectionInViewport(): void;
+  zoomToFitSelection(): void;
   pageBy(pagesX: number, pagesY: number): void;
   editSelectedText(): boolean;
   flipSelection(axis: FlipAxis): void;
@@ -175,15 +176,19 @@ function handlePlainKeys(session: KeySession, event: KeyEvent): boolean {
     if (!event.repeat) session.spaceHeld = true;
     return true;
   }
-  if (event.shiftKey && !(event.metaKey || event.ctrlKey) && event.code === "Digit1") {
-    engine.fit();
+  // The oracle's three fits (`actionCanvas.tsx@1118751f:290-410`), by the physical key:
+  // everything, the selection no closer than 100%, the selection filling the view.
+  const fitKey = event.shiftKey && !event.altKey && !(event.metaKey || event.ctrlKey);
+  if (fitKey && event.code === "Digit1") {
+    engine.zoomToFit();
     return true;
   }
-  if (event.shiftKey && !(event.metaKey || event.ctrlKey) && event.code === "Digit2") {
-    // Frame the selection rather than the board. `fit` cannot stand in for it: a fit has
-    // to hold everything, so the shape you are working on ends up as small as the
-    // furthest stray one allows.
-    engine.zoomToSelection();
+  if (fitKey && event.code === "Digit2") {
+    engine.zoomToFitSelectionInViewport();
+    return true;
+  }
+  if (fitKey && event.code === "Digit3") {
+    engine.zoomToFitSelection();
     return true;
   }
   if (event.key === "PageUp" || event.key === "PageDown") {

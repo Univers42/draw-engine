@@ -125,6 +125,24 @@ export class DrawEngine {
   }
 
   /**
+   * Shift+1: everything, zoomed out to hold it or in, up to 100%, clear of the chrome
+   * given to {@link setViewportOffsets}. Excalidraw's `zoomToFit`.
+   */
+  zoomToFit(): void {
+    this.inner.zoomToFit();
+  }
+
+  /** Shift+2: the selection — everything when nothing is — no closer than 100%. */
+  zoomToFitSelectionInViewport(): void {
+    this.inner.zoomToFitSelectionInViewport();
+  }
+
+  /** Shift+3: the selection — everything when nothing is — filling the view. */
+  zoomToFitSelection(): void {
+    this.inner.zoomToFitSelection();
+  }
+
+  /**
    * How the last frames were served: redraws, scrolls and reuses of the static layer,
    * then reset. A diagnostic — the layer is either being reused or it is not, and from
    * outside those look identical until something is measured against the wrong guess.
