@@ -43,18 +43,18 @@ pub struct LinearHandlePoint {
 /// box like any other shape.
 ///
 /// Excalidraw draws the line the same place: `hasBoundingBox` is
-/// `element.points.length > 2` for a linear element (`transformHandles.ts@1118751f:352`), and the
-/// point circles appear only while the line editor is open or the line has exactly two
-/// points (`interactiveScene.ts@1118751f:1198`).
+/// `element.points.length > 2` for a linear element (`transformHandles.ts@1118751f:352`),
+/// and the *midpoint* circles appear only while the line editor is open or the line has
+/// exactly two points (`interactiveScene.ts@1118751f:1198`). The point circles themselves
+/// stay on a longer line, under its box — see `DrawEngine::point_handles`.
 ///
 /// This used to be a kind alone, so every line and arrow was grabbed by its points
 /// however many it had. The element that made it matter is the bucket fill — a closed
 /// line of five points or more — which selected to a circle on every vertex of the region
-/// and no box at all: it could not be resized, could not be turned, and its circles
-/// dragged single corners of the paint away from the outline it was traced from.
+/// and no box at all: it could not be resized and could not be turned.
 ///
-/// The points of a longer path are not lost, only put behind a double click; the engine
-/// adds that to this rule in [`crate::DrawEngine::shows_point_handles`].
+/// The midpoints of a longer path are put behind a double click; the engine adds that to
+/// this rule in [`crate::DrawEngine::shows_point_handles`].
 pub fn is_point_edited(element: &DrawElement) -> bool {
     matches!(
         element.kind,

@@ -1,4 +1,5 @@
 use crate::camera::{Point, WorldBounds};
+use crate::math::{bezier_point, catmull_rom_cubics, CURVE_TIGHTNESS};
 use crate::scene::element::{DrawElement, DrawElementType};
 use crate::scene::figure;
 
@@ -608,15 +609,9 @@ fn encloses_its_interior(element: &DrawElement) -> bool {
 /// that both rules agree — but for a path that crosses itself the two disagree, and then
 /// the painter is the authority.
 fn interior_contains(element: &DrawElement, wx: f64, wy: f64) -> bool {
-    let Some(points) = element.points.as_deref() else {
-        return false;
-    };
-    let ring: Vec<Point> = points
-        .iter()
-        .map(|p| Point {
-            x: element.x + p[0],
-            y: element.y + p[1],
-        })
+    let ring: Vec<Point> = drawn_path(element)
+        .into_iter()
+        .map(|[x, y]| Point { x, y })
         .collect();
     polygon_includes_point_non_zero(Point { x: wx, y: wy }, &ring)
 }
@@ -653,24 +648,56 @@ pub fn hit_test_element(element: &DrawElement, wx: f64, wy: f64, tolerance: f64)
 }
 
 fn hit_linear(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
-    let points = match &element.points {
-        Some(points) if points.len() >= 2 => points,
-        _ => return false,
-    };
+    if element
+        .points
+        .as_ref()
+        .is_none_or(|points| points.len() < 2)
+    {
+        return false;
+    }
     // Half the stroke sits either side of the path, so that much is genuinely part of
     // the line; the tolerance is the aiming margin on top. This used to be
     // `max(tolerance, stroke) + 4`, which conflated the two and grew faster than either.
     let reach = tolerance + element.stroke_width / 2.0;
-    for window in points.windows(2) {
-        let ax = element.x + window[0][0];
-        let ay = element.y + window[0][1];
-        let bx = element.x + window[1][0];
-        let by = element.y + window[1][1];
-        if distance_to_segment(wx, wy, ax, ay, bx, by) <= reach {
-            return true;
+    drawn_path(element)
+        .windows(2)
+        .any(|w| distance_to_segment(wx, wy, w[0][0], w[0][1], w[1][0], w[1][1]) <= reach)
+}
+
+/// How many straight pieces each segment of a rounded path is measured as.
+///
+/// A segment is one span between two of the path's points, so a piece is a sixteenth of
+/// something a person drew; its chord strays from the curve by well under a pixel, far
+/// inside any aiming tolerance.
+const CURVE_HIT_PIECES: usize = 16;
+
+/// The path a line or arrow is drawn along, in world space before rotation: its own
+/// points when its corners are sharp, and the curve through them when it is rounded.
+///
+/// Rounded is the default, and the painter draws those points as a Catmull-Rom curve
+/// (`render/shape.rs`), so testing the straight segments between them left the whole bow
+/// of a curved arrow unclickable. The oracle hit-tests the same curve, rough's
+/// `curve()` at roughness 0 (`generateLinearCollisionShape`,
+/// `element/src/shape.ts@1118751f:621-700`), which is [`catmull_rom_cubics`].
+fn drawn_path(element: &DrawElement) -> Vec<[f64; 2]> {
+    let world: Vec<[f64; 2]> = element
+        .points
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|p| [element.x + p[0], element.y + p[1]])
+        .collect();
+    if element.roundness.is_none() || world.len() < 3 {
+        return world;
+    }
+    let mut path = Vec::with_capacity((world.len() - 1) * CURVE_HIT_PIECES + 1);
+    path.push(world[0]);
+    for cubic in catmull_rom_cubics(&world, CURVE_TIGHTNESS) {
+        for piece in 1..=CURVE_HIT_PIECES {
+            path.push(bezier_point(&cubic, piece as f64 / CURVE_HIT_PIECES as f64));
         }
     }
-    false
+    path
 }
 
 pub fn hit_test(

@@ -262,6 +262,10 @@ fn a_frame_is_hollow_because_its_middle_belongs_to_its_contents() {
 // excluded before either test is reached.
 
 /// A closed line through the given world points, with the first repeated at the end.
+///
+/// Sharp, as the bucket fill leaves its paint (`engine/bucket.rs`), so its edges are the
+/// straight runs between its points. A rounded loop is drawn, and hit, along the curve
+/// through them instead (`ci_curved_linear.rs`).
 fn closed_line(points: &[(f64, f64)]) -> DrawElement {
     let (ox, oy) = points[0];
     let mut element = create_element_default(
@@ -276,6 +280,7 @@ fn closed_line(points: &[(f64, f64)]) -> DrawElement {
     let mut ring: Vec<[f64; 2]> = points.iter().map(|&(x, y)| [x - ox, y - oy]).collect();
     ring.push([0.0, 0.0]);
     element.points = Some(ring);
+    element.roundness = None;
     element
 }
 

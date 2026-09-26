@@ -450,13 +450,20 @@ impl DrawEngine {
                 }
                 let world_tol = super::HANDLE_HIT_PX / self.camera.scale;
 
-                // A line or arrow is edited by its points, not its bounding box — so
-                // its handles are tested first and the box handles never apply to it.
-                // Excalidraw does the same: select an arrow there and you get circles
-                // on its ends, with no selection rectangle at all.
-                if self.shows_point_handles(&single) {
-                    let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
-                    let handles = crate::selection::linear::handle_points(&single, min_segment);
+                // A line or arrow of two points is edited by its points, not a bounding
+                // box, so the box handles never apply to it — Excalidraw gives one
+                // circles on its ends and no selection rectangle at all. A longer one has
+                // both, and the box handles are taken first (`App.tsx@1118751f:9406-9445`).
+                let handle = if self.shows_point_handles(&single) {
+                    None
+                } else {
+                    // The same layout the painter uses, so a grab can only land on a
+                    // handle that is actually on screen — and its own reach, which is
+                    // sized to stay clear of the element so the outline still moves it.
+                    self.resize_handle_at(&single, press)
+                };
+                if handle.is_none() {
+                    let handles = self.point_handles(&single);
                     if let Some(handle) =
                         crate::selection::linear::hit_handle(&handles, press.x, press.y, world_tol)
                     {
@@ -467,15 +474,6 @@ impl DrawEngine {
                         return;
                     }
                 }
-
-                let handle = if self.shows_point_handles(&single) {
-                    None
-                } else {
-                    // The same layout the painter uses, so a grab can only land on a
-                    // handle that is actually on screen — and its own reach, which is
-                    // sized to stay clear of the element so the outline still moves it.
-                    self.resize_handle_at(&single, press)
-                };
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
                     return;

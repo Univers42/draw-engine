@@ -93,10 +93,12 @@ pub struct PaintView<'a> {
     /// Point handles for a selected line or arrow, **or** for one being placed.
     ///
     /// Non-empty when exactly one linear element is selected, and while a path is being
-    /// built point by point. In the selected case the frame and box handles are
-    /// suppressed entirely — a linear element is edited by its points, and Excalidraw
-    /// shows no bounding box for one either.
+    /// built point by point. A line of two points, or one open in the editor, is edited
+    /// by its points alone and its frame is suppressed, as Excalidraw shows none; a
+    /// longer one keeps its frame, see [`Self::linear_handles_framed`].
     pub linear_handles: Vec<crate::selection::LinearHandlePoint>,
+    /// Whether the frame and box handles are painted beside `linear_handles`.
+    pub linear_handles_framed: bool,
     /// The handle the pointer is currently moving, if any.
     ///
     /// Painted in the focus colour rather than the resting one, so that during a drag it
@@ -229,7 +231,6 @@ impl DrawEngine {
         } else {
             None
         };
-        let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
         let linear_handles = match self.multi_linear.as_ref() {
             // A path being placed shows a joint on every point it has taken, so the
             // articulation of what is being drawn is visible while it is being drawn —
@@ -250,12 +251,12 @@ impl DrawEngine {
                 })
                 .unwrap_or_default(),
             None => match selected.as_slice() {
-                [single] if self.shows_point_handles(single) => {
-                    crate::selection::linear::handle_points(single, min_segment)
-                }
+                [single] => self.point_handles(single),
                 _ => Vec::new(),
             },
         };
+        let linear_handles_framed = self.multi_linear.is_none()
+            && matches!(selected.as_slice(), [single] if !self.shows_point_handles(single));
         let active_handle = match &self.interaction {
             Some(super::Interaction::LinearPoint { handle, .. }) => Some(*handle),
             _ => None,
@@ -390,6 +391,7 @@ impl DrawEngine {
             binding_highlight: self.binding_shape(),
             binding_midpoint: self.binding_midpoint(),
             linear_handles,
+            linear_handles_framed,
             active_handle,
             radius_handles,
             active_radius_handle,

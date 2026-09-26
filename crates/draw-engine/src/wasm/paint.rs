@@ -1860,10 +1860,14 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
     paint_lasso(ctx, view);
     paint_binding_highlight(ctx, view);
 
-    // A linear element is edited by its points; it gets no frame.
+    // A line of two points, or one open in the editor, is edited by its points and gets
+    // no frame. A longer one keeps its frame, drawn over its points as the oracle draws
+    // it (`interactiveScene.ts@1118751f:1805-1830`).
     if !view.linear_handles.is_empty() {
         paint_linear_handles(ctx, view);
-        return;
+        if !view.linear_handles_framed {
+            return;
+        }
     }
 
     if view.selected.len() == 1 {

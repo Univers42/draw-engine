@@ -167,17 +167,15 @@ impl DrawEngine {
                 if self.radius_handle_at(world).is_some() {
                     return HoverCursor::PointHandle;
                 }
-                if self.shows_point_handles(&single) {
-                    let min_segment = super::LINEAR_MIDPOINT_MIN_PX / self.camera.scale;
-                    let handles = crate::selection::linear::handle_points(&single, min_segment);
-                    let tol = super::HANDLE_HIT_PX / self.camera.scale;
-                    if crate::selection::linear::hit_handle(&handles, world.x, world.y, tol)
-                        .is_some()
-                    {
-                        return HoverCursor::PointHandle;
+                if !self.shows_point_handles(&single) {
+                    if let Some(kind) = self.resize_handle_at(&single, world) {
+                        return resize_cursor(kind, single.angle);
                     }
-                } else if let Some(kind) = self.resize_handle_at(&single, world) {
-                    return resize_cursor(kind, single.angle);
+                }
+                let handles = self.point_handles(&single);
+                let tol = super::HANDLE_HIT_PX / self.camera.scale;
+                if crate::selection::linear::hit_handle(&handles, world.x, world.y, tol).is_some() {
+                    return HoverCursor::PointHandle;
                 }
             }
         } else if self.selected_ids.len() > 1 {

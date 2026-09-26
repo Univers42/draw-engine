@@ -824,14 +824,40 @@ impl DrawEngine {
     /// can ask what is actually grabbable rather than infer it.
     pub fn linear_points(&self) -> Vec<crate::selection::linear::LinearHandlePoint> {
         match self.get_selected_elements().as_slice() {
-            [single] if self.shows_point_handles(single) => {
-                crate::selection::linear::handle_points(
-                    single,
-                    LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
-                )
-            }
+            [single] => self.point_handles(single),
             _ => Vec::new(),
         }
+    }
+
+    /// The point handles a sole selected element offers.
+    ///
+    /// Points and midpoints in place of a box when [`Self::shows_point_handles`]. A
+    /// longer line or arrow keeps its box and still offers every point under it, without
+    /// the midpoints: the oracle draws the circles for any selected linear element that
+    /// is not locked (`interactiveScene.ts@1118751f:1790-1815`), gates only the midpoints
+    /// on the editor (`:1198`, `linearElementEditor.ts@1118751f:887-893`), and takes a
+    /// press on a point after the box handles (`App.tsx@1118751f:9406-9445`). Without
+    /// them an arrow's points were out of reach, since a double click on an arrow opens
+    /// its label rather than the editor.
+    pub(crate) fn point_handles(
+        &self,
+        element: &DrawElement,
+    ) -> Vec<crate::selection::linear::LinearHandlePoint> {
+        if self.shows_point_handles(element) {
+            return crate::selection::linear::handle_points(
+                element,
+                LINEAR_MIDPOINT_MIN_PX / self.camera.scale,
+            );
+        }
+        let linear = matches!(
+            element.kind,
+            crate::scene::DrawElementType::Line | crate::scene::DrawElementType::Arrow
+        );
+        if !linear || element.locked() {
+            return Vec::new();
+        }
+        // No segment is long enough for a midpoint, which leaves the points.
+        crate::selection::linear::handle_points(element, f64::MAX)
     }
 
     pub fn clear_selection(&mut self) {

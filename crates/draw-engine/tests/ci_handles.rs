@@ -472,7 +472,8 @@ fn a_polygon_can_be_resized_by_its_corner() {
     );
 }
 
-/// The points are not lost — they are behind a double click, as they are upstream.
+/// Its corners are on offer under the box; the midpoints that add a corner are behind a
+/// double click, as they are upstream.
 #[test]
 fn double_clicking_a_polygon_opens_its_points() {
     let polygon = poly_line(&[
@@ -485,12 +486,24 @@ fn double_clicking_a_polygon_opens_its_points() {
     let id = polygon.id.clone();
     let mut engine = engine_with_scene(vec![polygon]);
     engine.select(vec![id.clone()]);
-    assert!(engine.linear_points().is_empty(), "a box to begin with");
+    let midpoints = |engine: &DrawEngine| {
+        engine
+            .linear_points()
+            .iter()
+            .filter(|h| matches!(h.handle, draw_engine::selection::LinearHandle::Midpoint(_)))
+            .count()
+    };
+    assert_eq!(
+        engine.linear_points().len(),
+        5,
+        "a box, and a circle on each point"
+    );
+    assert_eq!(midpoints(&engine), 0, "but nothing to add a point with");
 
     engine.handle_double_click(100.0, 75.0);
     assert!(
-        !engine.linear_points().is_empty(),
-        "double clicking the paint should offer its corners"
+        midpoints(&engine) > 0,
+        "double clicking the paint should offer its midpoints"
     );
 
     // Dragging one now moves that corner rather than the whole thing.
