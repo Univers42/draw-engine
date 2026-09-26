@@ -36,8 +36,48 @@ export type DrawElementType =
 
 export type FillStyle = "hachure" | "cross-hatch" | "solid" | "zigzag";
 export type StrokeStyle = "solid" | "dashed" | "dotted";
-export type Arrowhead = "none" | "arrow" | "triangle" | "dot" | "diamond" | "bar";
-export const ARROWHEADS: Arrowhead[] = ["none", "arrow", "triangle", "dot", "diamond", "bar"];
+/** Held to the oracle's own `Arrowhead | CardinalityArrowhead` union
+ *  (`packages/element/src/types.ts`) — the modern spellings only. A board saved with a
+ *  legacy name (`dot`, `crowfoot_one`, `crowfoot_many`, `crowfoot_one_or_many`) still loads
+ *  and renders (the WASM core's own deserializer normalizes those on the way in), but
+ *  nothing on this side can ever *write* one back out. */
+export type Arrowhead =
+  | "none"
+  | "arrow"
+  | "triangle"
+  | "triangle_outline"
+  | "circle"
+  | "circle_outline"
+  | "diamond"
+  | "diamond_outline"
+  | "bar"
+  /** "One" and "many" in an ER diagram's crow's-foot notation, plus the compound markers
+   *  built from them: exactly-one, zero-or-one, zero-or-many. */
+  | "cardinality_one"
+  | "cardinality_many"
+  | "cardinality_one_or_many"
+  | "cardinality_exactly_one"
+  | "cardinality_zero_or_one"
+  | "cardinality_zero_or_many";
+
+/** Picker order: `packages/excalidraw/actions/actionProperties.tsx`'s `getArrowheadOptions`. */
+export const ARROWHEADS: Arrowhead[] = [
+  "none",
+  "arrow",
+  "triangle",
+  "triangle_outline",
+  "circle",
+  "circle_outline",
+  "diamond",
+  "diamond_outline",
+  "bar",
+  "cardinality_one",
+  "cardinality_many",
+  "cardinality_one_or_many",
+  "cardinality_exactly_one",
+  "cardinality_zero_or_one",
+  "cardinality_zero_or_many",
+];
 
 /** Where a line of text sits across the width of its own box. */
 export type TextAlign = "left" | "center" | "right";
