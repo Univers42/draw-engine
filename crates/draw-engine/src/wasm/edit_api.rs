@@ -182,6 +182,19 @@ impl WasmEngine {
         self.cell.borrow().engine.selection_locked()
     }
 
+    /// The board menu's "Unlock all" (`DrawEngine::unlock_all`).
+    #[wasm_bindgen(js_name = unlockAll)]
+    pub fn unlock_all(&self) {
+        self.cell.borrow_mut().engine.unlock_all();
+        self.flush();
+    }
+
+    /// Whether "Unlock all" is on offer: nothing selected, something locked.
+    #[wasm_bindgen(js_name = canUnlockAll)]
+    pub fn can_unlock_all(&self) -> bool {
+        self.cell.borrow().engine.can_unlock_all()
+    }
+
     #[wasm_bindgen(js_name = applyStyleJson)]
     pub fn apply_style_json(&self, json: &str) {
         if let Ok(patch) = serde_json::from_str::<DrawElementStylePatch>(json) {

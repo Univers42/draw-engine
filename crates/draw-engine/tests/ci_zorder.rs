@@ -612,9 +612,9 @@ fn a_locked_group_member_goes_with_its_group() {
 }
 
 /// R, filled, with its label T, then X: bottom first. What `hold` does to R — locks it,
-/// or has a peer hold it — is done before Select All, which here takes locked elements
-/// and labels (`DrawEngine::select_all`) where the oracle's takes neither
-/// (`actionSelectAll.ts@1118751f:32-38`).
+/// or has a peer hold it — is done before Select All, which takes labels here where the
+/// oracle's takes none, and neither a locked or held shape nor its label, as the oracle's
+/// takes no locked element (`actionSelectAll.ts@1118751f:32-38`).
 fn labelled_under_select_all(hold: fn(&mut DrawEngine, &Cast)) -> (DrawEngine, Cast) {
     let (mut engine, mut cast) = framed(&[("R", &[], false), ("X", &[], false)]);
     let mut scene = engine.get_scene();
@@ -651,12 +651,12 @@ fn peer_holds_r(engine: &mut DrawEngine, cast: &Cast) {
 
 /// A label goes only with its shape. Left in the moving set on its own while its locked
 /// shape stayed, it went to the back alone — under its own filled shape, out of sight.
-/// The result is the oracle's, whose Select All holds X alone.
+/// Select All holds X alone, as the oracle's does.
 #[test]
 fn select_all_leaves_a_locked_shapes_label_on_it() {
     for mode in [Back, Backward] {
         let (mut engine, cast) = labelled_under_select_all(lock_r);
-        assert_eq!(engine.get_selection().len(), 3, "setup");
+        assert_eq!(engine.get_selection(), vec![id(&cast, "X")], "setup: X");
 
         engine.reorder_selection(mode);
 

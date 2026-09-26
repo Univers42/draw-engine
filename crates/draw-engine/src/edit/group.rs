@@ -198,9 +198,9 @@ where
 /// one by one instead left a locked member behind while the rest of its group moved.
 ///
 /// Grown from the unlocked part rather than taken whole because a locked element can be
-/// in the selection here without a group to carry it: Select All takes locked elements
-/// so they can be unlocked from the menu, where the oracle's skips them
-/// (`actionSelectAll.ts@1118751f:32-38`). Such an element, or a group locked throughout, stays.
+/// in the selection without a group to carry it: a right-click selects one so the menu
+/// can unlock it, and a lock a peer sends leaves one where it was held. Such an element,
+/// or a group locked throughout, stays.
 ///
 /// Nor is a label picked up on its own: it goes where its shape goes, as a marquee never
 /// takes one alone (`selection/marquee.rs`). This Select All takes labels too, where the

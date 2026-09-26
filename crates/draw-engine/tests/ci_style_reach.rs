@@ -177,9 +177,9 @@ fn a_label_select_all_takes_is_still_carried_by_its_shape() {
     assert_eq!(label.stroke_width, before.stroke_width);
 }
 
-/// Select All over a locked shape holding a label and a free shape, as this engine's
-/// takes locked elements — so they can be unlocked from the menu — where the oracle
-/// cannot select one at all (`shouldIgnoreElementFromSelection`,
+/// A locked shape holding a label, held beside a free shape — as a lock a peer sends
+/// leaves what it locks in the selection here, where no press, marquee or Select All
+/// takes a loose locked element (`shouldIgnoreElementFromSelection`,
 /// `packages/element/src/selection.ts@1118751f:33-34`).
 fn locked_box_and_a_free_one() -> DrawEngine {
     let mut elements = labelled_box();
@@ -189,15 +189,19 @@ fn locked_box_and_a_free_one() -> DrawEngine {
     free.stroke_color = "#2f9e44".into();
     elements.push(free);
     let mut engine = engine_with_measure(elements);
-    engine.select_all();
-    assert_eq!(engine.get_selection().len(), 3, "setup: all three are held");
+    hold_all_three(&mut engine);
     engine
+}
+
+fn hold_all_three(engine: &mut DrawEngine) {
+    engine.select(vec!["box".into(), "label".into(), "free".into()]);
+    assert_eq!(engine.get_selection().len(), 3, "setup: all three are held");
 }
 
 /// A locked element is never restyled, nor the label of a locked shape: what the oracle
 /// cannot select, no style of its reaches.
 #[test]
-fn a_style_chosen_after_select_all_passes_locked_elements_by() {
+fn a_style_chosen_for_a_held_selection_passes_locked_elements_by() {
     let mut engine = locked_box_and_a_free_one();
     let (locked, label) = (element(&engine, "box"), element(&engine, "label"));
 
@@ -220,7 +224,7 @@ fn pasted_styles_pass_locked_elements_by() {
     let (locked, label) = (element(&engine, "box"), element(&engine, "label"));
     engine.select(vec!["free".into()]);
     assert!(engine.copy_styles());
-    engine.select_all();
+    hold_all_three(&mut engine);
 
     engine.paste_styles();
 

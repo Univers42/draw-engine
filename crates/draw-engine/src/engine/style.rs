@@ -70,10 +70,9 @@ impl DrawEngine {
     /// element needs it — and so, with none selected, never: worked out for every read,
     /// it cost the panel's read of a whole selected board 80% more.
     ///
-    /// Not a locked element the selection holds without carrying it. This engine's Select
-    /// All takes a loose locked element, so it can be unlocked from the menu, where the
-    /// oracle's skips it (`actions/actionSelectAll.ts@1118751f:32-38`); a style chosen
-    /// then passes it by. A locked member of a selected group is carried, and is
+    /// Not a locked element the selection holds without carrying it — one a right-click
+    /// selected so the menu can unlock it, or one a peer locked while it was held: a style
+    /// chosen then passes it by. A locked member of a selected group is carried, and is
     /// restyled: the oracle selects every member of a clicked group with no lock filter
     /// (`selectGroupsForSelectedElements`, `packages/element/src/groups.ts@1118751f:66-140`)
     /// and restyles every selected element (`changeProperty`,

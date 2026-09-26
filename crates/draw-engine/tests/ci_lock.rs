@@ -246,3 +246,71 @@ fn a_right_click_inside_the_edited_group_takes_that_level() {
     assert_eq!(selection(&engine), set(&[&b]));
     assert!(engine.editing_group_id().is_some());
 }
+
+/// Select All takes what can be picked up (`!element.locked`, `actionSelectAll.ts@1118751f:
+/// 31-38`), then grows it to whole groups (`:45-53`). Taking a loose locked element handed
+/// it to the Delete, the Ctrl+G and the Ctrl+D that follow a Select All — a locked
+/// background deleted, or grouped with everything and dragged off with the next click.
+#[test]
+fn select_all_passes_a_locked_element_by() {
+    let Probe {
+        mut engine,
+        a,
+        b,
+        c,
+    } = probe();
+    engine.select(vec![c.clone()]);
+    engine.toggle_lock_selection();
+
+    engine.select_all();
+    assert_eq!(selection(&engine), set(&[&a, &b]));
+
+    engine.group_selection();
+    engine.delete_selection();
+    let c = element(&engine, &c);
+    assert!(!c.is_deleted && c.group_ids.is_empty());
+}
+
+/// A locked member comes in with its group, as a click on the group takes it.
+#[test]
+fn select_all_takes_a_locked_member_with_its_group() {
+    let Probe {
+        mut engine,
+        a,
+        b,
+        c,
+    } = probe();
+    engine.select(vec![b.clone()]);
+    engine.toggle_lock_selection();
+
+    engine.select_all();
+
+    assert_eq!(selection(&engine), set(&[&a, &b, &c]));
+}
+
+/// The board menu's "Unlock all" (`actionUnlockAllElements`, `:161-217`): offered with
+/// nothing selected and something locked, it unlocks everything and selects it, grown
+/// to groups — one step of undo.
+#[test]
+fn unlock_all_frees_every_locked_element_and_selects_it() {
+    let Probe {
+        mut engine,
+        a,
+        b,
+        c,
+    } = probe();
+    assert!(!engine.can_unlock_all(), "nothing is locked");
+    engine.select(vec![b.clone(), c.clone()]);
+    engine.toggle_lock_selection();
+    assert!(engine.can_unlock_all());
+    engine.select(vec![a.clone()]);
+    assert!(!engine.can_unlock_all(), "not with a selection");
+    engine.clear_selection();
+
+    engine.unlock_all();
+
+    assert!(!locked(&engine, &b) && !locked(&engine, &c));
+    assert_eq!(selection(&engine), set(&[&a, &b, &c]));
+    engine.undo();
+    assert!(locked(&engine, &b) && locked(&engine, &c));
+}

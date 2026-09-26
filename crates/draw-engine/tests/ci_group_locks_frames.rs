@@ -116,6 +116,12 @@ fn selection(engine: &DrawEngine) -> std::collections::HashSet<String> {
     engine.get_selection().into_iter().collect()
 }
 
+/// Every element in one selection, locked ones included — as a lock a peer sends leaves
+/// what it locks in the selection it was in. No press, marquee or Select All does.
+fn hold_everything(engine: &mut DrawEngine) {
+    engine.select(engine.get_scene().into_iter().map(|el| el.id).collect());
+}
+
 // ---------------------------------------------------------------------------
 // A locked member travels with its group
 // ---------------------------------------------------------------------------
@@ -209,10 +215,9 @@ fn a_locked_member_is_not_a_handle_on_its_group() {
 /// A group every member of which is locked is refused whole, as the oracle refuses a
 /// selection that is all locked.
 ///
-/// Select All is the one door that lets such a group into the selection here — it takes
-/// locked elements so they can be unlocked from the menu, where the oracle's skips them
-/// (`actionSelectAll.ts@1118751f:32-38`) — and dragging the rest of that selection must not pick
-/// it up with them.
+/// No press, marquee or Select All takes such a group (`actionSelectAll.ts@1118751f:32-38`),
+/// but a lock a peer sends leaves it in the selection it was in — and dragging the rest of
+/// that selection must not pick it up with them.
 #[test]
 fn a_group_that_is_locked_throughout_stays_put() {
     let Probe {
@@ -230,7 +235,7 @@ fn a_group_that_is_locked_throughout_stays_put() {
         "a locked group cannot be clicked"
     );
 
-    engine.select_all();
+    hold_everything(&mut engine);
     drag(&mut engine, (40.0, 40.0), (40.0, 240.0));
 
     assert_close(element(&engine, &a).y, 200.0);
@@ -509,8 +514,8 @@ fn aligning_a_child_out_of_its_frame_keeps_it_in_the_frame() {
 }
 
 /// Lock and Unlock are one toggle, as the context menu names it. Locked, a shape is not
-/// there to be pressed on — the press starts a marquee and nothing moves; Select All is
-/// how the menu reaches it again, and a second toggle gives it back to a drag.
+/// there to be pressed on — the press starts a marquee and nothing moves; a right-click
+/// is how the menu reaches it again, and a second toggle gives it back to a drag.
 #[test]
 fn a_second_toggle_unlocks() {
     let shape = filled(box_at(100.0, 100.0, 80.0, 80.0));
@@ -523,7 +528,7 @@ fn a_second_toggle_unlocks() {
     drag(&mut engine, (140.0, 140.0), (240.0, 140.0));
     assert_close(element(&engine, &id).x, 100.0);
 
-    engine.select_all();
+    engine.select_element(&id);
     assert!(engine.selection_locked());
     engine.toggle_lock_selection();
     engine.clear_selection();
@@ -585,8 +590,9 @@ fn moving_a_frame_leaves_a_child_a_peer_holds() {
     assert_close(element(&engine, &child_id).y, 60.0);
 }
 
-/// Select All holds a loose locked element so it can be unlocked, but nothing transforms
-/// it — so the box and its handles are drawn around what does, where a press finds them.
+/// A loose locked element held in a selection — a peer locked it while it was held — is
+/// transformed by nothing, so the box and its handles are drawn around what is, where a
+/// press finds them.
 #[test]
 fn the_selection_box_is_drawn_where_its_handles_are_hit() {
     let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
@@ -594,7 +600,7 @@ fn the_selection_box_is_drawn_where_its_handles_are_hit() {
     let mut locked = filled(box_at(600.0, 0.0, 80.0, 80.0));
     locked.locked = Some(true);
     let mut engine = engine_with_scene(vec![a, b, locked]);
-    engine.select_all();
+    hold_everything(&mut engine);
     assert_eq!(engine.get_selection().len(), 3, "setup");
 
     let drawn = engine.paint_view().group_box.expect("a box around A and B");
@@ -603,8 +609,8 @@ fn the_selection_box_is_drawn_where_its_handles_are_hit() {
     assert_close(drawn.max_x, 230.0);
 }
 
-/// Nor its label, which Select All takes too: a label goes only where its shape goes.
-/// Carried on its own, it stretched the box over the locked shape to frame its words.
+/// Nor its label, held with it: a label goes only where its shape goes. Carried on its
+/// own, it stretched the box over the locked shape to frame its words.
 #[test]
 fn a_locked_shapes_label_is_not_carried_on_its_own() {
     let a = filled(box_at(0.0, 0.0, 80.0, 80.0));
@@ -616,7 +622,7 @@ fn a_locked_shapes_label_is_not_carried_on_its_own() {
     label.container_id = Some(locked.id.clone());
     locked.bound_text_id = Some(label.id.clone());
     let mut engine = engine_with_scene(vec![a, b, locked, label]);
-    engine.select_all();
+    hold_everything(&mut engine);
     assert_eq!(engine.get_selection().len(), 4, "setup");
 
     let drawn = engine.paint_view().group_box.expect("a box around A and B");
@@ -656,8 +662,8 @@ fn align_carries_a_locked_group_member() {
     assert_close(element(&engine, &c).x, 0.0);
 }
 
-/// A loose locked element held by Select All is not carried by anything, so align
-/// leaves it where it is — as the oracle's Select All never takes it.
+/// A loose locked element held in the selection is not carried by anything, so align
+/// leaves it where it is — as the oracle, which never selects it, never aligns it.
 #[test]
 fn align_leaves_a_loose_locked_element_alone() {
     let a = filled(box_at(100.0, 0.0, 80.0, 80.0));
@@ -666,7 +672,7 @@ fn align_leaves_a_loose_locked_element_alone() {
     locked.locked = Some(true);
     let (a_id, c_id, locked_id) = (a.id.clone(), c.id.clone(), locked.id.clone());
     let mut engine = engine_with_scene(vec![a, c, locked]);
-    engine.select_all();
+    hold_everything(&mut engine);
     assert_eq!(selection(&engine).len(), 3, "setup");
 
     engine.align_selection(AlignMode::Left);

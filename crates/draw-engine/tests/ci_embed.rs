@@ -713,7 +713,7 @@ fn a_frame_says_what_it_is_and_how_far_the_board_is_zoomed() {
 // ------------------------------------------------------------------------ locking
 
 /// An embed locks as any element does: `toggle_lock_selection` has no kind filter. Locked,
-/// a press on it picks nothing up; a second toggle, from Select All, gives it back.
+/// a press on it picks nothing up; a second toggle, from a right-click, gives it back.
 #[test]
 fn a_locked_embed_stays_put_until_it_is_unlocked() {
     let mut engine = engine_with_scene(vec![]);
@@ -749,7 +749,7 @@ fn a_locked_embed_stays_put_until_it_is_unlocked() {
     drag(&mut engine);
     assert_close(x_of(&engine), before);
 
-    engine.select_all();
+    engine.select_element(&id);
     engine.toggle_lock_selection();
     engine.clear_selection();
     drag(&mut engine);

@@ -879,12 +879,25 @@ impl DrawEngine {
         self.select_caught(HashSet::from([id.to_string()]));
     }
 
+    /// Everything that can be picked up, grown to whole groups (`actionSelectAll.ts@1118751f:
+    /// 31-53`): not a locked element, nor the label of one, though a locked member comes
+    /// in with its group as a click on the group takes it. Taking every locked element
+    /// handed a locked background to the Delete, Ctrl+D and Ctrl+G that follow a Select
+    /// All — grouped with everything, it was dragged off by the next click. A right-click
+    /// and "Unlock all" reach locked elements instead.
+    ///
     /// A top-level selection even when everything is inside the group being edited
     /// (`actionSelectAll.ts@1118751f:49` passes `editingGroupId: null`), so Ctrl+G on it groups at
     /// the top rather than nesting a new level inside that group.
     pub fn select_all(&mut self) {
         self.editing_group_id = None;
-        let ids: Vec<String> = self.scene.iter_ordered().map(|el| el.id.clone()).collect();
+        let free: Vec<String> = self
+            .scene
+            .iter_ordered()
+            .filter(|el| !el.locked() && self.container_of(el).is_none_or(|shape| !shape.locked()))
+            .map(|el| el.id.clone())
+            .collect();
+        let ids = crate::edit::expand_within(self.scene.iter_ordered(), free, None);
         self.set_selection(ids);
     }
 

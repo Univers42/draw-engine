@@ -35,7 +35,7 @@ impl DrawEngine {
     /// Moves the selection through the stack: see [`crate::edit::zorder`].
     ///
     /// What the carried set holds moves, as a drag's: a locked group member comes with its
-    /// group, and a loose locked element — which only this engine's Select All can hold —
+    /// group, and a loose locked element — held after a right-click or a peer's lock —
     /// stays, as does a label whose shape stays. The labels of what moves and the children
     /// of a moving frame come too, even one a peer holds: the stack is not stamped, so it
     /// takes nothing from their edit.
@@ -300,6 +300,38 @@ impl DrawEngine {
     /// Unlock (`label`, `actionElementLock.ts@1118751f:28-37`).
     pub fn selection_locked(&self) -> bool {
         self.lock_targets().iter().any(DrawElement::locked)
+    }
+
+    /// The board menu's "Unlock all" — `actionUnlockAllElements` (`actionElementLock.ts@1118751f:
+    /// 161-217`), offered by [`Self::can_unlock_all`]: every locked element unlocked and
+    /// selected, grown to groups, so what was just freed is in hand. One step of undo.
+    pub fn unlock_all(&mut self) {
+        let patches: Vec<DrawElement> = self
+            .scene
+            .iter_ordered()
+            .filter(|el| el.locked())
+            .cloned()
+            .map(|mut el| {
+                el.locked = Some(false);
+                el
+            })
+            .collect();
+        let freed: Vec<String> = patches
+            .iter()
+            .filter(|el| el.container_id.is_none())
+            .map(|el| el.id.clone())
+            .collect();
+        self.apply_patches_then(patches, |engine| {
+            engine.editing_group_id = None;
+            let ids = crate::edit::expand_within(engine.scene.iter_ordered(), freed, None);
+            engine.set_selection(ids);
+        });
+    }
+
+    /// Whether "Unlock all" is on offer: nothing selected, and something locked
+    /// (`predicate`, `actionElementLock.ts@1118751f:166-171`).
+    pub fn can_unlock_all(&self) -> bool {
+        self.selected_ids.is_empty() && self.scene.iter_ordered().any(DrawElement::locked)
     }
 
     /// What Lock and Unlock act on: the selection, what its frames hold and the labels of

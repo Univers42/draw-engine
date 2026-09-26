@@ -529,8 +529,19 @@ export class DrawEngine {
     this.inner.toggleLockSelection();
   }
 
+  /** Whether the lock toggle would unlock: something it acts on is locked. */
   selectionLocked(): boolean {
     return this.inner.selectionLocked();
+  }
+
+  /** The board menu's "Unlock all": every locked element unlocked and selected. */
+  unlockAll(): void {
+    this.inner.unlockAll();
+  }
+
+  /** Whether "Unlock all" is on offer: nothing selected, and something locked. */
+  canUnlockAll(): boolean {
+    return this.inner.canUnlockAll();
   }
 
   /**
