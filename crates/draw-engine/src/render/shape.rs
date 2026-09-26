@@ -143,6 +143,21 @@ fn linear_points(element: &DrawElement) -> Vec<[f64; 2]> {
     }
 }
 
+/// An elbow arrow's path, `generateElbowArrowShape(points, 16)`: its runs, each corner
+/// a quadratic — elevated here as rough's `normalize()` elevates the oracle's `Q`.
+fn elbow_segments(points: &[[f64; 2]]) -> Vec<Segment> {
+    let corners = crate::scene::elbow::rounded_corners(points, crate::scene::elbow::CORNER_RADIUS);
+    let mut segments = vec![Segment::MoveTo(points[0])];
+    for [before, corner, after] in corners {
+        segments.push(Segment::LineTo(before));
+        segments.push(Segment::quad_to_cubic(
+            before, corner[0], corner[1], after[0], after[1],
+        ));
+    }
+    segments.push(Segment::LineTo(points[points.len() - 1]));
+    segments
+}
+
 /// Generates the rough geometry for one element, in element-local space.
 ///
 /// Returns `None` for element types that are not drawn through rough at all — text is
@@ -191,6 +206,20 @@ pub fn element_drawable(element: &DrawElement) -> Option<Drawable> {
         DrawElementType::Ellipse => {
             let o = generate_rough_options(element, false);
             Some(generator::ellipse(w / 2.0, h / 2.0, w, h, o))
+        }
+
+        DrawElementType::Arrow if crate::scene::elbow::is_elbow(element) => {
+            let points = linear_points(element);
+            // The oracle draws nothing past a million out rather than a shape that size
+            // (`shape.ts@1118751f:901-915`).
+            if !points
+                .iter()
+                .all(|p| p[0].abs() <= 1e6 && p[1].abs() <= 1e6)
+            {
+                return None;
+            }
+            let o = generate_rough_options(element, true);
+            Some(generator::path(&elbow_segments(&points), o))
         }
 
         DrawElementType::Line | DrawElementType::Arrow => {
@@ -311,6 +340,30 @@ mod tests {
         assert_eq!(corner_radius(60.0, &e), 15.0);
         // Above it: pinned to the fixed radius.
         assert_eq!(corner_radius(400.0, &e), ADAPTIVE_RADIUS);
+    }
+
+    /// `M 0 0 L 84 0 Q 100 0, 100 16 L 100 50`: a corner rounded by 16, and by no more
+    /// than half the run beside it.
+    #[test]
+    fn an_elbow_arrow_rounds_its_corners() {
+        let points = [[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [90.0, 50.0]];
+        let segments = elbow_segments(&points);
+        assert_eq!(segments[0], Segment::MoveTo([0.0, 0.0]));
+        assert_eq!(segments[1], Segment::LineTo([84.0, 0.0]));
+        assert_eq!(
+            segments[2],
+            Segment::quad_to_cubic([84.0, 0.0], 100.0, 0.0, 100.0, 16.0)
+        );
+        // Beside a 10-long run the corner is 5.
+        assert_eq!(segments[3], Segment::LineTo([100.0, 45.0]));
+        assert_eq!(segments.last(), Some(&Segment::LineTo([90.0, 50.0])));
+
+        let mut arrow = element(DrawElementType::Arrow, 100.0, 50.0);
+        arrow.points = Some(points.to_vec());
+        let straight = element_drawable(&arrow).unwrap();
+        arrow.elbowed = Some(true);
+        assert_eq!(element_drawable(&arrow).unwrap().shape, "path");
+        assert_ne!(element_drawable(&arrow), Some(straight));
     }
 
     #[test]

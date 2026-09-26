@@ -503,7 +503,58 @@ fn apply(element: &mut DrawElement, routed: Routed) {
 
 /// Whether `element` is an elbow arrow.
 pub fn is_elbow(element: &DrawElement) -> bool {
-    element.kind == crate::scene::element::DrawElementType::Arrow && element.elbowed == Some(true)
+    element.kind == DrawElementType::Arrow && element.elbowed == Some(true)
+}
+
+/// How round an elbow arrow's corners are drawn: the `16` both of the oracle's callers
+/// pass to `generateElbowArrowShape` (`shape.ts@1118751f:648, 917`).
+pub const CORNER_RADIUS: f64 = 16.0;
+
+/// The corners `generateElbowArrowShape(points, radius)` rounds
+/// (`shape.ts@1118751f:1018-1080`): for each point between the ends, where the run into it
+/// stops, the point itself — the quadratic's control — and where the run out of it
+/// starts. Each is up to `radius` from the corner, and never past half of either run.
+pub fn rounded_corners(points: &[[f64; 2]], radius: f64) -> Vec<[[f64; 2]; 3]> {
+    // Beside `point`, `corner` along the run toward `other`.
+    let toward = |point: Pt, other: Pt, horizontal: bool, corner: f64| {
+        if horizontal {
+            if other[0] < point[0] {
+                [point[0] - corner, point[1]]
+            } else {
+                [point[0] + corner, point[1]]
+            }
+        } else if other[1] < point[1] {
+            [point[0], point[1] - corner]
+        } else {
+            [point[0], point[1] + corner]
+        }
+    };
+    points
+        .windows(3)
+        .map(|w| {
+            let [prev, point, next] = [w[0], w[1], w[2]];
+            let corner = outline::js_min(&[
+                radius,
+                outline::distance(point, next) / 2.0,
+                outline::distance(point, prev) / 2.0,
+            ]);
+            [
+                toward(
+                    point,
+                    prev,
+                    heading::heading_for_point_is_horizontal(point, prev),
+                    corner,
+                ),
+                point,
+                toward(
+                    point,
+                    next,
+                    heading::heading_for_point_is_horizontal(next, point),
+                    corner,
+                ),
+            ]
+        })
+        .collect()
 }
 
 /// Moves an elbow arrow's ends, as the oracle's `LinearElementEditor.movePoints` does:

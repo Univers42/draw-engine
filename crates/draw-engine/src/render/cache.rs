@@ -97,6 +97,10 @@ impl ShapeKey {
             }
             None => eat(&[0]),
         }
+        // An elbow arrow is drawn as rounded runs, not through its points.
+        if crate::scene::elbow::is_elbow(element) {
+            eat(&[2]);
+        }
         // Linear geometry lives in the points, not in width and height.
         if let Some(points) = element.points.as_deref() {
             eat(&(points.len() as u64).to_le_bytes());

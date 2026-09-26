@@ -682,7 +682,8 @@ fn hit_linear(element: &DrawElement, wx: f64, wy: f64, tolerance: f64) -> bool {
 const CURVE_HIT_PIECES: usize = 16;
 
 /// The path a line or arrow is drawn along, in world space before rotation: its own
-/// points when its corners are sharp, and the curve through them when it is rounded.
+/// points when its corners are sharp, the curve through them when it is rounded, and an
+/// elbow's runs with its corners rounded off.
 ///
 /// Rounded is the default, and the painter draws those points as a Catmull-Rom curve
 /// (`render/shape.rs`), so testing the straight segments between them left the whole bow
@@ -697,6 +698,9 @@ fn drawn_path(element: &DrawElement) -> Vec<[f64; 2]> {
         .iter()
         .map(|p| [element.x + p[0], element.y + p[1]])
         .collect();
+    if crate::scene::elbow::is_elbow(element) {
+        return elbow_path(&world);
+    }
     if element.roundness.is_none() || world.len() < 3 {
         return world;
     }
@@ -707,6 +711,27 @@ fn drawn_path(element: &DrawElement) -> Vec<[f64; 2]> {
             path.push(bezier_point(&cubic, piece as f64 / CURVE_HIT_PIECES as f64));
         }
     }
+    path
+}
+
+/// An elbow arrow's path as drawn, rounded corners and all (`generateElbowArrowShape`, which
+/// the oracle hit-tests too), with each corner's quadratic cut into chords a tenth of a unit
+/// or less from it.
+fn elbow_path(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    const CHORDS: usize = 8;
+    let corners = crate::scene::elbow::rounded_corners(points, crate::scene::elbow::CORNER_RADIUS);
+    let mut path = vec![points[0]];
+    for [a, b, c] in corners {
+        path.extend((0..=CHORDS).map(|i| {
+            let t = i as f64 / CHORDS as f64;
+            let u = 1.0 - t;
+            [
+                u * u * a[0] + 2.0 * u * t * b[0] + t * t * c[0],
+                u * u * a[1] + 2.0 * u * t * b[1] + t * t * c[1],
+            ]
+        }));
+    }
+    path.push(points[points.len() - 1]);
     path
 }
 

@@ -78,6 +78,12 @@ fn corpus() -> Vec<DrawElement> {
                                             element.points =
                                                 Some(vec![[0.0, 0.0], [w, 0.0], [w / 2.0, h]]);
                                         }
+                                        // The same points drawn as an elbow arrow's runs.
+                                        if kind == DrawElementType::Arrow {
+                                            let mut elbow = element.clone();
+                                            elbow.elbowed = Some(true);
+                                            out.push(elbow);
+                                        }
                                         out.push(element);
                                     }
                                 }
