@@ -331,6 +331,24 @@ pub struct DrawElement {
     pub start_arrowhead: Option<Arrowhead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_arrowhead: Option<Arrowhead>,
+    /// Only an arrow's: routed around its shapes in horizontal and vertical runs rather
+    /// than drawn through its points — Excalidraw's `elbowed`
+    /// (`packages/element/src/types.ts@1118751f:394`). `None`, as on every arrow saved
+    /// before this existed, is a sharp or curved arrow. See `scene/elbow`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elbowed: Option<bool>,
+    /// An elbow arrow's segments the person moved, which its route keeps — Excalidraw's
+    /// `fixedSegments`. `None` is none (the oracle's `null`); an empty list is the fresh
+    /// arrow's `[]`, which the router tells apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_segments: Option<Vec<crate::scene::elbow::FixedSegment>>,
+    /// Whether an elbow arrow's route has an extra corner beside its start (or end), put
+    /// in to leave the shape square on while segments are fixed — Excalidraw's
+    /// `startIsSpecial`/`endIsSpecial`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_is_special: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_is_special: Option<bool>,
     /// What is drawn: the source with its soft line breaks baked in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -532,6 +550,10 @@ pub fn create_element(
         end_bind_mode: None,
         start_arrowhead: None,
         end_arrowhead: None,
+        elbowed: None,
+        fixed_segments: None,
+        start_is_special: None,
+        end_is_special: None,
         text: None,
         original_text: None,
         font_size: None,

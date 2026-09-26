@@ -127,7 +127,7 @@ pub fn is_target_kind(element: &DrawElement) -> bool {
 /// `isOpaqueForBinding` (`packages/element/src/collision.ts@1118751f:346-348`): a picture,
 /// or a shape with a background. An arrow dropped on one binds to it or to something drawn
 /// on top of it, never to a shape it cannot see.
-fn occludes(element: &DrawElement) -> bool {
+pub(crate) fn occludes(element: &DrawElement) -> bool {
     match element.kind {
         // A note's paper is never transparent.
         DrawElementType::Image | DrawElementType::StickyNote => true,

@@ -49,6 +49,9 @@ unicode-normalization = "0.1"
 # default-features = false drops plotters and rayon: smaller, and friendlier to the
 # offline build in scripts/docker-run.sh.
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# Oracle fixtures are replayed to 1e-9 from the exact doubles V8 printed; the default
+# parser can land one ulp off, and a shape one ulp away is a different input.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 
 [[bench]]
 name = "render"

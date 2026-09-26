@@ -1,5 +1,6 @@
 pub mod binding;
 pub mod bucket_fill;
+pub mod elbow;
 pub mod element;
 pub mod embed;
 pub mod figure;
