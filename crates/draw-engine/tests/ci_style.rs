@@ -142,6 +142,82 @@ fn set_font_size_updates_element_geometry() {
     assert_close(engine.get_font_size(), 32.0);
 }
 
+// -------------------------------------------------------------------- style presets' fonts
+
+/// A style preset's font reaches a selected text like `set_font_size` itself does —
+/// `apply_style` is what a preset ultimately is, several rows applied together.
+#[test]
+fn a_style_patchs_font_relays_out_a_selected_text() {
+    let text = text_at(0.0, 0.0, 10.0, 20.0);
+    let mut engine = engine_with_measure(vec![text.clone()]);
+    engine.select(vec![text.id.clone()]);
+    engine.apply_style(DrawElementStylePatch {
+        font_size: Some(32.0),
+        font_family: Some(5),
+        text_align: Some(TextAlign::Center),
+        ..Default::default()
+    });
+
+    let updated = engine
+        .get_scene()
+        .into_iter()
+        .find(|e| e.id == text.id)
+        .unwrap();
+    assert_eq!(updated.font_size, Some(32.0));
+    assert_eq!(updated.font_family, Some(5));
+    assert_eq!(updated.text_align, Some(TextAlign::Center));
+}
+
+/// A preset also reaches the label a selected shape carries — laid out again — and the
+/// font and the shape's own colour land together as one step of undo.
+#[test]
+fn a_style_patchs_font_relays_out_a_selected_shapes_label_as_one_step_with_the_rest() {
+    let mut shape = box_at(0.0, 0.0, 200.0, 100.0);
+    shape.id = "box".into();
+    shape.bound_text_id = Some("label".into());
+    let mut label = text_at(10.0, 40.0, 180.0, 20.0);
+    label.id = "label".into();
+    label.container_id = Some("box".into());
+    label.font_size = Some(20.0);
+    let mut engine = engine_with_measure(vec![shape, label]);
+    engine.select(vec!["box".to_string()]);
+
+    engine.apply_style(DrawElementStylePatch {
+        font_size: Some(32.0),
+        stroke_color: Some("#ff0000".to_string()),
+        ..Default::default()
+    });
+
+    let scene = engine.get_scene();
+    let label = scene.iter().find(|e| e.id == "label").unwrap();
+    let box_el = scene.iter().find(|e| e.id == "box").unwrap();
+    assert_eq!(label.font_size, Some(32.0), "the label took the font");
+    assert_eq!(box_el.stroke_color, "#ff0000", "the shape took the colour");
+
+    engine.undo();
+    let scene = engine.get_scene();
+    let label = scene.iter().find(|e| e.id == "label").unwrap();
+    let box_el = scene.iter().find(|e| e.id == "box").unwrap();
+    assert_eq!(label.font_size, Some(20.0), "one undo takes back both");
+    assert_ne!(box_el.stroke_color, "#ff0000");
+}
+
+/// With nothing selected, a preset's font becomes only the next text's style — the same
+/// rule `set_font_size`/`set_font_family`/`set_text_align` already follow on their own.
+#[test]
+fn a_style_patchs_font_with_nothing_selected_is_only_the_next_texts() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.apply_style(DrawElementStylePatch {
+        font_size: Some(48.0),
+        ..Default::default()
+    });
+    assert_close(engine.get_font_size(), 48.0);
+    assert!(
+        engine.get_scene().is_empty(),
+        "nothing was created or changed"
+    );
+}
+
 #[test]
 fn stroke_width_style_patch() {
     let rect = box_at(0.0, 0.0, 100.0, 50.0);

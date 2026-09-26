@@ -302,5 +302,11 @@ pub fn merge_style_patch(
         roughness: patch.roughness.or(base.roughness),
         opacity: patch.opacity.or(base.opacity),
         roundness: patch.roundness.or(base.roundness),
+        // Never carried in `next_style`: the next text's font lives in the engine's own
+        // `next_font_size`/`next_font_family`/`next_text_align`, which `apply_style` writes
+        // directly — see `engine/selection_style.rs`.
+        font_family: None,
+        font_size: None,
+        text_align: None,
     }
 }

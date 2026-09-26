@@ -21,7 +21,7 @@ const PREVIEW_MAX_TEXTS: usize = 200;
 const PREVIEW_MAX_CHARS: usize = 5000;
 
 /// A size as the contract would store it, or `None` for one that is not a number.
-fn storable_font_size(size: f64) -> Option<f64> {
+pub(super) fn storable_font_size(size: f64) -> Option<f64> {
     size.is_finite()
         .then(|| size.clamp(*FONT_SIZES.start(), *FONT_SIZES.end()))
 }
@@ -259,9 +259,10 @@ impl DrawEngine {
 
     /// [`Self::relayout_selected_texts`]'s write, without the bindings pass or the
     /// commit — shared with [`Self::set_text_wrap`], which writes this and
-    /// [`Self::write_text_auto_resize`] as one step. Says whether there was a selected
-    /// text to lay out.
-    fn write_relayout_selected_texts(
+    /// [`Self::write_text_auto_resize`] as one step, and with `apply_style`
+    /// (`selection_style.rs`) for a preset's font. Says whether there was a selected text
+    /// to lay out.
+    pub(super) fn write_relayout_selected_texts(
         &mut self,
         change: impl Fn(&mut DrawElement),
         anchor_font_resize: bool,
@@ -516,7 +517,7 @@ impl DrawEngine {
     }
 
     /// The selected texts that are notes' labels, whose picked size is their ceiling.
-    fn sticky_labels(&self) -> HashSet<String> {
+    pub(super) fn sticky_labels(&self) -> HashSet<String> {
         self.selected_texts()
             .into_iter()
             .filter(|text| {
@@ -796,7 +797,7 @@ impl DrawEngine {
 /// A picked size, written where it means something (`getBaseFontSizeUpdate`,
 /// `packages/element/src/stickyNote.ts@1118751f:415-423`): a note's label takes it as the
 /// ceiling its fit shrinks below, clamped; any other text as its size.
-fn set_user_font_size(text: &mut DrawElement, size: f64, sticky: bool) {
+pub(super) fn set_user_font_size(text: &mut DrawElement, size: f64, sticky: bool) {
     if sticky {
         text.base_font_size = Some(crate::scene::sticky::normalize_sticky_font_size(size));
     } else {

@@ -691,6 +691,11 @@ impl DrawEngine {
             opacity: patch.opacity,
             ..Default::default()
         };
+        // Font fields are never carried by `style_targets`' patches at all — a shape has
+        // none to apply them to, and a label's come through `apply_style`'s own font pass
+        // below, which reaches the same set (the selected texts and the labels of
+        // selected shapes) through `write_relayout_selected_texts` instead, because a font
+        // change needs a relayout `apply_style_patch` cannot give it.
         let reaches_labels = for_label.stroke_color.is_some() || for_label.opacity.is_some();
         let carried = std::cell::OnceCell::new();
         let mut selected = self.get_selected_elements();
@@ -760,10 +765,30 @@ impl DrawEngine {
     /// The commit is still taken, because a preview may have moved the elements already
     /// — see [`Self::preview_style`].
     pub fn apply_style(&mut self, patch: DrawElementStylePatch) {
+        // A preset's font, always written to the next text's style whatever is selected —
+        // `set_font_size`/`set_font_family`/`set_text_align` (`style.rs`) do the same
+        // unconditionally, and a preset is nothing more than several of those rows chosen
+        // together.
+        if let Some(size) = patch.font_size.and_then(super::style::storable_font_size) {
+            self.next_font_size = size;
+        }
+        if let Some(family) = patch
+            .font_family
+            .filter(|id| crate::text::font::family(*id).is_some())
+        {
+            self.next_font_family = family;
+        }
+        if let Some(align) = patch.text_align {
+            self.next_text_align = Some(align);
+        }
+        self.touch_style();
+
         // Resolved against the state the pick lands on, before it changes anything.
         let (stroke, background) = (self.color_domain(false), self.color_domain(true));
         let targets = self.style_targets(&patch);
-        if targets.is_empty() {
+        let has_font =
+            patch.font_size.is_some() || patch.font_family.is_some() || patch.text_align.is_some();
+        if targets.is_empty() && !has_font {
             let rest = self.write_next_colors(patch, stroke, background);
             self.set_next_style(rest);
             return;
@@ -778,12 +803,50 @@ impl DrawEngine {
         if patch.stroke_color.is_some() {
             self.sync_sticky_ink(&before);
         }
+        // The font, laid out again: the selected texts and the labels of selected shapes,
+        // as ONE step of undo together with the rest of the patch above — `commit_style`
+        // below is the only commit either makes.
+        self.apply_style_font(&patch);
         // The next element takes the style too, as the oracle's `currentItem*` do
         // (`actionProperties.tsx@1118751f:622`, `:971`; `colorTargets.ts@1118751f:178-192`).
         let rest = self.write_next_colors(patch, stroke, background);
         self.next_style = super::merge_style_patch(&self.next_style, &rest);
         self.commit_style();
         self.request_draw();
+    }
+
+    /// The font half of [`Self::apply_style`]: writes whichever of `patch`'s
+    /// `font_family`/`font_size`/`text_align` are present into the selected texts and the
+    /// labels of selected shapes, laid out again the way `set_font_size`, `set_font_family`
+    /// and `set_text_align` do (`style.rs`) — reusing that same relayout write rather than
+    /// a second one. No-op, and no relayout at all, when the patch carries none of them.
+    fn apply_style_font(&mut self, patch: &DrawElementStylePatch) {
+        let clamped_size = patch.font_size.and_then(super::style::storable_font_size);
+        let resolved_family = patch.font_family.and_then(|family| {
+            crate::text::font::family(family).map(|font| (family, font.line_height))
+        });
+        let text_align = patch.text_align;
+        if clamped_size.is_none() && resolved_family.is_none() && text_align.is_none() {
+            return;
+        }
+        let sticky = self.sticky_labels();
+        let anchor_font_resize = clamped_size.is_some();
+        self.write_relayout_selected_texts(
+            |text| {
+                if let Some(size) = clamped_size {
+                    super::style::set_user_font_size(text, size, sticky.contains(&text.id));
+                }
+                if let Some((family, line_height)) = resolved_family {
+                    text.font_family = Some(family);
+                    text.line_height = Some(line_height);
+                }
+                if let Some(align) = text_align {
+                    text.text_align = Some(align);
+                }
+            },
+            anchor_font_resize,
+        );
+        self.refloor_text_session();
     }
 
     /// Shows a style on the canvas without committing it: nothing stamped, nothing sent,

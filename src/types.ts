@@ -104,6 +104,19 @@ export const DEFAULT_ELEMENT_STYLE: DrawElementStyle = {
   roundness: 8,
 };
 
+/**
+ * What `applyStyle`/`previewStyle`/`setNextStyle` take: the 8 `DrawElementStyle` fields,
+ * plus a font — family, size, horizontal alignment — the engine's `DrawElementStylePatch`
+ * also carries. The font fields restyle every selected text and the label of every
+ * selected shape as one step with the rest of the patch, and fall back to the next text's
+ * style with nothing selected; see `engine/selection_style.rs`.
+ */
+export interface StylePatch extends Partial<DrawElementStyle> {
+  fontFamily?: number;
+  fontSize?: number;
+  textAlign?: TextAlign;
+}
+
 export interface DrawElement extends DrawElementStyle {
   /**
    * An explicit corner radius, set by dragging a corner-radius handle. Absent means the

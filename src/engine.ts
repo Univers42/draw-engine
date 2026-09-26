@@ -19,6 +19,7 @@ import type {
   FlowchartShape,
   GridSettings,
   SelectionStyle,
+  StylePatch,
   TextAlign,
   TextEditLayout,
   VerticalAlign,
@@ -358,7 +359,7 @@ export class DrawEngine {
     return this.inner.insertImage(dataUrl, naturalWidth, naturalHeight, screenX, screenY) ?? null;
   }
 
-  setNextStyle(style: Partial<DrawElementStyle>): void {
+  setNextStyle(style: StylePatch): void {
     this.inner.setNextStyleJson(JSON.stringify(style));
   }
 
@@ -374,7 +375,7 @@ export class DrawEngine {
     return parseJson<DrawElement[]>(this.inner.getSelectedElementsJson(), []);
   }
 
-  applyStyle(patch: Partial<DrawElementStyle>): void {
+  applyStyle(patch: StylePatch): void {
     this.inner.applyStyleJson(JSON.stringify(patch));
   }
 
@@ -830,7 +831,7 @@ export class DrawEngine {
   }
 
   /** Shows a style on the canvas without committing it; `applyStyle` commits. */
-  previewStyle(patch: Partial<DrawElementStyle>): void {
+  previewStyle(patch: StylePatch): void {
     this.inner.previewStyleJson(JSON.stringify(patch));
   }
 

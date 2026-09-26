@@ -608,6 +608,15 @@ pub struct DrawElementStylePatch {
         skip_serializing_if = "Option::is_none"
     )]
     pub roundness: Option<Option<f64>>,
+    /// A preset's font: the family, the size and the horizontal alignment. Reaches the
+    /// selected texts and the labels of selected shapes — never a shape itself — laid out
+    /// again as one step with the rest of the patch; see `engine/selection_style.rs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_align: Option<TextAlign>,
 }
 
 /// Lets an explicit `null` mean "set this to nothing" rather than "say nothing about it".
