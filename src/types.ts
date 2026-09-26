@@ -166,6 +166,21 @@ export interface DrawElement extends DrawElementStyle {
   endBindMode?: "inside" | "orbit";
   startArrowhead?: Arrowhead;
   endArrowhead?: Arrowhead;
+  /**
+   * Only an arrow's: routed around its shapes in horizontal and vertical runs
+   * (Excalidraw's `elbowed`). Absent — every arrow saved before this existed — is a sharp
+   * or curved arrow.
+   */
+  elbowed?: boolean;
+  /**
+   * An elbow arrow's segments the person moved, which its route keeps: the segment ending
+   * at point `index`, its ends relative to the arrow's `x`/`y` (Excalidraw's
+   * `fixedSegments`).
+   */
+  fixedSegments?: Array<{ index: number; start: [number, number]; end: [number, number] }>;
+  /** Whether an elbow arrow's route has an extra corner beside its start (end). */
+  startIsSpecial?: boolean;
+  endIsSpecial?: boolean;
   /** What is drawn: the source with its soft line breaks baked in. */
   text?: string;
   /**
@@ -663,8 +678,8 @@ export interface SelectionStyle {
 /** A colour pick's domain: sticky notes keep colours of their own. */
 export type ColorDomain = "regular" | "sticky" | "mixed";
 
-/** The arrow types the engine draws: Excalidraw's less `elbow`. */
-export type ArrowType = "sharp" | "round";
+/** The arrow types the engine draws: Excalidraw's `ARROW_TYPE`. */
+export type ArrowType = "sharp" | "round" | "elbow";
 
 /** What a panel shows before an engine exists: the default style, nothing selected. */
 export const EMPTY_SELECTION_STYLE: SelectionStyle = {

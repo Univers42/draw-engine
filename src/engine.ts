@@ -772,7 +772,7 @@ export class DrawEngine {
     this.inner.setArrowheadsJson(JSON.stringify(patch));
   }
 
-  /** Curved or sharp, for the selected arrows and the next one. The engine draws no elbow arrows. */
+  /** Sharp, curved or elbow, for the selected arrows and the next one. */
   setArrowType(type: ArrowType): void {
     this.inner.setArrowType(type);
   }

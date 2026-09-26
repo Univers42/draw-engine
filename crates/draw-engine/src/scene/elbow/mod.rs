@@ -730,6 +730,77 @@ pub fn renormalize(element: &mut DrawElement, board: &Board) {
     mutate(element, board, Updates::default(), &Options::default());
 }
 
+/// The route-and-binding half of `actionChangeArrowType` for one arrow whose type changes
+/// to or from elbow (`actionProperties.tsx@1118751f:2062-2213`); its roundness is the
+/// caller's. Made elbow, it is laid straight between its two ends, every bound end is
+/// anchored again where it snaps onto its shape at `zoom`, and it is routed; its moved
+/// segments are forgotten. Made sharp or curved, it is laid straight between its two ends
+/// and each bound end is anchored where it is.
+pub fn retype(element: &mut DrawElement, elbow: bool, board: &Board, zoom: f64) {
+    let world = crate::selection::linear::world_points(element);
+    let (Some(&start), Some(&end)) = (world.first(), world.last()) else {
+        return;
+    };
+    if !elbow {
+        let was = is_elbow(element);
+        element.elbowed = None;
+        if was {
+            *element = crate::selection::linear::from_world_points(element, &[start, end]);
+        }
+        for (which, at) in [(End::Start, start), (End::End, end)] {
+            let Some(a) = anchor(element, which) else {
+                continue;
+            };
+            if let Some(shape) = board.get(&a.element_id) {
+                let fixed_point = crate::scene::binding::fixed_point_at(shape, at);
+                set_anchor(
+                    element,
+                    which,
+                    Some(Anchor {
+                        fixed_point,
+                        mode: BindMode::Orbit,
+                        ..a
+                    }),
+                );
+            }
+        }
+        return;
+    }
+    element.x = start.x;
+    element.y = start.y;
+    element.angle = 0.0;
+    element.elbowed = Some(true);
+    element.fixed_segments = None;
+    let points = vec![[0.0, 0.0], [end.x - start.x, end.y - start.y]];
+    element.points = Some(points.clone());
+    // Each binding keeps its shape and mode, re-anchored — or is dropped with its shape.
+    let rebound = |which: End| {
+        anchor(element, which).and_then(|a| {
+            let shape = board.get(&a.element_id)?;
+            let fixed_point = fixed_point_for(element, shape, which, zoom, true)?;
+            Some(Anchor { fixed_point, ..a })
+        })
+    };
+    let (start_anchor, end_anchor) = (rebound(End::Start), rebound(End::End));
+    let as_binding = |a: &Option<Anchor>| {
+        Some(a.as_ref().map(|a| ElbowBinding {
+            element_id: a.element_id.clone(),
+            fixed_point: a.fixed_point,
+        }))
+    };
+    let updates = Updates {
+        points: Some(points),
+        start_binding: as_binding(&start_anchor),
+        end_binding: as_binding(&end_anchor),
+        fixed_segments: Some(None),
+        ..Updates::default()
+    };
+    mutate(element, board, updates, &Options::default());
+    // `mutate` writes an elbow binding as orbiting; the oracle's spread keeps the mode.
+    set_anchor(element, End::Start, start_anchor);
+    set_anchor(element, End::End, end_anchor);
+}
+
 /// Binds a new elbow arrow to `start` and `end` and routes it between them: the binding
 /// and routing half of the oracle's flowchart `createBindingArrow`
 /// (`flowchart.ts@1118751f:310-448`). `arrow` comes with its position and its two points

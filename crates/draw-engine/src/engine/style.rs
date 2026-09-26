@@ -136,7 +136,9 @@ impl DrawEngine {
 
     /// The Arrow type row for the selected arrows, and always the next arrow's type, as
     /// `actionChangeArrowType` sets `currentItemArrowType` (`:2057-2242`, `:2229`). An
-    /// arrow already of the type keeps the roundness it has.
+    /// arrow already of the type keeps the roundness — or the route — it has. One made
+    /// elbow, or no longer elbow, is laid straight between its ends first
+    /// ([`crate::scene::elbow::retype`]).
     pub fn set_arrow_type(&mut self, arrow_type: ArrowType) {
         self.next_arrow_type = arrow_type;
         self.touch_style();
@@ -146,15 +148,29 @@ impl DrawEngine {
             .into_iter()
             .filter(|element| {
                 element.kind == DrawElementType::Arrow
-                    && ArrowType::of(element.roundness) != arrow_type
+                    && ArrowType::of(element) != arrow_type
                     && self.restylable(element, &carried)
             })
             .collect();
         if changed.is_empty() {
             return;
         }
-        for mut arrow in changed {
-            arrow.roundness = arrow_type.roundness();
+        let to_elbow = arrow_type == ArrowType::Elbow;
+        let retyped: Vec<DrawElement> = {
+            let board = crate::scene::elbow::Board::new(self.scene.iter_ordered());
+            changed
+                .into_iter()
+                .map(|mut arrow| {
+                    arrow.roundness = arrow_type.roundness();
+                    if to_elbow || crate::scene::elbow::is_elbow(&arrow) {
+                        let zoom = self.camera.scale;
+                        crate::scene::elbow::retype(&mut arrow, to_elbow, &board, zoom);
+                    }
+                    arrow
+                })
+                .collect()
+        };
+        for arrow in retyped {
             self.scene.put(arrow);
         }
         self.apply_bindings();
@@ -167,6 +183,10 @@ impl DrawEngine {
     /// for lines and shapes) and the heads chosen, if any — `App.tsx@1118751f:10251-10276`.
     pub(super) fn style_new_arrow(&self, arrow: &mut DrawElement) {
         arrow.roundness = self.next_arrow_type.roundness();
+        if self.next_arrow_type == ArrowType::Elbow {
+            arrow.elbowed = Some(true);
+            arrow.fixed_segments = Some(Vec::new());
+        }
         arrow.start_arrowhead = self.next_start_arrowhead;
         arrow.end_arrowhead = self.next_end_arrowhead;
     }

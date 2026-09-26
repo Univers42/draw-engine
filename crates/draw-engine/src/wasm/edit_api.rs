@@ -311,8 +311,8 @@ impl WasmEngine {
         self.flush();
     }
 
-    /// `"sharp"` or `"round"` for the selected arrows and the next one. Anything else —
-    /// `"elbow"`, which the engine does not route — is ignored.
+    /// `"sharp"`, `"round"` or `"elbow"` for the selected arrows and the next one. Anything
+    /// else is ignored.
     #[wasm_bindgen(js_name = setArrowType)]
     pub fn set_arrow_type(&self, arrow_type: &str) {
         if let Some(arrow_type) = crate::engine::ArrowType::parse(arrow_type) {

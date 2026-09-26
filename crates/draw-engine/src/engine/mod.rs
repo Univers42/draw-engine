@@ -705,6 +705,13 @@ impl DrawEngine {
             self.events.tool = Some(back);
             return;
         }
+        // The arrow key again, with the arrow tool already out, moves the next arrow on to
+        // the next type (`App.tsx@1118751f:5706-5714`).
+        if tool == DrawTool::Arrow && self.tool == DrawTool::Arrow {
+            self.next_arrow_type = self.next_arrow_type.cycled();
+            self.touch_style();
+            return;
+        }
         self.set_tool(tool);
     }
 

@@ -67,20 +67,23 @@ impl Edges {
     }
 }
 
-/// The Arrow type row: `ARROW_TYPE` (`packages/common/src/constants.ts@1118751f`) less
-/// `elbow`, which this engine does not route — a recorded gap (`docs/reference/console.md`).
-/// An arrow is curved when it has a roundness at all, as the oracle's form value reads it
+/// The Arrow type row: `ARROW_TYPE` (`packages/common/src/constants.ts@1118751f`), in the
+/// oracle's order. An arrow is elbowed when it says so, else curved when it has a
+/// roundness at all, as the oracle's form value reads it
 /// (`actionProperties.tsx@1118751f:2275-2296`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArrowType {
     Sharp,
     Round,
+    Elbow,
 }
 
 impl ArrowType {
-    pub(super) fn of(roundness: Option<f64>) -> Self {
-        if roundness.is_some() {
+    pub(super) fn of(element: &DrawElement) -> Self {
+        if crate::scene::elbow::is_elbow(element) {
+            ArrowType::Elbow
+        } else if element.roundness.is_some() {
             ArrowType::Round
         } else {
             ArrowType::Sharp
@@ -89,19 +92,30 @@ impl ArrowType {
 
     /// The roundness an arrow of this type is drawn with. A curve takes the default
     /// style's: the painter reads an arrow's roundness only as "curved" (`PROPORTIONAL_RADIUS`
-    /// carries no value either).
+    /// carries no value either). An elbow arrow has none (`App.tsx@1118751f:10265-10271`).
     pub(super) fn roundness(self) -> Option<f64> {
         match self {
             ArrowType::Round => DrawElementStyle::default().roundness,
-            ArrowType::Sharp => None,
+            ArrowType::Sharp | ArrowType::Elbow => None,
         }
     }
 
-    /// `"sharp"` or `"round"`; anything else — `"elbow"` included — is `None`.
+    /// The type pressing the arrow key again gives: sharp, round, elbow, and round again
+    /// to sharp (`App.tsx@1118751f:5706-5714`).
+    pub(super) fn cycled(self) -> Self {
+        match self {
+            ArrowType::Sharp => ArrowType::Round,
+            ArrowType::Round => ArrowType::Elbow,
+            ArrowType::Elbow => ArrowType::Sharp,
+        }
+    }
+
+    /// `"sharp"`, `"round"` or `"elbow"`; anything else is `None`.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "sharp" => Some(ArrowType::Sharp),
             "round" => Some(ArrowType::Round),
+            "elbow" => Some(ArrowType::Elbow),
             _ => None,
         }
     }
@@ -438,7 +452,7 @@ impl DrawEngine {
             if element.kind == DrawElementType::Arrow {
                 start_arrowhead.add(default_arrowhead(element, "start"));
                 end_arrowhead.add(default_arrowhead(element, "end"));
-                arrow_type.add(ArrowType::of(element.roundness));
+                arrow_type.add(ArrowType::of(element));
             } else {
                 edges.add(Edges::of(element.roundness));
             }
