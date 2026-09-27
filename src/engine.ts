@@ -490,6 +490,20 @@ export class DrawEngine {
   }
 
   /**
+   * Plain text pasted as text elements — one per line, each wrapped to half the visible
+   * width and centred on `at`, the **world** point the pointer is at (the same convention
+   * `pasteJson` takes). One step of undo, the new texts selected; the clipboard is
+   * untouched, nothing was copied.
+   *
+   * This is the other branch of a paste: `pasteJson` for this app's own element JSON, this
+   * for everything else. `false` for text that would make no element at all, so a caller
+   * can fall through to whatever it had.
+   */
+  pasteText(text: string, at?: { x: number; y: number }): boolean {
+    return this.inner.pasteText(text, at?.x, at?.y);
+  }
+
+  /**
    * A scene made elsewhere — the Mermaid import — placed as `pasteJson` places it, centred
    * on the **world** point `at`, but with every text laid out in this engine's fonts and
    * every shape grown to hold its label. One step of undo; the clipboard is untouched.
