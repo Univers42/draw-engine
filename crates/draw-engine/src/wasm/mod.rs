@@ -9,6 +9,7 @@ use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 use crate::engine::{DrawEngine, Painter};
 
+mod camera_api;
 mod convert_api;
 mod edit_api;
 mod flowchart_api;

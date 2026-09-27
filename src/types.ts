@@ -13,9 +13,11 @@ export interface WorldBounds {
   maxY: number;
 }
 
-export const MIN_ZOOM = 0.1;
-export const MAX_ZOOM = 30;
+/** The identity camera, `0, 0, 1` — a translation of nothing at 1:1. */
 export const IDENTITY: Camera = { x: 0, y: 0, scale: 1 };
+// `MIN_ZOOM`/`MAX_ZOOM` used to sit here as the literals 0.1 and 30, which is the Rust's
+// pair (`camera.rs:5-6`) written out a second time and nothing compared the two. They are
+// the engine's to answer now — `minZoom()`/`maxZoom()` in `./cameraMath`.
 
 export type DrawElementType =
   | "rectangle"

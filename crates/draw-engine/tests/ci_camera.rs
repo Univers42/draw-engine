@@ -216,3 +216,118 @@ fn visible_world_rect_matches_viewport() {
     assert_point_close(top_left, Point { x: 0.0, y: 0.0 });
     assert_point_close(bottom_right, Point { x: 800.0, y: 600.0 });
 }
+
+// ---------------------------------------------------------------------------
+// Ported from `apps/web/src/lib/draw-chrome/camera.test.ts`, verbatim.
+//
+// The host used to carry a second, hand-kept copy of `world_to_screen` /
+// `screen_to_world` and its own pair of zoom limits, and the four values the
+// front called are now WASM exports of the functions above. These cases moved
+// here with the arithmetic, and the parity test
+// (`apps/web/src/lib/draw-chrome/cameraParity.test.ts`) is what keeps the copy
+// from coming back.
+// ---------------------------------------------------------------------------
+
+/// `worldToScreen({x: 100, y: 50, scale: 2}, 10, 20)` is `{x: 120, y: 90}`.
+#[test]
+fn ported_world_to_screen_is_scale_then_offset() {
+    let camera = Camera {
+        x: 100.0,
+        y: 50.0,
+        scale: 2.0,
+    };
+    assert_eq!(
+        world_to_screen(camera, 10.0, 20.0),
+        Point { x: 120.0, y: 90.0 }
+    );
+}
+
+/// The inverse pair, over the camera the peer-cursor send path uses.
+#[test]
+fn ported_screen_to_world_inverts_world_to_screen() {
+    let camera = Camera {
+        x: -40.0,
+        y: 12.0,
+        scale: 1.5,
+    };
+    let world = Point { x: 200.0, y: -30.0 };
+    let screen = world_to_screen(camera, world.x, world.y);
+    assert_point_close(screen_to_world(camera, screen.x, screen.y), world);
+}
+
+/// The host's `fitCamera` clamp cases: a unit square in a big room wants to be
+/// enormous, and a million-unit square in a small one wants to be microscopic, so
+/// both ends land on the limits rather than on what the room would allow.
+///
+/// `padding` is `0` because the host's `fitCamera` defaults it to `0`, and a
+/// different margin would fit to a different scale before the clamp ever ran.
+#[test]
+fn ported_fit_bounds_clamps_to_the_engines_own_zoom_limits() {
+    let tiny = fit_bounds(
+        WorldBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 1.0,
+            max_y: 1.0,
+        },
+        1000.0,
+        1000.0,
+        0.0,
+    );
+    assert_close(tiny.scale, MAX_ZOOM);
+    let huge = fit_bounds(
+        WorldBounds {
+            min_x: 0.0,
+            min_y: 0.0,
+            max_x: 1_000_000.0,
+            max_y: 1_000_000.0,
+        },
+        100.0,
+        100.0,
+        0.0,
+    );
+    assert_close(huge.scale, MIN_ZOOM);
+}
+
+/// A zero scale is the degenerate input the two functions differ on, and the
+/// difference is the point: `world_to_screen` still answers (everything collapses
+/// onto the camera's own offset), while `screen_to_world` divides by zero.
+///
+/// Which of the two non-finite answers comes out follows from the offset, and both
+/// are pinned because both used to be produced by JavaScript: the camera's own
+/// `x`/`y` divide `0 / 0` to `NaN`, and anything else divides a non-zero by zero
+/// to a signed infinity. `f64` does this rather than trapping, exactly as `number`
+/// does, so the host's numbers do not move.
+#[test]
+fn ported_degenerate_scales_answer_rather_than_trap() {
+    let flat = Camera {
+        x: 7.0,
+        y: -3.0,
+        scale: 0.0,
+    };
+    assert_eq!(world_to_screen(flat, 10.0, 20.0), Point { x: 7.0, y: -3.0 });
+    assert!(screen_to_world(flat, flat.x, flat.y).x.is_nan());
+    assert!(screen_to_world(flat, flat.x, flat.y).y.is_nan());
+    // `0 - 7` and `1 - 7` are both negative over a zero scale: minus infinity.
+    let left = screen_to_world(flat, 0.0, 0.0).x;
+    assert!(left.is_infinite() && left.is_sign_negative(), "{left}");
+    // `1 - (-3)` is positive over a zero scale: plus infinity.
+    let below = screen_to_world(flat, 0.0, 1.0).y;
+    assert!(below.is_infinite() && below.is_sign_positive(), "{below}");
+
+    // A negative scale is a mirror, not an error: it flips the sign of the offset
+    // and leaves the forward transform's arithmetic untouched.
+    let mirrored = Camera {
+        x: 0.0,
+        y: 0.0,
+        scale: -2.0,
+    };
+    assert_eq!(
+        world_to_screen(mirrored, 10.0, 20.0),
+        Point { x: -20.0, y: -40.0 }
+    );
+    assert_point_close(
+        screen_to_world(mirrored, -20.0, -40.0),
+        Point { x: 10.0, y: 20.0 },
+    );
+}
