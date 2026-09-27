@@ -134,6 +134,13 @@ impl<'a> PaintView<'a> {
     }
 }
 
+/// Where the frames go: the clip box for each child that pokes out of its frame, by child
+/// id, and each frame's name anchor with its label and the frame it belongs to.
+type FrameChrome = (
+    std::collections::HashMap<String, WorldBounds>,
+    Vec<(crate::camera::Point, String, String)>,
+);
+
 /// One peer's hold, as the painter draws it. See `peers.rs`.
 #[derive(Clone)]
 pub struct PeerMark<'a> {
@@ -200,6 +207,40 @@ impl DrawEngine {
         let focus = focus_point(shape, anchor.fixed_point);
         snapped_midpoint(shape, pointer, super::MIDPOINT_SNAP_PX / self.camera.scale)
             .is_some_and(|m| (m.x - focus.x).hypot(m.y - focus.y) < 0.01 / self.camera.scale)
+    }
+
+    /// Where the frame chrome goes: every frame `visible` reaches, its name anchor and
+    /// label, and the clip box for each child that pokes out of it.
+    ///
+    /// Frame chrome, decided here so every host paints the same boundaries and clips the
+    /// same children. A host is handed boxes and labels, not rules. Asked rather than
+    /// inlined so a caller with a different `visible` — an export framed by the scene
+    /// rather than by the viewport — gets the same boxes and labels from one copy.
+    fn frame_chrome(&self, visible: &WorldBounds) -> FrameChrome {
+        let mut frame_clips = std::collections::HashMap::new();
+        let mut frame_names = Vec::new();
+        for frame in self.scene.iter_ordered().filter(|el| {
+            crate::scene::is_frame(el)
+                && !el.is_deleted
+                && crate::render::bounds::intersects_viewport(el, visible)
+        }) {
+            // Never blank: a rename emptied to nothing shows the generic default, exactly
+            // as the oracle's `getFrameLikeTitle` does.
+            frame_names.push((
+                crate::scene::frame_name_anchor(frame),
+                crate::scene::frame_display_name(frame),
+                frame.id.clone(),
+            ));
+            let clip = crate::scene::frame_clip_bounds(frame);
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
+                if let Some(child) = self.scene.get(&child_id) {
+                    if crate::scene::needs_frame_clip(child, frame) {
+                        frame_clips.insert(child_id, clip);
+                    }
+                }
+            }
+        }
+        (frame_clips, frame_names)
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
@@ -278,31 +319,7 @@ impl DrawEngine {
             Some(super::Interaction::CornerRadius { corner, .. }) => Some(*corner),
             _ => None,
         };
-        // Frame chrome, decided here so every host paints the same boundaries and clips
-        // the same children. A host is handed boxes and labels, not rules.
-        let mut frame_clips = std::collections::HashMap::new();
-        let mut frame_names = Vec::new();
-        for frame in self.scene.iter_ordered().filter(|el| {
-            crate::scene::is_frame(el)
-                && !el.is_deleted
-                && crate::render::bounds::intersects_viewport(el, &visible)
-        }) {
-            // Never blank: a rename emptied to nothing shows the generic default, exactly
-            // as the oracle's `getFrameLikeTitle` does.
-            frame_names.push((
-                crate::scene::frame_name_anchor(frame),
-                crate::scene::frame_display_name(frame),
-                frame.id.clone(),
-            ));
-            let clip = crate::scene::frame_clip_bounds(frame);
-            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
-                if let Some(child) = self.scene.get(&child_id) {
-                    if crate::scene::needs_frame_clip(child, frame) {
-                        frame_clips.insert(child_id, clip);
-                    }
-                }
-            }
-        }
+        let (frame_clips, frame_names) = self.frame_chrome(&visible);
 
         // What peers are doing right now, painted in place of what is committed: a shape
         // moves on every screen while it is being moved. See `peers.rs`.
