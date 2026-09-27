@@ -1064,3 +1064,51 @@ fn undo_and_redo_of_a_shape_drawn_into_a_frame_keep_the_stack() {
     assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
     assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
 }
+
+/// A peer's order that has never seen the shape drawn into the frame leaves it where it
+/// is: the oracle's `syncMovedIndices` returns an element the incoming order does not
+/// mention untouched, keeping its own fractional index
+/// (`packages/element/src/fractionalIndex.ts@1118751f:185-193`) — it does not send it to
+/// the top. So does redo: the shape's place is part of its creation, which is why the
+/// draw records no reorder for it (`scene/store.rs` › `place_beside`), and a replay
+/// applies the step's order only when it has one (`engine/stamp.rs` › `replay_step`).
+#[test]
+fn a_peers_order_leaves_a_new_frame_child_where_the_peer_never_saw_it() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "drawn below it"
+    );
+
+    // A peer reordering the board it knows about, which cannot list what it has not seen.
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": [id(&cast, "C1"), id(&cast, "F"), id(&cast, "X")],
+    });
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "the peer's order leaves the shape it never saw alone"
+    );
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+
+    engine.undo();
+    assert!(
+        frame_of(&engine, &id(&cast, "N")).is_some(),
+        "still a frame child"
+    );
+    engine.redo();
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "redo brings it back below the frame"
+    );
+}
