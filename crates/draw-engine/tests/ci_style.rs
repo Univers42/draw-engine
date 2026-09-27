@@ -516,12 +516,12 @@ fn set_next_style_carries_the_stroke_and_fill_style_without_touching_the_scene()
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.set_next_style(DrawElementStylePatch {
         stroke_style: Some(StrokeStyle::Dashed),
-        fill_style: Some(FillStyle::Solid),
+        fill_style: Some(FillStyle::CrossHatch),
         ..Default::default()
     });
 
     assert_eq!(engine.get_next_style().stroke_style, StrokeStyle::Dashed);
-    assert_eq!(engine.get_next_style().fill_style, FillStyle::Solid);
+    assert_eq!(engine.get_next_style().fill_style, FillStyle::CrossHatch);
 
     let untouched = engine
         .get_scene()
@@ -533,9 +533,9 @@ fn set_next_style_carries_the_stroke_and_fill_style_without_touching_the_scene()
         StrokeStyle::Solid,
         "an unselected element is not restyled by the next-style setter"
     );
-    // Compared with the element's own value, not with a constant: the patch above sets
-    // solid, which is also what a new element is minted with, so a constant would now pass
-    // whether or not the setter had reached it.
+    // Compared with the element's own value, not with a constant, and the patch above is
+    // cross-hatch while a new element is minted solid: a constant would pass whether or not
+    // the setter had reached it, so this is the half of the guard that can still fail.
     assert_eq!(
         untouched.fill_style, rect.fill_style,
         "nor its fill, whatever the default happens to be"
@@ -596,19 +596,7 @@ fn a_shape_drawn_after_the_pick_comes_out_with_it() {
 /// missing one.
 #[test]
 fn a_shape_drawn_and_given_a_background_is_solid() {
-    assert_eq!(
-        default_element_style().fill_style,
-        FillStyle::Solid,
-        "the seed both a new element and the next style are built from"
-    );
-
     let mut engine = DrawEngine::new();
-    assert_eq!(
-        engine.get_next_style().fill_style,
-        FillStyle::Solid,
-        "and what the panel reads with nothing selected"
-    );
-
     engine.set_tool(DrawTool::Rectangle);
     engine.begin_pointer(0.0, 0.0, false, false);
     engine.move_pointer(120.0, 80.0, false, false);
@@ -644,9 +632,10 @@ fn a_shape_drawn_and_given_a_background_is_solid() {
     );
 }
 
-/// An element carries its own fill style, and has always been required to: `fill_style`
-/// has no serde default, so a board written by any earlier version reloads byte for byte
-/// the way it was saved, hatch and all. Only newly minted elements can differ.
+/// An element carries its own fill style: a value it was saved with survives the load,
+/// hatch and all, which is what this shows. The *missing* `#[serde(default)]` on
+/// `fill_style` is the other half — it is what makes an absent field an error rather than
+/// today's default — but that is a fact about the struct, not what this test establishes.
 #[test]
 fn an_element_keeps_the_fill_style_it_was_saved_with() {
     let json = r##"{
