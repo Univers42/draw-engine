@@ -237,7 +237,6 @@ impl DrawEngine {
         let pending_placement = self.scene.placement();
 
         let mut changed = false;
-        let mut reordered = false;
         for mut element in incoming {
             if self
                 .scene
@@ -287,31 +286,57 @@ impl DrawEngine {
         }
 
         if let Some(order_ids) = &patch.order {
+            // Resolved to what this scene holds before the pass below reads it: a named id it
+            // cannot produce — erased here and still live on the peer that has not been told,
+            // or an edit this tab has not received — spends a slot in a positional cursor that
+            // the scan can never fill. That is one O(m) pass over the order, on a path that was
+            // already O(n) over the board.
             let ids: Vec<&str> = order_ids
                 .iter()
                 .filter_map(serde_json::Value::as_str)
+                .filter(|id| self.scene.get(id).is_some_and(|e| !e.is_deleted))
                 .collect();
             if !ids.is_empty() {
-                let mut live: Vec<DrawElement> = Vec::with_capacity(ids.len());
-                for id in &ids {
-                    if let Some(element) = self.scene.get(id) {
-                        if !element.is_deleted {
-                            live.push(element.clone());
-                        }
-                    }
-                }
-                // What the order leaves out stays on top. Told by a set: searched in the
-                // list once per element, a peer's order cost the board squared — 533ms on
-                // 20,000 shapes — and every shape a peer draws into a frame sends one.
+                // Told by a set: searched in the list once per element, a peer's order
+                // cost the board squared — 533ms on 20,000 shapes — and every shape a
+                // peer draws into a frame sends one.
                 let listed: HashSet<&str> = ids.iter().copied().collect();
-                live.extend(
-                    self.scene
-                        .iter_ordered()
-                        .filter(|element| !listed.contains(element.id.as_str()))
-                        .cloned(),
-                );
+                // What the order names, in the order it names it, with what it leaves out
+                // dropped back into the slot it held rather than piled on top.
+                //
+                // The oracle's `syncMovedIndices` returns an element the incoming order
+                // does not name untouched — its own fractional index and all
+                // (`packages/element/src/fractionalIndex.ts@1118751f:185-193`) — and a
+                // peer cannot name what it has never seen. Sent to the top instead, a
+                // shape drawn into a frame came back above the frame it was drawn in, and
+                // a redo kept it there: the step that drew it records no order of its own
+                // to replay, a new element's place being part of its creation
+                // (`scene/store.rs` › `place_beside`).
+                //
+                // Each one goes back above the last of the order's elements the stack
+                // put under it, so a label stays above its shape and a frame child below
+                // its frame even where the peer's order moved those. The ids are resolved
+                // to this scene's own live elements above, so every one of the order's slots
+                // is an element the scan can meet: read as a count of the order's elements
+                // met so far, which only rises, this is one pass and one stack.
+                let mut live: Vec<DrawElement> = Vec::with_capacity(self.scene.total_len());
+                let mut sent = 0usize;
+                let mut named = 0usize;
+                for element in self.scene.iter_ordered() {
+                    if listed.contains(element.id.as_str()) {
+                        named += 1;
+                        continue;
+                    }
+                    while sent < named {
+                        live.push(self.scene.get(ids[sent]).expect("resolved above").clone());
+                        sent += 1;
+                    }
+                    live.push(element.clone());
+                }
+                for id in &ids[sent..] {
+                    live.push(self.scene.get(id).expect("resolved above").clone());
+                }
                 self.scene.set_order(live);
-                reordered = true;
                 changed = true;
             }
         }
@@ -327,15 +352,13 @@ impl DrawEngine {
             let _ = self.scene.take_delta();
             // ...but not the local changes that were pending in it, which the host has
             // not been told about yet — nor where they put things in the stack: a new
-            // label above its shape, told as a delta without the order, went on top of
-            // the host's copy, and of the saved board.
+            // label above its shape, or a shape below the frame it was drawn in, told as
+            // a delta without the order, went on top of the host's copy, and of the saved
+            // board.
             for id in &pending {
                 self.scene.mark_dirty(id);
             }
             self.scene.restore_placement(pending_placement);
-            if reordered {
-                self.put_back_new_labels(&pending);
-            }
             self.request_draw();
         }
         // What the peer's edit changed here — its elements, arrows re-routed to follow
@@ -344,22 +367,6 @@ impl DrawEngine {
         self.scene.retain_baseline(|id| pending.contains(id));
         self.scene.set_order_baseline(pending_order);
         changed
-    }
-
-    /// Puts a label made for the edit in progress back directly above its shape, where
-    /// the oracle's fractional index keeps it, after a peer's order put it on top — they
-    /// have never seen it, and what an order leaves out stays on top. A placement of ours,
-    /// told to the host with the edit's commit.
-    fn put_back_new_labels(&mut self, pending: &HashSet<String>) {
-        let labels: Vec<(String, String)> = pending
-            .iter()
-            .filter(|id| self.scene.created_since_commit(id))
-            .filter_map(|id| self.scene.get(id))
-            .filter_map(|label| Some((label.id.clone(), label.container_id.clone()?)))
-            .collect();
-        for (label, container) in labels {
-            self.scene.place_above(&[label], &container);
-        }
     }
 
     pub fn paste_json(&mut self, json: Option<&str>, at: Option<(f64, f64)>) -> bool {

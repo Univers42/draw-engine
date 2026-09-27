@@ -1335,6 +1335,69 @@ mod peers {
         assert_eq!((element(&engine, &shape), element(&engine, &label)), before);
     }
 
+    /// The same take of a shape whose label is being typed but does not exist yet — the
+    /// one direction the tests above cannot reach, since `labelled` commits. The label is
+    /// made for this edit, so letting the gesture go erases it outright: no step, no
+    /// tombstone, nothing left on the board or in the host's copy
+    /// (`peers.rs` › `abandon_gesture`, `text_session.rs` › an abandoned edit).
+    ///
+    /// No oracle counterpart: what a peer holds is drawnosaurus's own protocol, not
+    /// Excalidraw's. The rule the session half is ported from is the wysiwyg commit,
+    /// `textWysiwyg.tsx@1118751f:818-872` and `App.tsx@1118751f:6439-6498`, cited at
+    /// `text_session.rs:154,158-160`.
+    #[test]
+    fn a_peer_taking_the_shape_of_a_label_still_being_typed_erases_it() {
+        let shape = box_at(100.0, 100.0, 200.0, 100.0);
+        let shape_id = shape.id.clone();
+        let at = middle(&shape);
+        let mut engine = engine_with_measure(vec![shape]);
+        let before = element(&engine, &shape_id);
+        let could_undo = engine.debug_state().scene.can_undo;
+
+        // A double click on a shape's middle makes the label for it. Nothing has been
+        // committed, so the label has no baseline entry but `Some(None)`.
+        let label = open_at(&mut engine, at);
+        engine.update_text_edit("typed");
+        assert!(find(&engine, &label).is_some(), "the label is being typed");
+
+        engine.set_peers(vec![Peer {
+            id: "ana".into(),
+            name: "Ana".into(),
+            color: "#e03131".into(),
+            holds: vec![shape_id],
+            preview: Vec::new(),
+        }]);
+
+        assert!(
+            !engine.update_text_edit("more"),
+            "the editor has nothing to type into"
+        );
+        assert!(find(&engine, &label).is_none(), "erased, not tombstoned");
+        assert_eq!(
+            element(&engine, &before.id),
+            before,
+            "the shape is as it was"
+        );
+        assert_eq!(
+            element(&engine, &before.id).bound_text_id,
+            None,
+            "and carries no label"
+        );
+        assert_eq!(
+            engine.get_selection(),
+            vec![label.clone()],
+            "still names the label it erased: `set_peers` drops what someone else holds, \
+             and by the time it looks, this label is gone from the store, so nothing tells \
+             it to leave the selection — unlike a committed label, which is still there to \
+             be recognised as held. Pinned as it stands, not endorsed"
+        );
+        assert_eq!(
+            engine.debug_state().scene.can_undo,
+            could_undo,
+            "a gesture that came to nothing records no step"
+        );
+    }
+
     /// A peer's patch landing while a new label is typed leaves it directly above its
     /// shape, where the oracle's fractional index keeps it, and the commit tells the host
     /// so: its copy of the board — the one saved and sent — is stacked as this one is. A

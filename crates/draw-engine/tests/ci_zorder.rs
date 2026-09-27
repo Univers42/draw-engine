@@ -1064,3 +1064,127 @@ fn undo_and_redo_of_a_shape_drawn_into_a_frame_keep_the_stack() {
     assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
     assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
 }
+
+/// A peer's order that has never seen the shape drawn into the frame leaves it where it
+/// is: the oracle's `syncMovedIndices` returns an element the incoming order does not
+/// mention untouched, keeping its own fractional index
+/// (`packages/element/src/fractionalIndex.ts@1118751f:185-193`) — it does not send it to
+/// the top. So does redo: the shape's place is part of its creation, which is why the
+/// draw records no reorder for it (`scene/store.rs` › `place_beside`), and a replay
+/// applies the step's order only when it has one (`engine/stamp.rs` › `replay_step`).
+#[test]
+fn a_peers_order_leaves_a_new_frame_child_where_the_peer_never_saw_it() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "drawn below it"
+    );
+
+    // A peer reordering the board it knows about, which cannot list what it has not seen.
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": [id(&cast, "C1"), id(&cast, "F"), id(&cast, "X")],
+    });
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "the peer's order leaves the shape it never saw alone"
+    );
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+
+    engine.undo();
+    assert!(
+        frame_of(&engine, &id(&cast, "N")).is_some(),
+        "still a frame child"
+    );
+    engine.redo();
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "redo brings it back below the frame"
+    );
+}
+
+/// Three shapes bottom first — `A`, `N` the one the peer's order will not name, `B` — and a
+/// tombstone `T`: erased here, still live on a peer that has not been told yet.
+fn board_with_a_tombstone() -> (DrawEngine, Cast) {
+    let a = box_at(0.0, 400.0, 60.0, 60.0);
+    let n = box_at(120.0, 400.0, 60.0, 60.0);
+    let b = box_at(240.0, 400.0, 60.0, 60.0);
+    let mut gone = box_at(360.0, 400.0, 60.0, 60.0);
+    gone.is_deleted = true;
+    let cast: Cast = vec![
+        ("A", a.id.clone()),
+        ("N", n.id.clone()),
+        ("B", b.id.clone()),
+        ("T", gone.id.clone()),
+    ];
+    (engine_with_scene(vec![a, n, b, gone]), cast)
+}
+
+/// A peer's order is applied along a **positional** cursor: the pass walks the live stack
+/// counting the order's elements met so far, and hands back that many of the order before
+/// every element the order does not name — so each one lands above the last of the order's
+/// elements the stack had put under it, and below the rest, which is what the oracle's
+/// per-element fractional index gives for nothing
+/// (`packages/element/src/fractionalIndex.ts@1118751f:185-193`). So the ids are resolved to
+/// the elements this scene holds *before* the pass. A named id it cannot produce — erased
+/// here and still live on the peer, or an edit this tab has not received — would otherwise
+/// spend a slot the scan can never fill, and everything the order left out would fall to the
+/// bottom of the board.
+#[test]
+fn a_tombstone_in_a_peers_order_leaves_what_it_left_out_where_it_was() {
+    let (mut engine, cast) = board_with_a_tombstone();
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": [id(&cast, "T"), id(&cast, "B"), id(&cast, "A")],
+    });
+
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["B", "N", "A"],
+        "the order moves B under A, and the shape it left out stays between them — above A, \
+         which it was above, below B, which it was under"
+    );
+    assert!(
+        engine
+            .get_scene()
+            .iter()
+            .any(|element| element.id == id(&cast, "T") && element.is_deleted),
+        "the element the peer still has live stays in the scene, to be told it is gone"
+    );
+}
+
+/// The same, for an id this scene has never been told of at all: a peer reordering the board
+/// names what it holds, and this tab has not caught up with all of it. Same slot, same cost.
+#[test]
+fn an_element_never_received_in_a_peers_order_leaves_what_it_left_out_where_it_was() {
+    let (mut engine, cast) = board_with_a_tombstone();
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": ["never-arrived", id(&cast, "B"), id(&cast, "A")],
+    });
+
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["B", "N", "A"],
+        "an id the scene has not got costs the order nothing, and the shape it left out stays \
+         where it was"
+    );
+}
