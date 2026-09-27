@@ -368,10 +368,14 @@ impl DrawEngine {
     ///
     /// The image going is a delete, so it takes the arrows bound to it with it: they are
     /// let go, exactly as the Delete key and the eraser let them go, and **not** moved to
-    /// the trace's new ids — the oracle cannot rebind an arrow and has no substitution to
-    /// copy (`binding.ts@1118751f:2569`, `:2577`, `delta.ts:2024-2025`). With
-    /// `keep_original` the image is still on the board under its own id, so every binding
-    /// on it is still good and is left alone.
+    /// the trace's new ids. The oracle does the same on a deletion — nothing
+    /// `fixBindingsAfterDeletion` reaches rewrites a bound id
+    /// (`binding.ts@1118751f:2569`) — and where it does substitute an `elementId`
+    /// (`fixDuplicatedBindingsAfterDuplication`, `:2256-2281`) the shape was copied too.
+    /// A vectorize is not a duplication: the arrow
+    /// is not part of what was replaced. See `docs/reference/binding.md` › When the shape
+    /// is deleted. With `keep_original` the image is still on the board under its own id,
+    /// so every binding on it is still good and is left alone.
     fn commit_trace(&mut self, image_id: &str, ids: &[String], keep_original: bool) {
         self.scene.place_above(ids, image_id);
         if !keep_original {

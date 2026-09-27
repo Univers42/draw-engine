@@ -134,13 +134,7 @@ fn delete_selection_lets_an_arrow_go_of_the_shape_it_deleted() {
     engine.delete_selection();
 
     let scene = engine.get_scene();
-    assert!(
-        scene
-            .iter()
-            .find(|e| e.id == right_id)
-            .expect("the tombstone")
-            .is_deleted
-    );
+    assert!(scene.iter().find(|e| e.id == right_id).unwrap().is_deleted);
     let arrow = scene.iter().find(|e| e.id == arrow_id).unwrap();
     assert!(!arrow.is_deleted, "the arrow was not selected");
     assert_eq!(arrow.end_binding, None, "let go of the deleted shape");

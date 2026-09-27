@@ -1232,18 +1232,29 @@ pub fn reanchor_to_outline(
 /// only ever calls `unbindAffected` and writes `{ [bindingProp]: null }`
 /// (`binding.ts:2569`).
 ///
-/// **It releases; it never rebinds.** The oracle has no mechanism for moving a binding to
-/// another element's id, and says so itself: *"we cannot rebind arrows atm"*
-/// (`binding.ts:2577`), *"we cannot rebind arrows with bindable element … TODO: #7348"*
-/// (`delta.ts:2024-2025`), and even its rebind path releases when the target is gone
+/// **On a deletion it releases; it never rebinds.** Nothing `fixBindingsAfterDeletion`
+/// reaches rewrites a bound id: it writes `{ [bindingProp]: null }` on the arrow
+/// (`binding.ts@1118751f:2569`) and drops the entry from the shape's `boundElements`
+/// (`:2452-2457`, `newBoundElements` at `:2313-2330`). The one place the oracle does
+/// substitute a bound `elementId` is `fixDuplicatedBindingsAfterDuplication`
+/// (`:2256-2281`, at `:2264` and `:2277`), and that is a copy, not a removal: the shape
+/// was copied too, so the copy's binding has to follow the copy. That is
+/// [`materialize_within`](crate::edit::materialize_within).
+/// Everywhere else the oracle admits it cannot rebind — *"we cannot rebind arrows atm"*
+/// (`:2577`), *"we cannot rebind arrows with bindable element … TODO: #7348"*
+/// (`delta.ts:2024-2025`) — and even its rebind path releases when the target is gone
 /// (`binding.ts:2489-2492`). The rule is one-directional (`delta.ts@1118751f:1976-1979`):
 /// a binding must not point from a live element into a deleted one, and nothing else
 /// about an arrow changes. An end on a shape that survives is left exactly as it was.
 ///
 /// Called **before** the removals, in the same step of history as them, so one undo binds
-/// the arrow again. The three paths that take a shape somebody drew an arrow to — the
-/// eraser, the Delete key, and a vectorize that drops the image it replaces — all go
-/// through here, so there is one release and not one per caller.
+/// the arrow again. Three of the four paths that tombstone an element go through here —
+/// the eraser, the Delete key, and a vectorize that drops the image it replaces — so
+/// there is one release and not one per caller. Known limit: a committed text emptied
+/// through the editor is tombstoned without one (`engine/text_session.rs` ›
+/// `remove_emptied_text`), and a free-standing text is a legal arrow target
+/// ([`is_target_kind`], whose `Text` arm takes any `Text` with no container). Closed on
+/// `bunny/p1.1b-text-bindings`; see `docs/reference/binding.md` › Known limits.
 pub fn release_bindings_to_removed(
     scene: &mut crate::scene::store::Scene,
     removed: &std::collections::HashSet<String>,

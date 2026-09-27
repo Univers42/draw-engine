@@ -131,7 +131,7 @@ impl DrawEngine {
         // What a marked frame holds was marked with it; taken again here, with every
         // label of what is going, so nothing marked while a peer's patch moved things
         // around is left behind as an orphan.
-        let mut doomed: HashSet<String> = marked.iter().cloned().collect();
+        let mut doomed = marked.clone();
         for id in &marked {
             if self.scene.get(id).is_some_and(crate::scene::is_frame) {
                 doomed.extend(crate::scene::frame_children(self.scene.iter_ordered(), id));
