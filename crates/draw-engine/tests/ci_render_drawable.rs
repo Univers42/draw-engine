@@ -74,16 +74,18 @@ fn every_kind_is_drawable_at_every_fill_style_and_roundness() {
 #[test]
 fn a_hand_drawn_polyline_given_a_background_is_drawable() {
     // The exact gesture that froze the board: draw a line with three or more points, then
-    // pick a background in the inspector. Three points make it a curve, and the default
-    // fill style is hachure, so this is the one combination rough refused to build.
+    // pick a background in the inspector. Three points make it a curve, and a curve with a
+    // pattern fill is the one combination rough refused to build — so hachure here is an
+    // *input*, set on purpose: the default is solid, and a test that leaned on the default
+    // would quietly stop covering the case it exists for.
     let mut element = base(DrawElementType::Line, 100.0, 80.0);
     element.points = Some(vec![[0.0, 0.0], [100.0, 0.0], [50.0, 80.0], [0.0, 0.0]]);
     element.background_color = "#ffec99".into();
+    element.fill_style = FillStyle::Hachure;
     assert!(
         element.roundness.is_some(),
         "a line is rounded by default, which is what makes it a curve"
     );
-    assert_eq!(element.fill_style, FillStyle::Hachure);
 
     let drawable = element_drawable(&element).expect("a filled line has a shape");
     assert!(

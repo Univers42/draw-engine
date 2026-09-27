@@ -143,7 +143,11 @@ export interface DrawElementStyle {
 export const DEFAULT_ELEMENT_STYLE: DrawElementStyle = {
   strokeColor: "#1e1e1e",
   backgroundColor: "transparent",
-  fillStyle: "hachure",
+  // The engine's own `DrawElementStyle::default()`, kept in step with it: the placeholder
+  // a panel shows before an engine exists, and the fallback `parseJson` reaches for. The
+  // oracle's `DEFAULT_ELEMENT_PROPS.fillStyle` is `"solid"`
+  // (packages/common/src/constants.ts@1118751f:522).
+  fillStyle: "solid",
   strokeWidth: 2,
   strokeStyle: "solid",
   roughness: 1,

@@ -294,7 +294,16 @@ impl Default for DrawElementStyle {
         Self {
             stroke_color: "#1e1e1e".into(),
             background_color: "transparent".into(),
-            fill_style: FillStyle::Hachure,
+            // The oracle's `DEFAULT_ELEMENT_PROPS.fillStyle` — `"solid"`,
+            // `packages/common/src/constants.ts@1118751f:522` — read into
+            // `currentItemFillStyle` (`appState.ts@1118751f:34`) and handed to every new
+            // element (`App.tsx@1118751f:10467`, `newElement.ts@1118751f:94`).
+            //
+            // Hachure here looked right until a background existed: a transparent one
+            // draws no fill under any style, and the panel has no Fill style row until a
+            // background does, so the first colour made every shape hatch over its own
+            // colour where the oracle paints it flat.
+            fill_style: FillStyle::Solid,
             stroke_width: 2.0,
             stroke_style: StrokeStyle::Solid,
             roughness: 1.0,

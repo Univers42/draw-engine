@@ -230,10 +230,10 @@ impl DrawEngine {
 
     /// The fill style a bucket lays down.
     ///
-    /// Solid unless someone actually chose otherwise. A bucket means paint, and the
-    /// default style is hachure — so taking the merged style at face value gave a click
-    /// a shape crosshatched in faint diagonal lines with white between them, which reads
-    /// as the tool having half worked. Caught by looking at the screen: a pixel probe in
+    /// Solid unless someone actually chose otherwise. A bucket means paint, and taking the
+    /// merged style at face value gave a click a shape crosshatched in faint diagonal lines
+    /// with white between them, which reads as the tool having half worked — it did, while
+    /// the default fill style was hachure. Caught by looking at the screen: a pixel probe in
     /// the middle of a "filled" shape came back white, because it landed in a gap.
     ///
     /// The *raw* patch is what distinguishes the two cases. `get_next_style` merges over
