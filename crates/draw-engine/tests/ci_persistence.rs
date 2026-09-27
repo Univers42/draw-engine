@@ -121,6 +121,84 @@ fn delete_selection_unbinds_container_label() {
     assert!(host.bound_text_id.is_none());
 }
 
+/// The Delete key, the same defect the eraser and the vectorize had and the same release
+/// they make: an arrow that stays is let go of the shape deleted from under it, as
+/// Excalidraw's `fixBindingsAfterDeletion` does (`binding.ts@1118751f:2297-2311` — it
+/// releases, it never moves a binding to another id, `binding.ts:2569`, `:2577`). Its other
+/// end, on a shape nobody deleted, is still good and stays bound to it: the rule is
+/// one-directional (`delta.ts@1118751f:1976-1979`).
+#[test]
+fn delete_selection_lets_an_arrow_go_of_the_shape_it_deleted() {
+    let (mut engine, arrow_id, left_id, right_id) = bound_arrow_over_two_shapes();
+    engine.select(vec![right_id.clone()]);
+    engine.delete_selection();
+
+    let scene = engine.get_scene();
+    assert!(scene.iter().find(|e| e.id == right_id).unwrap().is_deleted);
+    let arrow = scene.iter().find(|e| e.id == arrow_id).unwrap();
+    assert!(!arrow.is_deleted, "the arrow was not selected");
+    assert_eq!(arrow.end_binding, None, "let go of the deleted shape");
+    assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+    assert_eq!(
+        arrow.start_binding.as_deref(),
+        Some(left_id.as_str()),
+        "the other shape is still there"
+    );
+}
+
+/// The release is part of the same step of history as the tombstone, as it is for the
+/// eraser: one undo gives back both, the shape and the arrow's hold on it.
+#[test]
+fn one_undo_binds_the_arrow_to_the_deleted_shape_again() {
+    let (mut engine, arrow_id, _left_id, right_id) = bound_arrow_over_two_shapes();
+    engine.select(vec![right_id.clone()]);
+    engine.delete_selection();
+
+    engine.undo();
+
+    let scene = engine.get_scene();
+    let arrow = scene.iter().find(|e| e.id == arrow_id).unwrap();
+    assert_eq!(arrow.end_binding.as_deref(), Some(right_id.as_str()));
+    assert!(arrow.end_fixed_point.is_some(), "with its anchor back too");
+    assert!(
+        !scene
+            .iter()
+            .find(|e| e.id == right_id)
+            .expect("the shape is back")
+            .is_deleted
+    );
+}
+
+/// Two filled boxes with an arrow drawn from inside one to inside the other, so both its
+/// ends are bound — the binding the engine itself makes, not one assigned to it.
+fn bound_arrow_over_two_shapes() -> (DrawEngine, String, String, String) {
+    let left = filled(box_at(0.0, 0.0, 100.0, 60.0));
+    let right = filled(box_at(300.0, 0.0, 100.0, 60.0));
+    let (left_id, right_id) = (left.id.clone(), right.id.clone());
+    let mut engine = engine_with_scene(vec![left, right]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(50.0, 30.0, false, false);
+    engine.move_pointer(200.0, 30.0, false, false);
+    engine.move_pointer(350.0, 30.0, false, false);
+    engine.end_pointer();
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow was drawn");
+    assert_eq!(
+        arrow.start_binding.as_deref(),
+        Some(left_id.as_str()),
+        "setup"
+    );
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(right_id.as_str()),
+        "setup"
+    );
+    (engine, arrow.id, left_id, right_id)
+}
+
 #[test]
 fn undo_redo_color_change_cycle() {
     let rect = box_at(0.0, 0.0, 100.0, 60.0);
