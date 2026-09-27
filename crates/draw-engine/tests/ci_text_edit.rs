@@ -899,6 +899,306 @@ mod ending {
     }
 }
 
+/// What an emptying does to the arrows bound to the text.
+///
+/// A committed text emptied is a delete (`text_session.rs` › `remove_emptied_text`), and a
+/// delete releases the arrows bound to what it takes, as Excalidraw's
+/// `fixBindingsAfterDeletion` does (`binding.ts@1118751f:2297-2311`) — the eraser, the
+/// Delete key and a vectorize all go through one function for it. The premise this site
+/// was planned under, *"text has no inbound arrows"*, is **false**: a free-standing text
+/// **is** a target (`is_target_kind`, `scene/binding.rs` — `Text` is one only while its
+/// `container_id` is none), and a label can be bound too. The release is not guarded by
+/// bindability, because the oracle's is not: it matches on id equality alone
+/// (`binding.ts@1118751f:2568`) and runs for every element removed
+/// (`delta.ts@1118751f:1936-1939`).
+mod bindings {
+    use super::*;
+
+    /// Empties a committed text the way the editor does: open it, clear it, commit nothing.
+    fn emptied(engine: &mut DrawEngine, text_id: &str) {
+        engine.select(vec![text_id.to_string()]);
+        assert!(engine.edit_selected_text(), "the text opens for editing");
+        engine.update_text_edit("");
+        engine.commit_text_edit("", true);
+    }
+
+    /// A free-standing text, typed and committed, with an arrow drawn across it: both
+    /// ends land inside the text, so both are bound to it. Drawn, not assigned — the
+    /// binding is the one the engine itself makes, which is the thing in question.
+    fn text_with_an_arrow_across() -> (DrawEngine, String, String) {
+        let mut engine = engine_with_measure(Vec::new());
+        let text_id = open_at(&mut engine, (200.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        let y = middle(&text).1;
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(text.x + 2.0, y, false, false);
+        engine.move_pointer(text.x + text.width - 2.0, y, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup: a free-standing text is an arrow target"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup"
+        );
+        (engine, text_id, arrow.id)
+    }
+
+    /// A shape, a free-standing text on top of it in the z-order, and an arrow drawn from
+    /// inside the shape to inside the text: one end bound to each.
+    fn shape_and_text_with_an_arrow_between() -> (DrawEngine, String, String, String) {
+        let shape = filled(box_at(0.0, 200.0, 100.0, 60.0));
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let text_id = open_at(&mut engine, (300.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(50.0, 230.0, false, false);
+        engine.move_pointer(middle(&text).0, middle(&text).1, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(shape_id.as_str()),
+            "setup: the shape end"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup"
+        );
+        (engine, text_id, arrow.id, shape_id)
+    }
+
+    /// The text goes, so the arrow is let go of it — both ends, both on the same id, and
+    /// all three fields of an end together, as `set_anchor` is the only writer of them. A
+    /// release and not a rebind: the oracle has no way to move a binding to another id
+    /// ("we cannot rebind arrows atm", `binding.ts@1118751f:2577`).
+    #[test]
+    fn emptying_a_free_text_lets_an_arrow_go_of_it() {
+        let (mut engine, text_id, arrow_id) = text_with_an_arrow_across();
+
+        emptied(&mut engine, &text_id);
+
+        assert!(element(&engine, &text_id).is_deleted, "the text is deleted");
+        let arrow = element(&engine, &arrow_id);
+        assert!(!arrow.is_deleted, "the arrow was not emptied");
+        assert_eq!(arrow.start_binding, None, "let go of the start");
+        assert_eq!(arrow.end_binding, None, "let go of the end");
+        assert_eq!(arrow.start_fixed_point, None, "with no anchor left");
+        assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+    }
+
+    /// A label is a text that has a container, and a text with a container is not a
+    /// target — but a binding on it is not thereby impossible: "Bind text" gives a free
+    /// text a container and leaves the arrows already bound to it bound
+    /// (`bound_text.rs:35`). So emptying one releases, exactly as erasing it and deleting
+    /// it do. The oracle carves out nothing: its release matches on id equality alone
+    /// (`binding.ts@1118751f:2568`) and runs for every element removed
+    /// (`delta.ts@1118751f:1936-1939`).
+    ///
+    /// The binding is **assigned**, so the case is posed directly rather than staged
+    /// through the menu; [`emptying_erasing_and_deleting_a_label_all_let_an_arrow_go_of_it`]
+    /// builds the same state the way a person does and checks all three paths.
+    #[test]
+    fn emptying_a_text_that_belongs_to_a_shape_lets_an_arrow_go_of_it() {
+        let shape = filled(box_at(100.0, 100.0, 200.0, 100.0));
+        let mut label = text_at(120.0, 140.0, 60.0, 25.0);
+        label.text = Some("hello".into());
+        label.container_id = Some(shape.id.clone());
+        let mut link = connector(400.0, 150.0, 500.0, 150.0, DrawElementType::Arrow);
+        link.start_binding = Some(label.id.clone());
+        link.start_fixed_point = Some([400.0, 150.0]);
+        let (label_id, link_id) = (label.id.clone(), link.id.clone());
+        let mut engine = engine_with_measure(vec![shape, label, link]);
+
+        emptied(&mut engine, &label_id);
+
+        assert!(
+            element(&engine, &label_id).is_deleted,
+            "the label is deleted"
+        );
+        let arrow = element(&engine, &link_id);
+        assert!(!arrow.is_deleted, "the arrow was not emptied");
+        assert_eq!(
+            arrow.start_binding, None,
+            "let go of the label that went, a container or not"
+        );
+        assert_eq!(arrow.start_fixed_point, None, "with no anchor left");
+    }
+
+    /// One-directional, as the oracle's rule is (`delta.ts@1118751f:1976-1979`): the end
+    /// on the text that went is let go, the end on the shape nobody deleted is still good
+    /// and stays bound to it, with its anchor.
+    #[test]
+    fn emptying_a_text_leaves_an_arrow_bound_to_whoever_survives() {
+        let (mut engine, text_id, arrow_id, shape_id) = shape_and_text_with_an_arrow_between();
+
+        emptied(&mut engine, &text_id);
+
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(arrow.end_binding, None, "let go of the text that went");
+        assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(shape_id.as_str()),
+            "the shape is still there"
+        );
+        assert!(
+            arrow.start_fixed_point.is_some(),
+            "with its anchor still on it"
+        );
+    }
+
+    /// The three ways a person takes a label away agree: emptied, erased or deleted, an
+    /// arrow bound to it is let go of it every time. Only the emptying used to differ, a
+    /// label having been held not to be a target and so let past the release every other
+    /// delete goes through — and the oracle carves out nothing: a release matches on id
+    /// equality alone (`binding.ts@1118751f:2568`) and runs for every element removed
+    /// (`delta.ts@1118751f:1936-1939`).
+    ///
+    /// The state is [`label_with_an_arrow_bound`], built as a person builds it, so this
+    /// says the case is reachable and not only constructible.
+    #[test]
+    fn emptying_erasing_and_deleting_a_label_all_let_an_arrow_go_of_it() {
+        for fate in [Fate::Emptied, Fate::Erased, Fate::Deleted] {
+            let (mut engine, label_id, arrow_id, shape_id) = label_with_an_arrow_bound();
+
+            fate.take(&mut engine, &label_id, &shape_id);
+
+            assert!(
+                element(&engine, &label_id).is_deleted,
+                "{fate:?}: the label is gone"
+            );
+            let arrow = element(&engine, &arrow_id);
+            assert!(!arrow.is_deleted, "{fate:?}: the arrow was not taken");
+            assert_eq!(arrow.start_binding, None, "{fate:?}: let go of the start");
+            assert_eq!(arrow.end_binding, None, "{fate:?}: let go of the end");
+            assert_eq!(
+                arrow.start_fixed_point, None,
+                "{fate:?}: with no anchor left"
+            );
+            assert_eq!(arrow.end_fixed_point, None, "{fate:?}: with no anchor left");
+        }
+    }
+
+    /// A text that is a label and an arrow bound to it, made the way a person makes one:
+    /// a free-standing text typed and committed, an arrow drawn across it so the engine
+    /// binds both ends itself, then the text bound to a shape holding nothing
+    /// ("Bind text", `bound_text.rs:35`). That last step is the only way a label comes to
+    /// have a binding, and it is why a release cannot skip labels.
+    fn label_with_an_arrow_bound() -> (DrawEngine, String, String, String) {
+        let shape = filled(box_at(600.0, 500.0, 200.0, 100.0));
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let text_id = open_at(&mut engine, (200.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        let y = middle(&text).1;
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(text.x + 2.0, y, false, false);
+        engine.move_pointer(text.x + text.width - 2.0, y, false, false);
+        engine.end_pointer();
+        let arrow_id = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn")
+            .id;
+
+        engine.select(vec![text_id.clone(), shape_id.clone()]);
+        engine.bind_text();
+        engine.drain_events();
+
+        assert_eq!(
+            element(&engine, &text_id).container_id.as_deref(),
+            Some(shape_id.as_str()),
+            "setup: the text is the shape's label now"
+        );
+        assert_eq!(
+            element(&engine, &arrow_id).start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup: a label the arrow is still bound to"
+        );
+        (engine, text_id, arrow_id, shape_id)
+    }
+
+    /// The three ways a person takes a label away, named so a failure says which one.
+    #[derive(Debug, Clone, Copy)]
+    enum Fate {
+        Emptied,
+        Erased,
+        Deleted,
+    }
+
+    impl Fate {
+        /// Takes the label, by this one path and no other.
+        fn take(self, engine: &mut DrawEngine, label_id: &str, shape_id: &str) {
+            match self {
+                Fate::Emptied => emptied(engine, label_id),
+                Fate::Deleted => {
+                    engine.select(vec![label_id.to_string()]);
+                    engine.delete_selection();
+                }
+                // A person erases the shape a label is in, and the label goes with it
+                // (`eraser.rs:140-145`). The point is taken near the shape's corner, well
+                // clear of the arrow: the label lies in the middle of the shape, and the
+                // arrow runs through the middle of the label.
+                Fate::Erased => {
+                    let shape = element(engine, shape_id);
+                    engine.set_tool(DrawTool::Eraser);
+                    engine.begin_pointer(shape.x + 20.0, shape.y + 15.0, false, false);
+                    engine.end_pointer();
+                }
+            }
+        }
+    }
+
+    /// The release is part of the same step of history as the tombstone, as it is for the
+    /// eraser, the Delete key and the vectorize: one undo gives back both — the text, and
+    /// the arrow's hold on it.
+    #[test]
+    fn one_undo_binds_the_arrow_to_the_emptied_text_again() {
+        let (mut engine, text_id, arrow_id) = text_with_an_arrow_across();
+
+        emptied(&mut engine, &text_id);
+        engine.undo();
+
+        assert!(!element(&engine, &text_id).is_deleted, "the text is back");
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "bound to the start again"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "bound to the end again"
+        );
+    }
+}
+
 /// What peers see and send while a text is typed.
 mod peers {
     use super::*;

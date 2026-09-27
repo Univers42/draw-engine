@@ -27,6 +27,7 @@
 
 use crate::engine::DrawEngine;
 use crate::interaction::DrawTool;
+use crate::scene::binding::release_bindings_to_removed;
 use crate::scene::{DrawElement, DrawElementType, TextAlign, VerticalAlign};
 use crate::text::layout::{self, Laid};
 
@@ -332,26 +333,7 @@ impl DrawEngine {
     /// [`Self::set_element_text`] both empty a text through here.
     pub(crate) fn remove_emptied_text(&mut self, element: &DrawElement) {
         if self.scene.created_since_commit(&element.id) {
-            // Everything made or moved for it goes back as it was, as an abandoned gesture
-            // puts back what it changed: the label, its shape told of it and grown to one
-            // line, the arrows that followed the shape and their own labels. Divergence:
-            // the oracle leaves a new label's shape grown to one line
-            // (`App.tsx@1118751f:6974-7006`), uncaptured until the next step.
-            self.scene.discard(&element.id);
-            for (id, _) in self.scene.baseline() {
-                self.drop_local_change(&id);
-            }
-            // Nor does the shape remember a height a style grew it to meanwhile.
-            self.forget_original_heights(element.container_id.as_slice());
-            // Its place above its shape was the only reorder, and it went with it.
-            let before = self.scene.order_baseline().map(|mut order| {
-                order.retain(|id| *id != element.id);
-                order
-            });
-            if before.is_some_and(|before| before == self.scene.ids()) {
-                self.scene.set_order_baseline(None);
-            }
-            self.push_history();
+            self.abandon_new_text(element);
             return;
         }
         if let Some(container_id) = &element.container_id {
@@ -367,7 +349,49 @@ impl DrawEngine {
         }
         // A committed text emptied is a deletion, and a deletion is a tombstone: the server
         // and the peers have to be told, and undo has to be able to stamp it back.
+        // Being a delete, it releases too: an arrow bound to this text is let go of it, as
+        // the eraser, the Delete key and a vectorize let one go
+        // (`release_bindings_to_removed`), and never carried to another id — the oracle
+        // has no way to rebind an arrow (`binding.ts@1118751f:2577`). The release is part
+        // of this same step, before the tombstone, so one undo binds the arrow again.
+        //
+        // A label releases too, and the oracle carves out nothing for one: a release
+        // matches on id equality alone (`binding.ts@1118751f:2568`) and runs for every
+        // element removed (`delta.ts@1118751f:1936-1939`). A label *can* be bound — "Bind
+        // text" gives a text a container and leaves the arrows already bound to it bound
+        // (`bound_text.rs:35`) — so a guard here is the one delete path that can leave an
+        // arrow naming a tombstone.
+        release_bindings_to_removed(
+            &mut self.scene,
+            &std::collections::HashSet::from([element.id.clone()]),
+        );
         self.scene.remove(&element.id, self.now_ms);
+        self.push_history();
+    }
+
+    /// A text made since the last commit was never there, so emptying it takes nothing
+    /// away: everything made or moved for it goes back as it was, as an abandoned gesture
+    /// puts back what it changed.
+    ///
+    /// Divergence: the oracle leaves a new label's shape grown to one line
+    /// (`App.tsx@1118751f:6974-7006`), uncaptured until the next step.
+    fn abandon_new_text(&mut self, element: &DrawElement) {
+        // The label, its shape told of it and grown to one line, the arrows that followed
+        // the shape and their own labels.
+        self.scene.discard(&element.id);
+        for (id, _) in self.scene.baseline() {
+            self.drop_local_change(&id);
+        }
+        // Nor does the shape remember a height a style grew it to meanwhile.
+        self.forget_original_heights(element.container_id.as_slice());
+        // Its place above its shape was the only reorder, and it went with it.
+        let before = self.scene.order_baseline().map(|mut order| {
+            order.retain(|id| *id != element.id);
+            order
+        });
+        if before.is_some_and(|before| before == self.scene.ids()) {
+            self.scene.set_order_baseline(None);
+        }
         self.push_history();
     }
 }
