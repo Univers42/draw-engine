@@ -731,6 +731,124 @@ mod ending {
         assert!(engine.get_selection().is_empty());
     }
 
+    /// The same pair on a *free* text, which the case above leaves out: a click away
+    /// leaves nothing selected, so the arrow key pressed next nudges the board and not
+    /// the text just committed, while Ctrl+Enter leaves it selected and Enter opens it
+    /// again.
+    ///
+    /// The flag is the oracle's `submittedViaKeyboard`, and only its two key handlers
+    /// ever set it — `onKeyDown`'s Escape and Ctrl/Cmd+Enter (`textWysiwyg.tsx@1118751f`);
+    /// the blur it puts back in `bindBlurEvent`, the frame it defers a board press by in
+    /// `onPointerDown`, the window `blur` and `beforeunload` all submit with it still
+    /// false. What it buys is one thing, `elementIdToSelect`
+    /// (`handleTextWysiwyg`'s `onSubmit`, `App.tsx@1118751f`).
+    #[test]
+    fn a_new_text_clicked_away_is_not_left_selected_where_the_keyboard_leaves_it() {
+        for via_keyboard in [false, true] {
+            let mut engine = engine_with_measure(Vec::new());
+            let id = open_at(&mut engine, (300.0, 200.0));
+            engine.update_text_edit("clicked away");
+            engine.commit_text_edit("clicked away", via_keyboard);
+
+            let landed = element(&engine, &id);
+            assert!(
+                !landed.is_deleted,
+                "the commit wrote the text, via_keyboard: {via_keyboard}"
+            );
+            assert_eq!(
+                landed.original_text.as_deref(),
+                Some("clicked away"),
+                "all of it, via_keyboard: {via_keyboard}"
+            );
+            if via_keyboard {
+                assert_eq!(
+                    engine.get_selection(),
+                    vec![id.clone()],
+                    "Ctrl+Enter leaves the text selected"
+                );
+            } else {
+                assert!(
+                    engine.get_selection().is_empty(),
+                    "a click away selected {:?}, which the next arrow key would move",
+                    engine.get_selection()
+                );
+            }
+            // One step either way, and the session is closed: undo takes the text back
+            // off the board, so a blur that only closed the editor would show here.
+            engine.undo();
+            assert!(
+                find(&engine, &id).is_none_or(|el| el.is_deleted),
+                "one step undone, via_keyboard: {via_keyboard}"
+            );
+        }
+    }
+
+    /// A label emptied and committed by a click away is a deletion like any other — the
+    /// oracle's `isDeleted` runs on the blur as it does on the key
+    /// (`handleTextWysiwyg`'s `onSubmit`, `App.tsx@1118751f`) — and nothing is left
+    /// selected, where Escape leaves the shape selected. The half of the pair
+    /// `an_existing_text_emptied_is_deleted` above does not reach: it commits through the
+    /// keyboard, so the `keep` false branch of the emptied path had no test at all.
+    #[test]
+    fn a_label_emptied_by_a_click_away_is_deleted_and_nothing_stays_selected() {
+        for via_keyboard in [false, true] {
+            let case = format!("via_keyboard: {via_keyboard}");
+            let (mut engine, shape, label) = labelled(box_at(100.0, 100.0, 200.0, 100.0), "hello");
+            assert_eq!(
+                element(&engine, &label).original_text.as_deref(),
+                Some("hello"),
+                "setup: the label had text to empty, {case}"
+            );
+            assert_eq!(
+                element(&engine, &shape).bound_text_id.as_deref(),
+                Some(&*label),
+                "setup: it was bound to its shape, {case}"
+            );
+            engine.select(vec![label.clone()]);
+            assert!(engine.edit_selected_text());
+            engine.update_text_edit("");
+            engine.commit_text_edit("", via_keyboard);
+
+            // What both endings share: the label is deleted, its shape unbound, and the
+            // whole of it is one step. A blur is a commit, not a dismissal.
+            assert!(element(&engine, &label).is_deleted, "tombstoned, {case}");
+            assert_eq!(
+                element(&engine, &shape).bound_text_id,
+                None,
+                "its shape unbound, {case}"
+            );
+            engine.undo();
+            assert!(
+                !element(&engine, &label).is_deleted,
+                "one step brings the label back, {case}"
+            );
+            assert_eq!(
+                element(&engine, &shape).bound_text_id.as_deref(),
+                Some(&*label),
+                "and rebinds it, {case}"
+            );
+
+            // And what only the keyboard has: redo re-selects what the commit left
+            // selected, so the shape comes back with the deletion and nothing comes back
+            // with it when a click away ended the edit.
+            engine.redo();
+            assert!(element(&engine, &label).is_deleted, "redone, {case}");
+            if via_keyboard {
+                assert_eq!(
+                    engine.get_selection(),
+                    vec![shape.clone()],
+                    "redo selects the shape again, {case}"
+                );
+            } else {
+                assert!(
+                    engine.get_selection().is_empty(),
+                    "redo selected {:?} after a click away, {case}",
+                    engine.get_selection()
+                );
+            }
+        }
+    }
+
     /// Made for the edit and left empty, a text was never there: no tombstone, no step,
     /// and a label's shape as it was before it was grown for it.
     #[test]
