@@ -32,7 +32,10 @@ pub use engine::{
     NoopPainter, Notice, PaintView, Painter, Peer, PeerMark, TextEditLayout, TextEditRequest,
     TextEditSession,
 };
-pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
+pub use export::{
+    elements_from_json, scene_to_json, scene_to_svg, ExportFrame, OsidrawFile,
+    DEFAULT_EXPORT_PADDING,
+};
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
 pub use interaction::{

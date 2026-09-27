@@ -141,6 +141,18 @@ type FrameChrome = (
     Vec<(crate::camera::Point, String, String)>,
 );
 
+/// A mark set with nothing in it, for a view that must not inherit the editor's.
+///
+/// [`PaintView::erasing`] is a borrow, so an export cannot hand it an empty set it made —
+/// but it must: the oracle exports the committed scene, and an eraser sweep in progress
+/// has marked the elements it is about to remove (`export.ts@1118751f:277`). A `OnceLock`
+/// rather than a per-call `HashSet` because the set is never written, only read.
+fn no_marks() -> &'static std::collections::HashSet<String> {
+    static NONE: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    NONE.get_or_init(Default::default)
+}
+
 /// One peer's hold, as the painter draws it. See `peers.rs`.
 #[derive(Clone)]
 pub struct PeerMark<'a> {
@@ -213,9 +225,7 @@ impl DrawEngine {
     /// label, and the clip box for each child that pokes out of it.
     ///
     /// Frame chrome, decided here so every host paints the same boundaries and clips the
-    /// same children. A host is handed boxes and labels, not rules. Asked rather than
-    /// inlined so a caller with a different `visible` — an export framed by the scene
-    /// rather than by the viewport — gets the same boxes and labels from one copy.
+    /// same children. A host is handed boxes and labels, not rules.
     fn frame_chrome(&self, visible: &WorldBounds) -> FrameChrome {
         let mut frame_clips = std::collections::HashMap::new();
         let mut frame_names = Vec::new();
@@ -241,6 +251,68 @@ impl DrawEngine {
             }
         }
         (frame_clips, frame_names)
+    }
+
+    /// The scene as a whole-scene export paints it: framed by `frame` rather than by the
+    /// viewport, and with none of the editor's own furniture.
+    ///
+    /// An export is a picture of the drawing, not of the editor over it — no selection, no
+    /// handles, no marquee, no guides, no peers, no laser, and no grid (the oracle passes
+    /// `renderGrid: false`, `export.ts@1118751f:272`). It is the committed scene, too: a
+    /// peer's shape still being dragged is not in it, the flowchart cluster being previewed
+    /// is not in it, and neither is the erasure an in-progress sweep has marked — the
+    /// oracle hands the renderer an empty `elementsPendingErasure` for exactly this
+    /// (`export.ts@1118751f:277`), so an element about to be deleted exports undeleted and
+    /// at full strength.
+    ///
+    /// The scale is the **device** ratio and the camera stays at 1, because that is how the
+    /// oracle splits the two: `scale` goes to the renderer as the factor it draws at, and
+    /// `zoom` stays at the default (`export.ts@1118751f:259, 266`).
+    pub fn export_view(&self, frame: &crate::export::ExportFrame) -> PaintView<'_> {
+        let camera = frame.camera();
+        let visible = crate::camera::visible_world_rect(camera, frame.width, frame.height);
+        let (frame_clips, frame_names) = self.frame_chrome(&visible);
+        let mut view = self.paint_view();
+        view.camera = camera;
+        view.width = frame.width;
+        view.height = frame.height;
+        view.dpr = frame.scale;
+        view.detail_scale = frame.scale;
+        view.in_motion = false;
+        view.grid = GridSettings {
+            enabled: false,
+            ..self.grid
+        };
+        // Every live element, not the ones the viewport reaches: the export's box is the
+        // scene's own, so culling to the editor's camera would cut off whatever the person
+        // had scrolled away from. The text being typed stays out, as on screen — it is the
+        // host editor's to show (`Renderer.ts@1118751f:259-267`).
+        view.elements = self
+            .scene
+            .iter_ordered()
+            .filter(|element| self.editing_text_id() != Some(element.id.as_str()))
+            .collect();
+        view.frame_clips = frame_clips;
+        view.frame_names = frame_names;
+        view.selected = Vec::new();
+        view.group_box = None;
+        view.marquee = None;
+        view.lasso = Vec::new();
+        view.flowchart_pending = Vec::new();
+        view.laser = Vec::new();
+        view.peer_lasers = Vec::new();
+        view.peer_marks = Vec::new();
+        view.snap_guides = Vec::new();
+        view.linear_handles = Vec::new();
+        view.linear_handles_framed = false;
+        view.active_handle = None;
+        view.radius_handles = Vec::new();
+        view.active_radius_handle = None;
+        view.previews = std::collections::HashMap::new();
+        view.binding_highlight = None;
+        view.binding_midpoint = None;
+        view.erasing = no_marks();
+        view
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {

@@ -761,7 +761,14 @@ fn count_plan(redraw: u32, scroll: u32, reuse: u32) {
 }
 
 /// A canvas of exactly `w` x `h` device pixels, with a 2D context.
-fn make_layer(w: u32, h: u32) -> Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)> {
+///
+/// The scrolling layer's target, and an export's too (`crate::wasm::export`): a fresh
+/// offscreen canvas is what an export is, where the on-screen canvas is whatever the
+/// camera happens to be showing.
+pub(crate) fn make_layer(
+    w: u32,
+    h: u32,
+) -> Option<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d)> {
     let document = web_sys::window()?.document()?;
     let canvas: web_sys::HtmlCanvasElement =
         document.create_element("canvas").ok()?.dyn_into().ok()?;
@@ -1070,10 +1077,17 @@ fn paint_elements_faded(
 /// the rasteriser discards it. Only the frames in motion pass strips, over a moved
 /// picture that the frame after the motion replaces: see the note on
 /// `LayerPlan::Scroll` in `paint` for why the persistent layer is never patched this way.
-fn paint_static(
+///
+/// `background` is the paper. It is on everywhere the picture is shown and off only for an
+/// export that asked for none (`crate::wasm::export`), which leaves the fresh canvas as
+/// transparent as it already was rather than filling it with something. An export is one
+/// whole-scene pass with `only` empty: the layers above exist to keep a moving camera cheap
+/// between frames, which is the opposite of what a one-shot export wants.
+pub(crate) fn paint_static(
     ctx: &CanvasRenderingContext2d,
     view: &PaintView,
     only: Option<&[crate::scene::geometry::Rect]>,
+    background: bool,
 ) {
     let dpr = view.dpr;
     // A fresh context has none of the state the cache believes it set.
@@ -1100,8 +1114,10 @@ fn paint_static(
 
     let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
     ctx.clear_rect(0.0, 0.0, view.width, view.height);
-    set_fill(ctx, &view.theme.background);
-    ctx.fill_rect(0.0, 0.0, view.width, view.height);
+    if background {
+        set_fill(ctx, &view.theme.background);
+        ctx.fill_rect(0.0, 0.0, view.width, view.height);
+    }
     paint_grid(ctx, view);
 
     let elements: Vec<&DrawElement> = match only {
@@ -1214,7 +1230,7 @@ impl Painter for CanvasPainter<'_> {
                                 ..view.clone()
                             };
                             count_plan(1, 0, 0);
-                            paint_static(&layers.front_ctx, &ahead_view, None);
+                            paint_static(&layers.front_ctx, &ahead_view, None, true);
                             layers.base = Some((whole_picture(&ahead_view), chrome_digest(view)));
                             layers.painted = Some((
                                 LayerKey {
@@ -1246,7 +1262,7 @@ impl Painter for CanvasPainter<'_> {
                         // Then what the picture does not reach, painted for real.
                         let exposed = blit.exposed(w, h);
                         if !exposed.is_empty() {
-                            paint_static(ctx, view, Some(&exposed));
+                            paint_static(ctx, view, Some(&exposed), true);
                         }
                         layers.overlay_drawn = true;
                         return Some(repainted);
@@ -1282,7 +1298,7 @@ impl Painter for CanvasPainter<'_> {
                 }
                 LayerPlan::Redraw => {
                     count_plan(1, 0, 0);
-                    paint_static(&layers.front_ctx, view, None);
+                    paint_static(&layers.front_ctx, view, None, true);
                     layers.base = Some((whole_picture(view), digest));
                     true
                 }
@@ -1303,7 +1319,7 @@ impl Painter for CanvasPainter<'_> {
                 // frames where nothing changed at all — is untouched by this.
                 LayerPlan::Scroll { .. } => {
                     count_plan(1, 0, 0);
-                    paint_static(&layers.front_ctx, view, None);
+                    paint_static(&layers.front_ctx, view, None, true);
                     layers.base = Some((whole_picture(view), digest));
                     true
                 }
@@ -1327,7 +1343,7 @@ impl Painter for CanvasPainter<'_> {
         let drew_everything = match drew_everything {
             Some(full) => full,
             None => {
-                paint_static(ctx, view, None);
+                paint_static(ctx, view, None, true);
                 true
             }
         };
