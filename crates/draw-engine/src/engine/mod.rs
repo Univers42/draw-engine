@@ -29,6 +29,7 @@ mod live;
 pub use image::EmbedFrame;
 pub use peers::Peer;
 mod multi_linear;
+mod paste_text;
 mod peers;
 mod pointer;
 mod pointer_end;

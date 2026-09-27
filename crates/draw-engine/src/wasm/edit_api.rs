@@ -52,6 +52,20 @@ impl WasmEngine {
         ok
     }
 
+    /// [`DrawEngine::paste_text`]: plain text as text elements, one per line, centred on
+    /// the **world** point `(x, y)` — what the host hands `pasteJson` too. The other branch
+    /// of a paste: a clipboard that is not this app's own element JSON is text.
+    #[wasm_bindgen(js_name = pasteText)]
+    pub fn paste_text(&self, text: &str, x: Option<f64>, y: Option<f64>) -> bool {
+        let at = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        };
+        let ok = self.cell.borrow_mut().engine.paste_text(text, at);
+        self.flush();
+        ok
+    }
+
     /// [`DrawEngine::insert_json`]: a scene made elsewhere, placed with its labels laid out.
     #[wasm_bindgen(js_name = insertJson)]
     pub fn insert_json(&self, json: &str, x: Option<f64>, y: Option<f64>) -> bool {
