@@ -264,6 +264,10 @@ pub fn resize_group_flips(
 /// a half turn about the anchor, and the turn is left exactly as it was. Negating there
 /// turns every member the wrong way round as soon as a corner goes through.
 ///
+/// It is asked only of a shape: a line, an arrow or a stroke is not here, because its
+/// shape *is* its points — [`map_points`] has already mirrored those exactly, and a
+/// point-based element keeps no turn of its own to reverse.
+///
 /// Not folded into `[0, 2π)` as the oracle's `normalizeRadians` does, for the reason
 /// `edit/flip.rs` gives: an unturned member must stay `0.0` rather than become `-0.0`, and
 /// two of them give back the original number exactly.
@@ -375,9 +379,7 @@ pub fn resize_group(
                     next.y += next.height;
                     next.height = -next.height;
                 }
-                // The turn goes with the mirror — see `flipped_angle`. A line, an arrow or
-                // a stroke is not here: its shape is its points, which `map_points` has
-                // already mirrored exactly, and it keeps no turn of its own to reverse.
+                // The turn goes with the mirror — see `flipped_angle`.
                 next.angle = flipped_angle(from.angle, flip_by_x, flip_by_y);
                 next
             };
@@ -695,6 +697,13 @@ mod tests {
     /// `-0.0`: a negative zero is a different `f64`, and it is written into the scene, the
     /// saved file and the geometry fingerprint. `edit/flip.rs` special-cases it for the
     /// Flip command and this does the same.
+    ///
+    /// The sign is the whole assertion, and it cannot be joined by
+    /// `assert_eq!(a.angle, 0.0)`: `-0.0 == 0.0` in Rust, so that one passes whatever the
+    /// guard does. A real pointer asks the same thing from the other side of the API — the
+    /// assertion on `plain` in `ci_group_resize.rs` ›
+    /// a_turned_member_turns_with_the_group_when_a_drag_crosses_the_anchor — so the
+    /// property does not rest on this one check.
     #[test]
     fn an_unturned_member_stays_at_positive_zero_across_the_anchor() {
         let els = turned_trio(0.0);
@@ -713,13 +722,10 @@ mod tests {
         );
 
         let a = out.iter().find(|e| e.id == "a").unwrap();
-        assert_eq!(
-            a.angle, 0.0,
-            "0.0 and -0.0 are equal but not the same number, and both get written out"
-        );
         assert!(
             a.angle.is_sign_positive(),
-            "the turn went negative-zero on a member that had none"
+            "the turn went negative-zero on a member that had none: {}",
+            a.angle
         );
     }
 

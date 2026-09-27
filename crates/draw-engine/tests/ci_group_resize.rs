@@ -77,22 +77,50 @@ fn find<'a>(scene: &'a [DrawElement], id: &str) -> &'a DrawElement {
         .expect("element is gone")
 }
 
-/// Drags the group's south-east handle so the union's corner lands on `to`.
+/// How far past the frame a group handle is drawn: four pixels of frame margin plus half
+/// an eight-pixel handle, on the axes that handle moves on.
+const HANDLE_OFFSET: f64 = 8.0;
+
+/// Where `kind` sits on the frame, plus [`HANDLE_OFFSET`] on the axes it moves on.
 ///
-/// The pointer goes down on the handle where it is drawn — `handle_offset` beyond the
-/// corner, four pixels of frame margin plus half an eight-pixel handle — and every move
-/// is offset the same, because a resize takes off where in the handle it was grabbed
+/// A side handle is drawn at the **middle** of one edge, so it is out along that one axis
+/// only — `(x + 8, y)`, not `(x + 8, y + 8)`. Off by eight on the other axis the press
+/// misses the handle altogether, falls through to the hit test, and drags the whole
+/// selection across the canvas instead: a resize that reads as a move, with every width
+/// untouched and nothing to fail an assertion about the angle.
+fn handle_offset(kind: HandleKind) -> (f64, f64) {
+    match kind {
+        HandleKind::N | HandleKind::S => (0.0, HANDLE_OFFSET),
+        HandleKind::E | HandleKind::W => (HANDLE_OFFSET, 0.0),
+        _ => (HANDLE_OFFSET, HANDLE_OFFSET),
+    }
+}
+
+/// Drags the group's `kind` handle, taken at `from` on the frame, so the frame's corner
+/// lands on `to` after `steps` moves. `alt` is Alt held throughout.
+///
+/// The pointer goes down on the handle where it is drawn, and every move is offset the
+/// same way, because a resize takes off where in the handle it was grabbed
 /// (`getResizeOffsetXY`, `packages/element/src/resizeElements.ts@1118751f:497-554`): the
 /// corner goes exactly as far as the pointer. Aiming at the corner itself misses by more
-/// than the handle's reach, falls through to the hit test, and moves the group instead.
-fn drag_se_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
-    const HANDLE_OFFSET: f64 = 8.0;
-    engine.begin_pointer(from.0 + HANDLE_OFFSET, from.1 + HANDLE_OFFSET, false, false);
+/// than the handle's reach and moves the group instead of resizing it.
+fn drag_handle(
+    engine: &mut DrawEngine,
+    kind: HandleKind,
+    from: (f64, f64),
+    to: (f64, f64),
+    steps: usize,
+    alt: bool,
+) {
+    let (dx, dy) = handle_offset(kind);
+    engine.set_alt_held(alt);
+    engine.begin_pointer(from.0 + dx, from.1 + dy, false, alt);
     for step in 1..=steps {
         let t = step as f64 / steps as f64;
+        engine.set_alt_held(alt);
         engine.move_pointer(
-            from.0 + (to.0 - from.0) * t + HANDLE_OFFSET,
-            from.1 + (to.1 - from.1) * t + HANDLE_OFFSET,
+            from.0 + (to.0 - from.0) * t + dx,
+            from.1 + (to.1 - from.1) * t + dy,
             false,
             // Snapping to objects stays off (the default): alignment guides pull toward
             // other elements and would make this a test of the guides, not of the scale.
@@ -100,6 +128,11 @@ fn drag_se_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), ste
         );
     }
     engine.end_pointer();
+}
+
+/// Drags the group's south-east handle so the union's corner lands on `to`.
+fn drag_se_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
+    drag_handle(engine, HandleKind::Se, from, to, steps, false);
 }
 
 /// Two boxes plus a drawing, selected together. Union is (0,0)-(300,100).
@@ -280,20 +313,7 @@ fn the_frame_is_the_union_of_turned_bounds_not_unturned_boxes() {
 /// `session.engine.setAltHeld(event.altKey)` does before every move
 /// (`engine/src/host/pointerInput.ts:19`).
 fn drag_se_handle_alt(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
-    const HANDLE_OFFSET: f64 = 8.0;
-    engine.set_alt_held(true);
-    engine.begin_pointer(from.0 + HANDLE_OFFSET, from.1 + HANDLE_OFFSET, false, true);
-    for step in 1..=steps {
-        let t = step as f64 / steps as f64;
-        engine.set_alt_held(true);
-        engine.move_pointer(
-            from.0 + (to.0 - from.0) * t + HANDLE_OFFSET,
-            from.1 + (to.1 - from.1) * t + HANDLE_OFFSET,
-            false,
-            false,
-        );
-    }
-    engine.end_pointer();
+    drag_handle(engine, HandleKind::Se, from, to, steps, true);
 }
 
 /// Alt scales a group about the frame's own centre instead of the corner or side
@@ -348,57 +368,102 @@ fn group_with_a_turned_member() -> (DrawEngine, String, String) {
     (engine, bar_id, plain_id)
 }
 
-/// The east handle, dragged in several steps from where it is drawn to `to`.
-///
-/// The handle sits on the frame's edge **at its middle** and `handle_offset` (four pixels
-/// of frame margin plus half an eight-pixel handle) out along that one axis — so the grab
-/// and the offset are `(x + 8, y)`, not `(x + 8, y + 8)`. Off by eight on y the press
-/// misses the handle altogether, falls through to the hit test, and drags the whole
-/// selection across the canvas instead: a resize that reads as a move, with every width
-/// untouched and nothing to fail an assertion about the angle.
+/// The east handle, dragged in several steps from where it is drawn to `to` — on the
+/// frame's own middle, so [`handle_offset`] is 8 along x and nothing along y.
 fn drag_east_handle(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
-    const HANDLE_OFFSET: f64 = 8.0;
-    engine.begin_pointer(from.0 + HANDLE_OFFSET, from.1, false, false);
-    for step in 1..=steps {
-        let t = step as f64 / steps as f64;
-        engine.move_pointer(
-            from.0 + (to.0 - from.0) * t + HANDLE_OFFSET,
-            from.1,
-            false,
-            false,
-        );
-    }
-    engine.end_pointer();
+    drag_handle(engine, HandleKind::E, from, to, steps, false);
 }
 
 /// Taking a handle through the anchor reverses the direction of a member's turn, as a
 /// mirror does — `angle * flipFactorX * flipFactorY` with one factor -1
 /// (`resizeElements.ts@1118751f:1392`, `:1417-1419`).
 ///
-/// The turn is read raw, not folded into `[0, 2π)`: a drag that mirrored the mirror on
-/// every move would land on `-3π/2`, which is the *same turn* as the `π/2` it started at
-/// and would slip through any comparison that folds. This engine does not fold, so the
-/// number itself is the evidence.
+/// The turn is read raw, not folded into `[0, 2π)`, so the number itself is the evidence
+/// and this test is a real RED: a mirror taken once per move instead of once per gesture
+/// would land on `+π/2` here, which folding could not tell apart either.
 #[test]
 fn a_turned_member_turns_with_the_group_when_a_drag_crosses_the_anchor() {
     let (mut engine, bar_id, plain_id) = group_with_a_turned_member();
 
     // Past the frame's own west edge at x=70, on one axis only: an east handle never
     // crosses on y (`flipConditionsMap`, `resizeElements.ts@1118751f:1189`).
-    drag_east_handle(&mut engine, (300.0, 90.0), (40.0, 90.0), 4);
+    //
+    // And crossed **twice** on the way, at x=0 and again at x=-100, so the scale that
+    // comes out is one crossing while the pointer crossed the anchor twice. That is what
+    // makes this more than a statement of the rule: an implementation that read the live
+    // member's turn and mirrored it on every move it found itself past the anchor would
+    // negate twice and hand back the `π/2` it started with. This one is taken from the
+    // geometry captured at the press, so every move of the gesture says the same thing.
+    drag_east_handle(&mut engine, (300.0, 90.0), (-100.0, 90.0), 4);
 
     let scene = engine.get_scene();
     let bar = find(&scene, &bar_id);
     assert!(
         (bar.angle + std::f64::consts::FRAC_PI_2).abs() < 1e-9,
         "a turn of π/2 came out as {} — the drag crossed the anchor on one axis, so it \
-         should have come out as -π/2, once and not once a move",
+         should have come out as -π/2, and the pointer crossed it twice without the turn \
+         being mirrored twice",
         bar.angle
     );
     let plain = find(&scene, &plain_id);
-    assert_eq!(
-        plain.angle, 0.0,
-        "an unturned member is its own mirror image and must not become -0.0"
+    // `assert_eq!(plain.angle, 0.0)` would be nothing here: `-0.0 == 0.0` in Rust, so
+    // that is the check that lets a negative zero through. The sign is the whole
+    // assertion, and it is the one that fails when `flipped_angle`'s zero guard is
+    // dropped and an unturned member is negated into `-0.0`.
+    assert!(
+        plain.angle == 0.0 && plain.angle.is_sign_positive(),
+        "an unturned member is its own mirror image and must not become -0.0, and it \
+         came out as {}",
+        plain.angle
+    );
+}
+
+/// Alt moves the anchor to the frame's own centre (`resize_anchor`), so a drag that
+/// started on the far side of it comes out on the near side — and a turned member's turn
+/// goes with it.
+///
+/// The anchor is the midpoint in the oracle too: `shouldResizeFromCenter` swaps the
+/// opposite corner for `midX`/`midY` (`resizeElements.ts@1118751f:1150-1155`), so the
+/// one-axis crossing is read against the centre rather than against the frame's west
+/// edge, and the turn is reversed exactly as it is without Alt.
+#[test]
+fn alt_reverses_a_turned_members_turn_when_the_drag_passes_the_frames_centre() {
+    let (mut engine, bar_id, plain_id) = group_with_a_turned_member();
+
+    // The east handle, dragged to x=100 — past the frame's own centre at x=185, so with
+    // Alt held the horizontal scale is (100 - 185) * 2 / 230 = -0.74, and the turn goes
+    // with it. Without Alt this same drag would scale by (100 - 70) / 230 = +0.13, cross
+    // nothing, and leave the turn alone: the assertion below is what pins the Alt in.
+    drag_handle(
+        &mut engine,
+        HandleKind::E,
+        (300.0, 90.0),
+        (100.0, 90.0),
+        4,
+        true,
+    );
+
+    let scene = engine.get_scene();
+    let bar = find(&scene, &bar_id);
+    assert!(
+        (bar.angle + std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+        "a turn of π/2 came out as {} — Alt moved the anchor to the frame's centre, the \
+         drag passed it on x alone, and one crossing is one mirror",
+        bar.angle
+    );
+    // Mirrored about the centre, not about the west edge: the bar sat at x=70..90, well
+    // west of x=185, and a scale of -0.74 about the centre puts it east of it.
+    assert!(
+        bar.x > 185.0,
+        "the bar came out at x={}, still west of the centre it was mirrored about",
+        bar.x
+    );
+    let plain = find(&scene, &plain_id);
+    assert!(
+        plain.angle == 0.0 && plain.angle.is_sign_positive(),
+        "an unturned member is its own mirror image and must not become -0.0, and it \
+         came out as {}",
+        plain.angle
     );
 }
 
@@ -445,7 +510,6 @@ fn the_groups_east_handle_resizes_it_along_one_axis() {
     engine.select(vec![anchor_id.clone(), other_id.clone()]);
     // Frame is (0,0)-(300,100); the east handle is drawn at (300, 50), 8px further out.
 
-    const HANDLE_OFFSET: f64 = 8.0;
     engine.begin_pointer(300.0 + HANDLE_OFFSET, 50.0, false, false);
     engine.move_pointer(450.0 + HANDLE_OFFSET, 50.0, false, false);
     engine.move_pointer(600.0 + HANDLE_OFFSET, 50.0, false, false);
