@@ -1,6 +1,6 @@
 //! Z-order: Bring forward, Send backward, Bring to front, Send to back.
 //!
-//! Two parts.
+//! Three parts.
 //!
 //! - **The oracle's own cases.** Every z-order case of
 //!   `packages/element/tests/zindex.test.tsx@1118751f`, same stacks in, same stacks out,
@@ -8,6 +8,10 @@
 //!   port keeps the oracle's handling of tombstones even though the engine reorders only
 //!   the live stack (tombstones stay at the bottom, `Scene::set_order`). Not ported: the
 //!   duplication cases (`:919-1160`), which test Ctrl+D, not a z-order command.
+//! - **Rules the oracle's cases never drive.** A selection that straddles the range of an
+//!   entered group: the oracle's own stacks never contain one, which is how the refusal
+//!   guard at `zorder.rs:468` came to be deletable — with it gone, all seventy cases
+//!   above still pass.
 //! - **Through the engine.** Frames with children, a group inside a frame, a label on a
 //!   frame child, a locked element in the selection, a label whose shape stays (locked,
 //!   held by a peer, or not selected), and a reorder that moves nothing.
@@ -373,6 +377,55 @@ fn the_oracles_z_index_cases() {
     assert!(
         failures.is_empty(),
         "{} of the oracle's steps differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Rules the oracle's own cases never drive
+// ---------------------------------------------------------------------------------------
+
+/// Inside an entered group the group's range is the whole world, and a selection
+/// holding anything outside it is **refused**: nothing moves, not even the part that is
+/// inside. `shiftElementsToEnd` returns the stack untouched
+/// (`zindex.ts@1118751f:481-483`, and the guard the port puts it in at `zorder.rs:468`
+/// — "refused, as the oracle's is, when something to move lies outside that range",
+/// `zorder.rs:425`).
+///
+/// The oracle's seventy cases never drive a selection that straddles the range, which
+/// is how that guard came to be deletable: with `lowest < leading || highest > trailing`
+/// taken out, **every case in this file still passes** — all seventy, and the ones
+/// through the engine. Two named cases, one from each side, so the guard is not
+/// deletable again. The frame path cannot straddle at all: `shift_accounting_for_frames`
+/// splits the selection by frame before it moves anything, so this is the entered group's
+/// own refusal and nothing else.
+#[test]
+fn a_selection_straddling_the_entered_group_is_refused() {
+    /// `stack` bottom first, the group entered, the command, and the stack it must leave
+    /// — which is the stack it came in as, because a refused command is not an edit.
+    const REFUSED: &[(&str, &str, ZOrderMode, &str)] = &[
+        // Something to move lies above the group: A and C would go to the group's top,
+        // and D, outside it, must refuse the whole thing.
+        ("A/g1* B/g1 C/g1* D*", "g1", Front, "A B C D"),
+        // And the other side: A lies below the group, and the same refusal follows.
+        ("A* B/g1 C/g1* D/g1*", "g1", Back, "A B C D"),
+    ];
+    let mut failures = Vec::new();
+    for (stack, group, mode, expected) in REFUSED {
+        let (elements, selected) = populate(stack);
+        let next = reorder_within(&elements, &selected, *mode, Some(group));
+        let got = names(&next);
+        if got != *expected {
+            failures.push(format!(
+                "[{stack}] {} in {group}: expected [{expected}], got [{got}]",
+                mode.as_str()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of the refusals differ:\n{}",
         failures.len(),
         failures.join("\n")
     );
