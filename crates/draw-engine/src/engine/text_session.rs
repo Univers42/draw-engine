@@ -27,6 +27,7 @@
 
 use crate::engine::DrawEngine;
 use crate::interaction::DrawTool;
+use crate::scene::binding::{is_target_kind, release_bindings_to_removed};
 use crate::scene::{DrawElement, DrawElementType, TextAlign, VerticalAlign};
 use crate::text::layout::{self, Laid};
 
@@ -367,6 +368,22 @@ impl DrawEngine {
         }
         // A committed text emptied is a deletion, and a deletion is a tombstone: the server
         // and the peers have to be told, and undo has to be able to stamp it back.
+        // Being a delete, it releases too: an arrow bound to this text is let go of it, as
+        // the eraser, the Delete key and a vectorize let one go
+        // (`release_bindings_to_removed`), and never carried to another id — the oracle
+        // has no way to rebind an arrow (`binding.ts@1118751f:2577`). The release is part
+        // of this same step, before the tombstone, so one undo binds the arrow again.
+        //
+        // Guarded by the rule that says a text is a target at all: a free-standing one is
+        // (`is_target_kind` — `Text` is one only while `container_id` is none), so arrows
+        // can be bound to it, and a label belongs to its shape and was never bound to
+        // anything. There is nothing to let go of, and nothing is touched.
+        if is_target_kind(element) {
+            release_bindings_to_removed(
+                &mut self.scene,
+                &std::collections::HashSet::from([element.id.clone()]),
+            );
+        }
         self.scene.remove(&element.id, self.now_ms);
         self.push_history();
     }

@@ -1241,9 +1241,10 @@ pub fn reanchor_to_outline(
 /// about an arrow changes. An end on a shape that survives is left exactly as it was.
 ///
 /// Called **before** the removals, in the same step of history as them, so one undo binds
-/// the arrow again. The three paths that take a shape somebody drew an arrow to — the
-/// eraser, the Delete key, and a vectorize that drops the image it replaces — all go
-/// through here, so there is one release and not one per caller.
+/// the arrow again. Every path that takes something somebody drew an arrow to — the
+/// eraser, the Delete key, a vectorize that drops the image it replaces, and a text
+/// emptied out of existence — all go through here, so there is one release and not one
+/// per caller.
 pub fn release_bindings_to_removed(
     scene: &mut crate::scene::store::Scene,
     removed: &std::collections::HashSet<String>,

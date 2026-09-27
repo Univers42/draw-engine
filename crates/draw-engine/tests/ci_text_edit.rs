@@ -899,6 +899,188 @@ mod ending {
     }
 }
 
+/// What an emptying does to the arrows bound to the text.
+///
+/// A committed text emptied is a delete (`text_session.rs` › `remove_emptied_text`), and a
+/// delete releases the arrows bound to what it takes, as Excalidraw's
+/// `fixBindingsAfterDeletion` does (`binding.ts@1118751f:2297-2311`) — the eraser, the
+/// Delete key and a vectorize all go through one function for it. The premise this site
+/// was planned under, *"text has no inbound arrows"*, is **false**: a free-standing text
+/// **is** a target (`is_target_kind`, `scene/binding.rs` — `Text` is one only while its
+/// `container_id` is none). A label is not, and the release is guarded by that rule.
+mod bindings {
+    use super::*;
+
+    /// Empties a committed text the way the editor does: open it, clear it, commit nothing.
+    fn emptied(engine: &mut DrawEngine, text_id: &str) {
+        engine.select(vec![text_id.to_string()]);
+        assert!(engine.edit_selected_text(), "the text opens for editing");
+        engine.update_text_edit("");
+        engine.commit_text_edit("", true);
+    }
+
+    /// A free-standing text, typed and committed, with an arrow drawn across it: both
+    /// ends land inside the text, so both are bound to it. Drawn, not assigned — the
+    /// binding is the one the engine itself makes, which is the thing in question.
+    fn text_with_an_arrow_across() -> (DrawEngine, String, String) {
+        let mut engine = engine_with_measure(Vec::new());
+        let text_id = open_at(&mut engine, (200.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        let y = middle(&text).1;
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(text.x + 2.0, y, false, false);
+        engine.move_pointer(text.x + text.width - 2.0, y, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup: a free-standing text is an arrow target"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup"
+        );
+        (engine, text_id, arrow.id)
+    }
+
+    /// A shape, a free-standing text on top of it in the z-order, and an arrow drawn from
+    /// inside the shape to inside the text: one end bound to each.
+    fn shape_and_text_with_an_arrow_between() -> (DrawEngine, String, String, String) {
+        let shape = filled(box_at(0.0, 200.0, 100.0, 60.0));
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let text_id = open_at(&mut engine, (300.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(50.0, 230.0, false, false);
+        engine.move_pointer(middle(&text).0, middle(&text).1, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(shape_id.as_str()),
+            "setup: the shape end"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup"
+        );
+        (engine, text_id, arrow.id, shape_id)
+    }
+
+    /// The text goes, so the arrow is let go of it — both ends, both on the same id, and
+    /// all three fields of an end together, as `set_anchor` is the only writer of them. A
+    /// release and not a rebind: the oracle has no way to move a binding to another id
+    /// ("we cannot rebind arrows atm", `binding.ts@1118751f:2577`).
+    #[test]
+    fn emptying_a_free_text_lets_an_arrow_go_of_it() {
+        let (mut engine, text_id, arrow_id) = text_with_an_arrow_across();
+
+        emptied(&mut engine, &text_id);
+
+        assert!(element(&engine, &text_id).is_deleted, "the text is deleted");
+        let arrow = element(&engine, &arrow_id);
+        assert!(!arrow.is_deleted, "the arrow was not emptied");
+        assert_eq!(arrow.start_binding, None, "let go of the start");
+        assert_eq!(arrow.end_binding, None, "let go of the end");
+        assert_eq!(arrow.start_fixed_point, None, "with no anchor left");
+        assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+    }
+
+    /// A label is not a target: it belongs to its shape, so an arrow was never bound to it
+    /// and emptying it must touch nothing that names it. The binding is **assigned**,
+    /// because the engine would never make it — that is the point: the release is guarded
+    /// by the rule (`is_target_kind`), not by what happens to be reachable.
+    #[test]
+    fn emptying_a_text_that_belongs_to_a_shape_lets_no_arrow_go_of_it() {
+        let shape = filled(box_at(100.0, 100.0, 200.0, 100.0));
+        let mut label = text_at(120.0, 140.0, 60.0, 25.0);
+        label.text = Some("hello".into());
+        label.container_id = Some(shape.id.clone());
+        let mut link = connector(400.0, 150.0, 500.0, 150.0, DrawElementType::Arrow);
+        link.start_binding = Some(label.id.clone());
+        let (label_id, link_id) = (label.id.clone(), link.id.clone());
+        let mut engine = engine_with_measure(vec![shape, label, link]);
+
+        emptied(&mut engine, &label_id);
+
+        assert!(
+            element(&engine, &label_id).is_deleted,
+            "the label is deleted"
+        );
+        let arrow = element(&engine, &link_id);
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(label_id.as_str()),
+            "a text with a container is not a target, so it was never bound"
+        );
+    }
+
+    /// One-directional, as the oracle's rule is (`delta.ts@1118751f:1976-1979`): the end
+    /// on the text that went is let go, the end on the shape nobody deleted is still good
+    /// and stays bound to it, with its anchor.
+    #[test]
+    fn emptying_a_text_leaves_an_arrow_bound_to_whoever_survives() {
+        let (mut engine, text_id, arrow_id, shape_id) = shape_and_text_with_an_arrow_between();
+
+        emptied(&mut engine, &text_id);
+
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(arrow.end_binding, None, "let go of the text that went");
+        assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(shape_id.as_str()),
+            "the shape is still there"
+        );
+        assert!(
+            arrow.start_fixed_point.is_some(),
+            "with its anchor still on it"
+        );
+    }
+
+    /// The release is part of the same step of history as the tombstone, as it is for the
+    /// eraser, the Delete key and the vectorize: one undo gives back both — the text, and
+    /// the arrow's hold on it.
+    #[test]
+    fn one_undo_binds_the_arrow_to_the_emptied_text_again() {
+        let (mut engine, text_id, arrow_id) = text_with_an_arrow_across();
+
+        emptied(&mut engine, &text_id);
+        engine.undo();
+
+        assert!(!element(&engine, &text_id).is_deleted, "the text is back");
+        let arrow = element(&engine, &arrow_id);
+        assert_eq!(
+            arrow.start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "bound to the start again"
+        );
+        assert_eq!(
+            arrow.end_binding.as_deref(),
+            Some(text_id.as_str()),
+            "bound to the end again"
+        );
+    }
+}
+
 /// What peers see and send while a text is typed.
 mod peers {
     use super::*;
