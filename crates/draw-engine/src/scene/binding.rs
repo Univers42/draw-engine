@@ -1241,10 +1241,12 @@ pub fn reanchor_to_outline(
 /// about an arrow changes. An end on a shape that survives is left exactly as it was.
 ///
 /// Called **before** the removals, in the same step of history as them, so one undo binds
-/// the arrow again. Every path that takes something somebody drew an arrow to — the
-/// eraser, the Delete key, a vectorize that drops the image it replaces, and a text
+/// the arrow again. Every **local** path that takes something somebody drew an arrow to —
+/// the eraser, the Delete key, a vectorize that drops the image it replaces, and a text
 /// emptied out of existence — all go through here, so there is one release and not one
-/// per caller.
+/// per caller. A **remote** peer's tombstone does not: it arrives already applied
+/// (`clipboard.rs:213`). That is benign, because the arrow the peer let go of arrives in
+/// the same patch, already let go of.
 pub fn release_bindings_to_removed(
     scene: &mut crate::scene::store::Scene,
     removed: &std::collections::HashSet<String>,

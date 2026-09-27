@@ -907,7 +907,10 @@ mod ending {
 /// Delete key and a vectorize all go through one function for it. The premise this site
 /// was planned under, *"text has no inbound arrows"*, is **false**: a free-standing text
 /// **is** a target (`is_target_kind`, `scene/binding.rs` — `Text` is one only while its
-/// `container_id` is none). A label is not, and the release is guarded by that rule.
+/// `container_id` is none), and a label can be bound too. The release is not guarded by
+/// bindability, because the oracle's is not: it matches on id equality alone
+/// (`binding.ts@1118751f:2568`) and runs for every element removed
+/// (`delta.ts@1118751f:1936-1939`).
 mod bindings {
     use super::*;
 
@@ -1004,18 +1007,26 @@ mod bindings {
         assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
     }
 
-    /// A label is not a target: it belongs to its shape, so an arrow was never bound to it
-    /// and emptying it must touch nothing that names it. The binding is **assigned**,
-    /// because the engine would never make it — that is the point: the release is guarded
-    /// by the rule (`is_target_kind`), not by what happens to be reachable.
+    /// A label is a text that has a container, and a text with a container is not a
+    /// target — but a binding on it is not thereby impossible: "Bind text" gives a free
+    /// text a container and leaves the arrows already bound to it bound
+    /// (`bound_text.rs:35`). So emptying one releases, exactly as erasing it and deleting
+    /// it do. The oracle carves out nothing: its release matches on id equality alone
+    /// (`binding.ts@1118751f:2568`) and runs for every element removed
+    /// (`delta.ts@1118751f:1936-1939`).
+    ///
+    /// The binding is **assigned**, so the case is posed directly rather than staged
+    /// through the menu; [`emptying_erasing_and_deleting_a_label_all_let_an_arrow_go_of_it`]
+    /// builds the same state the way a person does and checks all three paths.
     #[test]
-    fn emptying_a_text_that_belongs_to_a_shape_lets_no_arrow_go_of_it() {
+    fn emptying_a_text_that_belongs_to_a_shape_lets_an_arrow_go_of_it() {
         let shape = filled(box_at(100.0, 100.0, 200.0, 100.0));
         let mut label = text_at(120.0, 140.0, 60.0, 25.0);
         label.text = Some("hello".into());
         label.container_id = Some(shape.id.clone());
         let mut link = connector(400.0, 150.0, 500.0, 150.0, DrawElementType::Arrow);
         link.start_binding = Some(label.id.clone());
+        link.start_fixed_point = Some([400.0, 150.0]);
         let (label_id, link_id) = (label.id.clone(), link.id.clone());
         let mut engine = engine_with_measure(vec![shape, label, link]);
 
@@ -1026,11 +1037,12 @@ mod bindings {
             "the label is deleted"
         );
         let arrow = element(&engine, &link_id);
+        assert!(!arrow.is_deleted, "the arrow was not emptied");
         assert_eq!(
-            arrow.start_binding.as_deref(),
-            Some(label_id.as_str()),
-            "a text with a container is not a target, so it was never bound"
+            arrow.start_binding, None,
+            "let go of the label that went, a container or not"
         );
+        assert_eq!(arrow.start_fixed_point, None, "with no anchor left");
     }
 
     /// One-directional, as the oracle's rule is (`delta.ts@1118751f:1976-1979`): the end
@@ -1054,6 +1066,112 @@ mod bindings {
             arrow.start_fixed_point.is_some(),
             "with its anchor still on it"
         );
+    }
+
+    /// The three ways a person takes a label away agree: emptied, erased or deleted, an
+    /// arrow bound to it is let go of it every time. Only the emptying used to differ, a
+    /// label having been held not to be a target and so let past the release every other
+    /// delete goes through — and the oracle carves out nothing: a release matches on id
+    /// equality alone (`binding.ts@1118751f:2568`) and runs for every element removed
+    /// (`delta.ts@1118751f:1936-1939`).
+    ///
+    /// The state is [`label_with_an_arrow_bound`], built as a person builds it, so this
+    /// says the case is reachable and not only constructible.
+    #[test]
+    fn emptying_erasing_and_deleting_a_label_all_let_an_arrow_go_of_it() {
+        for fate in [Fate::Emptied, Fate::Erased, Fate::Deleted] {
+            let (mut engine, label_id, arrow_id, shape_id) = label_with_an_arrow_bound();
+
+            fate.take(&mut engine, &label_id, &shape_id);
+
+            assert!(
+                element(&engine, &label_id).is_deleted,
+                "{fate:?}: the label is gone"
+            );
+            let arrow = element(&engine, &arrow_id);
+            assert!(!arrow.is_deleted, "{fate:?}: the arrow was not taken");
+            assert_eq!(arrow.start_binding, None, "{fate:?}: let go of the start");
+            assert_eq!(arrow.end_binding, None, "{fate:?}: let go of the end");
+            assert_eq!(
+                arrow.start_fixed_point, None,
+                "{fate:?}: with no anchor left"
+            );
+            assert_eq!(arrow.end_fixed_point, None, "{fate:?}: with no anchor left");
+        }
+    }
+
+    /// A text that is a label and an arrow bound to it, made the way a person makes one:
+    /// a free-standing text typed and committed, an arrow drawn across it so the engine
+    /// binds both ends itself, then the text bound to a shape holding nothing
+    /// ("Bind text", `bound_text.rs:35`). That last step is the only way a label comes to
+    /// have a binding, and it is why a release cannot skip labels.
+    fn label_with_an_arrow_bound() -> (DrawEngine, String, String, String) {
+        let shape = filled(box_at(600.0, 500.0, 200.0, 100.0));
+        let shape_id = shape.id.clone();
+        let mut engine = engine_with_measure(vec![shape]);
+        let text_id = open_at(&mut engine, (200.0, 200.0));
+        engine.update_text_edit("hello");
+        engine.commit_text_edit("hello", true);
+        engine.drain_events();
+        let text = element(&engine, &text_id);
+        let y = middle(&text).1;
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(text.x + 2.0, y, false, false);
+        engine.move_pointer(text.x + text.width - 2.0, y, false, false);
+        engine.end_pointer();
+        let arrow_id = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("the arrow was drawn")
+            .id;
+
+        engine.select(vec![text_id.clone(), shape_id.clone()]);
+        engine.bind_text();
+        engine.drain_events();
+
+        assert_eq!(
+            element(&engine, &text_id).container_id.as_deref(),
+            Some(shape_id.as_str()),
+            "setup: the text is the shape's label now"
+        );
+        assert_eq!(
+            element(&engine, &arrow_id).start_binding.as_deref(),
+            Some(text_id.as_str()),
+            "setup: a label the arrow is still bound to"
+        );
+        (engine, text_id, arrow_id, shape_id)
+    }
+
+    /// The three ways a person takes a label away, named so a failure says which one.
+    #[derive(Debug, Clone, Copy)]
+    enum Fate {
+        Emptied,
+        Erased,
+        Deleted,
+    }
+
+    impl Fate {
+        /// Takes the label, by this one path and no other.
+        fn take(self, engine: &mut DrawEngine, label_id: &str, shape_id: &str) {
+            match self {
+                Fate::Emptied => emptied(engine, label_id),
+                Fate::Deleted => {
+                    engine.select(vec![label_id.to_string()]);
+                    engine.delete_selection();
+                }
+                // A person erases the shape a label is in, and the label goes with it
+                // (`eraser.rs:140-145`). The point is taken near the shape's corner, well
+                // clear of the arrow: the label lies in the middle of the shape, and the
+                // arrow runs through the middle of the label.
+                Fate::Erased => {
+                    let shape = element(engine, shape_id);
+                    engine.set_tool(DrawTool::Eraser);
+                    engine.begin_pointer(shape.x + 20.0, shape.y + 15.0, false, false);
+                    engine.end_pointer();
+                }
+            }
+        }
     }
 
     /// The release is part of the same step of history as the tombstone, as it is for the
