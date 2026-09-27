@@ -388,12 +388,13 @@ fn a_turned_member_turns_with_the_group_when_a_drag_crosses_the_anchor() {
     // Past the frame's own west edge at x=70, on one axis only: an east handle never
     // crosses on y (`flipConditionsMap`, `resizeElements.ts@1118751f:1189`).
     //
-    // And crossed **twice** on the way, at x=0 and again at x=-100, so the scale that
-    // comes out is one crossing while the pointer crossed the anchor twice. That is what
-    // makes this more than a statement of the rule: an implementation that read the live
-    // member's turn and mirrored it on every move it found itself past the anchor would
-    // negate twice and hand back the `π/2` it started with. This one is taken from the
-    // geometry captured at the press, so every move of the gesture says the same thing.
+    // The pointer walks x = 300, 200, 100, 0, -100, so it crosses the anchor **once** (between
+    // 100 and 0) and then stands **west of it on two of the four moves** — at 0 and at -100.
+    // That even count is what makes this more than a statement of the rule: an implementation
+    // that read the live member's turn and mirrored it on every move that found the pointer
+    // past the anchor would negate twice and hand back the `π/2` it started with. This one
+    // is taken from the geometry captured at the press, so every move of the gesture says
+    // the same thing.
     drag_east_handle(&mut engine, (300.0, 90.0), (-100.0, 90.0), 4);
 
     let scene = engine.get_scene();
@@ -401,8 +402,8 @@ fn a_turned_member_turns_with_the_group_when_a_drag_crosses_the_anchor() {
     assert!(
         (bar.angle + std::f64::consts::FRAC_PI_2).abs() < 1e-9,
         "a turn of π/2 came out as {} — the drag crossed the anchor on one axis, so it \
-         should have come out as -π/2, and the pointer crossed it twice without the turn \
-         being mirrored twice",
+         should have come out as -π/2, and the pointer stood west of it on two of the \
+         four moves without the turn being mirrored twice",
         bar.angle
     );
     let plain = find(&scene, &plain_id);
