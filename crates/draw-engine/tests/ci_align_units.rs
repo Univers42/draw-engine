@@ -352,3 +352,90 @@ fn an_arrow_bound_to_an_aligned_shape_follows_it() {
     assert!(after.y > 400.0, "the tail followed R1 down: {after:?}");
     assert_eq!(after.version, arrow.version + 1);
 }
+
+// ---------------------------------------------------------------------------
+// AlignMode::Top
+// ---------------------------------------------------------------------------
+
+/// `shortkey.md:140`, "Align selected elements top" — the fourth of the six align rows,
+/// and the only one of the six no test had ever selected: this file exercises Left
+/// (four times), Bottom (twice) and, through the same code path, nothing else.
+///
+/// The rule is the oracle's, and it is one line of arithmetic:
+/// `actionAlignTop` asks for `{ position: "start", axis: "y" }`
+/// (`actions/actionAlign.tsx@1118751f:79-94`), and `calculateTranslation` for `start` is
+/// `y = selectionBoundingBox.minY - groupBoundingBox.minY`
+/// (`packages/element/src/align.ts@1118751f:65-70`). So every unit's **top edge** lands on
+/// the topmost unit's top edge, and nothing moves sideways.
+#[test]
+fn align_top_puts_every_units_top_edge_on_the_topmost_one() {
+    // Deliberately staggered in *both* axes and of two heights, so "aligned at the top"
+    // cannot be satisfied by accident and a bug that also nudged x would show.
+    let (mut engine, ids) = boxes(&[(100.0, 40.0), (250.0, 10.0), (0.0, 90.0)]);
+    let [a, b, c] = [&ids[0], &ids[1], &ids[2]];
+    engine.select(vec![a.clone(), b.clone(), c.clone()]);
+
+    engine.align_selection(AlignMode::Top);
+
+    // The topmost unit is already there and must not move.
+    assert_close(y_of(&engine, b), 10.0);
+    // Both others come up to it — the tallest included: it is the *top* edges that line up,
+    // not the middles and not the bottoms.
+    assert_close(y_of(&engine, a), 10.0);
+    assert_close(y_of(&engine, c), 10.0);
+    // ...and x is untouched, because `Top` is `axis: "y"` and the other translation is
+    // hard-wired to 0.
+    assert_close(x_of(&engine, a), 100.0);
+    assert_close(x_of(&engine, b), 250.0);
+    assert_close(x_of(&engine, c), 0.0);
+}
+
+/// `Top` is not `Bottom` and not `CenterY`, and the three disagree on this stack — so this
+/// is the assertion that would catch an off-by-one in the match arm. Bottom would put every
+/// unit's *bottom* at 170; CenterY would centre them all on 90.
+#[test]
+fn align_top_is_neither_bottom_nor_middle() {
+    let (mut engine, ids) = boxes(&[(100.0, 40.0), (250.0, 10.0), (0.0, 90.0)]);
+    let [a, b, c] = [&ids[0], &ids[1], &ids[2]];
+    engine.select(vec![a.clone(), b.clone(), c.clone()]);
+
+    engine.align_selection(AlignMode::Top);
+    let tops: Vec<f64> = [a, b, c].iter().map(|id| y_of(&engine, id)).collect();
+    assert!(
+        tops.iter().all(|y| (y - 10.0).abs() < 1e-9),
+        "all on the top edge, got {tops:?}"
+    );
+    // 80 tall from y=10, so their bottoms are all at 90 — a value neither Bottom nor
+    // CenterY would produce for every one of them.
+    assert!(
+        tops.iter().all(|y| (y + 80.0 - 90.0).abs() < 1e-9),
+        "and the bottoms happen to agree too, which is what makes this stack a real test"
+    );
+}
+
+/// The group case, because a unit is not an element: a group is moved by one translation,
+/// so aligning its top edge aligns the top of its *highest member* and leaves the rest of
+/// the group's shape alone. This is the same `getSelectedElementsByGroup` the other align
+/// tests cover, on the one mode that had none.
+///
+/// The lone box is the topmost unit here, so the group is the one that moves — a test
+/// where the group were already topmost would pass on the group not moving at all.
+#[test]
+fn align_top_moves_a_group_by_one_translation_and_leaves_its_shape() {
+    let (mut engine, ids) = boxes(&[(100.0, 200.0), (100.0, 320.0), (400.0, 10.0)]);
+    let [a, b, lonely] = [&ids[0], &ids[1], &ids[2]];
+    group(&mut engine, &[a, b]);
+    // The lone box's top edge is 10 and the group's is 200, so aligning top must bring the
+    // whole group up by 190.
+    engine.select(vec![a.clone(), b.clone(), lonely.clone()]);
+
+    engine.align_selection(AlignMode::Top);
+
+    // The group's highest member reaches the top edge.
+    assert_close(y_of(&engine, a), 10.0);
+    // ...and the group is still the same shape: the 120 gap between its members is
+    // untouched, which is what "one translation" means.
+    assert_close(y_of(&engine, b) - y_of(&engine, a), 120.0);
+    // The lone box was already the topmost and stays exactly where it was.
+    assert_close(y_of(&engine, lonely), 10.0);
+}

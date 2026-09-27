@@ -418,3 +418,147 @@ fn a_keyhole_is_a_hole_to_click_through_as_well() {
         "the paint around it is still paint"
     );
 }
+
+// ---------------------------------------------------------------------- content kinds
+//
+// `design.md:1728` (Sticky) and `design.md:1730` (Embeds), two of the eleven kinds §43
+// "Hit-testing engine" lists under `hitTest(point, scene)`.
+//
+// The rule is `has_solid_interior` (`scene/geometry.rs:479-493`): a frame is hollow
+// because its middle belongs to its contents, a rectangle/diamond/ellipse/figure is
+// hollow when its background is transparent, and **everything else is solid whatever its
+// background is**. Text, freedraw and image are already in `content_elements_are_never_hollow`
+// above; a sticky note and an embed are the two content kinds that list does not name, so
+// nothing has ever hit-tested either of them.
+//
+// The oracle decides the same way, and by name rather than by falling through:
+// `shouldTestInside` returns true for `isIframeLikeElement` — `iframe` or `embeddable`
+// (`packages/element/src/typeChecks.ts@1118751f:59-65`) — whatever the background is
+// (`packages/element/src/collision.ts@1118751f:85-105`), and `hasBackground` lists
+// `stickynote` and `embeddable` among the kinds that have a background at all
+// (`packages/element/src/comparisons.ts@1118751f:3-14`), so a note is draggable from
+// inside for the same reason a filled rectangle is.
+
+/// Both kinds, on their interiors. The point is the **middle**: the outline is hit either
+/// way, so a test that only tried the edge would pass even if the interior were hollow.
+#[test]
+fn a_sticky_note_is_clickable_in_its_middle() {
+    let note = create_element_default(
+        DrawElementType::StickyNote,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 200.0,
+        },
+    );
+    assert!(
+        hit_test_element(&note, 100.0, 100.0, T),
+        "the middle of a note is the note"
+    );
+    // Off-centre too: a note is a rectangle to the geometry, so a corner of the pad is as
+    // much its interior as the dead centre.
+    assert!(hit_test_element(&note, 150.0, 150.0, T));
+    assert!(
+        !hit_test_element(&note, 260.0, 100.0, T),
+        "and it stops at its own edge, tolerance or not"
+    );
+}
+
+#[test]
+fn an_embed_is_clickable_in_its_middle() {
+    let embed = create_element_default(
+        DrawElementType::Embed,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 320.0,
+            height: 180.0,
+        },
+    );
+    assert!(
+        hit_test_element(&embed, 160.0, 90.0, T),
+        "the middle of an embed is the embed"
+    );
+    assert!(hit_test_element(&embed, 10.0, 170.0, T));
+    assert!(!hit_test_element(&embed, 400.0, 90.0, T));
+}
+
+/// The part that makes it a decision rather than a fall-through: a **transparent** note or
+/// embed is still solid, where a transparent rectangle is hollow. This is the oracle's
+/// `isIframeLikeElement` arm of `shouldTestInside` and it is the whole difference — a
+/// background of "transparent" does not make a note or an embed hollow, because what is
+/// inside them is content, not canvas showing through.
+#[test]
+fn a_transparent_sticky_note_or_embed_is_still_solid_where_a_transparent_rectangle_is_not() {
+    let mut note = create_element_default(
+        DrawElementType::StickyNote,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 200.0,
+        },
+    );
+    note.background_color = "transparent".to_string();
+    assert!(
+        hit_test_element(&note, 100.0, 100.0, T),
+        "hollowing a note would make its label unclickable and the note unreachable"
+    );
+
+    let mut embed = create_element_default(
+        DrawElementType::Embed,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 320.0,
+            height: 180.0,
+        },
+    );
+    embed.background_color = "transparent".to_string();
+    assert!(hit_test_element(&embed, 160.0, 90.0, T));
+
+    // The contrast, so the assertion above is about the kind and not about the colour
+    // having been ignored: the same colour on a rectangle *is* hollow.
+    let mut rect = box_at(0.0, 0.0, 200.0, 200.0);
+    rect.background_color = "transparent".to_string();
+    assert!(
+        !hit_test_element(&rect, 100.0, 100.0, T),
+        "a rectangle with no fill is only its outline"
+    );
+}
+
+/// Through the engine, because that is the claim that matters: a click in the middle of a
+/// note selects the note, and a click just past its edge does not. `hit_test_element` is
+/// the primitive; this is `hitTest → selection`, which is what §43 says the two are for.
+#[test]
+fn clicking_the_middle_of_a_note_selects_it() {
+    let note = create_element_default(
+        DrawElementType::StickyNote,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 200.0,
+        },
+    );
+    let id = note.id.clone();
+    let mut engine = engine_with_scene(vec![note]);
+    engine.set_tool(DrawTool::Select);
+
+    engine.begin_pointer(100.0, 100.0, false, false);
+    engine.end_pointer();
+    assert_eq!(
+        engine.get_selection(),
+        vec![id.clone()],
+        "the dead centre of the note"
+    );
+
+    engine.select(vec![]);
+    engine.begin_pointer(260.0, 100.0, false, false);
+    engine.end_pointer();
+    assert!(
+        engine.get_selection().is_empty(),
+        "and 60px past its right edge is the canvas"
+    );
+}

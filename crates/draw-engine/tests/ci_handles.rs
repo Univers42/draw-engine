@@ -828,3 +828,148 @@ fn a_texts_sides_are_taken_on_its_frame_line() {
     }
     assert_ne!(engine.hover_cursor(302.5, 112.5), HoverCursor::ResizeEw);
 }
+
+// -----------------------------------------------------------------------------
+// The frame itself
+// -----------------------------------------------------------------------------
+
+/// `design.md:209`, "Selection outline" — the last row of §3 Rectangle's Geometry list,
+/// after Bounding box, Rotation handles, Resize handles, Hit testing, Intersection testing
+/// and Point containment.
+///
+/// The claim is about the **frame's own geometry**, which is a different thing from the
+/// box the handles sit on. `the_frame_and_the_handles_share_their_corners` above compares
+/// the handle ring with a ring built at the *handle* offset; nothing asserted what the
+/// painted frame is, and the frame is what a person aims between.
+///
+/// It is the element's own box, grown by a constant 4 screen pixels on every side, turned
+/// with the element: the oracle's `getTransformHandlesFromCoords` takes `margin = 4` and
+/// computes `dashedLineMargin = margin / zoom.value`
+/// (`packages/element/src/transformHandles.ts@1118751f:133-151`) — the dashed selection
+/// border's own gap — and the per-element border is that element's absolute coords with its
+/// own angle (`packages/excalidraw/renderer/interactiveScene.ts@1118751f:1864-1890`).
+/// Here: `HandleLayout::screen`'s `frame_pad` (`src/selection/handles.rs:145-148`), which
+/// is `FRAME_MARGIN_PX / scale`, and `selection_corners_padded` (`:202-214`).
+#[test]
+fn the_selection_frame_is_the_elements_own_box_grown_by_four_screen_pixels() {
+    let element = box_at(10.0, 20.0, 120.0, 80.0);
+    let corners = selection_corners_padded(&element, layout().frame_pad);
+    let [min_x, min_y, max_x, max_y] = freehand::points_bounds(&corners.map(|p| [p.x, p.y]));
+
+    // Four pixels outside each edge: 10-4, 20-4, 130+4, 100+4. Asserted as a box rather
+    // than as a corner list, because the corner *order* is the painter's business and the
+    // geometry is not.
+    assert_close(min_x, 6.0);
+    assert_close(min_y, 16.0);
+    assert_close(max_x, 134.0);
+    assert_close(max_y, 104.0);
+
+    // And it is a box of the element's own size plus the same margin on both sides: the
+    // gap is 4, not 4 on one side and something else on the other.
+    assert_close((max_x - min_x) - 120.0, 8.0);
+    assert_close((max_y - min_y) - 80.0, 8.0);
+}
+
+/// Four *screen* pixels, so the frame is the same width on the glass however far the board
+/// is zoomed — the whole reason `HandleLayout` carries the scale. At half zoom the gap in
+/// world units doubles and the gap in screen pixels does not.
+#[test]
+fn the_frames_gap_is_four_screen_pixels_at_every_zoom() {
+    let element = box_at(0.0, 0.0, 100.0, 100.0);
+    for (scale, want) in [(1.0, 4.0), (0.5, 8.0), (2.0, 2.0), (4.0, 1.0)] {
+        let layout = HandleLayout::screen(8.0, 26.0, scale);
+        let corners = selection_corners_padded(&element, layout.frame_pad);
+        let [min_x, _, max_x, _] = freehand::points_bounds(&corners.map(|p| [p.x, p.y]));
+        assert_close((max_x - min_x) - 100.0, 2.0 * want);
+        // Always four on the glass, whatever the zoom.
+        assert_close(layout.frame_pad * scale, 4.0);
+    }
+}
+
+/// The frame is turned with the element, or a rotated shape is selected by a box that does
+/// not fit it. On a **square** a quarter turn permutes the four corners onto each other, so
+/// the *order* is the whole claim: the corner that was top-left is now bottom-left. A frame
+/// that ignored the angle would return the same four points in the same order, which is a
+/// different list.
+#[test]
+fn the_frame_is_turned_with_the_element() {
+    let mut element = box_at(0.0, 0.0, 100.0, 100.0);
+    let upright: Vec<(f64, f64)> = selection_corners_padded(&element, layout().frame_pad)
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+    assert_eq!(upright[0], (-4.0, -4.0), "setup: the top-left corner first");
+
+    element.angle = std::f64::consts::FRAC_PI_2;
+    let turned: Vec<(f64, f64)> = selection_corners_padded(&element, layout().frame_pad)
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+
+    // A quarter turn sends the top-left corner to the top-right.
+    assert_eq!(turned[0], (104.0, -4.0), "the first corner has moved");
+    assert_eq!(turned.len(), 4);
+    for corner in &upright {
+        assert!(
+            turned.contains(corner),
+            "and the frame is still the same box: {corner:?} is missing from {turned:?}"
+        );
+    }
+    // The centre has not moved, and the box is still a square of the same size: it is the
+    // frame that turned, not the element or the camera.
+    let [min_x, min_y, max_x, max_y] =
+        freehand::points_bounds(&turned.iter().map(|(x, y)| [*x, *y]).collect::<Vec<_>>());
+    assert_close(min_x + max_x, 100.0);
+    assert_close(min_y + max_y, 100.0);
+    assert_close((max_x - min_x) - (upright[2].0 - upright[0].0), 0.0);
+}
+
+/// The same claim on a shape that is not square, where a quarter turn swaps the extents
+/// instead of permuting the corners: the frame is 108 wide and 68 tall for an element that
+/// is 60 wide and 100 tall.
+#[test]
+fn a_quarter_turn_swaps_the_frames_extents() {
+    let mut element = box_at(0.0, 0.0, 100.0, 60.0);
+    let upright = selection_corners_padded(&element, layout().frame_pad);
+    let [u_min_x, u_min_y, u_max_x, u_max_y] =
+        freehand::points_bounds(&upright.map(|p| [p.x, p.y]));
+    assert_close(u_max_x - u_min_x, 108.0);
+    assert_close(u_max_y - u_min_y, 68.0);
+
+    element.angle = std::f64::consts::FRAC_PI_2;
+    let turned = selection_corners_padded(&element, layout().frame_pad);
+    let [t_min_x, t_min_y, t_max_x, t_max_y] = freehand::points_bounds(&turned.map(|p| [p.x, p.y]));
+    // The width and the height trade places.
+    assert_close(t_max_x - t_min_x, 68.0);
+    assert_close(t_max_y - t_min_y, 108.0);
+    // Same centre: (50, 30) either way.
+    assert_close(t_min_x + t_max_x, 100.0);
+    assert_close(t_min_y + t_max_y, 60.0);
+}
+
+/// A mirror is the painter's transform, not a different shape, so the frame is laid out
+/// from the element's **extent** — `element_bounds` normalises a negative width or height
+/// (`src/scene/geometry.rs:114-131`), the same fix `world_box` reads it through. So two
+/// elements that describe the same rectangle get the same frame however their extents are
+/// written, and a frame built from the *directed* box would put it on the other side.
+#[test]
+fn a_mirrored_elements_frame_is_the_same_as_the_unmirrored_one() {
+    // (50, 50) with -100 × -60 spans x -50..50, y -10..50 — the same rectangle as
+    // (-50, -10) with 100 × 60, and as a mirror of (0, 0, 100, 60).
+    let mirrored = box_at(50.0, 50.0, -100.0, -60.0);
+    let written_the_other_way = box_at(-50.0, -10.0, 100.0, 60.0);
+
+    let a = selection_corners_padded(&mirrored, layout().frame_pad);
+    let b = selection_corners_padded(&written_the_other_way, layout().frame_pad);
+    for (pa, pb) in a.iter().zip(b.iter()) {
+        assert_close(pa.x, pb.x);
+        assert_close(pa.y, pb.y);
+    }
+
+    // And the extent really is the normalised rectangle, four pixels out on every side.
+    let [min_x, min_y, max_x, max_y] = freehand::points_bounds(&a.map(|p| [p.x, p.y]));
+    assert_close(min_x, -54.0);
+    assert_close(min_y, -14.0);
+    assert_close(max_x, 54.0);
+    assert_close(max_y, 54.0);
+}
