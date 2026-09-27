@@ -482,6 +482,7 @@ impl DrawEngine {
 
         let (this, other) = self.drop_binding(element, end, world, angle_locked);
         self.binding_snaps = Some(self.drop_snaps(this.as_ref(), world));
+        self.binding_elbow = false;
         self.binding_highlight = this.as_ref().map(|a| a.element_id.clone());
         self.binding_point = Some(world);
         set_anchor(element, end, this);

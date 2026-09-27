@@ -261,6 +261,7 @@ impl DrawEngine {
         // click on it (`press_multi_linear`) or `finish_multi_linear` says so.
         let end = self.end_binding_at(&element, world).0;
         self.binding_snaps = Some(self.drop_snaps(end.as_ref(), world));
+        self.binding_elbow = false;
         self.binding_highlight = end.map(|a| a.element_id);
         self.binding_point = self.binding_highlight.as_ref().map(|_| world);
 

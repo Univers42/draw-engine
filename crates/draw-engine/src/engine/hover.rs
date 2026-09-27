@@ -10,7 +10,7 @@
 //! boundary on every mouse move, and a returned `String` would allocate on both sides
 //! hundreds of times a second to say "default" over and over.
 
-use crate::engine::{DrawEngine, Interaction};
+use crate::engine::{ArrowType, DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::arrow_target_among;
 use crate::selection::HandleKind;
@@ -104,6 +104,7 @@ impl DrawEngine {
         // not on every move across it.
         let shown = (self.binding_highlight.clone(), self.binding_midpoint());
         self.binding_snaps = None;
+        self.binding_elbow = self.next_arrow_type == ArrowType::Elbow;
         self.binding_point = target.as_ref().map(|_| world);
         self.binding_highlight = target;
         if shown != (self.binding_highlight.clone(), self.binding_midpoint()) {
@@ -118,6 +119,7 @@ impl DrawEngine {
         self.binding_highlight = None;
         self.binding_point = None;
         self.binding_snaps = None;
+        self.binding_elbow = false;
         self.bind_drag_origin = None;
     }
 

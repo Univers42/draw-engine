@@ -169,6 +169,7 @@ impl DrawEngine {
             shape,
             pointer,
             super::MIDPOINT_SNAP_PX / self.camera.scale,
+            self.binding_elbow,
         )?;
         // Only the snap a drop would really make: none on the grid (`binding.ts@1118751f:885-887`),
         // and in a drag, the anchor it chose.

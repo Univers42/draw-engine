@@ -109,6 +109,7 @@ impl DrawEngine {
         self.binding_highlight = target;
         self.binding_point = Some(at);
         self.binding_snaps = None;
+        self.binding_elbow = true;
         self.scene.put(element);
         let label = crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.rewrap_linear_labels(label);

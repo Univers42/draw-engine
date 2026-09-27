@@ -369,10 +369,11 @@ pub fn midpoint_snap_radius(shape: &DrawElement, radius: f64) -> f64 {
     radius.min(side * MIDPOINT_SNAP_SHARE_OF_SIDE).max(0.0)
 }
 
-/// The four points an orbiting end snaps to: the middle of each side, turned with the
-/// shape — right, bottom, left, top. For a diamond these are its vertices.
-/// `getSnapOutlineMidPoint` (`packages/element/src/utils.ts@1118751f:788-808`).
-pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
+/// The middle of each side of `shape`'s box, turned with the shape — right, bottom, left,
+/// top. For a diamond these are its vertices. `getAllMidpoints`
+/// (`packages/element/src/utils.ts@1118751f:743-767`): where an elbow end snaps, the router
+/// taking a figure for its box (`elbow::outline::Outline`).
+pub fn box_midpoints(shape: &DrawElement) -> [Point; 4] {
     let rect = normalize_rect(shape.x, shape.y, shape.width, shape.height);
     let c = rotation_center(shape);
     let at = |x: f64, y: f64| rotate_about(Point { x, y }, c, shape.angle);
@@ -382,6 +383,21 @@ pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
         at(rect.x, rect.y + rect.height / 2.0),
         at(rect.x + rect.width / 2.0, rect.y),
     ]
+}
+
+/// The four points an orbiting end snaps to, in [`box_midpoints`]' order.
+/// `getSnapOutlineMidPoint` (`packages/element/src/utils.ts@1118751f:788-808`).
+///
+/// A figure's are where the line from the centre to each middle of its box leaves the
+/// outline, which Excalidraw, having no figures, never needed: the middle of the box's side
+/// is off a triangle's slanted sides and between a star's arms, and an end snapped there
+/// ended in the air.
+pub fn side_midpoints(shape: &DrawElement) -> [Point; 4] {
+    let c = rotation_center(shape);
+    box_midpoints(shape).map(|m| match outline_interval(shape, c, m, 0.0) {
+        Some((_, out)) if shape.kind == DrawElementType::Figure => lerp(c, m, out),
+        _ => m,
+    })
 }
 
 /// Whether `p` is inside `shape` itself, filled or not — the test that decides between an
@@ -882,13 +898,23 @@ pub fn snapped_midpoint(shape: &DrawElement, pointer: Point, reach: f64) -> Opti
 /// there would snap onto it (`true`) or it is only close (`false`, within twice the snap).
 /// `renderBindingHighlightForBindableElement_simple`
 /// (`packages/excalidraw/renderer/interactiveScene.ts@1118751f:284-322`). Nothing inside the shape:
-/// a drop there binds exactly where it is.
-pub fn midpoint_mark(shape: &DrawElement, pointer: Point, reach: f64) -> Option<(Point, bool)> {
+/// a drop there binds exactly where it is. An `elbow` end snaps to the [`box_midpoints`].
+pub fn midpoint_mark(
+    shape: &DrawElement,
+    pointer: Point,
+    reach: f64,
+    elbow: bool,
+) -> Option<(Point, bool)> {
     if is_inside(shape, pointer) {
         return None;
     }
     let radius = midpoint_snap_radius(shape, reach);
-    let (m, d) = side_midpoints(shape)
+    let midpoints = if elbow {
+        box_midpoints(shape)
+    } else {
+        side_midpoints(shape)
+    };
+    let (m, d) = midpoints
         .into_iter()
         .map(|m| (m, distance(m, pointer)))
         .min_by(|a, b| a.1.total_cmp(&b.1))?;

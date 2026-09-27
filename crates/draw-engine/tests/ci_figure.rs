@@ -6,7 +6,8 @@
 
 mod common;
 use common::*;
-use draw_engine::scene::binding::{binding_gap, is_inside};
+use draw_engine::engine::ArrowType;
+use draw_engine::scene::binding::{binding_gap, is_inside, side_midpoints};
 use draw_engine::scene::outline_distance::signed_outline_distance;
 use draw_engine::scene::BindMode;
 use draw_engine::selection::linear::world_points;
@@ -186,6 +187,104 @@ fn a_point_in_the_box_corner_but_outside_the_silhouette_orbits_rather_than_binds
         arrow.end_bind_mode,
         Some(BindMode::Orbit),
         "the real outline decided, not the box"
+    );
+}
+
+/// The dots a drop snaps to sit on a figure's outline, as they do on a rectangle's or a
+/// diamond's: where the line from the centre to each side of the box leaves the shape. The
+/// middle of the box's side itself is off a triangle's slanted sides and a parallelogram's,
+/// and between a star's arms, so a snapped arrow ended in the air beside the figure.
+#[test]
+fn the_side_midpoint_snaps_sit_on_a_figures_outline() {
+    let figures = [
+        (FigureKind::Polygon, Some(3), None),
+        (FigureKind::Polygon, Some(5), None),
+        (FigureKind::Polygon, Some(6), None),
+        (FigureKind::Star, None, None),
+        (FigureKind::Star, Some(6), Some(0.4)),
+        (FigureKind::Parallelogram, None, None),
+        (FigureKind::Trapezoid, None, None),
+        (FigureKind::Cylinder, None, None),
+        (FigureKind::Document, None, None),
+    ];
+    for (kind, sides, ratio) in figures {
+        for angle in [0.0, 0.7, 2.5] {
+            let mut shape = filled(figure_at(100.0, 100.0, 240.0, 160.0, kind, sides, ratio));
+            shape.angle = angle;
+            for m in side_midpoints(&shape) {
+                let off = signed_outline_distance(&shape, m);
+                assert!(
+                    off.abs() < 1e-6,
+                    "{kind:?} {sides:?} turned {angle}: {m:?} is {off} off the outline"
+                );
+            }
+        }
+    }
+}
+
+/// Dropped by the dot on a triangle's slanted side, an arrow is aimed at it and stops a gap
+/// clear of the side, where the dot promised.
+#[test]
+fn an_arrow_dropped_by_a_triangles_side_dot_stops_a_gap_from_it() {
+    let mut tri = triangle(300.0, 200.0, 200.0, 200.0);
+    tri.id = "tri".into();
+    let gap = binding_gap(&tri);
+    let mut engine = engine_with_scene(vec![tri.clone()]);
+    engine.set_tool(DrawTool::Arrow);
+    // The left side is at x = 350 half way down; the box's side is 50 units further out.
+    engine.begin_pointer(100.0, 200.0, false, false);
+    engine.move_pointer(346.0, 301.0, false, false);
+    engine.end_pointer();
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("an arrow was drawn");
+    assert_eq!(arrow.end_binding.as_deref(), Some("tri"));
+    let points = world_points(&arrow);
+    let (tail, tip) = (points[0], points[points.len() - 1]);
+    let dot = Point { x: 350.0, y: 300.0 };
+    let (dx, dy) = (dot.x - tail.x, dot.y - tail.y);
+    let aside = ((tip.x - tail.x) * dy - (tip.y - tail.y) * dx) / dx.hypot(dy);
+    assert!(
+        aside.abs() < 1e-6,
+        "the end is {aside} off the line to the dot: {tip:?}"
+    );
+    let clear = -signed_outline_distance(&tri, tip);
+    assert!(
+        (clear - gap).abs() < 1e-6,
+        "the end is {clear} off the triangle, not the gap {gap}: {tip:?}"
+    );
+}
+
+/// The dot marks where the arrow being drawn would really end: a straight arrow's on the
+/// triangle's side, an elbow's on the side of its box. The elbow router takes a figure for
+/// its box (`scene/elbow/outline.rs`), so a dot on the triangle would promise an elbow an
+/// end it never makes.
+#[test]
+fn the_dot_by_a_figure_marks_the_snap_the_arrow_being_drawn_makes() {
+    let close = |(p, _): (Point, bool), x: f64, y: f64| (p.x - x).hypot(p.y - y) < 1e-6;
+    let mut engine = engine_with_scene(vec![triangle(300.0, 200.0, 200.0, 200.0)]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.hover_pointer(346.0, 301.0);
+    let dot = engine.paint_view().binding_midpoint.expect("a dot");
+    assert!(close(dot, 350.0, 300.0), "a straight arrow's: {dot:?}");
+
+    engine.set_arrow_type(ArrowType::Elbow);
+    engine.begin_pointer(100.0, 150.0, false, false);
+    engine.move_pointer(302.0, 301.0, false, false);
+    let dot = engine.paint_view().binding_midpoint.expect("a dot");
+    assert!(close(dot, 300.0, 300.0), "an elbow's: {dot:?}");
+    engine.end_pointer();
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("an arrow was drawn");
+    let tip = world_points(&arrow)[arrow.points.as_ref().map_or(0, Vec::len) - 1];
+    assert!(
+        (tip.y - 300.0).abs() < 0.5 && tip.x < 300.0 && tip.x > 290.0,
+        "the elbow ends by the dot: {tip:?}"
     );
 }
 

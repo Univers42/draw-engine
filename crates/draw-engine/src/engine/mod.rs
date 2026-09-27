@@ -218,6 +218,9 @@ pub struct DrawEngine {
     /// drop decides, as Shift or the far end sharing the shape turns the snap off.
     /// `None` between gestures, where a press binds on the dot's own terms.
     binding_snaps: Option<bool>,
+    /// Whether that end is an elbow arrow's, which snaps to the middles of a figure's box
+    /// rather than to its outline — see [`crate::scene::binding::box_midpoints`].
+    binding_elbow: bool,
     /// The other end's binding as it was when the drag of one end began, so a drag that
     /// passes over the shape the other end is on and moves on gives that end back.
     /// `(arrow id, the end being dragged, the other end's anchor)`. See `pointer_move.rs`.
@@ -345,6 +348,7 @@ impl DrawEngine {
             binding_highlight: None,
             binding_point: None,
             binding_snaps: None,
+            binding_elbow: false,
             bind_drag_origin: None,
             laser: crate::interaction::LaserTrails::default(),
             peer_lasers: HashMap::new(),
