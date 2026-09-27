@@ -813,7 +813,8 @@ mod ending {
             // whole of it is one step. A blur is a commit, not a dismissal.
             assert!(element(&engine, &label).is_deleted, "tombstoned, {case}");
             assert_eq!(
-                element(&engine, &shape).bound_text_id, None,
+                element(&engine, &shape).bound_text_id,
+                None,
                 "its shape unbound, {case}"
             );
             engine.undo();
