@@ -348,6 +348,23 @@ export const DEFAULT_GRID: GridSettings = {
   snap: true,
 };
 
+/**
+ * What a whole-scene PNG export is asked for. Mirrors the engine's `ExportFrame`
+ * (`crates/draw-engine/src/export/png.rs`).
+ *
+ * Both fields are optional and **both defaults live in the Rust binding**, not here: the
+ * oracle's own defaults are `exportBackground` true and an `exportScale` of the device
+ * pixel ratio when that is one of its three and 1 otherwise (`appState.ts@1118751f:20-22,
+ * 70`). A host that says nothing gets those; a host that says `2` gets twice the scene's
+ * size in each direction, which is arithmetic the engine does and this only asks for.
+ */
+export interface PngExport {
+  /** Device pixels per CSS pixel. Taken as given — the engine does not clamp it. */
+  scale?: number;
+  /** No background at all, rather than the theme's. */
+  transparent?: boolean;
+}
+
 export interface DrawTheme {
   background: string;
   grid: string;
