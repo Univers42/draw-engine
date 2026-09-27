@@ -1225,6 +1225,59 @@ pub fn reanchor_to_outline(
     moved.then_some(next)
 }
 
+// ------------------------------------------------------------------------ releasing
+
+/// Lets go of every end bound to one of the elements in `removed` — the release
+/// Excalidraw's `fixBindingsAfterDeletion` makes (`binding.ts@1118751f:2297-2311`), which
+/// only ever calls `unbindAffected` and writes `{ [bindingProp]: null }`
+/// (`binding.ts:2569`).
+///
+/// **It releases; it never rebinds.** The oracle has no mechanism for moving a binding to
+/// another element's id, and says so itself: *"we cannot rebind arrows atm"*
+/// (`binding.ts:2577`), *"we cannot rebind arrows with bindable element … TODO: #7348"*
+/// (`delta.ts:2024-2025`), and even its rebind path releases when the target is gone
+/// (`binding.ts:2489-2492`). The rule is one-directional (`delta.ts@1118751f:1976-1979`):
+/// a binding must not point from a live element into a deleted one, and nothing else
+/// about an arrow changes. An end on a shape that survives is left exactly as it was.
+///
+/// Called **before** the removals, in the same step of history as them, so one undo binds
+/// the arrow again. The three paths that take a shape somebody drew an arrow to — the
+/// eraser, the Delete key, and a vectorize that drops the image it replaces — all go
+/// through here, so there is one release and not one per caller.
+pub fn release_bindings_to_removed(
+    scene: &mut crate::scene::store::Scene,
+    removed: &std::collections::HashSet<String>,
+) {
+    if removed.is_empty() {
+        return;
+    }
+    // Collected first: `iter_ordered` borrows the scene, and the writes below need it.
+    // An arrow that is itself going is skipped — it is about to be written as a
+    // tombstone, and releasing an end of it would be a change nothing could see.
+    let affected: Vec<(String, bool, bool)> = scene
+        .iter_ordered()
+        .filter(|el| !removed.contains(&el.id))
+        .filter_map(|el| {
+            let start = el
+                .start_binding
+                .as_ref()
+                .is_some_and(|b| removed.contains(b));
+            let end = el.end_binding.as_ref().is_some_and(|b| removed.contains(b));
+            (start || end).then(|| (el.id.clone(), start, end))
+        })
+        .collect();
+    for (id, start, end) in affected {
+        scene.update(&id, |arrow| {
+            if start {
+                set_anchor(arrow, End::Start, None);
+            }
+            if end {
+                set_anchor(arrow, End::End, None);
+            }
+        });
+    }
+}
+
 // -------------------------------------------------------------------------- linears
 
 pub fn linear_endpoints(element: &DrawElement) -> (Point, Point) {
