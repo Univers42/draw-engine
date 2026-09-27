@@ -16,7 +16,9 @@
 
 mod common;
 use common::*;
-use draw_engine::scene::binding::{anchor, binding_gap, focus_point, is_inside, End};
+use draw_engine::scene::binding::{
+    anchor, binding_gap, element_center, focus_point, is_inside, side_midpoints, End,
+};
 use draw_engine::scene::element::BindMode;
 use draw_engine::scene::outline_distance::signed_outline_distance;
 use draw_engine::selection::linear::world_points;
@@ -110,6 +112,16 @@ fn stops_at_outline(shape: &DrawElement, p: Point) -> bool {
     let clear = -signed_outline_distance(shape, p);
     let gap = binding_gap(shape);
     clear <= gap + 1e-6 && clear >= gap - slack - 1e-6
+}
+
+/// Whether `p` is no closer to `shape` than an orbiting end may come: the gap, less a
+/// rounded corner's bulge ([`stops_at_outline`]) or, for an ellipse grown by its axes as
+/// Excalidraw grows it, less a fifth of the gap at its flanks.
+fn stays_off(shape: &DrawElement, p: Point) -> bool {
+    let (w, h) = (shape.width.abs(), shape.height.abs());
+    let bulge = 0.07 * draw_engine::render::shape::corner_radius(w.min(h), shape);
+    let gap = binding_gap(shape);
+    -signed_outline_distance(shape, p) >= gap - bulge.max(0.2 * gap) - 1e-6
 }
 
 /// Where the rotation handle turns a selection centred on `centre` to `degrees`,
@@ -269,6 +281,165 @@ fn an_arrow_between_two_turning_shapes_goes_through_neither() {
             });
         }
     }
+}
+
+/// mulberry32: the same draws on every machine, so a failing seed replays exactly.
+struct Draws(u32);
+
+impl Draws {
+    fn next(&mut self) -> f64 {
+        self.0 = self.0.wrapping_add(0x6d2b_79f5);
+        let mut t = self.0;
+        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
+        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
+        f64::from(t ^ (t >> 14)) / 4_294_967_296.0
+    }
+
+    fn between(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + self.next() * (hi - lo)
+    }
+
+    fn pick<T: Copy>(&mut self, list: &[T]) -> T {
+        list[((self.next() * list.len() as f64) as usize).min(list.len() - 1)]
+    }
+}
+
+/// A shape of any kind that binds, centred on `centre`: sharp or rounded, filled or not.
+fn any_shape(draws: &mut Draws, id: &str, centre: (f64, f64)) -> DrawElement {
+    let (w, h) = (draws.between(40.0, 190.0), draws.between(40.0, 190.0));
+    let (x, y) = (centre.0 - w / 2.0, centre.1 - h / 2.0);
+    let mut el = match draws.pick(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+        0 | 1 => box_at(x, y, w, h),
+        2 | 3 => diamond_at(x, y, w, h),
+        4 => ellipse_at(x, y, w, h),
+        5 => figure_at(
+            x,
+            y,
+            w,
+            h,
+            FigureKind::Polygon,
+            Some(draws.pick(&[3, 5, 6, 8])),
+            None,
+        ),
+        6 => figure_at(x, y, w, h, FigureKind::Star, None, None),
+        7 => figure_at(x, y, w, h, FigureKind::Parallelogram, None, None),
+        8 => figure_at(x, y, w, h, FigureKind::Trapezoid, None, None),
+        _ => figure_at(x, y, w, h, FigureKind::Cylinder, None, None),
+    };
+    if draws.next() < 0.5 {
+        el.roundness = None;
+    }
+    if draws.next() < 0.5 {
+        el = filled(el);
+    }
+    shape(id, el)
+}
+
+/// Somewhere an arrow end can be let go on `shape`: inside it, near a side's middle, or
+/// just off its outline.
+fn any_drop(draws: &mut Draws, shape: &DrawElement) -> (f64, f64) {
+    let c = element_center(shape);
+    let (hw, hh) = (shape.width / 2.0, shape.height / 2.0);
+    match draws.pick(&[0, 1, 2]) {
+        0 => loop {
+            let p = Point {
+                x: c.x + draws.between(-hw, hw),
+                y: c.y + draws.between(-hh, hh),
+            };
+            if is_inside(shape, p) {
+                return (p.x, p.y);
+            }
+        },
+        1 => {
+            let m = side_midpoints(shape)[draws.pick(&[0, 1, 2, 3])];
+            (
+                m.x + draws.between(-3.0, 3.0),
+                m.y + draws.between(-3.0, 3.0),
+            )
+        }
+        _ => {
+            // Out from the centre until off the outline, then a little further.
+            let a = draws.between(0.0, std::f64::consts::TAU);
+            let (dx, dy) = (a.cos(), a.sin());
+            let mut r = 0.0;
+            while is_inside(
+                shape,
+                Point {
+                    x: c.x + dx * r,
+                    y: c.y + dy * r,
+                },
+            ) {
+                r += 0.5;
+            }
+            r += draws.between(1.0, 8.0);
+            (c.x + dx * r, c.y + dy * r)
+        }
+    }
+}
+
+/// The owner's report, fuzzed: two shapes of any kind, an arrow let go anywhere on each —
+/// inside, on a side's middle, beside — and one of them, the other, both, or both with the
+/// arrow turned any amount. At every step of every turn the arrow runs through neither
+/// shape, and each end stays off its shape, as a ray stops at the first thing it meets.
+///
+/// Off, not exactly a gap off: an end snapped onto a side's middle of a figure that does
+/// not reach its box sits on that point, further out; closer in, see [`stays_off`].
+#[test]
+fn any_arrow_between_any_two_turning_shapes_goes_through_neither() {
+    let mut bound = 0;
+    for seed in 0..300u32 {
+        let mut draws = Draws(seed);
+        let a = any_shape(&mut draws, "a", (200.0, 320.0));
+        let b = any_shape(&mut draws, B, (560.0, 320.0));
+        let from = any_drop(&mut draws, &a);
+        let to = any_drop(&mut draws, &b);
+        let mut engine = engine_with_scene(vec![a, b]);
+        let arrow = draw_arrow(&mut engine, from, to);
+        if (arrow.start_binding.as_deref(), arrow.end_binding.as_deref()) != (Some("a"), Some(B)) {
+            continue;
+        }
+        bound += 1;
+        let (a, b) = (get(&engine, "a"), get(&engine, B));
+        let (ca, cb) = (element_center(&a), element_center(&b));
+        let both = (
+            (a.x.min(b.x) + (a.x + a.width).max(b.x + b.width)) / 2.0,
+            (a.y.min(b.y) + (a.y + a.height).max(b.y + b.height)) / 2.0,
+        );
+        let (selection, centre, top) = match draws.pick(&[0, 1, 2, 3]) {
+            0 => (vec!["a"], (ca.x, ca.y), a.y),
+            1 => (vec![B], (cb.x, cb.y), b.y),
+            2 => (vec!["a", B], both, a.y.min(b.y)),
+            _ => (vec!["a", B, arrow.id.as_str()], both, a.y.min(b.y)),
+        };
+        let degrees = draws.between(5.0, 355.0);
+        engine.select(selection.iter().map(|id| id.to_string()).collect());
+        let case = format!("seed {seed}, {selection:?} turned {degrees:.0}°");
+        turn_watching(&mut engine, centre, top, degrees, &|e, when| {
+            let turned = get(e, &arrow.id);
+            let (tail, tip) = ends(&turned);
+            let (a, b) = (get(e, "a"), get(e, B));
+            let at = format!("{case}, {when}: {tail:?} → {tip:?}");
+            assert!(!runs_through(&a, tail, tip), "runs through A, {at}");
+            assert!(!runs_through(&b, tail, tip), "runs through B, {at}");
+            // Closed up to nothing between shapes turned onto each other: the inside-out
+            // rule (`resolve_endpoints`).
+            if near(tail, tip, 1e-9) {
+                return;
+            }
+            for (shape, end, mode) in [
+                (&a, tail, turned.start_bind_mode),
+                (&b, tip, turned.end_bind_mode),
+            ] {
+                assert!(
+                    mode != Some(BindMode::Orbit) || stays_off(shape, end),
+                    "an end {:.2} off {}, {at}",
+                    -signed_outline_distance(shape, end),
+                    shape.id
+                );
+            }
+        });
+    }
+    assert!(bound >= 200, "only {bound} of 300 arrows bound both shapes");
 }
 
 /// At every angle an orbiting end is on the line from its turned anchor toward where the

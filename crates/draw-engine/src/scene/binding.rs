@@ -456,8 +456,10 @@ fn ellipse_interval(
 /// The parameter interval over which the line through `a` and `b` lies inside `shape`'s
 /// outline pushed out by `gap`, worked in the shape's own unrotated frame.
 ///
-/// Every target is convex, so a line meets its outline at most twice and the inside is one
-/// interval. The outline pushed out by the gap is Excalidraw's too
+/// The interval runs from where the line first enters to where it last leaves: for a
+/// convex target all of it is inside, for a star it may leave a notch between the two, and
+/// either way an end stopped at the entry or exit nearest its aim is the first thing a ray
+/// from the aim meets. The outline pushed out by the gap is Excalidraw's too
 /// (`intersectElementWithLineSegment` with an offset, `collision.ts@1118751f:675-799`): a box grows
 /// into a rounded box, so an arrow arriving at a corner keeps the same gap as one arriving
 /// square on.
@@ -476,7 +478,7 @@ fn outline_interval(shape: &DrawElement, a: Point, b: Point, gap: f64) -> Option
         DrawElementType::Figure => {
             let params = shape.figure.clone().unwrap_or_default();
             let poly = figure::centered_vertices(params.kind, params.sides, params.ratio, hx, hy);
-            convex_polygon_interval(p, d, &poly, gap)
+            polygon_interval(p, d, &poly, gap)
         }
         DrawElementType::Diamond => {
             // |x|/hx + |y|/hy <= 1 pushed out by `gap` is the same diamond with its four
@@ -533,50 +535,57 @@ fn outline_interval(shape: &DrawElement, a: Point, b: Point, gap: f64) -> Option
     }
 }
 
-/// The parameter interval over which the line `p + t·d` lies inside the convex polygon
-/// `poly` (centred, local coordinates, wound clockwise — [`figure::centered_vertices`]'s
-/// own convention) pushed outward by `gap`: each edge's own half-plane, moved out along
-/// its normal, intersected — the diamond case above generalized from four edges to `n`.
+/// From where the line `p + t·d` first comes within `gap` of the polygon `poly` (centred,
+/// local coordinates) to where it last leaves: the polygon grown by `gap` all round, a
+/// band a gap wide along each edge, rounded at every corner and notch.
 ///
-/// ponytail: exact for a convex figure (polygon, parallelogram, trapezoid, cylinder); a
-/// star's inner points are reflex vertices, where two edges are pushed out independently
-/// instead of rounding the notch between them, very slightly widening the gap right at
-/// the notch. Upgrade: clip against the offset edges *and* a gap-radius disc at each
-/// vertex, as a true polygon Minkowski sum would.
-fn convex_polygon_interval(
+/// A line through a polygon crosses its edges, and every edge lies inside its own band,
+/// so the bands alone reach as far as the polygon grown does — convex or not, with no
+/// half-planes to intersect. Intersecting them was right for a convex figure but mitred
+/// its corners, and for a star it gave the inner pentagon: an end stopped up to 19 units
+/// inside an arm, and the arrow ran through it.
+fn polygon_interval(
     p: (f64, f64),
     d: (f64, f64),
     poly: &[(f64, f64)],
     gap: f64,
 ) -> Option<(f64, f64)> {
     let n = poly.len();
-    let mut lo = f64::NEG_INFINITY;
-    let mut hi = f64::INFINITY;
-    for i in 0..n {
-        let (ax, ay) = poly[i];
-        let (bx, by) = poly[(i + 1) % n];
-        let (ex, ey) = (bx - ax, by - ay);
-        let len = ex.hypot(ey);
-        if len < 1e-9 {
-            continue;
-        }
-        let (nx, ny) = (ey / len, -ex / len);
-        let at = nx * (p.0 - ax) + ny * (p.1 - ay);
-        let along = nx * d.0 + ny * d.1;
-        if along.abs() < 1e-300 {
-            if at > gap {
-                return None;
-            }
-            continue;
-        }
-        let t = (gap - at) / along;
-        if along > 0.0 {
-            hi = hi.min(t);
-        } else {
-            lo = lo.max(t);
-        }
+    (0..n)
+        .filter_map(|i| band_interval(p, d, poly[i], poly[(i + 1) % n], gap))
+        .reduce(|(a, b), (lo, hi)| (a.min(lo), b.max(hi)))
+}
+
+/// The interval over which the line `p + t·d` is within `r` of the segment `a → b`: the
+/// strip along it and the discs at its ends, each convex and together convex.
+fn band_interval(
+    p: (f64, f64),
+    d: (f64, f64),
+    a: (f64, f64),
+    b: (f64, f64),
+    r: f64,
+) -> Option<(f64, f64)> {
+    let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+    let len = ex.hypot(ey);
+    let mut pieces = vec![
+        ellipse_interval(p, d, a, r, r),
+        ellipse_interval(p, d, b, r, r),
+    ];
+    if len > 1e-9 {
+        // The strip in the edge's own frame: along it from the middle, and across it.
+        let (ux, uy) = (ex / len, ey / len);
+        let (mx, my) = (p.0 - (a.0 + b.0) / 2.0, p.1 - (a.1 + b.1) / 2.0);
+        pieces.push(box_interval(
+            (mx * ux + my * uy, my * ux - mx * uy),
+            (d.0 * ux + d.1 * uy, d.1 * ux - d.0 * uy),
+            len / 2.0,
+            r,
+        ));
     }
-    (lo <= hi).then_some((lo, hi))
+    pieces
+        .into_iter()
+        .flatten()
+        .reduce(|(a, b), (lo, hi)| (a.min(lo), b.max(hi)))
 }
 
 /// Where the segment `a → b` crosses `shape`'s outline pushed out by `gap`.

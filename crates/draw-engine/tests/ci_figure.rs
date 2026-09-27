@@ -6,7 +6,8 @@
 
 mod common;
 use common::*;
-use draw_engine::scene::binding::is_inside;
+use draw_engine::scene::binding::{binding_gap, is_inside};
+use draw_engine::scene::outline_distance::signed_outline_distance;
 use draw_engine::scene::BindMode;
 use draw_engine::selection::linear::world_points;
 use draw_engine::*;
@@ -189,6 +190,50 @@ fn a_point_in_the_box_corner_but_outside_the_silhouette_orbits_rather_than_binds
 }
 
 // ------------------------------------------------------------------------------ style
+
+/// A star is concave: between two points its outline turns back in. An arrow aimed at its
+/// middle from any side stops at the first arm it meets, a gap clear of it, and never
+/// runs into an arm. Intersecting each edge's half-plane instead gave the star's inner
+/// pentagon, so an end stopped up to 19 units inside an arm.
+#[test]
+fn an_arrow_aimed_into_a_star_stops_at_the_first_arm_it_meets() {
+    let mut star = figure_at(250.0, 240.0, 200.0, 200.0, FigureKind::Star, None, None);
+    star.id = "star".into();
+    let gap = binding_gap(&star);
+    for degrees in (0..360).step_by(7) {
+        let a = f64::from(degrees).to_radians();
+        let from = (350.0 + 250.0 * a.cos(), 340.0 + 250.0 * a.sin());
+        let mut engine = engine_with_scene(vec![star.clone()]);
+        engine.set_tool(DrawTool::Arrow);
+        engine.begin_pointer(from.0, from.1, false, false);
+        engine.move_pointer(350.0, 340.0, false, false);
+        engine.end_pointer();
+        let arrow = engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.kind == DrawElementType::Arrow)
+            .expect("an arrow was drawn");
+        assert_eq!(arrow.end_bind_mode, Some(BindMode::Orbit), "{degrees}°");
+        let points = world_points(&arrow);
+        let (tail, tip) = (points[0], points[points.len() - 1]);
+        let clear = -signed_outline_distance(&star, tip);
+        assert!(
+            (clear - gap).abs() < 1e-6,
+            "{degrees}°: the end is {clear} off the star, not the gap {gap}, at {tip:?}"
+        );
+        for i in 1..400 {
+            let t = f64::from(i) / 400.0;
+            let p = Point {
+                x: tail.x + (tip.x - tail.x) * t,
+                y: tail.y + (tip.y - tail.y) * t,
+            };
+            assert!(
+                !is_inside(&star, p),
+                "{degrees}°: runs into the star at {p:?}"
+            );
+        }
+    }
+}
 
 #[test]
 fn the_sides_stepper_is_one_undo_step() {
