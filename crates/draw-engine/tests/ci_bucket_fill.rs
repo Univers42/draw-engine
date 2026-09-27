@@ -1458,10 +1458,12 @@ fn undoing_a_shape_fill_puts_the_colour_back() {
 
 #[test]
 fn a_bucket_lays_down_solid_paint_unless_told_otherwise() {
-    // The default style is hachure, which on a bucket click gives a shape crosshatched
-    // in faint lines with white between them — the tool looking like it half worked. A
-    // bucket means paint. Found by looking at the screen rather than at the scene: the
-    // element had the colour on it and a pixel in the middle of it was white.
+    // A bucket means paint: whatever the current fill style, a click lays down solid.
+    // Found by looking at the screen rather than at the scene: the element had the colour
+    // on it and a pixel in the middle of it was white. The default fill style was hachure
+    // then, which is what the click inherited; the bucket's own rule is the thing under
+    // test here, and `a_fill_style_that_was_actually_chosen_is_honoured` covers the other
+    // half — a pattern picked on purpose (cross-hatch there) and not second-guessed.
     let mut engine = engine_with_scene(vec![stroked_box(0.0, 0.0, 200.0, 120.0)]);
     engine.set_next_style(style_background("#ffc9c9"));
     engine.set_tool(DrawTool::BucketFill);

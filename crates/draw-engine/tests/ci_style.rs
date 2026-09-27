@@ -467,7 +467,11 @@ fn apply_style_writes_the_fill_style_to_the_selection_and_the_next_element() {
     let rect = box_at(0.0, 0.0, 100.0, 50.0);
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.select(vec![rect.id.clone()]);
-    assert_eq!(engine.get_next_style().fill_style, FillStyle::Hachure);
+    assert_ne!(
+        engine.get_next_style().fill_style,
+        FillStyle::CrossHatch,
+        "so what follows is about the patch, not about where it started"
+    );
 
     engine.apply_style(DrawElementStylePatch {
         fill_style: Some(FillStyle::CrossHatch),
@@ -512,12 +516,12 @@ fn set_next_style_carries_the_stroke_and_fill_style_without_touching_the_scene()
     let mut engine = engine_with_scene(vec![rect.clone()]);
     engine.set_next_style(DrawElementStylePatch {
         stroke_style: Some(StrokeStyle::Dashed),
-        fill_style: Some(FillStyle::Solid),
+        fill_style: Some(FillStyle::CrossHatch),
         ..Default::default()
     });
 
     assert_eq!(engine.get_next_style().stroke_style, StrokeStyle::Dashed);
-    assert_eq!(engine.get_next_style().fill_style, FillStyle::Solid);
+    assert_eq!(engine.get_next_style().fill_style, FillStyle::CrossHatch);
 
     let untouched = engine
         .get_scene()
@@ -529,7 +533,13 @@ fn set_next_style_carries_the_stroke_and_fill_style_without_touching_the_scene()
         StrokeStyle::Solid,
         "an unselected element is not restyled by the next-style setter"
     );
-    assert_eq!(untouched.fill_style, FillStyle::Hachure);
+    // Compared with the element's own value, not with a constant, and the patch above is
+    // cross-hatch while a new element is minted solid: a constant would pass whether or not
+    // the setter had reached it, so this is the half of the guard that can still fail.
+    assert_eq!(
+        untouched.fill_style, rect.fill_style,
+        "nor its fill, whatever the default happens to be"
+    );
     assert!(engine.get_selection().is_empty());
 }
 
@@ -572,4 +582,85 @@ fn a_shape_drawn_after_the_pick_comes_out_with_it() {
     assert_eq!(drawn.kind, DrawElementType::Rectangle);
     assert_eq!(drawn.stroke_style, StrokeStyle::Dashed);
     assert_eq!(drawn.fill_style, FillStyle::CrossHatch);
+}
+
+/// The fill style a new element is born with is the oracle's `DEFAULT_ELEMENT_PROPS`
+/// value — `"solid"`, `packages/common/src/constants.ts@1118751f:522` — which
+/// `appState.ts@1118751f:34` reads into `currentItemFillStyle` and every new element is
+/// built from (`App.tsx@1118751f:10467`, `newElement.ts@1118751f:94`).
+///
+/// Ours seeded hachure, and nothing showed it: a transparent background draws no fill
+/// under any style, and the panel has no Fill style row at all until a background exists.
+/// The moment a colour was picked, a shape came out the colour *and* a diagonal hatch
+/// over it, where the oracle paints it flat — a person sees a wrong picture, not a
+/// missing one.
+#[test]
+fn a_shape_drawn_and_given_a_background_is_solid() {
+    let mut engine = DrawEngine::new();
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(0.0, 0.0, false, false);
+    engine.move_pointer(120.0, 80.0, false, false);
+    engine.end_pointer();
+    let id = engine.get_scene()[0].id.clone();
+    assert_eq!(
+        engine.get_scene()[0].fill_style,
+        FillStyle::Solid,
+        "as drawn"
+    );
+
+    // A colour pick carries the background and nothing else: `getColorUpdate` returns
+    // `{ backgroundColor: color }` and never `fillStyle`
+    // (`actionProperties.tsx@1118751f:437-504`), so the shape keeps the fill style it was
+    // minted with. That half was already right; this asserts the seed it keeps is the
+    // oracle's.
+    engine.select(vec![id.clone()]);
+    engine.apply_style(DrawElementStylePatch {
+        background_color: Some("#ffc9c9".into()),
+        ..Default::default()
+    });
+
+    let painted = engine
+        .get_scene()
+        .into_iter()
+        .find(|element| element.id == id)
+        .unwrap();
+    assert_eq!(painted.background_color, "#ffc9c9", "the colour took");
+    assert_eq!(
+        painted.fill_style,
+        FillStyle::Solid,
+        "and the fill is the flat one, not a hatch over the colour"
+    );
+}
+
+/// An element carries its own fill style: a value it was saved with survives the load,
+/// hatch and all, which is what this shows. The *missing* `#[serde(default)]` on
+/// `fill_style` is the other half — it is what makes an absent field an error rather than
+/// today's default — but that is a fact about the struct, not what this test establishes.
+#[test]
+fn an_element_keeps_the_fill_style_it_was_saved_with() {
+    let json = r##"{
+        "type": "osidraw",
+        "version": 1,
+        "elements": [{
+            "id": "saved-hatched",
+            "type": "rectangle",
+            "x": 0, "y": 0, "width": 100, "height": 50, "angle": 0,
+            "strokeColor": "#1e1e1e", "backgroundColor": "#ffc9c9",
+            "fillStyle": "hachure", "strokeWidth": 2, "strokeStyle": "solid",
+            "roughness": 1, "opacity": 100, "roundness": null, "seed": 1,
+            "version": 1, "versionNonce": 1, "updated": 0, "isDeleted": false
+        }]
+    }"##;
+
+    let parsed = elements_from_json(json).expect("a saved board still loads");
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(
+        parsed[0].fill_style,
+        FillStyle::Hachure,
+        "the value it was saved with, not today's default"
+    );
+    assert_eq!(
+        parsed[0].background_color, "#ffc9c9",
+        "and it is still filled"
+    );
 }
