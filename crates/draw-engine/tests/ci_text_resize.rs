@@ -706,6 +706,59 @@ mod several {
         assert!(after.max_x > before.max_x + 90.0, "{after:?}");
     }
 
+    /// A loose selection's frame leaves the same label out, and that is a divergence from
+    /// the oracle, decided on purpose — pinned here so it cannot drift, and so the parity
+    /// fix has a red to start from: turn the `0.0` below into `-67.0` and the test drives
+    /// it.
+    ///
+    /// The oracle counts an arrow's own bound text in the selection bounds twice over.
+    /// `getLinearElementRotatedBounds` fetches it (`getBoundTextElement`,
+    /// `packages/element/src/bounds.ts@1118751f:940`) and widens the coords with
+    /// `LinearElementEditor.getMinMaxXYWithBoundText` (`:952` for the degenerate one-point
+    /// case, `:981` for the normal one), and `getCommonBounds` folds those bounds over the
+    /// selection (`:1005-1029`, the fold at `:1021`). And `elementsOverlappingBBox` builds
+    /// the label's own AABB and unions it in (`:1340`, `:1392-1408`), so a marquee
+    /// catches the arrow by that union and catches a label on its own (`:1416-1420`).
+    ///
+    /// Ours cannot: an arrow's label is a separate element, linked by
+    /// `container_id`/`bound_text_id`, and `element_outline_bounds`
+    /// (`scene/geometry.rs:260-302`) is given one element with no scene to look a label
+    /// up in. A group is counted because a group's members include the label
+    /// (`engine/edit/group.rs:210-225`); a loose selection carries only what
+    /// `set_selection` was given, and it is never given a bound label. The record is
+    /// `docs/reference/resize.md:127`, a row of its Divergences table, which — unlike
+    /// `:129` and `:131` — carries no `**gap**` marker, so it is a decision and not an
+    /// oversight. The fix is an engine API change through every reader of these bounds
+    /// (`edit/flip.rs:221`, `selection/group_transform.rs:103`, `engine/flowchart.rs:748`,
+    /// `:908`, `:949`, `engine/style.rs:850-852`, `engine/pointer.rs:335`, `:705`,
+    /// `engine/mod.rs:557`), and it would drag hit-testing and what a marquee catches with
+    /// it — the owner's call, and not one to make unreviewed at night.
+    ///
+    /// Checklist: `design.md:209` "Selection outline".
+    #[test]
+    fn a_loose_frames_corner_leaves_an_arrows_label_out() {
+        let rect = box_at(0.0, 0.0, 100.0, 100.0);
+        let arrow = connector(0.0, 150.0, 60.0, 150.0, DrawElementType::Arrow);
+        let (rect_id, arrow_id) = (rect.id.clone(), arrow.id.clone());
+        let mut engine = engine_with_measure(vec![rect, arrow]);
+        engine.handle_double_click(30.0, 150.0);
+        let label_id = engine
+            .drain_events()
+            .text_edit
+            .expect("a double click on an arrow's middle opens its label")
+            .id;
+        engine.set_element_text(&label_id, WORDS);
+
+        // The same selection, grouped or not.
+        engine.select(vec![rect_id, arrow_id]);
+
+        let loose = engine.paint_view().group_box.expect("a frame");
+        // -67.0 for the label, 194 wide, hanging past the rectangle's left edge: what
+        // the grouped case above gives, and what the oracle's loose frame gives.
+        assert_close(loose.min_x, 0.0);
+        assert_close(loose.min_y, 0.0);
+    }
+
     /// Grouped, they scale as one (`isInGroup`, `:1376`), and so do their labels' fonts
     /// (`:1505-1510`).
     #[test]
