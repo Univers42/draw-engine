@@ -34,17 +34,26 @@
 //!   only because it doubles a file this long for a spec the doc comment above
 //!   already carries.
 //!
-//! Two more conventions worth stating, because round 1 of this file got both wrong:
+//! Two more conventions worth stating, because this file has broken both:
 //!
 //! - **A ratchet names its own cause.** When the fix lands, the message says which
 //!   line to look at, so a red is a to-do rather than a mystery.
-//! - **The cause is measured, not assumed.** Round 1 asserted that a NaN camera is
-//!   what makes the poisoned shape unclickable. A 41×41 sweep with a perfect finite
-//!   camera says otherwise: the shape's own `rotation_center` has overflowed, so
-//!   `to_element_local` answers `(NaN, inf)` and the hit test misses before the camera
-//!   is consulted. The camera is a SECOND, independent cause — there is a test for
-//!   that too — but the first claim was misattributed, and pinning a cause you have not
-//!   isolated is how a fix gets aimed at the wrong line.
+//! - **The cause is measured, not assumed — and there are three of them.** Round 1
+//!   asserted a NaN camera makes the poisoned shape unclickable, then, when that was
+//!   falsified, that the shape's own `rotation_center` had overflowed. The second was
+//!   falsified the same way, and in the way that matters most: with `angle: 0.0`,
+//!   `to_element_local` returns at `geometry.rs:212-214` and NEVER READS the centre —
+//!   and the shape is still unhittable. The mechanism is `within_shape`, which computes
+//!   a centre of its own: `geometry.rs:502-503` is `x + width / 2`, which overflows to
+//!   +inf; `:510-511` divides the probe by it and answers `-inf`; `:524` compares that
+//!   infinity against `1.0`. The Q/R pair inside the test below is what pins that
+//!   rather than narrates it: same `x`, same `angle: 0.0`, same camera, same probe, and
+//!   only `width` between them — Q is hit, R is missed.
+//!   A NaN camera is a third cause, independent of both — there is a test for that too —
+//!   so no single line is "the" cause, and pinning one you have not isolated is how a
+//!   fix gets aimed at the wrong line. This file is the argument: it shipped the wrong
+//!   line twice, and a fixer who trusted either sentence would have left the real one
+//!   untouched and this ratchet green.
 //!
 //! Measured on `engine` `886738e`. Reproduce with:
 //! `cargo test -p draw-engine --test ci_finite -- --nocapture`
@@ -317,12 +326,16 @@ fn zoom_to_fit_on_a_box_with_no_finite_corner_gives_a_different_camera_and_also_
     // The second of the two centres, and round 1 named only the first. `fit_bounds` and
     // `zoom_to_fit_bounds` are not the same function and do not even agree on the scale
     // they answer: on identical non-finite bounds this one gives `1.0` where `fit_bounds`
-    // gives `30.0`, because it divides the room by the extent (`camera.rs:243-244`) and
+    // gives `30.0`, because it divides the room by the extent (`camera.rs:245`) and
     // `normalize_zoom`s the result, while `fit_bounds` clamps a ratio. The unguarded
-    // centre is a second copy of the same line at `camera.rs:250-251`, and the callers
-    // reach it too: `DrawEngine::zoom_to_fit` → `fit_to_view` (`style.rs:860-862`),
-    // `zoom_to_selection` (`:708`) and `reveal_if_hidden` (`:805`). A guard on `:191`
-    // alone leaves all three open, which is what the owner's Option B has to cover.
+    // centre is a second copy of the same line at `camera.rs:250-251`, and exactly TWO
+    // callers reach it: `reveal_if_hidden` (`style.rs:798`) and `fit_to_view`
+    // (`style.rs:861`), which all three Shift+fits enter — `zoom_to_fit` (`:823`),
+    // `zoom_to_fit_selection_in_viewport` (`:829`), `zoom_to_fit_selection` (`:835`).
+    // `fit_bounds` has its own two, `fit` (`:689`) and `zoom_to_selection` (`:708`), and
+    // a guard on `:191` does cover both. So a guard on `:191` alone leaves
+    // `reveal_if_hidden` and the three Shift+fits open — two call sites, four user paths —
+    // which is what the owner's Option B has to reach.
     let fitted = zoom_to_fit_bounds(
         non_finite_bounds(),
         800.0,
@@ -339,8 +352,13 @@ fn zoom_to_fit_on_a_box_with_no_finite_corner_gives_a_different_camera_and_also_
 }
 
 // ---------------------------------------------------------------------------------------
-// The two ways a hit test stops answering, which are different causes and were measured
-// as such after round 1 blamed the wrong one.
+// The THREE ways a hit test stops answering, all measured and all different. Non-finite
+// bounds on their own are SUFFICIENT, a NaN camera is an INDEPENDENT second cause, and
+// the `within_shape` centre overflow is the NECESSARY one. Round 1 blamed the first
+// cause it found, and then the second, and the file's own rule — pin a cause you have
+// isolated, or a fix gets aimed at the wrong line — is what the Q/R pair below exists to
+// keep honest. No single line is "the" cause, which argues harder for not aiming a fix at
+// any one of them, not less.
 // ---------------------------------------------------------------------------------------
 
 #[test]
@@ -385,13 +403,15 @@ fn a_nan_camera_alone_stops_an_ordinary_shape_from_being_hit() {
 
 #[test]
 fn a_shape_whose_own_centre_overflowed_is_not_hit_even_with_a_perfect_finite_camera() {
-    // The other cause, and the one round 1 misattributed. The camera here is FINITE and
-    // deliberately perfect: `x = 400 - f64::MAX` at scale 1 maps screen (400, 300) to
-    // world `(f64::MAX, f64::MAX)`, which is inside the element's own box — the control
-    // below proves it. The miss is therefore the element's, not the camera's:
-    // `rotation_center` (`scene/geometry.rs:108`) has overflowed to +inf, and
-    // `to_element_local` (`:211-222`) rotates the probe about that inf and answers
-    // `(NaN, inf)`, which is outside every shape by comparison.
+    // The NECESSARY cause, and the one rounds 1 and 2 each misattributed. The camera is
+    // FINITE and deliberately perfect: `x = 400 - f64::MAX` at scale 1 maps screen
+    // (400, 300) to world `(f64::MAX, f64::MAX)`, which is inside the element's own box
+    // — the control above proves it. The miss is therefore the element's, not the
+    // camera's. It is not the rotation centre either: `within_shape` computes a centre
+    // of its own, and at `scene/geometry.rs:502-503` that is `x + width / 2`, which is
+    // `f64::MAX + 8.988e307` = +inf. `:510-511` then answers `nx = (f64::MAX - inf) / rx`
+    // = -inf, and `:524` compares `nx.abs() <= 1.0` — false, so `hit_test_element`
+    // returns at `:651`.
     let mut engine = board();
     let overflowing = overflowing_document();
     assert!(engine.load_scene(&overflowing), "the file did not load");
@@ -408,13 +428,44 @@ fn a_shape_whose_own_centre_overflowed_is_not_hit_even_with_a_perfect_finite_cam
          against {plain:?}), so a miss below would prove nothing. The camera needs \
          re-aiming before this test means anything."
     );
+    // Q and R, ONE VARIABLE APART, and this pair is the whole point of the comment
+    // above: same x, same height, same `angle: 0.0` — so `to_element_local` returns at
+    // `geometry.rs:212-214` and the rotation centre is never read — same finite camera,
+    // same probe, same screen point. Only `width` differs. Q's `cx` at `:502` is
+    // `f64::MAX + 0`, finite, `:510` answers 0, `:524` says yes: HIT. R's is
+    // `f64::MAX + f64::MAX / 2` = +inf, `:510` answers -inf, `:524` says no: MISS.
+    // A distance of f64::MAX on its own is hittable, so it is the INFINITY and not the
+    // distance that does it — and without this pair the sentence above is a claim.
+    let qr = |width: &str| {
+        let mut qr_engine = board();
+        let qr_doc = document_with("\"x\": 0.0", &format!("\"x\": {F64_MAX}"))
+            .replace("\"width\": 100.0", &format!("\"width\": {width}"));
+        assert!(qr_engine.load_scene(&qr_doc), "the file did not load");
+        qr_engine.camera = Camera {
+            x: 400.0 - f64::MAX,
+            y: 297.5,
+            scale: 1.0,
+        };
+        qr_engine.hit_test(400.0, 300.0, 10.0).is_some()
+    };
+    assert!(
+        qr("0.0") && !qr(F64_MAX),
+        "CONTROL FAILED: the Q/R pair no longer isolates `width`, so the ratchet below \
+         would be measuring a difference this test can no longer account for. Q is an \
+         element at x = f64::MAX with width 0, probed at its own centre: it is hit. R is \
+         the same element with width f64::MAX: it is missed, because the centre at \
+         `scene/geometry.rs:502` overflows. Both run at angle 0.0, where the rotation \
+         centre is never read, under a finite camera."
+    );
     assert!(
         engine.hit_test(400.0, 300.0, 10.0).is_none(),
-        "MEASURED on 886738e: the element's own ROTATED bounds are NaN — its rotation \
-         centre overflowed to +inf and `to_element_local` answers (NaN, inf) — so the \
-         hit test misses with a finite, correctly aimed camera. It is the ELEMENT that \
-         is unhittable, not the camera. If this now hits, the NaN centre is gone and the \
-         ratchet is stale."
+        "MEASURED on 886738e: the hit test misses with a finite, correctly aimed camera, \
+         because `within_shape` overflows a centre of its OWN — `x + width / 2` is +inf at \
+         `scene/geometry.rs:502-503`, `nx` is -inf at `:510-511`, and `:524` compares an \
+         infinity against 1.0. It is the ELEMENT that is unhittable, and not the rotation \
+         centre: at angle 0 `to_element_local` never reads that. The Q/R pair above is \
+         what pins the line. If this now hits, `:502` has been guarded and the ratchet is \
+         stale."
     );
 }
 
@@ -454,27 +505,35 @@ fn the_file_door_refuses_every_spelling_of_a_number_that_does_not_fit_an_f64() {
         assert!(
             elements_from_json(&document_with("\"width\": 100.0", replacement)).is_none(),
             "MEASURED on 886738e: {spelling} is refused by serde_json before \
-             elements_from_json sees it. If it now loads, the parser changed and this \
-             table is stale — which would also mean the fix has landed."
+             elements_from_json sees it. A red here means the door started ACCEPTING a \
+             spelling it used to refuse — the OPPOSITE of the sanctioned fix, which makes \
+             it refuse more and so leaves this green straight through. The parser changed."
         );
     }
 }
 
 #[test]
-fn a_file_whose_geometry_outranges_f64_loads_through_all_three_doors_that_share_one_parser() {
-    // One door, three callers, none of which validates anything of its own. A guard has
-    // to go on the door, and the report has to say which is which: `load_scene` is the
-    // one a user reaches through Open, `insert_json` is the paste door, and the
-    // `elements_from_json` call is the door itself.
+fn a_file_whose_geometry_outranges_f64_loads_through_three_of_the_four_doors_of_one_parser() {
+    // FOUR call sites, one parser, and validation in none of them of its own. A guard has
+    // to go on the door at `export/json.rs:27` and that one place covers all four, because
+    // all four call it: `load_scene` (`engine/clipboard.rs:631`) — the door Open reaches
+    // — `materialize_elements` (`edit/clipboard.rs:204`), which BOTH `insert_json` and
+    // `paste_json` enter through `place_json` at `engine/clipboard.rs:424` and `:442`, and
+    // `set_scene_json` (`wasm/input.rs:112`), live from `engine.ts:79`. Three of the four
+    // are measurable from a native test; the fourth is `#[cfg(target_arch = "wasm32")]`
+    // (`lib.rs:16-17`) and its whole body is `elements_from_json` then `set_scene`, so it
+    // is counted here rather than asserted.
     let overflowing = overflowing_document();
     let mut engine = board();
     assert!(
         elements_from_json(&overflowing).is_some()
             && engine.load_scene(&overflowing)
-            && engine.insert_json(&overflowing, None),
-        "MEASURED on 886738e: all three accept a file whose every coordinate is \
-         f64::MAX. If one refuses now, the fix has landed — it is a behaviour change on a \
-         public format and needs the owner's sign-off, so these ratchets are stale."
+            && engine.insert_json(&overflowing, None)
+            && engine.paste_json(Some(&overflowing), None),
+        "MEASURED on 886738e: three of the four accept a file whose every coordinate is \
+         f64::MAX, and the fourth hands the same string to the same parser. If one refuses \
+         now, the fix has landed — it is a behaviour change on a public format and needs \
+         the owner's sign-off, so these ratchets are stale."
     );
 }
 
