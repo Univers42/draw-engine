@@ -5,14 +5,8 @@
  * DrawEngine (DrawCanvas does this on mount).
  */
 
-export {
-  type Camera,
-  type WorldBounds,
-  IDENTITY,
-  MAX_ZOOM,
-  MIN_ZOOM,
-} from "./types";
-export { fitBounds, panBy, screenToWorld, visibleWorldRect, worldToScreen, zoomAt, zoomTo } from "./camera";
+export { type Camera, type WorldBounds, IDENTITY } from "./types";
+export { type ScreenPoint, maxZoom, minZoom, screenToWorld, worldToScreen } from "./cameraMath";
 
 export {
   ARROWHEADS,

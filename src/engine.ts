@@ -1,4 +1,5 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
+import { screenToWorld } from "./cameraMath";
 import { readProbe, resetProbe, timeHitTest } from "./host/probe";
 import {
   DEFAULT_ELEMENT_STYLE,
@@ -161,9 +162,20 @@ export class DrawEngine {
     this.inner.pageBy(pagesX, pagesY);
   }
 
+  /**
+   * Where a screen point is in the world, from the engine's `screen_to_world`.
+   *
+   * The expression used to be written out here — the same one `engine/src/camera.ts`
+   * mirrored and the same one the front called — so this was the third copy. It is now
+   * the engine's own, reached through the wrapper beside it.
+   *
+   * The method and the free function differ only in where the camera comes from: this
+   * one reads it through the `camera` getter, which is a `cameraJson` call and a
+   * `JSON.parse`. A caller that already holds the camera should call the free
+   * `screenToWorld` from `./cameraMath` instead.
+   */
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
-    const camera = this.camera;
-    return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };
+    return screenToWorld(this.camera, sx, sy);
   }
 
   hitTest(sx: number, sy: number, tolerance = 0): DrawElement | null {
