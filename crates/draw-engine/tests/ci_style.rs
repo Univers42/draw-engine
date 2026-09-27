@@ -419,3 +419,157 @@ fn content_in_view_checks() {
     engine.pan_by(-50_000.0, -50_000.0);
     assert!(!engine.content_in_view());
 }
+
+// ------------------------------------------------------- the current stroke and fill
+//
+// `design.md:67` (Current stroke style) and `design.md:69` (Current fill style), the two
+// rows of §1 "Application state" that every other row of that table already has a test
+// for. They are one behaviour with two halves, and the oracle's actions are the same
+// shape: `actionChangeStrokeStyle` writes `strokeStyle` onto the selected elements *and*
+// sets `currentItemStrokeStyle` for the next one
+// (`actions/actionProperties.tsx@1118751f:901-917`), and `actionChangeFillStyle` writes
+// `fillStyle` onto the selected elements that have one and sets `currentItemFillStyle`
+// (`:606-625`). The panel then reads the `currentItem*` back whenever nothing is
+// selected (`:941-948`, `:664-671`) — which is what `get_next_style` is here.
+
+/// The two halves of one row, on the element and on the next-element state, in one call.
+#[test]
+fn apply_style_writes_the_stroke_style_to_the_selection_and_the_next_element() {
+    let rect = box_at(0.0, 0.0, 100.0, 50.0);
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id.clone()]);
+    assert_eq!(
+        engine.get_next_style().stroke_style,
+        StrokeStyle::Solid,
+        "setup: solid is the style a new element starts on"
+    );
+
+    engine.apply_style(DrawElementStylePatch {
+        stroke_style: Some(StrokeStyle::Dashed),
+        ..Default::default()
+    });
+
+    let styled = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == rect.id)
+        .unwrap();
+    assert_eq!(styled.stroke_style, StrokeStyle::Dashed, "the selection");
+    assert_eq!(
+        engine.get_next_style().stroke_style,
+        StrokeStyle::Dashed,
+        "and the next line to draw"
+    );
+}
+
+#[test]
+fn apply_style_writes_the_fill_style_to_the_selection_and_the_next_element() {
+    let rect = box_at(0.0, 0.0, 100.0, 50.0);
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.select(vec![rect.id.clone()]);
+    assert_eq!(engine.get_next_style().fill_style, FillStyle::Hachure);
+
+    engine.apply_style(DrawElementStylePatch {
+        fill_style: Some(FillStyle::CrossHatch),
+        ..Default::default()
+    });
+
+    let styled = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == rect.id)
+        .unwrap();
+    assert_eq!(styled.fill_style, FillStyle::CrossHatch, "the selection");
+    assert_eq!(
+        engine.get_next_style().fill_style,
+        FillStyle::CrossHatch,
+        "and the next shape to draw"
+    );
+}
+
+/// With nothing selected the pick is *only* the next element's — the same call, and the
+/// reason a style can be chosen before anything is drawn (`actionProperties.tsx@1118751f:
+/// 622`, `:914`: `currentItem*` is written whatever the selection is).
+#[test]
+fn a_stroke_style_chosen_with_nothing_selected_is_the_next_elements() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.apply_style(DrawElementStylePatch {
+        stroke_style: Some(StrokeStyle::Dotted),
+        fill_style: Some(FillStyle::Zigzag),
+        ..Default::default()
+    });
+
+    assert_eq!(engine.get_next_style().stroke_style, StrokeStyle::Dotted);
+    assert_eq!(engine.get_next_style().fill_style, FillStyle::Zigzag);
+    assert!(engine.get_scene().is_empty());
+}
+
+/// `set_next_style` is the other door, and the one the toolbar's own picker uses. It
+/// touches no element: there is none selected, and it must not invent one.
+#[test]
+fn set_next_style_carries_the_stroke_and_fill_style_without_touching_the_scene() {
+    let rect = box_at(0.0, 0.0, 100.0, 50.0);
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.set_next_style(DrawElementStylePatch {
+        stroke_style: Some(StrokeStyle::Dashed),
+        fill_style: Some(FillStyle::Solid),
+        ..Default::default()
+    });
+
+    assert_eq!(engine.get_next_style().stroke_style, StrokeStyle::Dashed);
+    assert_eq!(engine.get_next_style().fill_style, FillStyle::Solid);
+
+    let untouched = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == rect.id)
+        .unwrap();
+    assert_eq!(
+        untouched.stroke_style,
+        StrokeStyle::Solid,
+        "an unselected element is not restyled by the next-style setter"
+    );
+    assert_eq!(untouched.fill_style, FillStyle::Hachure);
+    assert!(engine.get_selection().is_empty());
+}
+
+/// The next-style state accumulates rather than replacing: a colour picked on the panel
+/// and a stroke style picked on the toolbar both have to survive, which is
+/// `merge_style_patch` taking each field from whichever patch carries it.
+#[test]
+fn a_later_stroke_style_leaves_an_earlier_fill_style_alone() {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_next_style(DrawElementStylePatch {
+        fill_style: Some(FillStyle::CrossHatch),
+        ..Default::default()
+    });
+    engine.set_next_style(DrawElementStylePatch {
+        stroke_style: Some(StrokeStyle::Dashed),
+        ..Default::default()
+    });
+
+    let next = engine.get_next_style();
+    assert_eq!(next.fill_style, FillStyle::CrossHatch, "not overwritten");
+    assert_eq!(next.stroke_style, StrokeStyle::Dashed);
+}
+
+/// And the selection follows the next style once it is *drawn*, or the two halves are
+/// only half a behaviour: a shape drawn after the pick is already on.
+#[test]
+fn a_shape_drawn_after_the_pick_comes_out_with_it() {
+    let mut engine = DrawEngine::new();
+    engine.set_next_style(DrawElementStylePatch {
+        stroke_style: Some(StrokeStyle::Dashed),
+        fill_style: Some(FillStyle::CrossHatch),
+        ..Default::default()
+    });
+    engine.set_tool(DrawTool::Rectangle);
+    engine.begin_pointer(0.0, 0.0, false, false);
+    engine.move_pointer(80.0, 40.0, false, false);
+    engine.end_pointer();
+
+    let drawn = &engine.get_scene()[0];
+    assert_eq!(drawn.kind, DrawElementType::Rectangle);
+    assert_eq!(drawn.stroke_style, StrokeStyle::Dashed);
+    assert_eq!(drawn.fill_style, FillStyle::CrossHatch);
+}

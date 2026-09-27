@@ -1815,3 +1815,177 @@ pub fn is_restylable_fill(hit: &DrawElement, scene_points: &[Point]) -> bool {
         && (a.max_x - b.max_x).abs() <= tolerance
         && (a.max_y - b.max_y).abs() <= tolerance
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `design.md:1773` (Projection) and `design.md:1775` (Closest point), two rows of §44
+    /// "Geometry engine — build reusable primitives". Everything else in that section is
+    /// reachable from outside the crate; these two are not, so they are asserted here
+    /// where the functions themselves are visible. What they are for is downstream
+    /// behaviour — bucket filling, binding anchors — and both of those already have tests
+    /// (`ci_bucket_fill.rs`, `ci_binding_dense.rs`), which is exactly why these two rows
+    /// could read as covered while the primitives themselves were never called and checked
+    /// by name.
+    ///
+    /// The oracle has both, and they are the pair a distance is built from:
+    /// `lineSegmentClosestParameter` is the projection parameter
+    /// (`packages/math/src/segment.ts@1118751f:185-204`) and `lineSegmentPointAt` the point
+    /// at that parameter (`:133-140`); `distanceToLineSegment` is the two composed
+    /// (`:119-127`).
+    mod projection {
+        use super::*;
+
+        fn at(x: f64, y: f64) -> Point {
+            Point { x, y }
+        }
+
+        /// The parameter is a *fraction of the segment*, so 0 is its start, 1 its end and
+        /// 1/2 its midpoint — whichever way round the segment is given. Checked on all
+        /// three, because a sign error in the dot product would show up on two of them and
+        /// not the third.
+        #[test]
+        fn the_parameter_is_where_the_point_lands_as_a_fraction_of_the_segment() {
+            let a = at(0.0, 0.0);
+            let b = at(10.0, 0.0);
+
+            assert!(
+                (project_param(a, b, at(0.0, 7.0)) - 0.0).abs() < 1e-12,
+                "at the start"
+            );
+            assert!(
+                (project_param(a, b, at(5.0, 7.0)) - 0.5).abs() < 1e-12,
+                "above the middle"
+            );
+            assert!(
+                (project_param(a, b, at(10.0, -3.0)) - 1.0).abs() < 1e-12,
+                "at the end, from the other side of the line"
+            );
+
+            // Order-independent: swapping the ends mirrors the fraction about 1/2.
+            assert!(
+                (project_param(b, a, at(5.0, 7.0)) - 0.5).abs() < 1e-12,
+                "the midpoint is the midpoint whichever end is first"
+            );
+            assert!(
+                (project_param(b, a, at(0.0, 7.0)) - 1.0).abs() < 1e-12,
+                "and the start is the other end's 1"
+            );
+        }
+
+        /// On a slanted segment, so a formula that accidentally used the x or y extent
+        /// instead of the dot product would pass the horizontal case above. The 3-4-5
+        /// triangle keeps every number exact: the foot of the perpendicular from (4, 0)
+        /// onto the line through the origin along (4, 3) is 16/25 of the way along it.
+        #[test]
+        fn on_a_slanted_segment_the_parameter_is_the_dot_product_over_the_length_squared() {
+            let a = at(0.0, 0.0);
+            let b = at(4.0, 3.0);
+            let t = project_param(a, b, at(4.0, 0.0));
+            assert!((t - 16.0 / 25.0).abs() < 1e-12, "expected 16/25, got {t}");
+        }
+
+        /// A zero-length segment has no direction, and `len_sq` divides by zero here. The
+        /// oracle guards the same division the same way — `if (len_sq !== 0)`
+        /// (`packages/math/src/segment.ts@1118751f:199-201`) — and lands on 0, so both ends
+        /// of a collapsed segment are reported as the parameter.
+        #[test]
+        fn a_zero_length_segment_reports_the_start_rather_than_dividing_by_zero() {
+            let a = at(7.0, 9.0);
+            assert_eq!(project_param(a, a, at(100.0, -100.0)), 0.0);
+            assert!(project_param(a, a, at(100.0, -100.0)).is_finite());
+        }
+
+        /// **Where this engine and the oracle differ, and it is not a bug here.** The
+        /// oracle clamps its parameter to `[0, 1]`
+        /// (`packages/math/src/segment.ts@1118751f:203`), because for it the segment is a
+        /// finite edge and the closest point on a *segment* is its end when the projection
+        /// falls beyond it. This one does not clamp: it projects onto the infinite line,
+        /// which is what the bucket fill needs — the query points are already known to be
+        /// within a cell's span, and an unclamped parameter keeps the perpendicular
+        /// distance below correct for a point past the end instead of silently reporting
+        /// the distance to the endpoint. Pinned so the difference is a decision on the
+        /// record rather than an accident: **not** the oracle's clamped answer.
+        #[test]
+        fn the_parameter_is_unclamped_which_is_not_what_the_oracle_returns() {
+            let a = at(0.0, 0.0);
+            let b = at(10.0, 0.0);
+
+            // Well past the end: the oracle would say 1, this says 2.
+            assert!(
+                (project_param(a, b, at(20.0, 0.0)) - 2.0).abs() < 1e-12,
+                "a projection, not a segment parameter"
+            );
+            // Well before the start: the oracle would say 0, this says -1.
+            assert!(
+                (project_param(a, b, at(-10.0, 0.0)) + 1.0).abs() < 1e-12,
+                "and it goes negative before the start rather than stopping"
+            );
+        }
+
+        /// `design.md:1775` (Closest point): the point at the parameter *is* the foot of
+        /// the perpendicular, so the segment and the foot meet at a right angle. On the
+        /// 3-4-5 segment the foot is (64/25, 48/25) and the vector from it to (4, 0) is
+        /// (36/25, -48/25) — which is perpendicular to the segment's own (4, 3): 4·36/25
+        /// + 3·(-48/25) = 0.
+        #[test]
+        fn the_point_at_the_parameter_is_the_foot_of_the_perpendicular() {
+            let a = at(0.0, 0.0);
+            let b = at(4.0, 3.0);
+            let q = at(4.0, 0.0);
+
+            let foot = point_at_param(a, b, project_param(a, b, q));
+            assert!(
+                (foot.x - 64.0 / 25.0).abs() < 1e-12,
+                "foot x expected 64/25, got {}",
+                foot.x
+            );
+            assert!(
+                (foot.y - 48.0 / 25.0).abs() < 1e-12,
+                "foot y expected 48/25, got {}",
+                foot.y
+            );
+
+            // Perpendicular: the dot product of the segment's direction with the vector
+            // back to the query point is zero.
+            let along = (b.x - a.x, b.y - a.y);
+            let back = (q.x - foot.x, q.y - foot.y);
+            let dot = along.0 * back.0 + along.1 * back.1;
+            assert!(dot.abs() < 1e-12, "not perpendicular: dot is {dot}");
+        }
+
+        /// And the two together are the oracle's `distanceToLineSegment`: the distance
+        /// from the point to its projection onto the line
+        /// (`packages/math/src/segment.ts@1118751f:119-127`). 12/5 on the 3-4-5, 4 on the
+        /// flat one — and the two routes to it must agree, or the bucket fill's own
+        /// perpendicular formula and its projection formula are describing different lines.
+        #[test]
+        fn the_perpendicular_distance_agrees_with_the_projection_it_is_computed_from() {
+            let flat = (at(0.0, 0.0), at(10.0, 0.0), at(3.0, 4.0), 4.0);
+            let slanted = (at(0.0, 0.0), at(4.0, 3.0), at(4.0, 0.0), 12.0 / 5.0);
+
+            for (a, b, q, expected) in [flat, slanted] {
+                let foot = point_at_param(a, b, project_param(a, b, q));
+                let by_projection = point_distance(q, foot);
+                let by_formula = perpendicular_distance(q, a, b);
+                assert!(
+                    (by_formula - expected).abs() < 1e-12,
+                    "expected {expected}, formula gave {by_formula}"
+                );
+                assert!(
+                    (by_formula - by_projection).abs() < 1e-12,
+                    "the two routes disagree: {by_formula} vs {by_projection}"
+                );
+            }
+        }
+
+        /// The degenerate case again, from the distance side: a collapsed segment has no
+        /// perpendicular, so the answer is the distance to the single point it is.
+        #[test]
+        fn a_zero_length_segment_measures_to_the_point_itself() {
+            let a = at(2.0, 5.0);
+            assert!((perpendicular_distance(at(5.0, 9.0), a, a) - 5.0).abs() < 1e-12);
+        }
+    }
+}

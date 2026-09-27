@@ -69,6 +69,103 @@ fn shift_snaps_to_45() {
     assert_eq!(snapped.height.round(), 0.0);
 }
 
+/// `design.md:828`, "Vertical" — the third of the three angle-snapping rows
+/// (`design.md:825-832` lists Horizontal, Vertical, 45°, Configurable increments), and the
+/// one `shift_snaps_to_45` above never fed: it covers the 0° and the 45° case and stops
+/// there.
+///
+/// The claim is that a drag that is *nearly* vertical comes out vertical, with the pointer
+/// still as far from the start as it was — a snap re-aims the line, it does not shorten it.
+/// Asserted on the offset rather than on a rounded pair, because a rounded pair would also
+/// pass for a drag that was already vertical.
+///
+/// The tolerance is not sloppiness: the snap lands on `cos(90°)`, and IEEE-754's `cos(π/2)`
+/// is 6.1e-17 rather than 0, so the x offset comes out around 6e-15 on a drag this long.
+/// Exactly vertical is not a representable answer; "vertical to a rounding error" is.
+#[test]
+fn shift_snaps_a_near_vertical_drag_to_exactly_vertical() {
+    // 10 across and 100 down: 84.3°, which is inside the 22.5° either side of 90° that
+    // rounds to vertical, and nowhere near horizontal.
+    let dragged = 10.0_f64.hypot(100.0);
+    let (dx, dy) = constrain_to_angle(10.0, 100.0);
+    assert!(dx.abs() < 1e-9, "the x offset is {dx}, not vertical");
+    assert!(
+        (dy - dragged).abs() < 1e-9,
+        "at the drag's own length {dragged}, not {dy}"
+    );
+
+    // And through the drag itself, so this is the path a person takes rather than the
+    // helper alone: the line's second point sits straight below the first.
+    let snapped = linear_from_drag(200.0, 300.0, 210.0, 400.0, true);
+    assert_eq!(snapped.x, 200.0, "the start does not move");
+    assert_eq!(snapped.y, 300.0);
+    assert_eq!(snapped.points[0], [0.0, 0.0]);
+    assert!(snapped.width.abs() < 1e-9, "no run at all to the side");
+    assert!((snapped.height - dragged).abs() < 1e-9);
+}
+
+/// The mirror of the case above, for the same reason: `design.md:826` (Horizontal) is
+/// covered by the existing test's `dy.round() == 0.0`, which is a rounded comparison and
+/// would pass for a drag that was already horizontal.
+#[test]
+fn shift_snaps_a_near_horizontal_drag_to_exactly_horizontal() {
+    let dragged = 100.0_f64.hypot(10.0);
+    let (dx, dy) = constrain_to_angle(100.0, 10.0);
+    assert!(dy.abs() < 1e-9, "the y offset is {dy}, not level");
+    assert!((dx - dragged).abs() < 1e-9);
+}
+
+/// The step is 45°, so the two axes and the two diagonals are the only outcomes, and a
+/// drag between two of them goes to the nearer one. The boundaries are halfway: 22.5°
+/// between level and 45°, 67.5° between 45° and vertical. Each case below is a degree or
+/// two either side of one, so this fails if the snapping ever becomes 90°-only (a different
+/// feature) or 15° (the oracle's — see below).
+///
+/// **Deliberate divergence from the oracle, and an open question — not endorsed here.**
+/// The oracle's Shift-constrain for a linear drag is `getPerfectElementSize`
+/// (`packages/element/src/sizeHelpers.ts@1118751f:155-185`), and its step is
+/// `SHIFT_LOCKING_ANGLE = Math.PI / 12` — **15°**, not 45°
+/// (`packages/common/src/constants.ts@1118751f:31`). It also keeps the drag's *width* and
+/// recomputes the height (`sizeHelpers.ts@1118751f:179`), where `constrain_to_angle` keeps
+/// the drag's *length* and re-aims it. So a 30° drag is exactly 45° here and 30° in the
+/// oracle, and the two rules disagree about which extent survives a snap. Nothing in
+/// `docs/reference/` or the registry records the 45° step as a chosen divergence, so this
+/// test pins what the engine does today and says nothing about it being right: see the
+/// Phase 3.4a report.
+#[test]
+fn the_snap_step_is_45_degrees_so_a_drag_lands_on_an_axis_or_a_diagonal() {
+    // A drag of `deg`, always 100 across so the numbers stay readable.
+    let at = |deg: f64| {
+        let dy = 100.0 * deg.to_radians().tan();
+        constrain_to_angle(100.0, dy)
+    };
+
+    let (dx, dy) = at(20.0);
+    assert!(
+        dy.abs() < 1e-9,
+        "20° is 20° from level and 25° from 45°: it rounds down"
+    );
+    assert!((dx - 100.0_f64.hypot(100.0 * 20.0_f64.to_radians().tan())).abs() < 1e-9);
+
+    for deg in [30.0, 67.0] {
+        let (dx, dy) = at(deg);
+        assert!(
+            (dx - dy).abs() < 1e-9,
+            "{deg}° is past the halfway mark, so it rounds to the 45° diagonal"
+        );
+    }
+
+    let (dx, dy) = at(68.0);
+    assert!(
+        dx.abs() < 1e-9,
+        "68° is past 67.5°: it rounds up to vertical"
+    );
+    assert!(dy > 0.0, "and upwards, not downwards");
+
+    // A zero-length drag has no direction to snap, and must not invent one.
+    assert_eq!(constrain_to_angle(0.0, 0.0), (0.0, 0.0));
+}
+
 #[test]
 fn attach_point_on_outline() {
     let shape = box_at(0.0, 0.0, 100.0, 60.0);

@@ -1188,3 +1188,102 @@ fn an_element_never_received_in_a_peers_order_leaves_what_it_left_out_where_it_w
          where it was"
     );
 }
+
+// ---------------------------------------------------------------------------------------
+// Stable ordering after deletion
+// ---------------------------------------------------------------------------------------
+
+/// `design.md:747`, the last row of §17 Z-order.
+///
+/// A delete does not renumber anything: the oracle's `actionDeleteSelected` maps over the
+/// array and hands each doomed element back with `isDeleted: true` set
+/// (`actions/actionDeleteSelected.tsx@1118751f:78`, `:112`, `:125`) and returns that same
+/// array as `elements` (`:173`) — the array keeps its length and its order, and only the
+/// one flag changes. This engine does the same, tombstoning in place
+/// (`scene/store.rs:412`), which is what makes a delete a message to the other editors
+/// rather than an absence. So the property to pin is the oracle's: the survivors keep
+/// their relative order *and their absolute positions* in the stack.
+///
+/// Absolute positions matter because a z-order command moves an element relative to its
+/// neighbours, not to an index. A delete that shifted everything down one slot would leave
+/// the relative order intact and still make "bring forward" mean something different.
+#[test]
+fn a_deletion_leaves_the_rest_of_the_stack_exactly_where_it_was() {
+    // Five shapes in a row, so a reindex would show: deleting the middle one has to leave
+    // A, C, D, E in that order, and each of them still with the same number of elements
+    // below it as before, minus the one that went.
+    let mut cast: Cast = Vec::new();
+    let mut elements = Vec::new();
+    for (index, name) in ["A", "B", "C", "D", "E"].into_iter().enumerate() {
+        let element = filled(box_at(90.0 * index as f64, 400.0, 60.0, 60.0));
+        cast.push((name, element.id.clone()));
+        elements.push(element);
+    }
+    let mut engine = engine_with_scene(elements);
+
+    assert_eq!(stack(&engine, &cast), vec!["A", "B", "C", "D", "E"]);
+
+    engine.select(vec![id(&cast, "C")]);
+    engine.delete_selection();
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["A", "B", "D", "E"],
+        "the two above C and the two below it are still in that order"
+    );
+    // The tombstone is still in the scene, flagged — the oracle keeps it there too, and
+    // that is what lets the delete be sent on.
+    let tombstone = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id(&cast, "C"))
+        .expect("the deleted element is still on the board, flagged");
+    assert!(tombstone.is_deleted);
+
+    // And the order commands still read the stack the same way: bringing the bottom one
+    // to the front puts it above E, and sending the top one back puts it under A. If the
+    // delete had reindexed, these would land somewhere else.
+    engine.select(vec![id(&cast, "A")]);
+    engine.reorder_selection(ZOrderMode::Front);
+    assert_eq!(stack(&engine, &cast), vec!["B", "D", "E", "A"]);
+
+    engine.select(vec![id(&cast, "A")]);
+    engine.reorder_selection(ZOrderMode::Back);
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["A", "B", "D", "E"],
+        "and back to the bottom, into the slot C left rather than a new one"
+    );
+}
+
+/// The other half of the claim: an undo of a deletion is not a new element, so it must
+/// come back **in place** rather than on top or at the bottom. This is the case the
+/// registry's §17 rule leans on for the tombstone handling, and the one a reindexing
+/// store would get wrong.
+#[test]
+fn undoing_a_deletion_puts_the_element_back_where_it_was() {
+    let mut elements = Vec::new();
+    let mut cast: Cast = Vec::new();
+    for (index, name) in ["A", "B", "C"].into_iter().enumerate() {
+        let element = filled(box_at(90.0 * index as f64, 400.0, 60.0, 60.0));
+        cast.push((name, element.id.clone()));
+        elements.push(element);
+    }
+    let mut engine = engine_with_scene(elements);
+    let before = stack(&engine, &cast);
+
+    engine.select(vec![id(&cast, "B")]);
+    engine.delete_selection();
+    assert_eq!(stack(&engine, &cast), vec!["A", "C"]);
+
+    engine.undo();
+    assert_eq!(
+        stack(&engine, &cast),
+        before,
+        "B returns between A and C, not on top and not at the bottom"
+    );
+
+    // ...and the undo of the delete is itself undoable back to the gap.
+    engine.redo();
+    assert_eq!(stack(&engine, &cast), vec!["A", "C"]);
+}
