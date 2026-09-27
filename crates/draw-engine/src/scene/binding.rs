@@ -6,10 +6,12 @@
 //! (Excalidraw's `fixedPoint`), and a [`BindMode`]:
 //!
 //! - [`BindMode::Inside`] — the end sits exactly on the anchor. What you get by letting go
-//!   anywhere inside a shape, or anywhere near it with Alt held.
+//!   anywhere near a shape with Alt held, or with both ends on one shape.
 //! - [`BindMode::Orbit`] — the end aims at the anchor but stops a gap clear of the outline,
-//!   on the side facing where the arrow comes from. What you get by letting go near a
-//!   shape's edge from outside it.
+//!   on the side facing where the arrow comes from: a ray that ends at the first outline it
+//!   meets and never runs through the shape. What you get by letting go inside a shape or
+//!   near its edge. (Excalidraw's shipped default binds a drop inside a shape inside; its
+//!   `COMPLEX_BINDINGS` strategy orbits it, as here.)
 //!
 //! Because the anchor lives in the shape's own frame, it turns with the shape: rotating a
 //! shape carries every arrow end with it instead of leaving them at a world offset. And
@@ -940,7 +942,9 @@ fn projected_anchor<'a>(
 /// - nothing near: unbound;
 /// - both ends on the same shape: both sit exactly where they are ([`BindMode::Inside`]),
 ///   since orbiting a shape from inside it has no side to arrive on;
-/// - inside the shape, or anywhere near it with Alt: exactly at the drop;
+/// - anywhere near it with Alt: exactly at the drop;
+/// - inside the shape: in orbit, anchored at the drop — aimed there, drawn at the outline.
+///   A divergence from the oracle's default, which binds inside (see the body);
 /// - beside it: in orbit, anchored at the side midpoint it is near, or else where the
 ///   arrow's line through the drop meets the shape's projection lines (once the arrow has
 ///   a direction), or else the drop;
@@ -978,8 +982,15 @@ pub fn anchor_for_drop<'a>(
             }),
         );
     }
-    if drop.exact || is_inside(hit, pointer) {
+    if drop.exact {
         return (Some(at(BindMode::Inside, pointer)), None);
+    }
+    // Aimed at the drop, drawn where the arrow first meets the outline: a ray that never
+    // runs through its shape. Excalidraw's `COMPLEX_BINDINGS` rule for a new arrow
+    // (`binding.ts@1118751f:447-452`); its shipped default binds inside here
+    // (`binding.ts@1118751f:846-852`) and draws the arrow through the outline to the drop.
+    if is_inside(hit, pointer) {
+        return (Some(at(BindMode::Orbit, pointer)), None);
     }
     let reach = DEGENERATE_ARROW_PX * drop.pixel;
     let directed = arrow.width.abs() >= reach || arrow.height.abs() >= reach;

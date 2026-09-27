@@ -238,8 +238,8 @@ impl DrawEngine {
         } else {
             // The tail binds on the same terms the head will, as Excalidraw's initial
             // binding does (`packages/excalidraw/components/App.tsx@1118751f:10325-10347`):
-            // inside a shape it sits exactly where the press was, near one it orbits from
-            // there.
+            // in or near a shape it orbits, aimed at the press and leaving by the outline;
+            // with Alt it sits exactly where the press was.
             let (start, _) = self.drop_binding(&element, End::Start, world, false);
             set_anchor(&mut element, End::Start, start);
             set_anchor(&mut element, End::End, None);

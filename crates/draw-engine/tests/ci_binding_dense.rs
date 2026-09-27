@@ -193,6 +193,18 @@ const ORACLE_PROBES: [(f64, f64, &str, BindMode); 48] = [
     (661.3, 407.7, "r16", ORBIT),
 ];
 
+/// What this engine binds where excalidraw.com bound `oracle`. The square is always the
+/// oracle's. A drop inside it binds inside there and orbits here — aimed at the drop and
+/// stopped at the outline, a ray that never runs through the square: the owner's rule, and
+/// Excalidraw's own under `COMPLEX_BINDINGS` (`ci_binding_anchor.rs` ›
+/// `inside_a_shape_the_end_stops_at_its_outline`).
+fn ours(oracle: BindMode) -> BindMode {
+    match oracle {
+        INSIDE => ORBIT,
+        mode => mode,
+    }
+}
+
 /// The oracle's Ctrl+D offset: `DEFAULT_GRID_SIZE / 2`
 /// (`packages/excalidraw/actions/actionDuplicateSelection.tsx@1118751f:78-79`).
 const CTRL_D: f64 = 10.0;
@@ -203,8 +215,9 @@ fn nearest_outline_wins_in_a_ctrl_d_pack() {
     let mut wrong = Vec::new();
     for (x, y, id, mode) in ORACLE_PROBES {
         let got = drag_to(&scene, 1.0, (x, y));
-        if got != Some((id.to_string(), mode)) {
-            wrong.push(format!("({x}, {y}): want {id}/{mode:?}, got {got:?}"));
+        let want = ours(mode);
+        if got != Some((id.to_string(), want)) {
+            wrong.push(format!("({x}, {y}): want {id}/{want:?}, got {got:?}"));
         }
     }
     assert!(
@@ -232,7 +245,7 @@ fn a_click_just_outside_a_packed_square_binds_and_finishes() {
     let mut wrong = Vec::new();
     for (x, y, id, mode) in ORACLE_PROBES {
         let got = click_to(&scene, 1.0, (x, y));
-        if got.finished != (mode == ORBIT) || got.end != Some((id.to_string(), mode)) {
+        if got.finished != (mode == ORBIT) || got.end != Some((id.to_string(), ours(mode))) {
             wrong.push(format!(
                 "({x}, {y}): want {id}/{mode:?} finished={}, got {:?} finished={}",
                 mode == ORBIT,
@@ -260,12 +273,14 @@ fn a_click_inside_the_nearest_square_still_places_a_waypoint() {
     );
     click(&mut engine, 1.0, at);
     assert!(engine.linear_in_progress().is_none());
-    assert_eq!(end_of(&engine), Some(("r6".to_string(), INSIDE)));
+    assert_eq!(end_of(&engine), Some(("r6".to_string(), ours(INSIDE))));
 }
 
 /// Walks a grid over the pack. At every point the square the hover outlined is the one
-/// the click binds, and the click finishes exactly when that binding is an orbit — so
-/// what the highlight shows is what the click does. This is the deliberate divergence
+/// the click binds, and the click finishes exactly when it lands outside that square — so
+/// what the highlight shows is what the click does. (Before the ray rule that was "when
+/// the binding is an orbit": a click inside a square bound inside it. It orbits now, and
+/// still places a waypoint.) This is the deliberate divergence
 /// from Excalidraw, which re-tests the press at its moved preview point
 /// (`App.tsx@1118751f:10170`) and so turns some orbit highlights into waypoints.
 #[test]
@@ -278,7 +293,11 @@ fn the_highlight_is_what_the_click_does() {
             let mut x = 403.0 + (y - 203.0) % 17.0;
             while x < 790.0 {
                 let got = click_to(&scene, scale, (x, y));
-                let (id, mode) = got.end.clone().unwrap_or_else(|| ("-".into(), INSIDE));
+                let (id, _) = got.end.clone().unwrap_or_else(|| ("-".into(), INSIDE));
+                let outside = scene
+                    .iter()
+                    .find(|el| el.id == id)
+                    .is_some_and(|square| !is_inside(square, Point { x, y }));
                 assert_eq!(
                     got.highlight.as_deref(),
                     got.end.as_ref().map(|_| id.as_str()),
@@ -286,8 +305,8 @@ fn the_highlight_is_what_the_click_does() {
                 );
                 assert_eq!(
                     got.finished,
-                    got.end.is_some() && mode == ORBIT,
-                    "({x}, {y}) at {scale}: finished vs {id}/{mode:?}"
+                    got.end.is_some() && outside,
+                    "({x}, {y}) at {scale}: finished vs {id}, outside {outside}"
                 );
                 probes += 1;
                 x += 23.0;
@@ -608,15 +627,21 @@ fn texts(engine: &DrawEngine) -> Vec<DrawElement> {
 }
 
 /// A double click that finishes a click-mode arrow — its second click lands on the
-/// waypoint its first placed — goes on to open a label on **the arrow**, never on the
-/// square under the pointer. Checked on excalidraw.com with element ids: the typed text
-/// was bound to the new arrow's id, inside the pack and over an empty board alike. The
-/// oracle gets there because the finished arrow is the one selected element
-/// (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`).
+/// waypoint its first placed — never labels the square under the pointer. The finished
+/// arrow is the one selected element, so it is the only container on offer
+/// (`getTextBindableContainerAtPosition`, `App.tsx@1118751f:6831-6838`), and it takes the
+/// text only when the double click is on it (`:7356-7392`):
+///
+/// - over an empty board its end is under the pointer, and the arrow is labelled —
+///   excalidraw.com bound the typed text to the new arrow's id;
+/// - inside the pack its end orbits the square, stopped at the outline away from the
+///   pointer (the ray rule, [`ours`]), so the double click types a free text there, as it
+///   does after any orbiting end ([`ORBIT_DOUBLE_CLICKS`]). excalidraw.com, which binds that
+///   end inside at the pointer, labelled the arrow.
 #[test]
 fn a_double_click_that_finishes_an_arrow_labels_the_arrow() {
     let scene = pack(CTRL_D);
-    for at in [(471.3, 270.7), (1000.0, 150.0)] {
+    for (at, labels_arrow) in [((471.3, 270.7), false), ((1000.0, 150.0), true)] {
         let mut engine = arrow_engine(&scene, 1.0);
         click(&mut engine, 1.0, FROM);
         glide(&mut engine, 1.0, FROM, at);
@@ -627,7 +652,11 @@ fn a_double_click_that_finishes_an_arrow_labels_the_arrow() {
         let arrow = the_arrow(&engine);
         let labels: Vec<Option<String>> =
             texts(&engine).into_iter().map(|t| t.container_id).collect();
-        assert_eq!(labels, vec![Some(arrow.id.clone())], "at {at:?}");
+        assert_eq!(
+            labels,
+            vec![labels_arrow.then(|| arrow.id.clone())],
+            "at {at:?}"
+        );
     }
 }
 

@@ -18,6 +18,7 @@ mod common;
 use common::*;
 use draw_engine::scene::binding::{anchor, binding_gap, focus_point, is_inside, End};
 use draw_engine::scene::element::BindMode;
+use draw_engine::scene::outline_distance::signed_outline_distance;
 use draw_engine::selection::linear::world_points;
 use draw_engine::*;
 
@@ -81,6 +82,41 @@ fn ends(arrow: &DrawElement) -> (Point, Point) {
 
 fn near(a: Point, b: Point, tolerance: f64) -> bool {
     (a.x - b.x).hypot(a.y - b.y) <= tolerance
+}
+
+/// Whether the straight segment `a → b` runs through `shape`: some point strictly between
+/// its ends is inside the painted outline.
+fn runs_through(shape: &DrawElement, a: Point, b: Point) -> bool {
+    (1..400).any(|i| {
+        let t = i as f64 / 400.0;
+        is_inside(
+            shape,
+            Point {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+            },
+        )
+    })
+}
+
+/// Whether `p` is a gap clear of a box's outline, where an orbiting end stops.
+///
+/// Exactly a gap along a side. Round a rounded corner the gap is measured from a circle of
+/// the corner's radius, while the corner is painted as a quadratic curve that bulges up to
+/// `(3/√8 − 1)·r ≈ 0.061·r` further out, so there the end may be that much closer.
+fn stops_at_outline(shape: &DrawElement, p: Point) -> bool {
+    let (w, h) = (shape.width.abs(), shape.height.abs());
+    let slack = 0.07 * draw_engine::render::shape::corner_radius(w.min(h), shape);
+    let clear = -signed_outline_distance(shape, p);
+    let gap = binding_gap(shape);
+    clear <= gap + 1e-6 && clear >= gap - slack - 1e-6
+}
+
+/// Where the rotation handle turns a selection centred on `centre` to `degrees`,
+/// clockwise from north.
+fn toward(centre: (f64, f64), degrees: f64) -> (f64, f64) {
+    let r = degrees.to_radians();
+    (centre.0 + 300.0 * r.sin(), centre.1 - 300.0 * r.cos())
 }
 
 /// Turns the one selected element by dragging its rotation handle to `to`, found the way
@@ -149,6 +185,90 @@ fn an_inside_end_is_carried_round_exactly() {
         near(tip, Point { x: 370.0, y: 315.0 }, 1e-6),
         "the end kept its place on the shape: {tip:?}"
     );
+}
+
+/// Turns the selection by its handle to `degrees` in two moves, checking the arrow half
+/// way through the gesture, at its end and after the release: what a person watches.
+fn turn_watching(
+    engine: &mut DrawEngine,
+    centre: (f64, f64),
+    top: f64,
+    degrees: f64,
+    check: &dyn Fn(&DrawEngine, &str),
+) {
+    engine.set_tool(DrawTool::Select);
+    let handle_y = (0..120)
+        .map(|dy| top - dy as f64)
+        .find(|&y| engine.hover_cursor(centre.0, y) == HoverCursor::Grab)
+        .expect("the selection has a rotation handle");
+    engine.begin_pointer(centre.0, handle_y, false, false);
+    let half = toward(centre, degrees / 2.0);
+    engine.move_pointer(half.0, half.1, false, false);
+    check(engine, "half way");
+    let full = toward(centre, degrees);
+    engine.move_pointer(full.0, full.1, false, false);
+    check(engine, "at the end of the drag");
+    engine.end_pointer();
+    check(engine, "released");
+}
+
+/// The owner's report: turning a shape let its arrow through the shape's corner, where it
+/// should stay on the outline and follow the turn. An end let go inside B keeps aiming at
+/// that point as B turns — the anchor turns with B — but is drawn where the aim first
+/// meets B's outline: at every step of the turn, never through B.
+#[test]
+fn a_turning_shape_never_lets_its_arrow_through() {
+    for drop in [
+        (320.0, 330.0),
+        (392.0, 306.0),
+        (350.0, 340.0),
+        (306.0, 374.0),
+    ] {
+        for degrees in [30.0, 45.0, 90.0, 135.0, 200.0, 315.0] {
+            let mut engine = engine_with_scene(vec![target()]);
+            let arrow = draw_arrow(&mut engine, (100.0, 100.0), drop).id;
+            engine.select(vec![B.into()]);
+            turn_watching(&mut engine, (350.0, 340.0), 300.0, degrees, &|e, when| {
+                let (tail, tip) = ends(&get(e, &arrow));
+                let b = get(e, B);
+                let case = format!("drop {drop:?}, {degrees}° {when}: {tail:?} → {tip:?}");
+                assert!(!runs_through(&b, tail, tip), "runs through B, {case}");
+                assert!(stops_at_outline(&b, tip), "off B's outline, {case}");
+            });
+        }
+    }
+}
+
+/// Two shapes and the arrow between them, each end let go inside its shape: turning
+/// either one, or both together, never lets the arrow through either.
+#[test]
+fn an_arrow_between_two_turning_shapes_goes_through_neither() {
+    let a = || shape("a", filled(box_at(100.0, 300.0, 100.0, 80.0)));
+    for (selection, centre) in [
+        (vec!["a"], (150.0, 340.0)),
+        (vec![B], (350.0, 340.0)),
+        (vec!["a", B], (250.0, 340.0)),
+    ] {
+        for degrees in [30.0, 90.0, 160.0, 250.0] {
+            let mut engine = engine_with_scene(vec![a(), target()]);
+            let arrow = draw_arrow(&mut engine, (180.0, 330.0), (330.0, 360.0));
+            assert_eq!(
+                (arrow.start_binding.as_deref(), arrow.end_binding.as_deref()),
+                (Some("a"), Some(B)),
+                "setup"
+            );
+            engine.select(selection.iter().map(|id| id.to_string()).collect());
+            turn_watching(&mut engine, centre, 300.0, degrees, &|e, when| {
+                let (tail, tip) = ends(&get(e, &arrow.id));
+                let (a, b) = (get(e, "a"), get(e, B));
+                let case = format!("{selection:?} {degrees}° {when}: {tail:?} → {tip:?}");
+                assert!(!runs_through(&a, tail, tip), "runs through A, {case}");
+                assert!(!runs_through(&b, tail, tip), "runs through B, {case}");
+                assert!(stops_at_outline(&a, tail), "off A's outline, {case}");
+                assert!(stops_at_outline(&b, tip), "off B's outline, {case}");
+            });
+        }
+    }
 }
 
 /// At every angle an orbiting end is on the line from its turned anchor toward where the
@@ -221,14 +341,48 @@ fn near_a_side_midpoint_the_end_snaps_to_it() {
     assert_eq!(a.mode, BindMode::Orbit);
 }
 
-/// Inside a shape the end is exactly where it was let go (`binding.ts@1118751f:847-854`).
+/// Let go inside a shape, the end is aimed where it was let go but stops at the first
+/// outline it meets, a gap clear of it: a ray from the tail, never a skewer through the
+/// shape. The anchor keeps the drop, so the aim survives a turn (below).
+///
+/// The owner's rule (2026-09-27), and Excalidraw's own for a new arrow under its
+/// `COMPLEX_BINDINGS` flag (`binding.ts@1118751f:447-452`). Its shipped default binds such
+/// an end inside and draws the arrow through the outline to it (`binding.ts@1118751f:846-852`,
+/// `1975-1984`); here only Alt does that.
 #[test]
-fn inside_a_shape_the_end_is_exactly_where_let_go() {
+fn inside_a_shape_the_end_stops_at_its_outline() {
     let mut engine = engine_with_scene(vec![target()]);
     let arrow = draw_arrow(&mut engine, (100.0, 100.0), (320.0, 330.0));
     let a = anchor(&arrow, End::End).unwrap();
-    assert_eq!(a.mode, BindMode::Inside);
-    assert_point_close(ends(&arrow).1, Point { x: 320.0, y: 330.0 });
+    assert_eq!((a.element_id.as_str(), a.mode), (B, BindMode::Orbit));
+    assert_point_close(
+        focus_point(&target(), a.fixed_point),
+        Point { x: 320.0, y: 330.0 },
+    );
+    let (tail, tip) = ends(&arrow);
+    let b = get(&engine, B);
+    assert!(
+        !runs_through(&b, tail, tip),
+        "{tail:?} → {tip:?} runs through B"
+    );
+    assert!(stops_at_outline(&b, tip), "a gap clear of B: {tip:?}");
+}
+
+/// The tail too: pressed inside a shape, it leaves by the outline facing where the arrow
+/// goes.
+#[test]
+fn pressed_inside_a_shape_the_tail_leaves_by_its_outline() {
+    let mut engine = engine_with_scene(vec![target()]);
+    let arrow = draw_arrow(&mut engine, (380.0, 360.0), (600.0, 100.0));
+    let a = anchor(&arrow, End::Start).expect("bound to B");
+    assert_eq!((a.element_id.as_str(), a.mode), (B, BindMode::Orbit));
+    let (tail, tip) = ends(&arrow);
+    let b = get(&engine, B);
+    assert!(
+        !runs_through(&b, tail, tip),
+        "{tail:?} → {tip:?} runs through B"
+    );
+    assert!(stops_at_outline(&b, tail), "a gap clear of B: {tail:?}");
 }
 
 /// Alt binds exactly where the end is, even from outside the shape.
@@ -761,7 +915,8 @@ fn a_press_inside_a_shape_binds_to_it_not_its_neighbour() {
         let arrow = draw_arrow(&mut engine, press, (press.0, 400.0));
         let start = anchor(&arrow, End::Start).expect("bound");
         assert_eq!(start.element_id, "a");
-        assert_eq!(start.mode, BindMode::Inside);
+        // Aimed at the press, leaving by the outline (`inside_a_shape_the_end_stops_at_its_outline`).
+        assert_eq!(start.mode, BindMode::Orbit);
     }
 }
 

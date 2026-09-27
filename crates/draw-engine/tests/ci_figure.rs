@@ -6,6 +6,7 @@
 
 mod common;
 use common::*;
+use draw_engine::scene::binding::is_inside;
 use draw_engine::scene::BindMode;
 use draw_engine::selection::linear::world_points;
 use draw_engine::*;
@@ -139,7 +140,30 @@ fn an_arrow_binds_to_a_figure_it_is_dropped_inside() {
 
     let arrow = engine.get_scene().into_iter().last().unwrap();
     assert_eq!(arrow.end_binding.as_deref(), Some(tri_id.as_str()));
-    assert_eq!(arrow.end_bind_mode, Some(BindMode::Inside));
+    // Aimed at the apex, stopped at the first outline it meets (`ci_binding_anchor.rs`).
+    assert_eq!(arrow.end_bind_mode, Some(BindMode::Orbit));
+    let tri = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == tri_id)
+        .unwrap();
+    let points = world_points(&arrow);
+    let (tail, tip) = (points[0], *points.last().unwrap());
+    assert!(
+        !is_inside(&tri, tip),
+        "the tip is off the triangle: {tip:?}"
+    );
+    assert!(
+        (1..400).all(|i| {
+            let t = i as f64 / 400.0;
+            let p = Point {
+                x: tail.x + (tip.x - tail.x) * t,
+                y: tail.y + (tip.y - tail.y) * t,
+            };
+            !is_inside(&tri, p)
+        }),
+        "the arrow does not run through the triangle"
+    );
 }
 
 #[test]
