@@ -38,11 +38,15 @@ pub fn export_png(
 /// the resolve function, both owned, so nothing borrowed from the engine outlives the call
 /// that asked for the picture.
 ///
-/// `None` where the browser refuses: a canvas too large to encode answers `null`, which is
+/// `null` where the browser refuses: a canvas too large to encode answers `null`, which is
 /// the oracle's `CANVAS_POSSIBLY_TOO_BIG` (`data/blob.ts@1118751f:245-252`) without its
 /// message. The web saves what it is given and nothing otherwise.
+///
+/// **`toBlob` throwing rejects rather than being swallowed**, which is the difference
+/// between a caller that learns the export failed and a caller that waits forever. The
+/// oracle's `canvasToBlob` rejects for the same reason (`blob.ts:240-256`).
 fn png_blob(canvas: web_sys::HtmlCanvasElement) -> js_sys::Promise {
-    js_sys::Promise::new(&mut |resolve, _reject| {
+    js_sys::Promise::new(&mut |resolve, reject| {
         let on_encoded = Closure::once_into_js(move |blob: Option<web_sys::Blob>| {
             let value = match blob {
                 Some(blob) => JsValue::from(blob),
@@ -50,6 +54,14 @@ fn png_blob(canvas: web_sys::HtmlCanvasElement) -> js_sys::Promise {
             };
             let _ = resolve.call1(&JsValue::NULL, &value);
         });
-        let _ = canvas.to_blob(on_encoded.as_ref().unchecked_ref::<js_sys::Function>());
+        if canvas
+            .to_blob(on_encoded.as_ref().unchecked_ref::<js_sys::Function>())
+            .is_err()
+        {
+            let _ = reject.call1(
+                &JsValue::NULL,
+                &JsValue::from_str("the export canvas could not be encoded"),
+            );
+        }
     })
 }
