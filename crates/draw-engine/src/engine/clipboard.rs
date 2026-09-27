@@ -561,6 +561,11 @@ impl DrawEngine {
                 }
             }
         }
+        // An arrow that stays is let go of a shape that is going, as the eraser and the
+        // vectorize let it go: the Delete key is a delete, and the release is part of this
+        // same step, so one undo binds the arrow again. An end on a shape that is not
+        // going is still good and is left alone.
+        crate::scene::binding::release_bindings_to_removed(&mut self.scene, &doomed);
         for id in doomed {
             // One made since the last commit — a text never typed into, left selected
             // while its session was ended the old way — was never there: dropped, not
