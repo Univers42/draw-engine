@@ -578,3 +578,148 @@ mod rename {
         assert!(engine.drain_events().scene_delta.is_none());
     }
 }
+
+// -------------------------------------------------------------------- resizing
+
+/// Drag a handle of `id` by `by`, in steps, with the layout the painter uses.
+fn resize_by(engine: &mut DrawEngine, id: &str, kind: HandleKind, by: (f64, f64)) {
+    let view = engine.paint_view();
+    let from = selection_handles(
+        &engine
+            .get_scene()
+            .into_iter()
+            .find(|el| el.id == id)
+            .expect("the frame is in the scene"),
+        view.handle_layout,
+    )
+    .into_iter()
+    .find(|h| h.kind == kind)
+    .map(|h| (h.x, h.y))
+    .expect("a frame offers that handle");
+    engine.begin_pointer(from.0, from.1, false, false);
+    for step in 1..=4 {
+        let t = f64::from(step) / 4.0;
+        engine.move_pointer(from.0 + by.0 * t, from.1 + by.1 * t, false, false);
+    }
+    engine.end_pointer();
+}
+
+/// A frame's corner reaches as far as a shape's, so a resized frame changes what is inside
+/// it — the property the frame section calls "membership", and the one that cannot be
+/// stored: it is re-derived from where things are.
+///
+/// The oracle re-derives it through `getElementsInResizingFrame`
+/// (`frame.ts@1118751f:283-378`), and the rule for a child that is not a group is on
+/// lines 299-316 and 342-348: one that ends up **wholly inside** the new bounds is in,
+/// and one that ends up **not touching it at all** is out. A child that only straddles the
+/// edge was already in and is left in — which is what makes it *clip*, the whole point of a
+/// frame holding something that pokes out.
+#[test]
+fn resizing_a_frame_takes_in_what_the_grown_bounds_now_hold() {
+    let child = filled(box_at(500.0, 500.0, 60.0, 40.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame_id = draw_frame(&mut engine, 20.0, 20.0, 200.0, 200.0);
+    assert_eq!(
+        child_frame_of(&engine, &child_id),
+        None,
+        "setup: the child starts outside the frame"
+    );
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![frame_id.clone()]);
+    resize_by(&mut engine, &frame_id, HandleKind::Se, (400.0, 400.0));
+
+    let frame = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == frame_id)
+        .expect("the frame is in the scene");
+    assert!(
+        element_in_frame_bounds(&filled(box_at(500.0, 500.0, 60.0, 40.0)), &frame),
+        "setup: the child should now be inside the grown frame"
+    );
+    assert_eq!(
+        child_frame_of(&engine, &child_id).as_deref(),
+        Some(frame_id.as_str()),
+        "a frame that grew over a shape should have taken it"
+    );
+}
+
+/// The other direction, and the one that has teeth: shrinking a frame must let go of what
+/// no longer fits, or a frame that was made small would keep a claim on the whole
+/// neighbourhood — invisible, because the claim is not drawn, and permanent, because
+/// moving the shape back inside would find it already home.
+#[test]
+fn resizing_a_frame_lets_go_of_what_no_longer_fits() {
+    let child = filled(box_at(60.0, 60.0, 80.0, 60.0));
+    let child_id = child.id.clone();
+    let mut engine = engine_with_scene(vec![child]);
+    let frame_id = draw_frame(&mut engine, 20.0, 20.0, 400.0, 300.0);
+    assert_eq!(
+        child_frame_of(&engine, &child_id).as_deref(),
+        Some(frame_id.as_str()),
+        "setup: the child starts inside the frame"
+    );
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![frame_id.clone()]);
+    // The frame spans 20..400 × 20..300 and the child 60..140 × 60..120. The corner
+    // handle sits 8px outside, at (408, 308); bringing it to (128, 108) leaves a frame of
+    // 20..128 × 20..108, so the child is wholly outside rather than straddling.
+    resize_by(&mut engine, &frame_id, HandleKind::Se, (-280.0, -200.0));
+
+    let frame = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == frame_id)
+        .expect("the frame is in the scene");
+    assert!(
+        !element_in_frame_bounds(&filled(box_at(60.0, 60.0, 80.0, 60.0)), &frame),
+        "setup: the child should now be outside the shrunken frame, whose box is \
+         ({}, {}) {}×{}",
+        frame.x,
+        frame.y,
+        frame.width,
+        frame.height
+    );
+    assert_eq!(
+        child_frame_of(&engine, &child_id),
+        None,
+        "a frame that shrank away from a shape should have let it go"
+    );
+}
+
+/// A frame's handles are its sides and corners, which is what makes "Resize frame" work at
+/// all: a frame is the one element whose whole job is its box, so the eight resize handles
+/// are the only ones it needs.
+#[test]
+fn a_frames_handles_are_its_corners_and_sides() {
+    let mut engine = engine_with_scene(vec![]);
+    let frame_id = draw_frame(&mut engine, 20.0, 20.0, 400.0, 300.0);
+    let frame = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == frame_id)
+        .expect("the frame is in the scene");
+    let view = engine.paint_view();
+    let kinds: Vec<HandleKind> = selection_handles(&frame, view.handle_layout)
+        .into_iter()
+        .map(|h| h.kind)
+        .collect();
+    for kind in [
+        HandleKind::Nw,
+        HandleKind::N,
+        HandleKind::Ne,
+        HandleKind::E,
+        HandleKind::Se,
+        HandleKind::S,
+        HandleKind::Sw,
+        HandleKind::W,
+    ] {
+        assert!(
+            kinds.contains(&kind),
+            "a frame's sides and corners are resizable, {kind:?} is missing from {kinds:?}"
+        );
+    }
+}

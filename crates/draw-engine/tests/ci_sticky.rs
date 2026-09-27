@@ -1386,3 +1386,154 @@ mod frames {
         );
     }
 }
+
+mod turning_it {
+    use super::*;
+
+    /// The rotate handle where the engine paints it, for the note as it stands.
+    fn rotate_handle(engine: &DrawEngine, note: &str) -> (f64, f64) {
+        let view = engine.paint_view();
+        selection_handles(&element(engine, note), view.handle_layout)
+            .into_iter()
+            .find(|h| h.kind == HandleKind::Rotate)
+            .map(|h| (h.x, h.y))
+            .expect("a note offers a rotation handle")
+    }
+
+    /// `a_turned_note_grows_from_its_top_edge` sets `angle` by hand to reach the resize
+    /// maths around a turned note. This drives the handle instead, because the checklist
+    /// line is about the handle and the hand-set field skips the whole gesture.
+    ///
+    /// The angle is the oracle's, for every element
+    /// (`rotateSingleElement`, `resizeElements.ts@1118751f:221-233`): `atan2(pointer -
+    /// centre) + pi/2`, about the middle of the element's absolute coords. Due right of
+    /// that centre is therefore exactly a quarter turn.
+    #[test]
+    fn the_rotation_handle_turns_a_note() {
+        let (mut engine, note, _) = note_with("short");
+        let before = element(&engine, &note);
+        assert_eq!(before.angle, 0.0, "setup: the note starts unturned");
+        // The oracle's centre: the middle of the note's absolute coords, read from its
+        // bounds rather than from the engine's own pivot.
+        let bounds = element_bounds(&before);
+        let middle = (
+            (bounds.min_x + bounds.max_x) / 2.0,
+            (bounds.min_y + bounds.max_y) / 2.0,
+        );
+
+        engine.set_tool(DrawTool::Select);
+        engine.select(vec![note.clone()]);
+        let from = rotate_handle(&engine, &note);
+        engine.begin_pointer(from.0, from.1, false, false);
+        for step in 1..=4 {
+            let t = f64::from(step) / 4.0;
+            let x = from.0 + (middle.0 + 300.0 - from.0) * t;
+            let y = from.1 + (middle.1 - from.1) * t;
+            engine.move_pointer(x, y, false, false);
+        }
+        engine.end_pointer();
+
+        let after = element(&engine, &note);
+        assert!(
+            (after.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+            "expected a quarter turn ({}), got {}",
+            std::f64::consts::FRAC_PI_2,
+            after.angle
+        );
+    }
+
+    /// A note is the one element that carries another element inside it, and the oracle
+    /// turns the label with the note — the same `angle`, and its position recomputed
+    /// against the turned note (`rotateSingleElement`, `resizeElements.ts@1118751f:256-272`).
+    ///
+    /// A note whose label stayed at `angle` 0 would be the worst kind of wrong here,
+    /// because it is invisible: the paper turns, the words on it do not, and both are
+    /// inside the same selection frame.
+    #[test]
+    fn a_turned_note_turns_its_label_with_it() {
+        let (mut engine, note, label) = note_with("short");
+        let before_label = element(&engine, &label);
+        let before_note = element(&engine, &note);
+        let note_centre = centre(&before_note);
+        let label_centre = centre(&before_label);
+        assert_near(label_centre.x, note_centre.x);
+        assert_near(label_centre.y, note_centre.y);
+        let bounds = element_bounds(&before_note);
+        let middle = (
+            (bounds.min_x + bounds.max_x) / 2.0,
+            (bounds.min_y + bounds.max_y) / 2.0,
+        );
+
+        engine.set_tool(DrawTool::Select);
+        engine.select(vec![note.clone()]);
+        let from = rotate_handle(&engine, &note);
+        engine.begin_pointer(from.0, from.1, false, false);
+        for step in 1..=4 {
+            let t = f64::from(step) / 4.0;
+            let x = from.0 + (middle.0 - from.0) * t;
+            let y = from.1 + (middle.1 + 300.0 - from.1) * t;
+            engine.move_pointer(x, y, false, false);
+        }
+        engine.end_pointer();
+
+        let after_note = element(&engine, &note);
+        let after_label = element(&engine, &label);
+        // Due *below* the centre: `atan2(+300, 0) + pi/2` is a half turn.
+        assert!(
+            (after_note.angle - std::f64::consts::PI).abs() < 1e-6,
+            "expected a half turn ({}), got {}",
+            std::f64::consts::PI,
+            after_note.angle
+        );
+        assert!(
+            (after_label.angle - after_note.angle).abs() < 1e-9,
+            "the label is painted on the note, so it turns with it: note {} vs label {}",
+            after_note.angle,
+            after_label.angle
+        );
+        // And it is still the middle of the note it is written on.
+        let after_centre = centre(&after_note);
+        let after_label_centre = centre(&after_label);
+        assert_near(after_label_centre.x, after_centre.x);
+        assert_near(after_label_centre.y, after_centre.y);
+    }
+
+    /// A turn changes no size, on a note any more than on a shape: the paper is still the
+    /// paper, and the label is still the same label bound to the same note.
+    #[test]
+    fn a_turn_changes_nothing_about_a_notes_size_or_its_label() {
+        let (mut engine, note, label) = note_with("short");
+        let before = element(&engine, &note);
+        let before_label = element(&engine, &label);
+
+        engine.set_tool(DrawTool::Select);
+        engine.select(vec![note.clone()]);
+        let from = rotate_handle(&engine, &note);
+        let bounds = element_bounds(&before);
+        engine.begin_pointer(from.0, from.1, false, false);
+        for step in 1..=4 {
+            let t = f64::from(step) / 4.0;
+            let x = from.0 + ((bounds.min_x + bounds.max_x) / 2.0 + 300.0 - from.0) * t;
+            let y = from.1 + ((bounds.min_y + bounds.max_y) / 2.0 - from.1) * t;
+            engine.move_pointer(x, y, false, false);
+        }
+        engine.end_pointer();
+
+        let after = element(&engine, &note);
+        assert_near(after.x, before.x);
+        assert_near(after.y, before.y);
+        assert_near(after.width, before.width);
+        assert_near(after.height, before.height);
+        let after_label = element(&engine, &label);
+        assert_eq!(after_label.id, before_label.id, "the same label");
+        assert_eq!(after_label.text, before_label.text, "with the same words");
+        assert_eq!(after_label.font_size, before_label.font_size);
+        assert_eq!(
+            after_label.container_id.as_deref(),
+            Some(note.as_str()),
+            "still bound to the same note"
+        );
+        assert_eq!(after_label.width, before_label.width);
+        assert_eq!(after_label.height, before_label.height);
+    }
+}
