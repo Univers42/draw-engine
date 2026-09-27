@@ -107,8 +107,10 @@ pub(super) fn ends<'a>(
         arrow.end_binding.as_ref().map(|b| b.fixed_point),
         orig_end,
     );
-    let start_heading = heading_for_snap(start, end, start_target.as_ref(), orig_start, zoom);
-    let end_heading = heading_for_snap(end, start, end_target.as_ref(), orig_end, zoom);
+    let outward = options.leave_outward;
+    let start_heading =
+        heading_for_snap(start, end, start_target.as_ref(), orig_start, zoom, outward);
+    let end_heading = heading_for_snap(end, start, end_target.as_ref(), orig_end, zoom, outward);
     let point_bounds = |p: Pt| [p[0] - 2.0, p[1] - 2.0, p[0] + 2.0, p[1] + 2.0];
     let (start_point_bounds, end_point_bounds) = (point_bounds(start), point_bounds(end));
     let element_bounds =

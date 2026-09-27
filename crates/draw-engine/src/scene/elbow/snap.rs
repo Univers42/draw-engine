@@ -51,8 +51,16 @@ pub fn global_fixed_point(fixed: [f64; 2], t: &Target) -> Pt {
 
 /// `getHeadingForElbowArrowSnap`: the far end's direction when there is no shape, the
 /// direction from the shape's middle when the end is off its outline (or exactly on it),
-/// and otherwise the cone the end is in.
-pub fn heading_for_snap(p: Pt, other: Pt, target: Option<&Target>, orig: Pt, zoom: f64) -> Heading {
+/// and otherwise the cone the end is in — or, `outward`, a side that does not send the
+/// arrow back through its shape ([`leaving`]).
+pub fn heading_for_snap(
+    p: Pt,
+    other: Pt,
+    target: Option<&Target>,
+    orig: Pt,
+    zoom: f64,
+    outward: bool,
+) -> Heading {
     let other_heading = vector_to_heading([other[0] - p[0], other[1] - p[1]]);
     let Some(t) = target else {
         return other_heading;
@@ -60,11 +68,50 @@ pub fn heading_for_snap(p: Pt, other: Pt, target: Option<&Target>, orig: Pt, zoo
     // `getBindPointHeading`: the box grown by how far the end is from the outline.
     let grown = aabb(t, Some([distance_to(t, p); 4]));
     let distance = distance_to(t, orig);
-    if distance > max_binding_distance(zoom) || distance == 0.0 || distance.is_nan() {
+    let heading = if distance > max_binding_distance(zoom) || distance == 0.0 || distance.is_nan() {
         let c = center(t);
-        return vector_to_heading([p[0] - c[0], p[1] - c[1]]);
+        vector_to_heading([p[0] - c[0], p[1] - c[1]])
+    } else {
+        heading_for_point_from_element(t, grown, p)
+    };
+    if outward {
+        leaving(t, p, heading)
+    } else {
+        heading
     }
-    heading_for_point_from_element(t, grown, p)
+}
+
+/// The heading an end leaves `t` by: `heading` when its first run is out within a unit,
+/// otherwise the heading whose run is inside least (see `clear_of_shapes` in the parent
+/// module for when this is asked).
+fn leaving(t: &Target, p: Pt, heading: Heading) -> Heading {
+    const OUT: f64 = 1.0;
+    let first = run_inside(t, p, heading);
+    if first <= OUT {
+        return heading;
+    }
+    [Heading::Up, Heading::Right, Heading::Down, Heading::Left]
+        .into_iter()
+        .map(|h| (run_inside(t, p, h), h))
+        .fold((first, heading), |best, next| {
+            if next.0 < best.0 - OUT {
+                next
+            } else {
+                best
+            }
+        })
+        .1
+}
+
+/// How far a run from `p` along `heading` goes before it has left `t` for good: nothing
+/// when it never meets the outline, otherwise up to the last place it crosses it.
+fn run_inside(t: &Target, p: Pt, heading: Heading) -> f64 {
+    let d = heading.vector();
+    let reach = 2.0 * t.width.max(t.height) + distance(p, center(t));
+    intersect(t, [p, [p[0] + d[0] * reach, p[1] + d[1] * reach]], 0.0)
+        .into_iter()
+        .map(|q| distance(p, q))
+        .fold(0.0, f64::max)
 }
 
 /// `getAllMidpoints`: right, bottom, left, top.

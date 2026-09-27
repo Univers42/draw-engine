@@ -86,21 +86,6 @@ fn near(a: Point, b: Point, tolerance: f64) -> bool {
     (a.x - b.x).hypot(a.y - b.y) <= tolerance
 }
 
-/// Whether the straight segment `a → b` runs through `shape`: some point strictly between
-/// its ends is inside the painted outline.
-fn runs_through(shape: &DrawElement, a: Point, b: Point) -> bool {
-    (1..400).any(|i| {
-        let t = i as f64 / 400.0;
-        is_inside(
-            shape,
-            Point {
-                x: a.x + (b.x - a.x) * t,
-                y: a.y + (b.y - a.y) * t,
-            },
-        )
-    })
-}
-
 /// Whether `p` is a gap clear of a box's outline, where an orbiting end stops.
 ///
 /// Exactly a gap along a side. Round a rounded corner the gap is measured from a circle of
@@ -122,13 +107,6 @@ fn stays_off(shape: &DrawElement, p: Point) -> bool {
     let bulge = 0.07 * draw_engine::render::shape::corner_radius(w.min(h), shape);
     let gap = binding_gap(shape);
     -signed_outline_distance(shape, p) >= gap - bulge.max(0.2 * gap) - 1e-6
-}
-
-/// Where the rotation handle turns a selection centred on `centre` to `degrees`,
-/// clockwise from north.
-fn toward(centre: (f64, f64), degrees: f64) -> (f64, f64) {
-    let r = degrees.to_radians();
-    (centre.0 + 300.0 * r.sin(), centre.1 - 300.0 * r.cos())
 }
 
 /// Turns the one selected element by dragging its rotation handle to `to`, found the way
@@ -199,31 +177,6 @@ fn an_inside_end_is_carried_round_exactly() {
     );
 }
 
-/// Turns the selection by its handle to `degrees` in two moves, checking the arrow half
-/// way through the gesture, at its end and after the release: what a person watches.
-fn turn_watching(
-    engine: &mut DrawEngine,
-    centre: (f64, f64),
-    top: f64,
-    degrees: f64,
-    check: &dyn Fn(&DrawEngine, &str),
-) {
-    engine.set_tool(DrawTool::Select);
-    let handle_y = (0..120)
-        .map(|dy| top - dy as f64)
-        .find(|&y| engine.hover_cursor(centre.0, y) == HoverCursor::Grab)
-        .expect("the selection has a rotation handle");
-    engine.begin_pointer(centre.0, handle_y, false, false);
-    let half = toward(centre, degrees / 2.0);
-    engine.move_pointer(half.0, half.1, false, false);
-    check(engine, "half way");
-    let full = toward(centre, degrees);
-    engine.move_pointer(full.0, full.1, false, false);
-    check(engine, "at the end of the drag");
-    engine.end_pointer();
-    check(engine, "released");
-}
-
 /// The owner's report: turning a shape let its arrow through the shape's corner, where it
 /// should stay on the outline and follow the turn. An end let go inside B keeps aiming at
 /// that point as B turns — the anchor turns with B — but is drawn where the aim first
@@ -280,27 +233,6 @@ fn an_arrow_between_two_turning_shapes_goes_through_neither() {
                 assert!(stops_at_outline(&b, tip), "off B's outline, {case}");
             });
         }
-    }
-}
-
-/// mulberry32: the same draws on every machine, so a failing seed replays exactly.
-struct Draws(u32);
-
-impl Draws {
-    fn next(&mut self) -> f64 {
-        self.0 = self.0.wrapping_add(0x6d2b_79f5);
-        let mut t = self.0;
-        t = (t ^ (t >> 15)).wrapping_mul(t | 1);
-        t ^= t.wrapping_add((t ^ (t >> 7)).wrapping_mul(t | 61));
-        f64::from(t ^ (t >> 14)) / 4_294_967_296.0
-    }
-
-    fn between(&mut self, lo: f64, hi: f64) -> f64 {
-        lo + self.next() * (hi - lo)
-    }
-
-    fn pick<T: Copy>(&mut self, list: &[T]) -> T {
-        list[((self.next() * list.len() as f64) as usize).min(list.len() - 1)]
     }
 }
 

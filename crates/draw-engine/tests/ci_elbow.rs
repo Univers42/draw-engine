@@ -6,8 +6,10 @@
 
 mod common;
 use common::*;
+use draw_engine::camera::Camera;
 use draw_engine::engine::ArrowType;
-use draw_engine::scene::elbow;
+use draw_engine::scene::elbow::{self, FixedSegment};
+use draw_engine::scene::BindMode;
 use draw_engine::selection::LinearHandle;
 use draw_engine::*;
 
@@ -210,6 +212,240 @@ fn moving_a_bound_shape_routes_the_arrow_after_it() {
     let scene = engine.get_scene();
     elbow::reroute(&mut expected, &elbow::Board::new(scene.iter()));
     assert_eq!(expected.points, after.points);
+}
+
+/// Turning a shape an elbow arrow is bound to routes the arrow round it: one of two
+/// shapes of any kind and proportion, or both, turned any amount by the handle. At every
+/// step of the turn the route runs through neither shape.
+#[test]
+fn turning_a_bound_shape_never_routes_the_arrow_through_it() {
+    let mut routed = 0;
+    let mut wrong: Vec<String> = Vec::new();
+    for seed in 0..200u32 {
+        let mut draws = Draws(seed);
+        let mut any = |id: &str, centre: (f64, f64)| {
+            let (w, h) = (draws.between(40.0, 200.0), draws.between(40.0, 200.0));
+            let (x, y) = (centre.0 - w / 2.0, centre.1 - h / 2.0);
+            let mut el = match draws.pick(&[0, 1, 2]) {
+                0 => box_at(x, y, w, h),
+                1 => diamond_at(x, y, w, h),
+                _ => ellipse_at(x, y, w, h),
+            };
+            if draws.next() < 0.5 {
+                el.roundness = None;
+            }
+            el.id = id.into();
+            filled(el)
+        };
+        let (a, b) = (any("a", (200.0, 320.0)), any("b", (580.0, 320.0)));
+        let mut engine = engine_with_scene(vec![a, b]);
+        engine.set_arrow_type(ArrowType::Elbow);
+        engine.set_tool(DrawTool::Arrow);
+        let mut inside = |c: (f64, f64), el: &DrawElement| {
+            let (dx, dy) = (draws.between(-0.3, 0.3), draws.between(-0.3, 0.3));
+            (c.0 + dx * el.width, c.1 + dy * el.height)
+        };
+        let from = inside((200.0, 320.0), &get(&engine, "a"));
+        let to = inside((580.0, 320.0), &get(&engine, "b"));
+        drag(&mut engine, from, to);
+        let Some(arrow) = arrows(&engine).pop() else {
+            continue;
+        };
+        if (arrow.start_binding.as_deref(), arrow.end_binding.as_deref()) != (Some("a"), Some("b"))
+        {
+            continue;
+        }
+        routed += 1;
+        let (a, b) = (get(&engine, "a"), get(&engine, "b"));
+        let (selection, centre, top) = match draws.pick(&[0, 1, 2]) {
+            0 => (vec!["a"], (200.0, 320.0), a.y),
+            1 => (vec!["b"], (580.0, 320.0), b.y),
+            _ => (
+                vec!["a", "b"],
+                ((a.x + b.x + b.width) / 2.0, 320.0),
+                a.y.min(b.y),
+            ),
+        };
+        let degrees = draws.between(5.0, 355.0);
+        engine.select(selection.iter().map(|id| id.to_string()).collect());
+        let case = format!("seed {seed}, {selection:?} turned {degrees:.0}°");
+        let found = std::cell::RefCell::new(Vec::new());
+        turn_watching(&mut engine, centre, top, degrees, &|e, when| {
+            let route: Vec<Point> = world(&get(e, &arrow.id))
+                .into_iter()
+                .map(|[x, y]| Point { x, y })
+                .collect();
+            for id in ["a", "b"] {
+                let shape = get(e, id);
+                if let Some(run) = route
+                    .windows(2)
+                    .position(|r| runs_through(&shape, r[0], r[1]))
+                {
+                    found.borrow_mut().push(format!(
+                        "{case}, {when}: run {run} goes through {id} ({:?}), {route:?}",
+                        shape.kind
+                    ));
+                }
+            }
+        });
+        wrong.extend(found.into_inner());
+    }
+    assert!(
+        routed >= 150,
+        "only {routed} of 200 arrows bound both shapes"
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} steps:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
+}
+
+/// The route of `id` in world points.
+fn route_of(engine: &DrawEngine, id: &str) -> Vec<Point> {
+    world(&get(engine, id))
+        .into_iter()
+        .map(|[x, y]| Point { x, y })
+        .collect()
+}
+
+/// Whether a run of `route` goes through `shape`, but for its first and last ten units:
+/// an end anchored on a rounded outline sits a hair inside it, and the run to it is not
+/// a crossing.
+fn crosses(shape: &DrawElement, route: &[Point]) -> bool {
+    let (first, last) = (route[0], route[route.len() - 1]);
+    let far = |q: Point| {
+        (q.x - first.x).hypot(q.y - first.y) > 10.0 && (q.x - last.x).hypot(q.y - last.y) > 10.0
+    };
+    route.windows(2).any(|run| {
+        (1..400).any(|k| {
+            let t = f64::from(k) / 400.0;
+            let q = Point {
+                x: run[0].x + (run[1].x - run[0].x) * t,
+                y: run[0].y + (run[1].y - run[0].y) * t,
+            };
+            far(q) && draw_engine::scene::binding::is_inside(shape, q)
+        })
+    })
+}
+
+/// An elbow arrow from a rounded diamond's point to a bigger one's, anchored on the points as
+/// imported diagrams anchor them — the owner's board, where it was. Turned 225° (Shift turns by
+/// 15°), the bigger diamond's point aims down a diagonal, where the oracle's heading is a tie
+/// that rounding breaks: here toward the side that runs the last leg 332 units through the
+/// diamond. Moved elsewhere on the board the tie breaks the other way, so the board's own
+/// coordinates are the test.
+#[test]
+fn an_end_on_a_turned_diamonds_point_leaves_it_outward() {
+    let mut s = diamond_at(1_896.833_312_988_281_3, 1_784.5, 206.5, 171.5);
+    s.id = "s".into();
+    let mut t = diamond_at(
+        2_203.333_312_988_281_3,
+        2_060.166_687_011_718_8,
+        430.500_122_070_312_5,
+        520.0,
+    );
+    t.id = "t".into();
+    s.roundness = Some(8.0);
+    t.roundness = Some(8.0);
+    let mut arrow = connector(
+        2_102.833_312_988_281_3,
+        1_870.5,
+        2_204.4,
+        2_320.9,
+        DrawElementType::Arrow,
+    );
+    arrow.id = "arrow".into();
+    arrow.elbowed = Some(true);
+    arrow.roundness = None;
+    arrow.points = Some(vec![
+        [0.0, 0.0],
+        [50.5, 0.0],
+        [50.5, 450.424_704_504_430_34],
+        [101.542_373_176_925_6, 450.424_704_504_430_34],
+    ]);
+    arrow.start_binding = Some("s".into());
+    arrow.start_fixed_point = Some([0.997_578_692_493_946_7, 0.501_457_725_947_521_9]);
+    arrow.start_bind_mode = Some(BindMode::Orbit);
+    arrow.end_binding = Some("t".into());
+    arrow.end_fixed_point = Some([0.002_421_307_506_053_269, 0.501_457_725_947_521_9]);
+    arrow.end_bind_mode = Some(BindMode::Orbit);
+    let (cx, cy) = (t.x + t.width / 2.0, t.y + t.height / 2.0);
+    let scale = 0.5;
+    for degrees in (15..360).step_by(15) {
+        let mut engine = engine_with_scene(vec![s.clone(), t.clone(), arrow.clone()]);
+        engine.set_camera(Camera {
+            x: 400.0 - cx * scale,
+            y: 300.0 - cy * scale,
+            scale,
+        });
+        engine.select(vec!["t".into()]);
+        let top = 300.0 - t.height / 2.0 * scale;
+        turn_watching(
+            &mut engine,
+            (400.0, 300.0),
+            top,
+            f64::from(degrees),
+            &|e, when| {
+                let route = route_of(e, "arrow");
+                let (s, t) = (get(e, "s"), get(e, "t"));
+                assert!(
+                    !crosses(&s, &route) && !crosses(&t, &route),
+                    "{degrees}° {when}: {route:?}"
+                );
+            },
+        );
+    }
+}
+
+/// A moved segment is kept while an end follows its shape, and the runs next to the end are
+/// redrawn square with nothing in their way considered. Turned under them, the shape can
+/// end up across one: then the arrow is routed afresh round it and the moved segment let go.
+/// The owner's board: a rectangle turned 145° had the run 142 units through it.
+#[test]
+fn a_moved_segment_gives_way_rather_than_cross_a_turned_shape() {
+    let mut a = box_at(170.8, 442.0, 206.5, 171.5);
+    a.id = "a".into();
+    let mut b = box_at(477.3, 170.5, 206.5, 171.5);
+    b.id = "b".into();
+    let mut arrow = connector(383.3, 527.8, 471.3, 256.3, DrawElementType::Arrow);
+    arrow.id = "arrow".into();
+    arrow.elbowed = Some(true);
+    arrow.roundness = None;
+    arrow.points = Some(vec![
+        [0.0, 0.0],
+        [44.0, 0.0],
+        [44.0, -277.8],
+        [66.0, -277.8],
+        [66.0, -271.5],
+        [88.0, -271.5],
+    ]);
+    arrow.fixed_segments = Some(vec![FixedSegment {
+        index: 3,
+        start: [44.0, -277.8],
+        end: [66.0, -277.8],
+    }]);
+    arrow.start_is_special = Some(false);
+    arrow.end_is_special = Some(false);
+    arrow.start_binding = Some("a".into());
+    arrow.start_fixed_point = Some([1.029_055_690_072_639_3, 0.5001]);
+    arrow.start_bind_mode = Some(BindMode::Orbit);
+    arrow.end_binding = Some("b".into());
+    arrow.end_fixed_point = Some([-0.029_055_690_072_639_227, 0.5001]);
+    arrow.end_bind_mode = Some(BindMode::Orbit);
+    for degrees in [135.0, 140.0, 145.0, 160.0] {
+        let mut engine = engine_with_scene(vec![a.clone(), b.clone(), arrow.clone()]);
+        engine.select(vec!["b".into()]);
+        turn_watching(&mut engine, (580.55, 256.25), 170.5, degrees, &|e, when| {
+            let route = route_of(e, "arrow");
+            let (a, b) = (get(e, "a"), get(e, "b"));
+            assert!(
+                !crosses(&a, &route) && !crosses(&b, &route),
+                "{degrees}° {when}: {route:?}"
+            );
+        });
+    }
 }
 
 #[test]

@@ -25,6 +25,16 @@ impl Heading {
         }
     }
 
+    /// One unit along the heading, in screen coordinates (y grows downward).
+    pub fn vector(self) -> Pt {
+        match self {
+            Heading::Up => [0.0, -1.0],
+            Heading::Right => [1.0, 0.0],
+            Heading::Down => [0.0, 1.0],
+            Heading::Left => [-1.0, 0.0],
+        }
+    }
+
     /// Right and down: the headings that grow a coordinate.
     pub fn is_positive(self) -> bool {
         matches!(self, Heading::Right | Heading::Down)

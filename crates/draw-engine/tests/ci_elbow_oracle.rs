@@ -8,11 +8,18 @@
 //! oracle's state after it, to 1e-9: the port is operation for operation, so a miss is a
 //! bug, never noise.
 //!
+//! One divergence is allowed, and counted: a step whose oracle route runs through a shape
+//! the arrow is bound to, where ours keeps clear of it (`elbow::clear_of_shapes`). The
+//! oracle leaves a shape by the side of its box an end is in, and with segments fixed
+//! redraws the runs next to each end with nothing in their way considered.
+//!
 //! Why 1e-9 and not 0: natively, 11014 of the 11176 steps are identical to the bit. The
 //! other 162 all involve a shape turned 2.5 rad, where the host's `sin` (glibc) and
 //! V8's disagree in the last place (0.5984721441039565 against …564). In the browser the
 //! engine's `sin` is compiled from Rust's own libm, not the host's.
 
+use draw_engine::camera::Point;
+use draw_engine::scene::binding::is_inside;
 use draw_engine::scene::elbow::{self, Board, ElbowBinding, FixedSegment, Options, Updates};
 use draw_engine::scene::{
     create_element, Anchor, BindMode, DrawElement, DrawElementType, End, Geometry,
@@ -281,6 +288,34 @@ fn end_of(name: &str) -> End {
     }
 }
 
+/// Whether `arrow`'s route runs through a shape in `shapes` it is bound to, but for its
+/// first and last ten units: an end anchored on a rounded outline sits a hair inside it.
+fn through_its_shapes(arrow: &DrawElement, shapes: &[DrawElement]) -> bool {
+    let route = draw_engine::selection::linear::world_points(arrow);
+    let (Some(&first), Some(&last)) = (route.first(), route.last()) else {
+        return false;
+    };
+    let far = |q: Point| {
+        (q.x - first.x).hypot(q.y - first.y) > 10.0 && (q.x - last.x).hypot(q.y - last.y) > 10.0
+    };
+    let bound: Vec<&DrawElement> = shapes
+        .iter()
+        .filter(|s| {
+            Some(&s.id) == arrow.start_binding.as_ref() || Some(&s.id) == arrow.end_binding.as_ref()
+        })
+        .collect();
+    route.windows(2).any(|run| {
+        (1..200).any(|k| {
+            let t = f64::from(k) / 200.0;
+            let q = Point {
+                x: run[0].x + (run[1].x - run[0].x) * t,
+                y: run[0].y + (run[1].y - run[0].y) * t,
+            };
+            far(q) && bound.iter().any(|s| is_inside(s, q))
+        })
+    })
+}
+
 #[test]
 fn routes_match_the_oracle() {
     let fixture = load();
@@ -292,6 +327,7 @@ fn routes_match_the_oracle() {
     assert_eq!(fixture.cases.len(), fixture.oracle.cases);
     let mut failures: Vec<String> = Vec::new();
     let mut steps = 0;
+    let mut kept_clear = 0;
     for case in &fixture.cases {
         let mut shapes: Vec<DrawElement> = case.shapes.iter().map(shape).collect();
         let mut current = arrow(&case.arrow);
@@ -379,17 +415,27 @@ fn routes_match_the_oracle() {
                 }
             }
             if let Some(why) = differs(&got, &step.arrow) {
-                failures.push(format!(
-                    "{} · step {i} {}: {why}",
-                    case.name,
-                    op_name(&step.op)
-                ));
+                let mut oracle = current.clone();
+                set_route(&mut oracle, &step.arrow);
+                if through_its_shapes(&oracle, &shapes) && !through_its_shapes(&got, &shapes) {
+                    kept_clear += 1;
+                } else {
+                    failures.push(format!(
+                        "{} · step {i} {}: {why}",
+                        case.name,
+                        op_name(&step.op)
+                    ));
+                }
             }
             // The next step starts from the oracle's state, not ours.
             set_route(&mut current, &step.arrow);
         }
     }
     assert_eq!(steps, fixture.oracle.steps);
+    assert_eq!(
+        kept_clear, 76,
+        "steps where the oracle's route crosses a bound shape and ours keeps clear"
+    );
     if !failures.is_empty() {
         let shown: Vec<&String> = failures.iter().take(25).collect();
         panic!(

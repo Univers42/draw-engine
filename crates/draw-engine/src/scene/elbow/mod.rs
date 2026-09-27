@@ -225,6 +225,9 @@ pub struct Options {
     /// The oracle routes through `mutateElement`, which never carries the zoom, so every
     /// route measures at 1 (`elbowArrow.ts@1118751f:1220-1222`).
     pub zoom: f64,
+    /// Each bound end leaves its shape by a side that does not face back across it
+    /// ([`snap::leaving`]): the second try of [`update`] when the oracle's route crosses.
+    pub leave_outward: bool,
 }
 
 impl Default for Options {
@@ -234,6 +237,7 @@ impl Default for Options {
             binding_enabled: true,
             midpoint_snapping: true,
             zoom: 1.0,
+            leave_outward: false,
         }
     }
 }
@@ -399,10 +403,26 @@ pub(crate) fn update(arrow: &Arrow, board: &Board, updates: &Updates, options: &
     };
     let e = route::ends(&rebound, board, &updated, options);
 
+    // Routed again with each end leaving its shape outward and nothing fixed — see
+    // [`clear_of_shapes`].
+    let outward = || {
+        let e = route::ends(
+            &rebound,
+            board,
+            &updated,
+            &Options {
+                leave_outward: true,
+                ..*options
+            },
+        );
+        let corners = route::corners_of(arrow.start_binding.is_some(), &e);
+        (normalize(corners, None, None, None), e)
+    };
+
     // 2. No fixed segments: route.
     if fixed.is_empty() {
         let corners = route::corners_of(arrow.start_binding.is_some(), &e);
-        return normalize(corners, Some(fixed), None, None);
+        return clear_of_shapes(normalize(corners, Some(fixed), None, None), &e, outward);
     }
     // 3. A segment released.
     if arrow.fixed_segments.as_ref().map_or(0, Vec::len) > fixed.len() {
@@ -430,7 +450,7 @@ pub(crate) fn update(arrow: &Arrow, board: &Board, updates: &Updates, options: &
         };
     }
     // 6. An end moved with segments fixed.
-    segments::drag_endpoint(
+    let dragged = segments::drag_endpoint(
         arrow,
         &updated,
         &fixed,
@@ -440,7 +460,70 @@ pub(crate) fn update(arrow: &Arrow, board: &Board, updates: &Updates, options: &
         e.end,
         e.start_target.as_ref(),
         e.end_target.as_ref(),
-    )
+    );
+    clear_of_shapes(dragged, &e, outward)
+}
+
+/// The oracle's `routed`, unless it runs through a shape the arrow is bound to and routing
+/// again as `outward` does keeps clear of them.
+///
+/// A divergence, and only where it helps. The oracle picks the side an end leaves by which
+/// quarter of its shape's box the end is in, and with segments fixed it redraws only the
+/// runs next to each end, square, with nothing in their way considered. Round a shape
+/// turned partway — or a diamond with an end on its point, as imported diagrams anchor
+/// them — either can send the arrow through its own shape (measured on Excalidraw's router
+/// at the pinned SHA: a diamond turned 145° to 225°). The second try leaves each shape
+/// outward and lets go of the segments moved by hand, which kept could only be drawn
+/// through the shape. Where the shapes overlap, or one holds the other, no route is clear
+/// and the oracle's stands.
+fn clear_of_shapes<'a>(
+    routed: Routed,
+    e: &route::Ends<'a>,
+    outward: impl FnOnce() -> (Routed, route::Ends<'a>),
+) -> Routed {
+    let crosses = |routed: &Routed, e: &route::Ends<'_>| {
+        [e.start_target.as_ref(), e.end_target.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|t| runs_through(routed, t))
+    };
+    if !crosses(&routed, e) {
+        return routed;
+    }
+    let (again, e) = outward();
+    if crosses(&again, &e) {
+        routed
+    } else {
+        again
+    }
+}
+
+/// Whether the route in `routed` runs through `t`, but for its first and last few units:
+/// an end anchored on the outline itself, as imported diagrams anchor them, sits a hair
+/// inside a rounded corner, and the run to it is not a crossing.
+fn runs_through(routed: &Routed, t: &Target) -> bool {
+    const ENDS: f64 = 2.0 * snap::BASE_BINDING_GAP;
+    let (Some(points), Some(x), Some(y)) = (&routed.points, routed.x, routed.y) else {
+        return false;
+    };
+    let global: Vec<Pt> = points.iter().map(|p| [x + p[0], y + p[1]]).collect();
+    let (Some(&first), Some(&last)) = (global.first(), global.last()) else {
+        return false;
+    };
+    global.windows(2).any(|run| {
+        let length = outline::distance(run[0], run[1]);
+        let steps = (length / 2.0).ceil().max(1.0) as usize;
+        (1..steps).any(|i| {
+            let t_ = i as f64 / steps as f64;
+            let q = [
+                run[0][0] + (run[1][0] - run[0][0]) * t_,
+                run[0][1] + (run[1][1] - run[0][1]) * t_,
+            ];
+            outline::distance(q, first) > ENDS
+                && outline::distance(q, last) > ENDS
+                && outline::contains(t, q)
+        })
+    })
 }
 
 fn apply_binding(element: &mut DrawElement, end: End, binding: Option<ElbowBinding>) {
