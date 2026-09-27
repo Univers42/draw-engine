@@ -286,9 +286,15 @@ impl DrawEngine {
         }
 
         if let Some(order_ids) = &patch.order {
+            // Resolved to what this scene holds before the pass below reads it: a named id it
+            // cannot produce — erased here and still live on the peer that has not been told,
+            // or an edit this tab has not received — spends a slot in a positional cursor that
+            // the scan can never fill. That is one O(m) pass over the order, on a path that was
+            // already O(n) over the board.
             let ids: Vec<&str> = order_ids
                 .iter()
                 .filter_map(serde_json::Value::as_str)
+                .filter(|id| self.scene.get(id).is_some_and(|e| !e.is_deleted))
                 .collect();
             if !ids.is_empty() {
                 // Told by a set: searched in the list once per element, a peer's order
@@ -309,9 +315,10 @@ impl DrawEngine {
                 //
                 // Each one goes back above the last of the order's elements the stack
                 // put under it, so a label stays above its shape and a frame child below
-                // its frame even where the peer's order moved those. Read as a count of
-                // the order's elements met so far, which only rises, so this is one pass
-                // and one stack.
+                // its frame even where the peer's order moved those. The ids are resolved
+                // to this scene's own live elements above, so every one of the order's slots
+                // is an element the scan can meet: read as a count of the order's elements
+                // met so far, which only rises, this is one pass and one stack.
                 let mut live: Vec<DrawElement> = Vec::with_capacity(self.scene.total_len());
                 let mut sent = 0usize;
                 let mut named = 0usize;
@@ -321,18 +328,13 @@ impl DrawEngine {
                         continue;
                     }
                     while sent < named {
-                        if let Some(element) = self.scene.get(ids[sent]).filter(|e| !e.is_deleted) {
-                            live.push(element.clone());
-                        }
+                        live.push(self.scene.get(ids[sent]).expect("resolved above").clone());
                         sent += 1;
                     }
                     live.push(element.clone());
                 }
-                while sent < ids.len() {
-                    if let Some(element) = self.scene.get(ids[sent]).filter(|e| !e.is_deleted) {
-                        live.push(element.clone());
-                    }
-                    sent += 1;
+                for id in &ids[sent..] {
+                    live.push(self.scene.get(id).expect("resolved above").clone());
                 }
                 self.scene.set_order(live);
                 changed = true;

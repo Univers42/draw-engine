@@ -716,9 +716,10 @@ mod several {
     /// `packages/element/src/bounds.ts@1118751f:940`) and widens the coords with
     /// `LinearElementEditor.getMinMaxXYWithBoundText` (`:952` for the degenerate one-point
     /// case, `:981` for the normal one), and `getCommonBounds` folds those bounds over the
-    /// selection (`:1005-1029`, the fold at `:1021`). And `elementsOverlappingBBox` builds
-    /// the label's own AABB and unions it in (`:1340`, `:1392-1408`), so a marquee
-    /// catches the arrow by that union and catches a label on its own (`:1416-1420`).
+    /// selection (`:1005-1029`, the fold at `:1022-1025`). And `elementsOverlappingBBox`
+    /// builds the label's own AABB (`:1340` declares it, `:1351-1365` builds it) and unions
+    /// it in (`:1392-1399`), so a marquee catches the arrow by that union and catches a label
+    /// on its own (`:1416-1420`).
     ///
     /// Ours cannot: an arrow's label is a separate element, linked by
     /// `container_id`/`bound_text_id`, and `element_outline_bounds`
