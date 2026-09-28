@@ -1,0 +1,81 @@
+{
+  "note": "Hand-computed label positions. Every `at` here was worked out on paper from the path's own definition, NOT read off a run of the engine, and no oracle fixture generator writes this file. That is the point of it: the numbers are a second source of truth, and a port that got the unit wrong disagrees with them for reasons no amount of self-consistency would hide.",
+  "unit": "`labelPosition` is a FRACTION of the path's total arc length, `targetLength = clamp(f, 0, 1) * totalLength` (linearElementEditor.ts@1118751f:2050). A fraction and a world-unit offset are indistinguishable on a straight horizontal line and disagree on everything else, so the cases below are built to disagree.",
+  "cases": [
+    {
+      "name": "a right angle, three points, sharp",
+      "why": "Chords of 120 and 90, so the path is 210 long. Three ways of reading the same number that a test must not confuse: a fraction of the bounding box (120 x 90), a fraction of each segment, and a world-unit offset. At 0.25 the answers are (52.5, 0) for a fraction of the length, (30, 0) for a box x-fraction, (30, 0) for a per-segment fraction, and (0.25, 0) for an offset. 0.6 puts the answer 6 into the SECOND chord, which a per-segment fraction could never reach.",
+      "points": [[0, 0], [120, 0], [120, 90]],
+      "roundness": null,
+      "angle": 0,
+      "expected": [
+        { "fraction": -0.5, "at": [0, 0] },
+        { "fraction": 0.0, "at": [0, 0] },
+        { "fraction": 0.25, "at": [52.5, 0] },
+        { "fraction": 0.5, "at": [105, 0] },
+        { "fraction": 0.6, "at": [120, 6] },
+        { "fraction": 0.75, "at": [120, 37.5] },
+        { "fraction": 1.0, "at": [120, 90] },
+        { "fraction": 1.5, "at": [120, 90] }
+      ]
+    },
+    {
+      "name": "one straight run, three hundred long, sharp",
+      "why": "A two-point path is drawn as a single cubic whose controls sit on the chord, so the curve IS the straight line and every fraction is exactly `a + f * (b - a)`. 0.25 of 300 is 75, not 0.25 and not 0.25 of the box by accident.",
+      "points": [[0, 0], [300, 0]],
+      "roundness": null,
+      "angle": 0,
+      "expected": [
+        { "fraction": -0.5, "at": [0, 0] },
+        { "fraction": 0.0, "at": [0, 0] },
+        { "fraction": 0.25, "at": [75, 0] },
+        { "fraction": 0.5, "at": [150, 0] },
+        { "fraction": 0.75, "at": [225, 0] },
+        { "fraction": 1.0, "at": [300, 0] },
+        { "fraction": 1.5, "at": [300, 0] }
+      ]
+    },
+    {
+      "name": "one straight run, three hundred long, rounded",
+      "why": "The SAME expected points as the sharp case above, and that is the finding rather than a copy: with two points a Catmull-Rom spline is the straight run through them, so `roundness` cannot move a label on a two-point path. A port that rounded a straight run into something else fails here.",
+      "points": [[0, 0], [300, 0]],
+      "roundness": 8,
+      "angle": 0,
+      "expected": [
+        { "fraction": -0.5, "at": [0, 0] },
+        { "fraction": 0.0, "at": [0, 0] },
+        { "fraction": 0.25, "at": [75, 0] },
+        { "fraction": 0.5, "at": [150, 0] },
+        { "fraction": 0.75, "at": [225, 0] },
+        { "fraction": 1.0, "at": [300, 0] },
+        { "fraction": 1.5, "at": [300, 0] }
+      ]
+    },
+    {
+      "name": "the same straight run, turned a quarter",
+      "why": "Points [[0,0],[300,0]] at x=y=0, turned by pi/2 about the centre of the points, which is (150, 0). The world path is therefore the VERTICAL run from (150, -150) to (150, 150), and 0.25 of it is (150, -75). A port that measured in the element's own unrotated frame answers (75, 0) — on the ghost of the path, which is the bug this whole task is about for a curved arrow, arriving here by another road.",
+      "points": [[0, 0], [300, 0]],
+      "roundness": null,
+      "angle": 1.5707963267948966,
+      "expected": [
+        { "fraction": 0.0, "at": [150, -150] },
+        { "fraction": 0.25, "at": [150, -75] },
+        { "fraction": 0.5, "at": [150, 0] },
+        { "fraction": 0.75, "at": [150, 75] },
+        { "fraction": 1.0, "at": [150, 150] }
+      ]
+    },
+    {
+      "name": "a symmetric arch, three points, rounded",
+      "why": "The Catmull-Rom control points, worked out by hand from the duplicated ends: the first cubic is [(0,0), (50/3,50/3), (200/3,100), (100,100)] and the second is its mirror in x = 100. Two equal halves, so half the arc length is exactly where they meet, which is the middle point (100, 100). The other fractions need the arc length of a cubic and are NOT here; the bowed case is cross-checked against a second implementation instead, because a hand-waved integration constant is a magic number wearing a lab coat.",
+      "points": [[0, 0], [100, 100], [200, 0]],
+      "roundness": 8,
+      "angle": 0,
+      "expected": [
+        { "fraction": 0.0, "at": [0, 0] },
+        { "fraction": 0.5, "at": [100, 100] },
+        { "fraction": 1.0, "at": [200, 0] }
+      ]
+    }
+  ]
+}

@@ -189,6 +189,13 @@ impl DrawEngine {
                     handle: next,
                 })
             }
+            Interaction::LabelDrag { ref id, grab } => {
+                self.move_label(id, grab, world);
+                Some(Interaction::LabelDrag {
+                    id: id.clone(),
+                    grab,
+                })
+            }
             Interaction::Linear { ref id, start, .. } => {
                 self.move_linear(id, start, world, square);
                 Some(Interaction::Linear {
@@ -377,6 +384,45 @@ impl DrawEngine {
         self.scene.put(moved);
         let label = crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.rewrap_linear_labels(label);
+        self.request_draw();
+    }
+
+    /// Puts `arrow`'s label where the pointer has carried it, along the arrow's own drawn
+    /// path — `handleBoundTextDragging`
+    /// (`linearElementEditor.ts@1118751f:1963-2030`).
+    ///
+    /// Three steps, in the oracle's order: take the pointer off the grab offset, read the
+    /// fraction of the path nearest what is left, and put the label on the path at that
+    /// fraction. Reading a fraction and *then* locating the point is what keeps the label on
+    /// the curve; snapping the pointer's projection straight onto the geometry would put it
+    /// on the polyline, which is a different place on anything bent.
+    ///
+    /// The arrow is read and never written: no points, no extent, no bindings, and no
+    /// `apply_bindings`. The oracle mutates the bound text alone, and an arrow that followed
+    /// its label would be an arrow whose ends no longer touch what they are bound to.
+    fn move_label(&mut self, id: &str, grab: Point, world: Point) {
+        let Some(arrow) = self.scene.get(id).cloned() else {
+            return;
+        };
+        let Some(label) = self.live_label(&arrow).cloned() else {
+            return;
+        };
+        let carried = Point {
+            x: world.x - grab.x,
+            y: world.y - grab.y,
+        };
+        let Some(fraction) = crate::selection::linear::path_fraction_at_point(&arrow, carried)
+        else {
+            return;
+        };
+        let Some(at) = crate::selection::linear::path_point_at_fraction(&arrow, fraction) else {
+            return;
+        };
+        let mut next = label;
+        next.label_position = Some(fraction);
+        next.x = at.x - next.width / 2.0;
+        next.y = at.y - next.height / 2.0;
+        self.scene.put(next);
         self.request_draw();
     }
 

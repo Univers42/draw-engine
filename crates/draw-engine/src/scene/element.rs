@@ -443,6 +443,22 @@ pub struct DrawElement {
     /// (`false`). Free text says the same with [`auto_resize`](Self::auto_resize).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap: Option<bool>,
+    /// Only a label's: how far along its arrow's drawn path it sits, as a **fraction of
+    /// that path's arc length** — Excalidraw's `labelPosition`
+    /// (`packages/element/src/types.ts@1118751f:290`).
+    ///
+    /// `None` — every label saved before this existed — is the middle, which is exactly
+    /// where those were always drawn. A fraction and not an offset in world units: the
+    /// oracle writes `(prefixSums[i] + lengthWithinSegment) / totalLength`
+    /// (`linearElementEditor.ts@1118751f:2011-2018`) and reads
+    /// `clamp(fraction, 0, 1) * totalLength` (`:2050`), so a label stays where it was put
+    /// when the arrow is lengthened.
+    ///
+    /// Read it through [`label_fraction`](Self::label_fraction), which clamps it into
+    /// `[0, 1]` and drops a value that is not a number — as the oracle's restore does
+    /// (`packages/excalidraw/data/restore.ts@1118751f:573-575`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_position: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -536,6 +552,19 @@ impl DrawElement {
     pub fn is_polygon(&self) -> bool {
         self.polygon.unwrap_or(false)
     }
+
+    /// How far along its arrow this label sits, as a fraction of the path's arc length
+    /// clamped into `[0, 1]`. See [`Self::label_position`].
+    ///
+    /// `None` for a number that did not survive the trip — the oracle's restore reads
+    /// `isFiniteNumber(element.labelPosition) ? clamp(element.labelPosition, 0, 1) : null`
+    /// (`packages/excalidraw/data/restore.ts@1118751f:573-575`) — and a position that is
+    /// `None` is the label's middle, which is where it was before anybody could set one.
+    pub fn label_fraction(&self) -> Option<f64> {
+        self.label_position
+            .filter(|fraction| fraction.is_finite())
+            .map(|fraction| crate::math::clamp(fraction, 0.0, 1.0))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -619,6 +648,7 @@ pub fn create_element(
         vertical_align: None,
         auto_resize: None,
         wrap: None,
+        label_position: None,
         container_id: None,
         bound_text_id: None,
         group_ids: Vec::new(),

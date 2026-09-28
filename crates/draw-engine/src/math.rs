@@ -132,9 +132,7 @@ pub fn catmull_rom_cubics(points: &[[f64; 2]], tightness: f64) -> Vec<Cubic> {
     if points.len() == 2 {
         // A straight run. Given as a cubic with its controls on the line so that callers
         // get the same shape of answer whatever the path looks like.
-        let (a, b) = (points[0], points[1]);
-        let third = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-        return vec![[a, third(1.0 / 3.0), third(2.0 / 3.0), b]];
+        return vec![chord_cubic(points[0], points[1])];
     }
 
     // The duplicated ends, exactly as rough builds them.
@@ -159,6 +157,17 @@ pub fn catmull_rom_cubics(points: &[[f64; 2]], tightness: f64) -> Vec<Cubic> {
         out.push([start, b1, b2, end]);
     }
     out
+}
+
+/// A straight run as a cubic: the two ends and two controls evenly spaced between them.
+///
+/// The four control points are collinear and evenly spaced, so the Bezier is exactly
+/// `a + t (b - a)` — this *is* the chord, and gives a path of straight segments the same
+/// shape of answer as one of curves, which is what lets a caller measure a fraction of the
+/// way along a line without branching on whether the line is round.
+pub fn chord_cubic(a: [f64; 2], b: [f64; 2]) -> Cubic {
+    let third = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    [a, third(1.0 / 3.0), third(2.0 / 3.0), b]
 }
 
 /// A point on a cubic at parameter `t`.
@@ -191,38 +200,110 @@ const ARC_STEPS: usize = 64;
 /// at these sizes, and the tests assert the property — *the handle is on the path, half
 /// way along it* — rather than the method, so neither is locked in.
 pub fn bezier_point_at_fraction(curve: &Cubic, fraction: f64) -> [f64; 2] {
-    let fraction = clamp(fraction, 0.0, 1.0);
+    let (samples, lengths) = arc_table(curve);
+    point_at_length(
+        &samples,
+        &lengths,
+        clamp(fraction, 0.0, 1.0) * *lengths.last().unwrap(),
+    )
+}
+
+/// A cubic's arc length, by the same walk [`bezier_point_at_fraction`] uses.
+pub fn bezier_length(curve: &Cubic) -> f64 {
+    let (_, lengths) = arc_table(curve);
+    *lengths.last().unwrap_or(&0.0)
+}
+
+/// The arc length of a cubic from its start to parameter `t`.
+///
+/// What the oracle asks of a curve when a drag puts a label somewhere on it:
+/// `curveLengthAtParameter` (`packages/math/src/curve.ts@1118751f:477-506`). The nearest
+/// place on a curve is not at half its parameter, so a gesture that wants the closest point
+/// on a segment has to be able to ask how far along *this* `t` is.
+pub fn bezier_length_to(curve: &Cubic, t: f64) -> f64 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return bezier_length(curve);
+    }
+    let (_, lengths) = arc_table(curve);
+    // The step the target falls in, and how far into it, as a fraction of the step.
+    let at = t * ARC_STEPS as f64;
+    let index = (at.floor() as usize).min(ARC_STEPS - 1);
+    let span = lengths[index + 1] - lengths[index];
+    lengths[index] + span * (at - index as f64).clamp(0.0, 1.0)
+}
+
+/// The walk: a cubic sampled evenly, and the ground covered to each sample.
+///
+/// One walk, three readers — the total, a length to a point, a length to a parameter. They
+/// have to agree with each other exactly, or a fraction of a whole path would be measured by
+/// one rule and located by another, so they read this one table.
+fn arc_table(curve: &Cubic) -> (Vec<[f64; 2]>, Vec<f64>) {
     let mut samples = Vec::with_capacity(ARC_STEPS + 1);
     let mut lengths = Vec::with_capacity(ARC_STEPS + 1);
     let mut total = 0.0;
     for step in 0..=ARC_STEPS {
         let point = bezier_point(curve, step as f64 / ARC_STEPS as f64);
-        if step > 0 {
-            let previous: [f64; 2] = samples[step - 1];
+        if let Some(previous) = samples.last() {
+            let previous: [f64; 2] = *previous;
             total += (point[0] - previous[0]).hypot(point[1] - previous[1]);
         }
         samples.push(point);
         lengths.push(total);
     }
-    if total <= f64::EPSILON {
-        return curve[0];
-    }
+    (samples, lengths)
+}
 
-    let target = total * fraction;
-    let index = lengths
-        .iter()
-        .position(|&length| length >= target)
-        .unwrap_or(ARC_STEPS);
+/// The parameter of a cubic nearest `at`, by walking to it.
+///
+/// A coarse pass finds the nearest of 32 steps and a bisection narrows inside it, which is
+/// sound because the distance to a point is unimodal over a step this small. Excalidraw
+/// solves the cubic that `d/dt |B(t) - p|² = 0` gives it
+/// (`curveClosestParameter`, `packages/math/src/curve.ts@1118751f:223-`); this arrives at
+/// the same place by a different road, and what a caller wants from either is *which point
+/// of the curve is nearest*, not a parameter.
+pub fn cubic_closest_parameter(curve: &Cubic, at: [f64; 2]) -> f64 {
+    const STEPS: usize = 32;
+    let away = |t: f64| {
+        let p = bezier_point(curve, t);
+        (p[0] - at[0]).hypot(p[1] - at[1])
+    };
+    let mut nearest = 0;
+    for step in 0..=STEPS {
+        if away(step as f64 / STEPS as f64) < away(nearest as f64 / STEPS as f64) {
+            nearest = step;
+        }
+    }
+    let mut lo = nearest.saturating_sub(1) as f64 / STEPS as f64;
+    let mut hi = (nearest + 1).min(STEPS) as f64 / STEPS as f64;
+    for _ in 0..24 {
+        let mid = (lo + hi) / 2.0;
+        if away(mid) < away(lo) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
+/// The point `length` along a walk, interpolating inside the step that reaches it.
+fn point_at_length(samples: &[[f64; 2]], lengths: &[f64], length: f64) -> [f64; 2] {
+    let Some(index) = lengths.iter().position(|&walked| walked >= length) else {
+        return *samples.last().unwrap_or(&[0.0, 0.0]);
+    };
     if index == 0 {
         return samples[0];
     }
-    // Where in this piece the target falls. The piece is a straight line by construction,
-    // so a plain interpolation along it is exact.
+    // The step is a straight line by construction, so a plain interpolation along it is
+    // exact rather than another approximation.
     let span = lengths[index] - lengths[index - 1];
     let t = if span <= f64::EPSILON {
         0.0
     } else {
-        (target - lengths[index - 1]) / span
+        (length - lengths[index - 1]) / span
     };
     [
         lerp(samples[index - 1][0], samples[index][0], t),

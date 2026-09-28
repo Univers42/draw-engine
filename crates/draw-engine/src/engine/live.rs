@@ -57,6 +57,7 @@ impl DrawEngine {
                 | Interaction::Resize { id, .. }
                 | Interaction::Rotate { id }
                 | Interaction::LinearPoint { id, .. }
+                | Interaction::LabelDrag { id, .. }
                 | Interaction::CornerRadius { id, .. },
             ) => {
                 ids.insert(id.clone());

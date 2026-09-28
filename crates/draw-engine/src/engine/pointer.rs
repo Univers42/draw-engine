@@ -562,6 +562,19 @@ impl DrawEngine {
                     });
                     return;
                 }
+                // An arrow's label, last. Everything above has already said no: the box
+                // handles, the point handles and the segment-midpoint knob. That is the
+                // oracle's precedence exactly, its label losing to the handles sitting
+                // under it so a labelled arrow can still be bent at its middle
+                // (`App.tsx@1118751f:1149-1151`), and winning everywhere else, including
+                // where it reaches past the arrow's own hit area.
+                if let Some(grab) = self.label_grab(&single, press) {
+                    self.interaction = Some(Interaction::LabelDrag {
+                        id: single.id.clone(),
+                        grab,
+                    });
+                    return;
+                }
             }
         }
         // More than one element selected: the handles belong to the group's frame.
@@ -875,5 +888,33 @@ impl DrawEngine {
         };
         (!text.is_deleted && !self.untouchable(&text) && !self.in_untouchable_shape(&text))
             .then_some(text.id)
+    }
+
+    /// Where in `element`'s label a press at `world` landed: the press measured from the
+    /// label's centre, which is the whole of `boundTextGrabOffset`
+    /// (`linearElementEditor.ts@1118751f:1170-1176`).
+    ///
+    /// `None` unless the press is on the label of an **arrow**: the oracle's guard is
+    /// `boundTextElement && isArrowElement(element)`
+    /// (`linearElementEditor.ts@1118751f:1157-1165`), so a line's label is not draggable
+    /// and neither is anything but a text. Read with [`crate::hit_test_element`], the same
+    /// test [`Self::text_reopen_target`] reads, because it is the oracle's
+    /// `hitElementBoundText` and a text is hit on its box.
+    pub(crate) fn label_grab(&self, element: &DrawElement, world: Point) -> Option<Point> {
+        if !crate::scene::binding::is_binding_element(element) {
+            return None;
+        }
+        let label = self.live_label(element)?;
+        if !crate::hit_test_element(label, world.x, world.y, self.collision_tolerance()) {
+            return None;
+        }
+        let centre = Point {
+            x: label.x + label.width / 2.0,
+            y: label.y + label.height / 2.0,
+        };
+        Some(Point {
+            x: world.x - centre.x,
+            y: world.y - centre.y,
+        })
     }
 }

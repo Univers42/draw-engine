@@ -233,6 +233,20 @@ pub(crate) enum Interaction {
         id: String,
         handle: crate::selection::LinearHandle,
     },
+    /// Dragging an arrow's label along the arrow.
+    ///
+    /// The label's position along the path is the *only* thing this writes: the arrow keeps
+    /// its points, its extent and its bindings, which is what separates a label drag from a
+    /// drag of the arrow — the oracle's `handleBoundTextDragging`
+    /// (`linearElementEditor.ts@1118751f:1963-2030`) mutates the bound text alone.
+    ///
+    /// `grab` is the press measured from the label's **centre**, so the label follows the
+    /// pointer by the delta from the grab rather than jumping its centre onto the cursor —
+    /// `boundTextGrabOffset`, `linearElementEditor.ts@1118751f:1170-1176`.
+    LabelDrag {
+        id: String,
+        grab: Point,
+    },
     /// A free-form selection loop in progress.
     ///
     /// The path is world-space and accumulates as the pointer moves; the engine
