@@ -1,4 +1,6 @@
+pub mod base64;
 pub mod clipboard;
+pub mod font_face;
 pub mod json;
 pub mod png;
 pub mod png_chunk;
@@ -7,6 +9,7 @@ pub mod scope;
 pub mod svg;
 
 pub use clipboard::*;
+pub use font_face::*;
 pub use json::*;
 pub use png::*;
 pub use png_chunk::*;

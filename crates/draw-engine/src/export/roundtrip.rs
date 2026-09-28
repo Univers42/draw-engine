@@ -128,7 +128,10 @@ pub enum Restore {
 pub fn scene_payload(elements: &[&DrawElement]) -> String {
     let owned: Vec<DrawElement> = elements.iter().map(|element| (*element).clone()).collect();
     let json = crate::scene_to_json(&owned);
-    format!("{SCENE_PAYLOAD_VERSION}:{}", base64_encode(json.as_bytes()))
+    format!(
+        "{SCENE_PAYLOAD_VERSION}:{}",
+        super::base64::encode(json.as_bytes())
+    )
 }
 
 /// The scene in `bytes`, or why there is none.
@@ -245,34 +248,6 @@ fn scene_json_of(payload: &str) -> Option<String> {
     String::from_utf8(base64_decode(encoded)?).ok()
 }
 
-/// Base64, the standard alphabet with padding (RFC 4648 §4).
-///
-/// Written out rather than pulled in: it is 20 lines, and every crate that does it — the
-/// `base64` family — is a dependency BUNNY.md §3.2 does not allow, for a codec this module
-/// is the only caller of.
-fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for group in bytes.chunks(3) {
-        // Left-aligned into 24 bits before the shifts, so the last group — which is one or
-        // two bytes, not three — lands in the same place as every other one. Without it a
-        // two-byte tail is read one whole byte too far left and the file comes back with a
-        // character flipped in it; see the RFC 4648 vectors in
-        // `ci_export_roundtrip_bytes.rs`, which is where that is pinned.
-        let packed = group
-            .iter()
-            .fold(0u32, |acc, byte| (acc << 8) | u32::from(*byte))
-            << (8 * (3 - group.len()));
-        for index in 0..=group.len() {
-            out.push(ALPHABET[((packed >> (18 - 6 * index)) & 0x3F) as usize] as char);
-        }
-        for _ in group.len()..3 {
-            out.push('=');
-        }
-    }
-    out
-}
-
 /// Base64, strictly: a length that is not a multiple of four, a character outside the
 /// alphabet, or padding anywhere but the end is `None`.
 ///
@@ -282,7 +257,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 /// would hand back a JSON cut in the middle of a string, and how that is reported is
 /// exactly the kind of thing this module is not guessing about.
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = super::base64::ALPHABET;
     let bytes = text.as_bytes();
     if !bytes.len().is_multiple_of(4) {
         return None;

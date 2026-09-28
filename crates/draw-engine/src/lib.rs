@@ -34,10 +34,10 @@ pub use engine::{
     TextEditRequest, TextEditSession,
 };
 pub use export::{
-    elements_from_json, insert_text_chunk, restore, scene_payload, scene_to_json, scene_to_svg,
-    ClipboardCopy, ClipboardFormat, ClipboardHost, ClipboardRefusal, ExportFrame, ExportOptions,
-    ExportScopeKind, OsidrawFile, PngError, Restore, RestoreRefusal, DEFAULT_EXPORT_PADDING,
-    SCENE_FORMAT, SCENE_PAYLOAD_VERSION,
+    elements_from_json, font_face_files, insert_text_chunk, restore, scene_payload, scene_to_json,
+    scene_to_svg, ClipboardCopy, ClipboardFormat, ClipboardHost, ClipboardRefusal, ExportFrame,
+    ExportOptions, ExportScopeKind, OsidrawFile, PngError, Restore, RestoreRefusal, ShippedFace,
+    DEFAULT_EXPORT_PADDING, SCENE_FORMAT, SCENE_PAYLOAD_VERSION, SHIPPED_FONT_FACES,
 };
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
@@ -68,12 +68,12 @@ pub use scene::{
     element_rotated_bounds, hit_test, hit_test_element, is_auto_resize, is_bindable_element,
     is_binding_element, is_linear_element, is_path_a_loop_within, is_transparent, layout_label,
     linear_endpoints, linear_from_endpoints, linear_retarget, local_box, local_center, merge_style,
-    new_element_id, normalize_rect, refresh_bindings, resolved_font_family, resolved_line_height,
-    resolved_text_align, resolved_vertical_align, rotation_center, scene_bounds,
-    scene_outline_bounds, segment_hits_element, source_text, Arrowhead, DrawElement,
-    DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene,
-    StrokeStyle, TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS,
-    VERTICAL_ALIGNS,
+    new_element_id, normalize_rect, refresh_bindings, resolved_font_family,
+    resolved_font_family_id, resolved_line_height, resolved_text_align, resolved_vertical_align,
+    rotation_center, scene_bounds, scene_outline_bounds, segment_hits_element, source_text,
+    Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle,
+    Geometry, Rect, Scene, StrokeStyle, TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP,
+    LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,
