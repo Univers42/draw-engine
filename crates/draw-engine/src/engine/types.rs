@@ -287,6 +287,25 @@ pub(crate) struct MultiLinear {
     pub committed: usize,
 }
 
+/// Which points of which line or arrow are held.
+///
+/// The oracle keeps this in one place — `appState.selectedLinearElement`, which carries
+/// `elementId`, `isEditing` and `selectedPointsIndices` together
+/// (`linearElementEditor.ts@1118751f:196-197`) — so the element is reached *through* the
+/// index list rather than beside it. That is why the id travels here too: the delete
+/// action resolves `linearElementEditor.elementId` to the element it is about to take
+/// points off (`actionDeleteSelected.tsx@1118751f:215-221`), and the element a set of
+/// points belongs to is not always the open one — a two-point line is edited by its
+/// points without a point editor ever being opened, which is what gate four of
+/// `handleSelectionOnPointerDown` is for (`App.tsx:9355-9359`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PointSelection {
+    pub id: String,
+    /// Sorted and without duplicates — [`super::selection::linear::normalize_selected_points`]
+    /// keeps it that way, so `indices[0]` is the lowest held index.
+    pub indices: Vec<usize>,
+}
+
 /// The measurement used when no browser is available — host tests, and a server-side
 /// render.
 ///

@@ -31,6 +31,7 @@ pub use peers::Peer;
 mod multi_linear;
 mod paste_text;
 mod peers;
+mod point_edit;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -50,7 +51,7 @@ pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub use selection_style::{ArrowType, ColorDomain, Edges, SelectionStyle};
 pub use text_session::{TextEditLayout, TextEditSession};
-pub(crate) use types::{default_measure, Interaction};
+pub(crate) use types::{default_measure, Interaction, PointSelection};
 pub use types::{merge_style_patch, EngineEvents, FrameRenameRequest, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
@@ -158,6 +159,24 @@ pub struct DrawEngine {
     ///
     /// Held by id rather than by index because the scene is reordered underneath it.
     editing_linear: Option<String>,
+    /// Which of that element's points are held, if any.
+    ///
+    /// The oracle's `appState.selectedLinearElement.selectedPointsIndices`
+    /// (`packages/element/src/linearElementEditor.ts@1118751f:196`, set to `null` by the
+    /// constructor at `:199`). **`None` means no point is held, and it is not the same
+    /// thing as holding an empty set**: the difference is the entire first branch of the
+    /// delete action — a `null` index list falls through to deleting whole elements,
+    /// which is the common case and the one that must not be confused with "the points
+    /// went" (`actionDeleteSelected.tsx@1118751f:225-231`). So this type has no
+    /// `Some(vec![])`, and [`Self::select_point`] is the only thing that writes it.
+    ///
+    /// A press on a point is the only gesture that fills it, and that is faithful: the
+    /// oracle's other writer, the marquee `handleBoxSelection`
+    /// (`linearElementEditor.ts:248-309`), cannot run — its only call site is guarded by
+    /// `!isEditing` (`:11274`) while its own guard needs a `selectionElement` that only
+    /// the sibling branch on the other side of that same guard ever sets
+    /// (`App.tsx:11282`, `:10497`).
+    selected_points: Option<PointSelection>,
     /// The group that has been stepped into, if any.
     ///
     /// Session state, not document state: which level you are looking at is a property of
@@ -334,6 +353,7 @@ impl DrawEngine {
             original_container_heights: HashMap::new(),
             interaction: None,
             editing_linear: None,
+            selected_points: None,
             editing_group_id: None,
             narrow_on_click: None,
             reopen_text_on_click: None,
@@ -764,6 +784,14 @@ impl DrawEngine {
                 self.editing_linear = None;
             }
         }
+        // The points held belong to the editor that is closing. Left behind, a fresh
+        // `LinearElementEditor` over the next line would open already holding indices
+        // that name somebody else's points, and the first Delete would remove them —
+        // the oracle never has this state to get wrong, because it constructs a new
+        // editor with `selectedPointsIndices: null` on every selection change
+        // (`linearElementEditor.ts@1118751f:199`, `_getLinearElementEditor`,
+        // `selection.ts@1118751f:248-266`).
+        self.selected_points = None;
         self.revalidate_editing();
         self.settle_selection();
         self.touch_style();
@@ -811,8 +839,81 @@ impl DrawEngine {
     /// The shape of the element decides it — two points or fewer — plus the one element
     /// the person has explicitly opened by double clicking it.
     pub(crate) fn shows_point_handles(&self, element: &DrawElement) -> bool {
-        crate::selection::linear::is_point_edited(element)
-            || self.editing_linear.as_deref() == Some(element.id.as_str())
+        !self.offers_transform_handles(element)
+    }
+
+    /// Whether a press on this element offers a bounding box with handles on it.
+    ///
+    /// The negation of [`Self::shows_point_handles`], named for what the five gates on
+    /// `handleSelectionOnPointerDown` are about
+    /// (`packages/excalidraw/components/App.tsx@1118751f:9351-9364`):
+    ///
+    /// ```ts
+    /// if (
+    ///   selectedElements.length === 1 &&                        // :9352
+    ///   !this.state.selectedLinearElement?.isEditing &&          // :9353
+    ///   !isElbowArrow(selectedElements[0]) &&                    // :9354
+    ///   !(isLinearElement(selectedElements[0]) &&
+    ///     (this.editorInterface.userAgent.isMobileDevice ||
+    ///      selectedElements[0].points.length === 2)) &&          // :9355-9359
+    ///   !(this.state.selectedLinearElement &&
+    ///     this.state.selectedLinearElement.hoverPointIndex !== -1)  // :9360-9363
+    /// ) {
+    /// ```
+    ///
+    /// The first four of those, read one at a time:
+    ///
+    /// - **`:9352`** is about the *selection*, not the element, so it is
+    ///   [`Self::selection_offers_transform_handles`] — five gates in a row, and this one
+    ///   is about what is held rather than what was pressed.
+    /// - **`:9353`** is this element's point editor being open, which is
+    ///   [`Self::editing_linear`] — the same `isEditing` the oracle keeps beside
+    ///   `selectedPointsIndices` in one object (`linearElementEditor.ts:196-197`).
+    /// - **`:9354`** and **`:9355-9359`** are both [`is_point_edited`], which is the
+    ///   elbow and the two-point rule in one predicate: an elbow arrow of any length is
+    ///   routed rather than drawn, and two points make a degenerate box, so neither is
+    ///   offered one (`transformHandles.ts@1118751f:352` is
+    ///   `element.points.length > 2`). The oracle's `isMobileDevice` half of `:9357` has
+    ///   no counterpart and needs none — a touch device gets its own treatment of the
+    ///   point handles rather than a different answer to this question.
+    /// - **`:9360-9363`** is `hoverPointIndex`, which **this engine does not have**. The
+    ///   oracle's is `-1` until a point drag sets it (`linearElementEditor.ts:214`), and
+    ///   it exists so that a press on a point under the cursor is not read as a resize.
+    ///   Here that press is routed by the point-hit test in `pointer.rs` instead, which
+    ///   is the same answer reached a different way, so the gate is trivially true and
+    ///   **no field was invented to satisfy it**.
+    pub fn offers_transform_handles(&self, element: &DrawElement) -> bool {
+        !crate::selection::linear::is_point_edited(element)
+            && self.editing_linear.as_deref() != Some(element.id.as_str())
+    }
+
+    /// Whether the press path would offer a bounding box for what is selected — gate one
+    /// on top of [`Self::offers_transform_handles`] (`App.tsx@1118751f:9352`).
+    ///
+    /// `selectedElements.length === 1` and nothing else in the branch, so with a
+    /// multi-selection the whole block is skipped: a press that misses a handle is a
+    /// marquee, and no element in it is offered its points.
+    pub fn selection_offers_transform_handles(&self) -> bool {
+        match self.get_selected_elements().as_slice() {
+            [single] => self.offers_transform_handles(single),
+            _ => false,
+        }
+    }
+
+    /// The points of a line or arrow that are held, if any — the oracle's
+    /// `selectedPointsIndices`. `None` for "none", never an empty set; see
+    /// [`Self::selected_points`].
+    pub fn selected_points(&self) -> Option<Vec<usize>> {
+        self.selected_points
+            .as_ref()
+            .map(|held| held.indices.clone())
+    }
+
+    /// Which element those points belong to, if any — the oracle's
+    /// `selectedLinearElement.elementId`, reached through the index list
+    /// (`actionDeleteSelected.tsx@1118751f:215`).
+    pub fn selected_points_of(&self) -> Option<&str> {
+        self.selected_points.as_ref().map(|held| held.id.as_str())
     }
 
     /// Open a longer path for point editing, if this element is one.
