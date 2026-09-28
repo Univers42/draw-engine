@@ -69,8 +69,9 @@ impl Rng {
 }
 
 /// The three shapes a corpus is built from, plus a turned one: a turned element is the
-/// case 4.2's bug was about (`clipboard.rs:693` measured the SVG with the unrotated union
-/// while the PNG used the turned one), so a corpus without turns would miss its ghost.
+/// case a past bug in this engine was about (`engine/clipboard.rs:693` measured the SVG
+/// with the unrotated union while the PNG used the turned one), so a corpus without turns
+/// would miss its ghost.
 fn corpus(rng: &mut Rng) -> Vec<DrawElement> {
     let kinds = 2 + rng.below(3);
     let mut elements: Vec<DrawElement> = Vec::new();
@@ -200,7 +201,7 @@ fn every_copy_is_byte_for_byte_the_file_export_of_the_same_scope() {
 
 /// **The frame is measured by its own box, on the clipboard as on a file.**
 ///
-/// The other half of 4.2's finding, carried to the new path: a lone selected frame is
+/// The frame case, carried onto the new path: a lone selected frame is
 /// measured by the *frame element's* box at padding 0 and not by the union of what is
 /// inside it (`export.ts@1118751f:228-233`). A clipboard that re-derived the box — or that
 /// framed the contents instead of the frame — would produce a picture with a different
@@ -235,7 +236,7 @@ fn a_copied_frame_is_measured_by_its_own_box() {
 
 /// **A turned element on the clipboard is measured by what it draws.**
 ///
-/// The bug 4.2 fixed in the engine's own clipboard path, pinned on the new one because a
+/// The turned-bounds rule, pinned on the clipboard path as well as the file one, because a
 /// regression here is silent: a turned square copied with the *unrotated* box comes out
 /// with its corners cropped, which looks like a drawing decision rather than a bug. The
 /// eighth turn is the oracle's own probe — a quarter turn would land back on the box it

@@ -35,7 +35,8 @@ pub use engine::{
 };
 pub use export::{
     elements_from_json, scene_to_json, scene_to_svg, ClipboardCopy, ClipboardFormat, ClipboardHost,
-    ExportFrame, ExportOptions, ExportScopeKind, OsidrawFile, DEFAULT_EXPORT_PADDING,
+    ClipboardRefusal, ExportFrame, ExportOptions, ExportScopeKind, OsidrawFile,
+    DEFAULT_EXPORT_PADDING,
 };
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;

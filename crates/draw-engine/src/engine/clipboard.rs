@@ -760,11 +760,21 @@ impl DrawEngine {
         options: &crate::export::ExportOptions,
     ) -> crate::export::ClipboardCopy<'a> {
         let scope = self.export_scope(true, options);
-        if !format.host_can_take(host) || scope.elements.is_empty() {
-            return crate::export::ClipboardCopy::declined(scope);
+        if !format.host_can_take(host) {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::BrowserCannotTake,
+            );
+        }
+        if scope.elements.is_empty() {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::NothingToCopy,
+            );
         }
         crate::export::ClipboardCopy {
             supported: true,
+            refusal: None,
             mime: format.mime(),
             text: match format {
                 crate::export::ClipboardFormat::Svg => self.export_svg_of(&scope),

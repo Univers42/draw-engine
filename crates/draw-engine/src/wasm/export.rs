@@ -96,6 +96,17 @@ pub fn clipboard_json(
     let _ = js_sys::Reflect::set(&out, &"supported".into(), &copy.supported.into());
     let _ = js_sys::Reflect::set(&out, &"mime".into(), &JsValue::from_str(copy.mime));
     let _ = js_sys::Reflect::set(&out, &"scope".into(), &JsValue::from_str(scope));
+    set_optional(
+        &out,
+        "refusal",
+        copy.refusal.map(|why| {
+            let name = match why {
+                crate::export::ClipboardRefusal::BrowserCannotTake => "browser-cannot-take",
+                crate::export::ClipboardRefusal::NothingToCopy => "nothing-to-copy",
+            };
+            JsValue::from_str(name)
+        }),
+    );
     set_optional(&out, "text", text.map(JsValue::from));
     if let Some(blob) = blob {
         let _ = js_sys::Reflect::set(&out, &"blob".into(), &blob.into());

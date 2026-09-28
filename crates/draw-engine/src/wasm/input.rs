@@ -989,7 +989,7 @@ impl WasmEngine {
         } else {
             None
         };
-        clipboard_json(format, &copy, blob)
+        super::export::clipboard_json(format, &copy, blob)
     }
 
     #[wasm_bindgen(js_name = cameraJson)]

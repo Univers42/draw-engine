@@ -14,6 +14,9 @@ import type {
   Arrowhead,
   ArrowType,
   Camera,
+  ClipboardCopy,
+  ClipboardFormatName,
+  ClipboardSupport,
   DebugSnapshot,
   DrawElement,
   DrawElementStyle,
@@ -85,6 +88,39 @@ const SECONDARY_PAN_END = ["none", "drag", "menu"] as const;
  */
 function encodedBlob(value: unknown): Blob | null {
   return value instanceof Blob ? value : null;
+}
+
+/**
+ * The engine's clipboard answer, as a value the host can trust.
+ *
+ * **Every field is read defensively, and a malformed answer is a declined one.** The
+ * binding is a `JsValue` because a promise cannot cross into a plain object, so nothing
+ * here is checked by the type system, and a host that read a missing `mime` as `""` and
+ * wrote it would produce a clipboard nothing can paste — the exact failure this feature
+ * exists to prevent. A shape that does not hold up is reported as `supported: false` with
+ * no payload, which is what the engine says when it declines, so there is one "no" and not
+ * two.
+ */
+function readClipboardCopy(raw: unknown, format: ClipboardFormatName): ClipboardCopy {
+  const declined: ClipboardCopy = { supported: false, mime: "", scope: "scene" };
+  if (typeof raw !== "object" || raw === null) return declined;
+  const answer = raw as Record<string, unknown>;
+  if (answer["supported"] !== true) return declined;
+  const mime = answer["mime"];
+  const scope = answer["scope"];
+  if (typeof mime !== "string" || mime === "") return declined;
+  if (scope !== "selection" && scope !== "scene") return declined;
+  const payload = format === "png" ? answer["blob"] : answer["text"];
+  if (payload === undefined || payload === null) return declined;
+  const copy: ClipboardCopy = { supported: true, mime, scope };
+  if (format === "png") {
+    copy.blob = Promise.resolve(payload).then(encodedBlob);
+  } else if (typeof payload === "string") {
+    copy.text = payload;
+  } else {
+    return declined;
+  }
+  return copy;
 }
 
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
@@ -1026,6 +1062,31 @@ export class DrawEngine {
       options.selectionOnly,
     );
     return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
+  }
+
+  /**
+   * One clipboard copy: whether to write it, under what type, of what, and the payload.
+   *
+   * The engine decides all four (BUNNY.md §2) — the MIME type is `image/png` or
+   * `text/plain` and never the host's to pick, and the scope is the export scope, so an
+   * empty selection is still the whole scene and a lone selected frame is still a frame
+   * export. The two booleans are the only thing the host contributes, and they are facts
+   * about the browser rather than decisions: `supportsClipboardBlob` and
+   * `supportsClipboardWriteText` in the oracle's own spelling (`clipboard.ts@1118751f:65-72`).
+   *
+   * `blob` is a promise for the raster and `text` a string for the vector; the format's
+   * other payload is absent. The promise is passed through rather than awaited here, so
+   * this stays a forward — and a host that writes it and finds the promise resolved to
+   * `null` has the oracle's `CANVAS_POSSIBLY_TOO_BIG` (`data/blob.ts@1118751f:245-252`),
+   * a canvas too large to encode, which is a browser's answer and not one to retry.
+   */
+  clipboardCopy(format: ClipboardFormatName, options: ClipboardSupport = {}): ClipboardCopy {
+    const raw = this.inner.clipboardCopy(
+      format,
+      options.canWriteBlob ?? true,
+      options.canWriteText ?? true,
+    );
+    return readClipboardCopy(raw, format);
   }
 
   loadScene(json: string): boolean {

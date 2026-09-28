@@ -415,6 +415,58 @@ export interface SvgExport {
   selectionOnly?: boolean;
 }
 
+/**
+ * The two copy actions, which are two formats and not two features
+ * (`actionClipboard.tsx@1118751f:192` and `:124`).
+ */
+export type ClipboardFormatName = "png" | "svg";
+
+/**
+ * What the browser can take, and nothing else.
+ *
+ * The oracle reads these off `navigator` and `window` at its own `predicate`
+ * (`clipboard.ts@1118751f:65-72`); the engine cannot see either, so a host reports them.
+ * They default to `true` because a host that has a clipboard at all is the normal case,
+ * and the two entries that matter pass the real answer.
+ */
+export interface ClipboardSupport {
+  /**
+   * `probablySupportsClipboardBlob`: `navigator.clipboard.write`, `ClipboardItem` in the
+   * window, and `toBlob` on the canvas prototype.
+   */
+  canWriteBlob?: boolean;
+  /** `probablySupportsClipboardWriteText`: `navigator.clipboard.writeText`. */
+  canWriteText?: boolean;
+}
+
+/**
+ * One clipboard copy, as the engine answers it: whether to write at all, under what type,
+ * of what, and the payload for the format asked for.
+ *
+ * All four are the engine's (BUNNY.md §2). The host writes the payload under `mime` and
+ * reports whether the browser took it; it does not choose a type, decide a scope, or
+ * measure anything.
+ */
+export interface ClipboardCopy {
+  /**
+   * The oracle's `predicate` (`actionClipboard.tsx@1118751f:186-188, 247-249`): the
+   * browser can take this payload and there is something to take. `false` means do not
+   * write, and the `mime` and the payload are then both absent.
+   */
+  supported: boolean;
+  /** `image/png` or `text/plain`, from the engine. Never the host's to pick. */
+  mime: string;
+  /**
+   * What was copied, as the oracle's toast words it (`locales/en.json@1118751f:579-580`).
+   * A lone selected frame is `"selection"`, because a frame *is* selected.
+   */
+  scope: "selection" | "scene";
+  /** The raster, for `png`: a promise, and `null` if the browser could not encode it. */
+  blob?: Promise<Blob | null>;
+  /** The vector, for `svg`. */
+  text?: string;
+}
+
 export interface DrawTheme {
   background: string;
   grid: string;

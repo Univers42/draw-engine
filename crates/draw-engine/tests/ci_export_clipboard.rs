@@ -18,8 +18,8 @@
 //!
 //! ## What is new here, and why it is not the scope
 //!
-//! 4.2 owns the scope ([`draw_engine::export_scope`]) and this file reuses it rather than
-//! deciding anything a second time. What a *clipboard* needs on top of a file is three
+//! The scope belongs to [`draw_engine::export_scope`] (`export/scope.rs`) and this file
+//! reuses it rather than deciding anything a second time. What a *clipboard* needs on top of a file is three
 //! things, and each one is a decision a host is not allowed to make (BUNNY.md §2):
 //!
 //! - **the MIME type** — `image/png` for the raster, `text/plain` for the vector. The
@@ -91,7 +91,7 @@ fn frame_holding(child: DrawElement) -> (DrawElement, DrawElement) {
 
 /// The clipboard is written under the type the **engine** names.
 ///
-/// This is the smallest thing 4.3 has to add and the easiest to get wrong later, because
+/// This is the smallest thing the clipboard adds and the easiest to get wrong later, because
 /// a host that picks its own type still pastes — into some other application, or nowhere.
 /// The oracle writes `image/png` through a `ClipboardItem` and the vector as `text/plain`
 /// (never `image/svg+xml`: `copyTextToSystemClipboard`'s own comment says
@@ -185,7 +185,7 @@ fn a_browser_that_takes_only_text_is_offered_only_the_vector() {
     );
 }
 
-// ── The scope, which is 4.2's, reached the oracle's way ────────────────────────
+// ── The scope, reached the oracle's way ────────────────────────────────────────
 
 /// A copy of nothing selected is the whole scene, and says so.
 ///
@@ -241,7 +241,7 @@ fn a_copy_of_a_selection_is_that_selection() {
 /// The oracle's toast has no third word: `selectedElements.length ? t("toast.selection") :
 /// t("toast.canvas")` (`actionClipboard.tsx@1118751f:225-227`), and a lone frame *is*
 /// selected, so it says "selection". The frame's *contents* are the payload and the
-/// frame's own box is the framing — `data/index.ts@1118751f:73-79`, 4.2's case.
+/// frame's own box is the framing — `data/index.ts@1118751f:73-79`.
 #[test]
 fn a_copy_of_one_frame_is_that_frames_contents() {
     let (frame, child) = frame_holding(box_at(20.0, 20.0, 50.0, 50.0));
@@ -295,6 +295,41 @@ fn the_clipboard_carries_exactly_what_the_file_export_would() {
 
         assert_eq!(copy.text, expected, "selected {selected:?}");
     }
+}
+
+/// A refused copy says **which** of the two reasons it is, because the oracle says two
+/// different things about them.
+///
+/// `predicate` is a conjunction (`actionClipboard.tsx@1118751f:186-188, 247-249`) and so
+/// has two ways to be false, and the oracle treats them differently. A browser that cannot
+/// take the payload makes the menu entry **absent** (`ContextMenu.tsx@1118751f:38-48`
+/// filters on `predicate`). A scene with nothing on it leaves the entry alone — the key
+/// path never consults `predicate` at all, only `keyTest`
+/// (`actions/manager.tsx@1118751f:98-112`) — so the chord fires, `exportCanvas` throws
+/// `alerts.cannotExportEmptyCanvas` (`data/index.ts@1118751f:120-122`), and the action's
+/// `catch` shows it (`actionClipboard.tsx@1118751f:236-245`). Collapsing them into one
+/// "no" would make an empty board say "couldn't copy to clipboard", which is a thing a
+/// person cannot do anything about.
+#[test]
+fn a_refused_copy_says_which_of_the_two_reasons_it_is() {
+    let options = ExportOptions::default();
+    let filled = engine_with_scene(vec![box_at(0.0, 0.0, 40.0, 40.0)]);
+    let empty = engine_with_scene(vec![]);
+
+    let no_browser = filled.clipboard_copy(ClipboardFormat::Svg, &blind_browser(), &options);
+    assert_eq!(
+        no_browser.refusal,
+        Some(ClipboardRefusal::BrowserCannotTake)
+    );
+
+    let nothing_on_it = empty.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
+    assert_eq!(nothing_on_it.refusal, Some(ClipboardRefusal::NothingToCopy));
+
+    let offered = filled.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
+    assert_eq!(
+        offered.refusal, None,
+        "a copy that is offered has no reason"
+    );
 }
 
 // ── The failure path, which is the one nobody notices ──────────────────────────
