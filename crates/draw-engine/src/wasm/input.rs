@@ -881,15 +881,25 @@ impl WasmEngine {
         self.cell.borrow().engine.export_json()
     }
 
+    /// The scene as an SVG, of the selection when `selection_only` says so.
+    ///
+    /// The padding is no longer a parameter and that is the whole change: it was a bare
+    /// `f64` the host chose, disagreeing with the PNG path's oracle 10 by 6px per side
+    /// (§2 does not allow the front to pick a margin). It now comes from
+    /// [`crate::export::ExportOptions`], and a host that wants the old 16 has to say so in
+    /// engine terms — there is nowhere in this signature left to pass it by accident.
     #[wasm_bindgen(js_name = exportSvg)]
-    pub fn export_svg(&self, padding: Option<f64>) -> Option<String> {
-        self.cell
-            .borrow()
+    pub fn export_svg(&self, selection_only: Option<bool>) -> Option<String> {
+        let options = crate::export::ExportOptions::default();
+        let engine = self.cell.borrow();
+        let scope = engine
             .engine
-            .export_svg(padding.unwrap_or(16.0))
+            .export_scope(selection_only.unwrap_or(false), &options);
+        engine.engine.export_svg_of(&scope)
     }
 
-    /// The whole scene as a PNG, at `scale`, with or without the background.
+    /// The scene as a PNG, at `scale`, with or without the background, of the selection
+    /// when `selection_only` says so.
     ///
     /// A promise, because the canvas is encoded by the browser and `toBlob` is
     /// asynchronous — `export.ts@1118751f:198-203` hands back a canvas and the app
@@ -900,11 +910,18 @@ impl WasmEngine {
     /// on separately, so the same struct is what a second format will be asked. `frame_labels`
     /// is not a parameter yet: its one consumer is the painter, which reads it off the
     /// frame, and the format that would let a person choose it is 4.5's.
+    ///
+    /// `selection_only` is the host's whole contribution, and it is the oracle's
+    /// `exportSelectionOnly` — the dialog's checkbox. It does not say *what* to export: an
+    /// empty selection with it set is still the scene, and one selected frame is a frame
+    /// export, because [`crate::export::export_scope`] decides both
+    /// (`data/index.ts@1118751f:48-96`).
     #[wasm_bindgen(js_name = exportPng)]
     pub fn export_png(
         &self,
         scale: Option<f64>,
         transparent: Option<bool>,
+        selection_only: Option<bool>,
     ) -> Option<js_sys::Promise> {
         let options = crate::export::ExportOptions {
             scale: scale.unwrap_or(1.0),
@@ -912,8 +929,10 @@ impl WasmEngine {
             ..Default::default()
         };
         let engine = self.cell.borrow();
-        let frame = engine.engine.export_frame(&options);
-        super::export::export_png(&engine.engine, &frame, &options)
+        let scope = engine
+            .engine
+            .export_scope(selection_only.unwrap_or(false), &options);
+        super::export::export_png(&engine.engine, &scope, &options)
     }
 
     #[wasm_bindgen(js_name = cameraJson)]

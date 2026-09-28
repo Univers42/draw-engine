@@ -690,14 +690,37 @@ impl DrawEngine {
         crate::scene_to_json(&self.scene.ordered_cloned())
     }
 
-    pub fn export_svg(&self, padding: f64) -> Option<String> {
-        let bounds = self.scene.bounds()?;
+    /// The scene as an SVG, framed by `scope`.
+    ///
+    /// The same [`Self::export_scope`] the PNG path uses, so the two formats cannot frame one
+    /// drawing differently — which they did, and which the oracle has no way of doing: it
+    /// builds one `getCanvasSize` and hands it to both (`export.ts@1118751f:232-235, 341-344`).
+    /// `None` only for an empty scene, where the oracle has no element to measure.
+    pub fn export_svg_of(&self, scope: &crate::export::ExportScope<'_>) -> Option<String> {
+        if scope.elements.is_empty() {
+            return None;
+        }
         Some(crate::scene_to_svg(
-            &self.scene.ordered_cloned(),
-            bounds,
-            padding,
+            &scope.elements,
+            &scope.frame,
             &self.theme.background,
         ))
+    }
+
+    /// What an export is **of**: the box and the elements, for the current selection.
+    ///
+    /// [`Self::export_svg`] and the PNG binding both go through this, so a selection, a
+    /// single frame and the whole scene are one question with three answers rather than
+    /// three code paths. `selection_only` is the host's one boolean — the dialog's checkbox,
+    /// the oracle's `exportSelectionOnly` (`data/index.ts@1118751f:56-58`). The host does not
+    /// get to say *which* of the three it wants, and does not get to compute a box.
+    pub fn export_scope(
+        &self,
+        selection_only: bool,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ExportScope<'_> {
+        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
+        crate::export::export_scope(&self.scene, &ids, selection_only, options)
     }
 
     /// The box and the camera a whole-scene PNG export is framed by.

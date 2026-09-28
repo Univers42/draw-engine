@@ -197,3 +197,55 @@ pub fn stroke_patch(color: &str) -> DrawElementStylePatch {
 pub fn deleted_count(elements: &[DrawElement]) -> usize {
     elements.iter().filter(|element| element.is_deleted).count()
 }
+
+/// `scene_to_svg` over a borrowed slice, with the framing built from a bounds and a
+/// padding.
+///
+/// The tests that care about *markup* — a fill, a path, a text run — do not care about how
+/// the box was decided, and writing `ExportFrame::for_bounds` at every one of them says
+/// `for_bounds` is the thing under test. This is the spelling for "these bounds, this
+/// padding"; a test about the framing itself should use `ExportFrame` directly.
+pub fn svg_at(elements: &[DrawElement], bounds: WorldBounds, padding: f64) -> String {
+    svg_at_over(elements, bounds, padding, "#ffffff")
+}
+
+/// [`svg_at`] with the background colour spelled out, for the tests that are about it.
+///
+/// A separate function rather than a fourth argument on `svg_at`: the background is what the
+/// `<rect>` paints and what an outline arrowhead is punched through with, so the tests that
+/// care pass their own and the ones that do not should not have to name one.
+pub fn svg_at_over(
+    elements: &[DrawElement],
+    bounds: WorldBounds,
+    padding: f64,
+    background: &str,
+) -> String {
+    let borrowed: Vec<&DrawElement> = elements.iter().collect();
+    draw_engine::scene_to_svg(
+        &borrowed,
+        &ExportFrame::for_bounds(
+            bounds,
+            &ExportOptions {
+                padding,
+                ..Default::default()
+            },
+        ),
+        background,
+    )
+}
+
+/// `export_svg` with an explicit padding, for the tests that are about the markup.
+///
+/// Goes through [`DrawEngine::export_scope`] because that is where the scope lives now; a
+/// test about which elements or which box an export covers belongs in `ci_export_scope.rs`,
+/// which asserts on the scope itself rather than on the string.
+pub fn svg_of(engine: &DrawEngine, padding: f64) -> String {
+    let scope = engine.export_scope(
+        false,
+        &ExportOptions {
+            padding,
+            ..Default::default()
+        },
+    );
+    engine.export_svg_of(&scope).unwrap_or_default()
+}

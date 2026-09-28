@@ -1313,7 +1313,7 @@ mod the_file {
             }
         }
         engine.set_scene(Scene::new(scene));
-        let svg = engine.export_svg(10.0).expect("an svg");
+        let svg = svg_of(&engine, 10.0);
         assert!(
             svg.contains(&format!("sticky-note-clipPath-{note}")),
             "{svg}"

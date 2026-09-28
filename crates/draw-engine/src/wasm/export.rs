@@ -24,11 +24,13 @@ use crate::engine::DrawEngine;
 /// transparent-coloured fill: nothing.
 pub fn export_png(
     engine: &DrawEngine,
-    frame: &crate::export::ExportFrame,
+    scope: &crate::export::ExportScope<'_>,
     options: &crate::export::ExportOptions,
 ) -> Option<js_sys::Promise> {
+    let frame = &scope.frame;
     let (canvas, ctx) = super::paint::make_layer(frame.pixel_width(), frame.pixel_height())?;
-    super::paint::paint_static(&ctx, &engine.export_view(frame), None, options.background);
+    let view = engine.export_view_of(frame, &scope.elements);
+    super::paint::paint_static(&ctx, &view, None, options.background);
     Some(png_blob(canvas))
 }
 

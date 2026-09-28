@@ -276,7 +276,7 @@ fn an_unknown_family_loads_edits_and_exports_without_panicking() {
     let mut engine = engine_with_measure(vec![]);
     assert!(engine.load_scene(&json));
     assert_eq!(engine.export_json(), json, "kept as it came");
-    assert!(engine.export_svg(10.0).is_some());
+    assert!(!svg_of(&engine, 10.0).is_empty());
     engine.select(vec![label.id.clone()]);
     assert!(engine.edit_selected_text());
     engine.set_element_text(&label.id, "still editable");

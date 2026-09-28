@@ -1,6 +1,6 @@
 use draw_rough::ops::Op;
 
-use crate::camera::WorldBounds;
+use crate::export::ExportFrame;
 use crate::render::arrowheads::{
     arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
 };
@@ -452,21 +452,25 @@ fn text_svg(element: &DrawElement) -> String {
     )
 }
 
-pub fn scene_to_svg(
-    elements: &[DrawElement],
-    bounds: WorldBounds,
-    padding: f64,
-    background: &str,
-) -> String {
-    let width = bounds.max_x - bounds.min_x + padding * 2.0;
-    let height = bounds.max_y - bounds.min_y + padding * 2.0;
-    let dx = padding - bounds.min_x;
-    let dy = padding - bounds.min_y;
+/// The drawing as one SVG document, cut to `frame`.
+///
+/// `frame` rather than a bounds and a padding, so the box is arithmetic this engine has
+/// already done in one place. `exportToSvg` builds the very same
+/// `getCanvasSize(getRootElements(...), exportPadding)` the canvas path builds
+/// (`export.ts@1118751f:341-344` against `:232-235`) — one framing decision, two formats —
+/// and a function taking `(bounds, padding)` can only ever be the second one.
+///
+/// The background is still always drawn: `exportBackground` is 4.5's, and it is a colour
+/// this path has no option for yet (`png.rs`).
+pub fn scene_to_svg(elements: &[&DrawElement], frame: &ExportFrame, background: &str) -> String {
+    let width = frame.width;
+    let height = frame.height;
+    let camera = frame.camera();
     // Labels by id, for the arrows whose stroke is cut away under theirs.
     let labels: std::collections::HashMap<&str, &DrawElement> = elements
         .iter()
         .filter(|el| el.kind == DrawElementType::Text && el.container_id.is_some())
-        .map(|el| (el.id.as_str(), el))
+        .map(|el| (el.id.as_str(), *el))
         .collect();
     let body = elements
         .iter()
@@ -475,6 +479,8 @@ pub fn scene_to_svg(
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({dx} {dy})\">{body}</g></svg>"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({x} {y})\">{body}</g></svg>",
+        x = camera.x,
+        y = camera.y
     )
 }

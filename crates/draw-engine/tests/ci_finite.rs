@@ -626,7 +626,7 @@ fn a_board_containing_one_exports_an_svg_with_an_infinite_width() {
     // handed begins `width="inf"`.
     let mut engine = board();
     engine.load_scene(&overflowing_document());
-    let svg = engine.export_svg(20.0).unwrap_or_default();
+    let svg = svg_of(&engine, 20.0);
     assert!(
         svg.contains("inf"),
         "MEASURED on 886738e: export_svg writes `width=\"inf\"`. If it is finite now, the \

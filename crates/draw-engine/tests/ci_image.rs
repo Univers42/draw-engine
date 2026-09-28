@@ -356,7 +356,7 @@ fn an_svg_export_carries_the_picture() {
         .expect("inserted");
     let scene = engine.get_scene();
     let bounds = scene_bounds(&scene).unwrap();
-    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+    let svg = svg_at(&scene, bounds, 10.0);
     assert!(svg.contains("<image"), "no <image> element in {svg}");
     assert!(svg.contains(url), "the data URL is not in the export");
     assert_eq!(
@@ -386,7 +386,7 @@ fn a_flipped_image_exports_flipped() {
     assert!(scene[0].width < 0.0, "setup: a flip is a negative width");
 
     let bounds = scene_bounds(&scene).unwrap();
-    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+    let svg = svg_at(&scene, bounds, 10.0);
 
     assert!(svg.contains("scale(-1 1)"), "{svg}");
 }
@@ -406,7 +406,7 @@ fn an_image_without_a_picture_exports_no_broken_reference() {
     );
     element.data_url = None;
     let bounds = element_bounds(&element);
-    let svg = scene_to_svg(&[element], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[element], bounds, 10.0);
     assert!(!svg.contains("<image"), "{svg}");
     // Nothing at all: not an `<image>`, and not the stroked box it used to fall through to.
     assert_eq!(

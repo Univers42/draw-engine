@@ -472,7 +472,7 @@ fn growing_a_flowchart_chain_from_a_figure_clones_its_params() {
 fn svg_export_traces_the_real_outline_not_a_rectangle() {
     let fig = figure_at(10.0, 10.0, 50.0, 50.0, FigureKind::Star, Some(5), Some(0.4));
     let engine = engine_with_scene(vec![fig]);
-    let svg = engine.export_svg(0.0).unwrap();
+    let svg = svg_of(&engine, 0.0);
     assert!(
         svg.contains("<polygon"),
         "a figure exports as its own outline: {svg}"
@@ -483,7 +483,7 @@ fn svg_export_traces_the_real_outline_not_a_rectangle() {
 fn a_cylinders_open_rim_exports_as_its_own_stroke() {
     let fig = figure_at(0.0, 0.0, 50.0, 50.0, FigureKind::Cylinder, None, Some(0.2));
     let engine = engine_with_scene(vec![fig]);
-    let svg = engine.export_svg(0.0).unwrap();
+    let svg = svg_of(&engine, 0.0);
     assert!(svg.contains("<polygon"));
     assert!(
         svg.contains("<polyline"),

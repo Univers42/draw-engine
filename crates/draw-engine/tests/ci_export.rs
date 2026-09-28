@@ -61,7 +61,7 @@ fn scene_to_svg_contains_svg_tags() {
         max_x: 100.0,
         max_y: 60.0,
     };
-    let svg = scene_to_svg(&[rect], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[rect], bounds, 10.0);
     assert!(svg.starts_with("<svg "));
     assert!(svg.ends_with("</svg>"));
     assert!(svg.contains("<rect "));
@@ -77,7 +77,7 @@ fn scene_to_svg_skips_deleted_elements() {
         max_x: 100.0,
         max_y: 60.0,
     };
-    let svg = scene_to_svg(&[deleted], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[deleted], bounds, 10.0);
     // Should only have the background rect:
     assert_eq!(svg.matches("<rect ").count(), 1);
 }
@@ -91,7 +91,7 @@ fn scene_to_svg_ellipse_render() {
         max_x: 70.0,
         max_y: 100.0,
     };
-    let svg = scene_to_svg(&[el], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[el], bounds, 5.0);
     assert!(svg.contains("<ellipse "));
 }
 
@@ -104,7 +104,7 @@ fn scene_to_svg_diamond_polygon_render() {
         max_x: 80.0,
         max_y: 80.0,
     };
-    let svg = scene_to_svg(&[dia], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[dia], bounds, 5.0);
     assert!(svg.contains("<polygon points="));
 }
 
@@ -118,7 +118,7 @@ fn scene_to_svg_text_escapes_xml_entities() {
         max_x: 100.0,
         max_y: 30.0,
     };
-    let svg = scene_to_svg(&[text], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[text], bounds, 5.0);
     assert!(svg.contains("&lt;tag&gt;"));
     assert!(svg.contains("&amp;"));
     assert!(svg.contains("&quot;quotes&quot;"));
@@ -133,7 +133,7 @@ fn scene_to_svg_linear_connector_render() {
         max_x: 100.0,
         max_y: 100.0,
     };
-    let svg = scene_to_svg(&[arrow], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[arrow], bounds, 5.0);
     assert!(svg.contains("<line "));
 }
 
@@ -150,7 +150,7 @@ fn scene_to_svg_outline_arrowhead_follows_the_export_background() {
         max_x: 100.0,
         max_y: 0.0,
     };
-    let svg = scene_to_svg(&[arrow], bounds, 10.0, "#121212");
+    let svg = svg_at_over(&[arrow], bounds, 10.0, "#121212");
     // The background `<rect>` is one occurrence; the outline head's own fill, on a
     // `<circle>`, is what a regression to a fixed white would drop from this count.
     assert_eq!(svg.matches("fill=\"#121212\"").count(), 2, "{svg}");
@@ -175,7 +175,7 @@ fn scene_to_svg_freedraw_polyline_render() {
         max_x: 50.0,
         max_y: 50.0,
     };
-    let svg = scene_to_svg(&[freedraw], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[freedraw], bounds, 5.0);
     assert!(svg.contains("<polyline points="));
 }
 
@@ -189,7 +189,7 @@ fn scene_to_svg_stroke_style_dashed() {
         max_x: 100.0,
         max_y: 60.0,
     };
-    let svg = scene_to_svg(&[rect], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[rect], bounds, 5.0);
     assert!(svg.contains("stroke-dasharray=\"8 6\""));
 }
 
@@ -203,7 +203,7 @@ fn scene_to_svg_stroke_style_dotted() {
         max_x: 100.0,
         max_y: 60.0,
     };
-    let svg = scene_to_svg(&[rect], bounds, 5.0, "#ffffff");
+    let svg = svg_at(&[rect], bounds, 5.0);
     assert!(svg.contains("stroke-dasharray=\"2 4\""));
 }
 
@@ -217,7 +217,7 @@ fn scene_to_svg_arrowhead_marker_rendered() {
         max_x: 150.0,
         max_y: 0.0,
     };
-    let svg = scene_to_svg(&[arrow], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[arrow], bounds, 10.0);
     assert!(svg.contains("<polygon "));
 }
 
@@ -237,7 +237,7 @@ fn exported_text_is_in_its_family_one_line_at_a_time() {
     text.font_family = Some(5);
     text.text_align = Some(TextAlign::Right);
     let mut engine = engine_with_scene(vec![text]);
-    let svg = engine.export_svg(0.0).unwrap();
+    let svg = svg_of(&engine, 0.0);
     assert_eq!(svg.matches("<text ").count(), 2, "{svg}");
     assert!(svg.contains("font-family=\"Excalifont, Xiaolai, sans-serif, Segoe UI Emoji\""));
     assert!(svg.contains("white-space: pre;"));
@@ -272,7 +272,7 @@ fn an_arrows_stroke_is_masked_under_its_label() {
     let id = engine.drain_events().text_edit.unwrap().id;
     engine.set_element_text(&id, "label");
     let label = text_element(&engine, &id);
-    let svg = engine.export_svg(0.0).unwrap();
+    let svg = svg_of(&engine, 0.0);
     assert!(
         svg.contains(&format!("<mask id=\"mask-{arrow_id}\"")),
         "{svg}"

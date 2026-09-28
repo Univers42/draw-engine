@@ -310,17 +310,46 @@ impl DrawEngine {
     ) -> PaintView<'a> {
         let camera = frame.camera();
         let visible = crate::camera::visible_world_rect(camera, frame.width, frame.height);
-        let (frame_clips, mut frame_names) = self.frame_chrome(&visible);
-        if !frame.frame_labels {
-            frame_names.clear();
-        }
+        let (frame_clips, frame_names) = self.export_frame_chrome(&visible, frame);
         let mut view = self.paint_view();
         view.camera = camera;
         view.width = frame.width;
         view.height = frame.height;
-        // The scale is the **device** ratio and the camera stays at 1, because that is how
-        // the oracle splits the two: `scale` goes to the renderer as the factor it draws
-        // at, and `zoom` stays at the default (`export.ts@1118751f:259, 266`).
+        self.set_export_view_scale(&mut view, frame);
+        view.elements = self.export_elements(elements);
+        view.frame_clips = frame_clips;
+        view.frame_names = frame_names;
+        without_editor_chrome(&mut view);
+        view
+    }
+
+    /// The elements an export paints: the subset, less the text being typed.
+    ///
+    /// **Not culled to a viewport.** Every element handed over is kept, because the export's
+    /// box is its own and culling to the editor's camera would cut off whatever the person
+    /// had scrolled away from — the mutation `ci_export_scope.rs` makes on purpose to show
+    /// its invariant is load-bearing rather than decorative.
+    ///
+    /// The text being typed stays out, as on screen: it is the host editor's to show, and
+    /// painted as well it showed twice (`Renderer.ts@1118751f:259-267`).
+    fn export_elements<'a>(&'a self, elements: &[&'a DrawElement]) -> Vec<&'a DrawElement> {
+        elements
+            .iter()
+            .copied()
+            .filter(|element| self.editing_text_id() != Some(element.id.as_str()))
+            .collect()
+    }
+
+    /// The scale and the grid an export draws at, which are not the editor's.
+    ///
+    /// The scale is the **device** ratio and the camera stays at 1, because that is how the
+    /// oracle splits the two: `scale` goes to the renderer as the factor it draws at, and
+    /// `zoom` stays at the default (`export.ts@1118751f:259, 266`). Putting it in the camera
+    /// instead would have scaled the _layout_ and drawn the scene at 1× — the same bug
+    /// wearing a different hat, and the one the IHDR cannot see.
+    ///
+    /// The grid goes because the oracle passes `renderGrid: false` (`export.ts@1118751f:272`).
+    fn set_export_view_scale(&self, view: &mut PaintView<'_>, frame: &crate::export::ExportFrame) {
         view.dpr = frame.scale;
         view.detail_scale = frame.scale;
         view.in_motion = false;
@@ -328,19 +357,34 @@ impl DrawEngine {
             enabled: false,
             ..self.grid
         };
-        // Every element of the subset, not the ones the viewport reaches: the export's box
-        // is its own, so culling to the editor's camera would cut off whatever the person
-        // had scrolled away from. The text being typed stays out, as on screen — it is the
-        // host editor's to show (`Renderer.ts@1118751f:259-267`).
-        view.elements = elements
-            .iter()
-            .copied()
-            .filter(|element| self.editing_text_id() != Some(element.id.as_str()))
-            .collect();
-        view.frame_clips = frame_clips;
-        view.frame_names = frame_names;
-        without_editor_chrome(&mut view);
-        view
+    }
+
+    /// The frame chrome an export shows, which is not all of it.
+    ///
+    /// Two of the editor's own decisions are withdrawn for an export, and both come off the
+    /// `ExportFrame` rather than being decided here:
+    ///
+    /// - **the labels.** Off when the export says not to draw a frame's name, the oracle's
+    ///   `getFrameRenderingConfig` gate (`export.ts@1118751f:169-172`);
+    /// - **the clips.** Off for an export *of* a frame, or the frame's own corners cut the
+    ///   content inside them: "for canvas export, don't clip if exporting a specific frame
+    ///   as it would clip the corners of the content" (`export.ts@1118751f:217-219`).
+    ///
+    /// Everywhere else both stand, and that is what crops a child poking out of its frame
+    /// on screen and in a whole-scene export alike.
+    fn export_frame_chrome(
+        &self,
+        visible: &WorldBounds,
+        frame: &crate::export::ExportFrame,
+    ) -> FrameChrome {
+        let (mut clips, mut names) = self.frame_chrome(visible);
+        if !frame.frame_labels {
+            names.clear();
+        }
+        if !frame.frame_clip {
+            clips.clear();
+        }
+        (clips, names)
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
