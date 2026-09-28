@@ -27,14 +27,12 @@
 //!
 //! # The gesture that holds a point
 //!
-//! A **click on a point**, not a marquee:
-//! `LinearElementEditor.handlePointerDown` (`linearElementEditor.ts@1118751f:1204-1216`).
-//! The oracle's other writer of `selectedPointsIndices`, the marquee
-//! `handleBoxSelection` (`:248-309`), cannot run at this SHA — its only call site is
-//! guarded by `!isEditing` (`App.tsx:11274`) while its own guard needs a
-//! `selectionElement` that only the sibling branch on the other side of that same guard
-//! ever sets (`App.tsx:11282`, `:10497`).
+//! A **click on a point**, and a **Shift+drag** that box-selects several at once.
+//! `LinearElementEditor.handlePointerDown` (`linearElementEditor.ts@1118751f:1204-1216`)
+//! and `handleBoxSelection` (`:248-309`). The reachability of the second is not obvious and
+//! is written out in full beside [`DrawEngine::select_points_in_box`].
 
+use crate::camera::WorldBounds;
 use crate::engine::types::PointSelection;
 use crate::engine::DrawEngine;
 use crate::scene::{bump_version, DrawElementType};
@@ -120,6 +118,140 @@ impl DrawEngine {
         if self.selected_points.take().is_some() {
             self.request_draw();
         }
+    }
+
+    /// Holds the points of the line or arrow `id` that fall inside `box`, plus the ones
+    /// already held, as `LinearElementEditor.handleBoxSelection` does
+    /// (`packages/element/src/linearElementEditor.ts@1118751f:255-309`).
+    ///
+    /// ```ts
+    /// const [selectionX1, selectionY1, selectionX2, selectionY2] =
+    ///   getElementAbsoluteCoords(appState.selectionElement, elementsMap);
+    /// const pointsSceneCoords = LinearElementEditor.getPointsGlobalCoordinates(element, elementsMap);
+    ///
+    /// const nextSelectedPoints = pointsSceneCoords
+    ///   .reduce((acc: number[], point, index) => {
+    ///     if (
+    ///       (point[0] >= selectionX1 && point[0] <= selectionX2 &&
+    ///        point[1] >= selectionY1 && point[1] <= selectionY2) ||
+    ///       (event.shiftKey && selectedPointsIndices?.includes(index))
+    ///     ) { acc.push(index); }
+    ///     return acc;
+    ///   }, [])
+    ///   .filter((index) => { /* elbow: index === 0 || index === points.length - 1 */ });
+    ///
+    /// setState({ selectedLinearElement: { ...selectedLinearElement,
+    ///   selectedPointsIndices: nextSelectedPoints.length ? nextSelectedPoints : null } });
+    /// ```
+    ///
+    /// Five things in there are easy to get wrong, so they are each named here:
+    ///
+    /// - **The box is axis-aligned and in global coordinates.** The oracle reads it off
+    ///   `appState.selectionElement` with `getElementAbsoluteCoords` (`:268-269`), whose
+    ///   return is `[x1, y1, x2, y2]` with `y1 = minY` and `y2 = maxY`
+    ///   (`LinearElementEditor.getElementAbsoluteCoords`, `:2247-2251`) — so the y test at
+    ///   `:281-282` is `point[1] >= y1 && point[1] <= y2`, the **same** min-then-max order as
+    ///   x. Comparing them the other way round selects nothing at all.
+    /// - **The candidate points are global too** (`getPointsGlobalCoordinates`, `:271-274`),
+    ///   which is [`crate::selection::linear::world_points`] here: element origin plus the
+    ///   local point, rotated about the element's centre. Comparing a global box against
+    ///   local points would be a bug that only shows on a rotated or off-origin line.
+    /// - **Shift latches, and the expression is `&&`.** A point already held stays held for
+    ///   the rest of the drag, so the band can be dragged away and the selection follows it.
+    ///   `shift && already-held` is *not* `!shift || !already-held`; that De Morgan slip was
+    ///   made once already in this file's click path, where the oracle reads
+    ///   `event.shiftKey || includes` (`:1207`).
+    /// - **The whole set is rebuilt from the previous set on every move** (the reduce reads
+    ///   `selectedPointsIndices`, not an accumulator that carries over), which is what makes
+    ///   the latch above work across moves rather than only within one.
+    /// - **An empty result is `None`, not an empty list** (`:304-306`). That is not a
+    ///   detail: the delete action's first branch tests `== null` against an empty array
+    ///   (`actionDeleteSelected.tsx@1118751f:229-231`), so the two must not be flattened.
+    ///   [`crate::selection::linear::normalize_selected_points`] already does this, and the
+    ///   click path uses it — so it is reused here rather than a second answer.
+    ///
+    /// The elbow filter (`:290-299`) is the same predicate as
+    /// [`crate::selection::linear::is_point_handle`] (`:1424-1431`), which the click path
+    /// uses, and it is applied to the **built** set rather than to the candidates: an elbow
+    /// arrow's interior corners are the router's and are not selectable, but a corner that
+    /// shift had latched is dropped by the filter too, because `:290-299` runs after the
+    /// reduce.
+    pub(crate) fn select_points_in_box(&mut self, id: &str, box_bounds: WorldBounds, shift: bool) {
+        let Some(element) = self.scene.get(id).cloned() else {
+            return;
+        };
+        let points = crate::selection::linear::world_points(&element);
+        let latched: Vec<i64> = if shift {
+            self.selected_points
+                .as_ref()
+                .filter(|held| held.id == id)
+                .map(|held| held.indices.iter().map(|i| *i as i64).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let candidates: Vec<i64> = points
+            .iter()
+            .enumerate()
+            .filter(|(_, point)| {
+                // `point[0] >= x1 && point[0] <= x2 && point[1] >= y1 && point[1] <= y2`
+                // — both axes min-then-max, as `getElementAbsoluteCoords` returns them.
+                point.x >= box_bounds.min_x
+                    && point.x <= box_bounds.max_x
+                    && point.y >= box_bounds.min_y
+                    && point.y <= box_bounds.max_y
+            })
+            .map(|(index, _)| index as i64)
+            .chain(latched)
+            .collect();
+        // The filter runs on the built set, so a latched corner of an elbow arrow goes too.
+        let candidates: Vec<i64> = candidates
+            .into_iter()
+            .filter(|index| crate::selection::linear::is_point_handle(&element, *index))
+            .collect();
+        let next = crate::selection::linear::normalize_selected_points(&candidates);
+        let same = self.selected_points.as_ref().map(|held| &held.indices) == next.as_ref();
+        if same {
+            return;
+        }
+        self.selected_points = next.map(|indices| PointSelection {
+            id: id.to_string(),
+            indices,
+        });
+        self.request_draw();
+    }
+
+    /// Whether a press at `id` with `shift` held is the oracle's
+    /// `isSelectingPointsInLineEditor` — the one flag that decides whether a drag is a
+    /// **move** of the element or a **box** over its points
+    /// (`App.tsx@1118751f:10895-10899`).
+    ///
+    /// ```ts
+    /// const isSelectingPointsInLineEditor =
+    ///   this.state.selectedLinearElement?.isEditing &&
+    ///   event.shiftKey &&
+    ///   this.state.selectedLinearElement.elementId === pointerDownState.hit.element?.id;
+    /// ```
+    ///
+    /// It is `&& !isSelectingPointsInLineEditor` on the drag-the-element branch at
+    /// `:10901-10904`, so when this is true the press falls past it, through `:11136`'s
+    /// `if (this.state.selectionElement)` — the band the pointer-down made at
+    /// `createGenericElementOnPointerDown` (`:10439`, `:10495-10498`) — and on to `:11274`'s
+    /// `handleBoxSelection`. It is the **only** route to the marquee, and it is not an
+    /// obvious one, which is why it is a named predicate here rather than a condition
+    /// inlined at two call sites.
+    ///
+    /// The first two terms are already true of any press this engine routes here: the
+    /// caller only reaches it for the single selected element, and it has already
+    /// established that the element offers its points. What is left is the shift and the
+    /// identity of the element, and `editing_linear` is this engine's `isEditing`.
+    ///
+    /// Note what it is *not*: it does not ask whether the press landed on a handle. The
+    /// oracle compares the element id, so a press on the stroke works as well as one on a
+    /// point — and the same shift-drag starting between two points, where there is no
+    /// handle to grab, is the ordinary way to draw the box.
+    pub(crate) fn selecting_points_in_line_editor(&self, id: &str, shift: bool) -> bool {
+        shift && self.editing_linear.as_deref() == Some(id)
     }
 
     /// Removes the points at `point_indices` from the line or arrow `id`.

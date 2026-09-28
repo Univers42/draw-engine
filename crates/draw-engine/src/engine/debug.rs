@@ -141,6 +141,7 @@ fn interaction_kind(interaction: &Interaction) -> &'static str {
         Interaction::Lasso { .. } => "lasso",
         Interaction::Laser => "laser",
         Interaction::Marquee { .. } => "marquee",
+        Interaction::PointBox { .. } => "point-box",
         Interaction::CornerRadius { .. } => "corner-radius",
     }
 }

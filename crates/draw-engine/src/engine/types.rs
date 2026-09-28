@@ -247,6 +247,24 @@ pub(crate) enum Interaction {
         current: Point,
         base: HashSet<String>,
     },
+    /// A box drawn over the points of a line being edited, to hold several of them at once.
+    ///
+    /// Separate from [`Interaction::Marquee`] because it selects **points** rather than
+    /// elements, and the two are mutually exclusive: the oracle draws the same rectangle for
+    /// both and tells them apart at the call site — `handleBoxSelection` on one side of an
+    /// `if`, "regular box-select" on the other (`App.tsx@1118751f:11273-11282`). Folding
+    /// them into one variant would put a flag on it that says which, which is the same
+    /// question asked in the wrong place.
+    ///
+    /// Carries no `base`: the element being edited was already the only thing selected
+    /// before the drag began, and it stays selected — the band takes points off it, it does
+    /// not take elements onto the selection. Nor a `current`: the selection is re-derived
+    /// from `start` and the incoming pointer position on every move, and the release has
+    /// nothing left to settle — the last move already left the right points held.
+    PointBox {
+        id: String,
+        start: Point,
+    },
     /// Dragging a corner-radius handle.
     ///
     /// Holds the radius and the pointer position at the grab, and every move is measured

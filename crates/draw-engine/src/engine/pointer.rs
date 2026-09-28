@@ -482,7 +482,24 @@ impl DrawEngine {
                         // leaves it held, and a release without a move needs no special
                         // case. A midpoint is not a point, so it selects nothing.
                         if let crate::selection::LinearHandle::Point(index) = handle {
+                            // A press on a point holds it, which is the gesture that makes a
+                            // later Delete remove a point rather than the element
+                            // (`LinearElementEditor.handlePointerDown`,
+                            // `linearElementEditor.ts@1118751f:1204-1216`). Recorded on the
+                            // press, as the oracle does — so dragging the point away still
+                            // leaves it held, and a release without a move needs no special
+                            // case.
                             self.select_point(&single.id, Some(index), additive);
+                        }
+                        if self.selecting_points_in_line_editor(&single.id, additive) {
+                            // ...unless shift is held, which makes this a box over the
+                            // points rather than a drag of one. See
+                            // `selecting_points_in_line_editor` for the oracle's flag.
+                            self.interaction = Some(Interaction::PointBox {
+                                id: single.id,
+                                start: press,
+                            });
+                            return;
                         }
                         self.interaction = Some(Interaction::LinearPoint {
                             id: single.id,
@@ -619,6 +636,19 @@ impl DrawEngine {
             }
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
+            }
+            // A shift-press **on the line being edited** is a box over its points, even
+            // when the press missed every handle and landed on the stroke: the oracle's
+            // flag tests the element, not a handle (`:10898`). Without this the second half
+            // of the gesture — dragging out from a point you did not press on — would fall
+            // through to a move of the whole line.
+            if self.selecting_points_in_line_editor(&hit.id, additive) {
+                self.interaction = Some(Interaction::PointBox {
+                    id: hit.id,
+                    start: press,
+                });
+                self.request_draw();
+                return;
             }
             self.begin_move(world);
             return;

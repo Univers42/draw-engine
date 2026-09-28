@@ -185,6 +185,44 @@ fn open_editor(engine: &mut DrawEngine, id: &str) {
     );
 }
 
+/// Three **collinear** points, so the curve through them is a straight line and a
+/// coordinate between two of them is genuinely on the ink.
+///
+/// This is a fixture, not a convenience. `roundness` defaults to `Some(8.0)` and
+/// `render/shape.rs` sends a rounded linear element through `generator::curve`, so on
+/// `three_point_line`'s right angle the curve sags away from every chord — the midpoint
+/// handle sits at (202.8, 88.4), and the chord's midpoint at (200,100) is about 12px off
+/// the line. A press there hits nothing and starts an ordinary marquee, which is exactly how
+/// the first version of the marquee fixture passed while testing nothing (the subject of
+/// `ci_linear_midpoint.rs`).
+fn straight_three_point_line() -> DrawEngine {
+    engine_for(&[[0.0, 0.0], [100.0, 100.0], [200.0, 200.0]], false)
+}
+
+/// Four collinear points, for the same reason and one more notch: a band drawn from the
+/// **stroke** between points 0 and 1 has to be able to reach points 1 and 2 while leaving
+/// point 0 behind the press, and three points cannot do both.
+fn straight_four_point_line() -> DrawEngine {
+    engine_for(
+        &[[0.0, 0.0], [100.0, 100.0], [200.0, 200.0], [300.0, 300.0]],
+        false,
+    )
+}
+
+/// Opens the point editor on an **arrow**.
+///
+/// This engine opens an arrow's points only with Ctrl held — its `isSimpleArrow` rule, so a
+/// double click on an arrow can still reach the arrow's label
+/// (`App.tsx@1118751f:7218-7226`). The oracle reaches `isEditing` on any press that lands on
+/// the element (`:9591-9607`), so the difference is in how the editor is *opened*, not in
+/// what the marquee needs: by the time the band is drawn, the only thing that matters is that
+/// the editor is open, and the band itself never asks about Ctrl.
+fn open_arrow_editor(engine: &mut DrawEngine, id: &str) {
+    engine.set_ctrl_held(true);
+    open_editor(engine, id);
+    engine.set_ctrl_held(false);
+}
+
 /// A two-point line, which this engine edits by its points without a second click.
 fn two_point_line() -> DrawEngine {
     let line = line_at(&[[0.0, 0.0], [200.0, 0.0]], false);
@@ -1151,50 +1189,420 @@ fn gate_five_is_trivially_true_because_there_is_no_hover_point_index() {
     click(&mut engine, 300.0, 100.0, false);
     assert_eq!(engine.selected_points(), Some(vec![1]));
 }
-
 // ---------------------------------------------------------------------------
-// 9. The marquee — why there is none.
+// 9. The marquee: Shift+drag over the line being edited.
 // ---------------------------------------------------------------------------
 
-/// `LinearElementEditor.handleBoxSelection` (`linearElementEditor.ts@1118751f:248-309`) is
-/// the other writer of `selectedPointsIndices` in the oracle, and **it cannot run** at
-/// this SHA:
+/// The box is read from the rubber band, and a point is held when it is **inside it**.
 ///
-/// - its only call site is `App.tsx:11275`, guarded by
-///   `this.state.selectedLinearElement?.isEditing` (`:11274`);
-/// - its own first guard (`:255-259`) requires `appState.selectionElement` to be
-///   non-null;
-/// - but `selectionElement` is written in exactly one place, `App.tsx:10497`, which
-///   `maybeDragNewGenericElement` reaches from the **sibling** branch at `App.tsx:11282` —
-///   the regular box select, guarded by the same `!isEditing` test.
+/// `LinearElementEditor.handleBoxSelection`
+/// (`packages/element/src/linearElementEditor.ts@1118751f:248-309`):
 ///
-/// So whenever `handleBoxSelection` is offered a chance to run, `selectionElement` is
-/// necessarily still null and it returns at `:258`.
+/// ```ts
+/// const [selectionX1, selectionY1, selectionX2, selectionY2] =
+///   getElementAbsoluteCoords(appState.selectionElement, elementsMap);
 ///
-/// The consequence: this engine has no marquee over a point editor, and that is a
-/// fidelity result rather than an omission. Excalidraw at `1118751f` does not offer one
-/// either — clicking a point is the whole gesture. Shipping a marquee would be the
-/// divergence this task exists to prevent. The five gates, the elbow filter and
-/// `deletePoints` are all pinned above; what is deliberately absent is the gesture.
+/// const pointsSceneCoords = LinearElementEditor.getPointsGlobalCoordinates(element, elementsMap);
+///
+/// const nextSelectedPoints = pointsSceneCoords
+///   .reduce((acc: number[], point, index) => {
+///     if (
+///       (point[0] >= selectionX1 && point[0] <= selectionX2 &&
+///        point[1] >= selectionY1 && point[1] <= selectionY2) ||
+///       (event.shiftKey && selectedPointsIndices?.includes(index))
+///     ) { acc.push(index); }
+///     return acc;
+///   }, [])
+///   .filter((index) => { /* elbow: keep 0 and len-1 only */ });
+///
+/// setState({ selectedLinearElement: { ...selectedLinearElement,
+///   selectedPointsIndices: nextSelectedPoints.length ? nextSelectedPoints : null } });
+/// ```
+///
+/// # The tests are a Q/R pair on purpose
+///
+/// "The marquee selected some points" is satisfied by an implementation that ignores the box
+/// entirely, so every case here states *which* points, and the two halves of the pair are
+/// chosen to make a box-ignoring answer wrong. The Q half's band holds points 0 and 2 and
+/// **excludes** point 1; the R half's holds **only** point 1. An implementation that returned
+/// the whole list would answer `[0, 1, 2]` to both and fail both.
+///
+/// # Where the press has to land
+///
+/// On the line being edited — `:10898` compares the **element id**, not a handle, so a press
+/// on the stroke works as well as one on a point. Most of these tests press on points,
+/// because a point's own coordinates are known to be on the ink; the stroke case is
+/// `a_box_drawn_from_the_stroke_between_two_points`, on a fixture whose curve really is
+/// straight. That qualification is not decoration: this engine rounds a line by default, the
+/// curve sags away from the chord, and a press at the chord's midpoint lands on nothing at
+/// all — which is how the first version of this fixture passed for the wrong reason.
 #[test]
-fn there_is_no_marquee_over_a_point_editor() {
-    // A drag from empty canvas across two of the three points selects elements, as it
-    // always has — it does not select points, because there is no gesture for that.
+fn a_box_over_two_of_three_points_holds_those_two() {
+    let mut engine = three_point_line();
+
+    // Press on point 0 at (100,100) and drag down the left edge. The band is x 100..100,
+    // y 100..320: points 0 and 2 are on it, point 1 is 200px to the right.
+    engine.begin_pointer(100.0, 100.0, true, false);
+    engine.move_pointer(100.0, 320.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, 2]),
+        "the box covers the first and third points and not the second"
+    );
+}
+
+/// The R half: a band holding **only** point 1 — the one the Q half excluded. A marquee that
+/// ignored the box would answer `[0, 1, 2]` here and pass the Q half by accident.
+#[test]
+fn a_box_elsewhere_holds_only_the_point_it_covers() {
+    let mut engine = three_point_line();
+
+    // Press on point 1 at (300,100), drag a little past it.
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(330.0, 130.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![1]),
+        "the band has moved, and it contains only the point it was drawn from"
+    );
+}
+
+/// The press can be on the **stroke**, not on a handle — `:10898` compares the element, and
+/// this is the ordinary way to draw a band that does not start at a vertex.
+///
+/// The fixture is four collinear points, so the curve through them is a straight line and
+/// (150,150) is genuinely on the ink. The band runs from there to (350,350), which covers
+/// points 1 and 2 and **not** point 0 — the one behind the press, so a band-ignoring port
+/// would answer differently here too.
+#[test]
+fn a_box_drawn_from_the_stroke_between_two_points_selects_points() {
+    let mut engine = straight_four_point_line();
+
+    engine.begin_pointer(150.0, 150.0, true, false);
+    engine.move_pointer(350.0, 350.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![1, 2]),
+        "a press on the ink, not on a handle, is still a press on the element (`:10898`)"
+    );
+}
+
+/// The two corners are normalised, so a drag that goes **up and to the left** encloses the
+/// same kind of region as one that goes down and to the right. `marquee_rect` does it here
+/// and `getElementAbsoluteCoords` does it in the oracle.
+///
+/// The case is chosen so an un-normalised box selects nothing: the band is x 250..300,
+/// y 40..100, and point 1 is at (300,100) — on both edges. Tested as `x1 >= 300 && x1 <= 250`
+/// it is false, so the test would see `None`.
+#[test]
+fn a_box_dragged_up_and_left_encloses_its_region_too() {
+    let mut engine = three_point_line();
+
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(250.0, 40.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![1]),
+        "the band is the region between the two corners, whichever order they came in"
+    );
+}
+
+/// The box is **axis-aligned over global coordinates**, and the y bounds are compared in
+/// the same min-then-max order as the x bounds — `getElementAbsoluteCoords` returns
+/// `[x1, y1, x2, y2]` with `y1 = minY` (`LinearElementEditor.getElementAbsoluteCoords`,
+/// `:2247-2251`), so `:281-282` is `point[1] >= y1 && point[1] <= y2` and not the comparison
+/// the other way round.
+///
+/// The band below is 120 wide and 240 tall and holds point 2 at (100,300) on both axes.
+/// Swapped, `point[1] >= 340` is false for every point on this line and the band holds
+/// nothing.
+#[test]
+fn the_box_compares_both_axes_the_same_way_round() {
+    let mut engine = three_point_line();
+
+    // Press on the line at (100,100), drag to (220,340): band x 100..220, y 100..340.
+    engine.begin_pointer(100.0, 100.0, true, false);
+    engine.move_pointer(220.0, 340.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, 2]),
+        "y1 is the top edge and y2 the bottom, exactly as x1 is the left and x2 the right"
+    );
+}
+
+/// Shift **accumulates** through the drag, and re-reads the set on every move
+/// (`:283`, `event.shiftKey && selectedPointsIndices?.includes(index)`).
+///
+/// Read the expression carefully, because the De Morgan slip is easy and this engine had it
+/// in its click path: a point is kept when `shift && already-held`, so a point already held
+/// **stays** held for the rest of the drag, while a point the band has left and that was
+/// never latched is dropped. The whole set is rebuilt from the previous set on every move,
+/// which is what makes the latch work across moves rather than within one.
+#[test]
+fn a_point_already_held_stays_held_after_the_box_leaves_it() {
+    let mut engine = three_point_line();
+
+    // A band holding only point 1.
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(330.0, 130.0, true, false);
+    assert_eq!(engine.selected_points(), Some(vec![1]));
+
+    // Drag it away, still with shift. Point 1 is no longer inside, but the latch keeps it,
+    // and the new position adds what it now covers.
+    engine.move_pointer(100.0, 320.0, true, false);
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, 1, 2]),
+        "`:283` — point 1 is latched, and points 0 and 2 are newly covered"
+    );
+
+    // Back to a band over nothing at all. **Nothing** is dropped, and that is the point:
+    // the latch reads the *previous* set (`:283` compares against
+    // `selectedPointsIndices`), so by now all three have been held and all three are
+    // latched. A shift-drag can only ever grow.
+    engine.move_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(301.0, 101.0, true, false);
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, 1, 2]),
+        "a shift-drag only ever grows: `:283` latches against the previous set"
+    );
+}
+
+/// The corollary, and the reason the latch is a latch: a point the band has **left** and
+/// that was held is still held, and the only way to let one go is a drag that is not a
+/// marquee at all.
+///
+/// This is worth pinning because it is the opposite of what the band looks like it does. An
+/// implementation that rebuilt the set purely from containment would answer `None` here and
+/// pass every other test in this file.
+#[test]
+fn the_latched_point_outlives_the_band_that_selected_it() {
+    let mut engine = three_point_line();
+
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(330.0, 130.0, true, false);
+    assert_eq!(engine.selected_points(), Some(vec![1]));
+
+    // The band now holds nothing: (500,500) to (600,600) is nowhere near the line.
+    engine.move_pointer(500.0, 500.0, true, false);
+    engine.move_pointer(600.0, 600.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![1]),
+        "the band covers nothing, and point 1 is still held"
+    );
+}
+
+/// The other half of the latch, on its own: a point the band picks up on the way is
+/// **added** to the ones already held, not substituted for them. This is the `||` at `:283`
+/// meeting the accumulate in `normalizeSelectedPoints`.
+#[test]
+fn a_box_picks_up_more_points_as_it_grows() {
+    let mut engine = three_point_line();
+
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(330.0, 130.0, true, false);
+    assert_eq!(engine.selected_points(), Some(vec![1]));
+
+    engine.move_pointer(100.0, 320.0, true, false);
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, 1, 2]),
+        "every point the band has covered during the drag is held"
+    );
+}
+
+/// A press that names no point and holds no shift clears the list, and an empty set is
+/// `null` — not `[]` (`:304-306`). The test carries the consequence rather than the
+/// spelling, because the spelling alone is satisfied by a marquee that does not exist.
+///
+/// A shift-drag can never *empty* the selection, because the oracle's latch is
+/// `event.shiftKey && includes` (`:283`) and shift is what makes the marquee: once a point is
+/// held it stays held for the rest of that drag. The release is the other writer — `:1204`,
+/// where the `clickedPointIndex > -1` guard sits **outside** the ternary, so a press that
+/// names no point and holds no shift writes `null`. That is how `:304-306` is reachable at
+/// all, and it is the state the delete action's first branch keys on.
+#[test]
+fn a_press_that_names_no_point_releases_the_held_one() {
     let mut engine = three_point_line();
     let id = first_id(&engine);
-    engine.begin_pointer(50.0, 50.0, false, false);
-    engine.move_pointer(350.0, 350.0, false, false);
+
+    engine.begin_pointer(300.0, 100.0, true, false);
+    engine.move_pointer(330.0, 130.0, true, false);
+    assert_eq!(engine.selected_points(), Some(vec![1]));
+    engine.end_pointer();
+
+    // A click on empty canvas beside the line.
+    engine.begin_pointer(500.0, 500.0, false, false);
+    engine.end_pointer();
+    assert_eq!(engine.selected_points(), None, "`:304-306` — empty is null");
+
+    // And the consequence, which is why the distinction is a type rather than a length: the
+    // delete action's first branch is `== null` (`:229-231`), so a Backspace now takes the
+    // whole element rather than a point.
+    engine.select(vec![id.clone()]);
+    engine.delete_selection();
+    assert!(
+        get(&engine, &id).is_deleted,
+        "branch one, which is what `null` means"
+    );
+}
+
+/// The elbow filter, on the marquee's own copy of it (`:290-299`) — the same predicate as
+/// `is_point_handle` (`:1424-1431`), which the *click* path uses.
+///
+/// A band that encloses an elbow arrow's interior corners takes the arrow's two ends and
+/// nothing else, because the corners are the router's and are not selectable. Without the
+/// filter this test answers `[0, 1, 2, 3]` on a four-point route.
+#[test]
+fn a_box_over_an_elbow_arrow_takes_only_its_two_ends() {
+    let mut engine = elbow_arrow();
+    // The arrow's own id, not the first element in the scene: the scene also holds the two
+    // shapes it is bound to, and those have no points at all.
+    let id = arrow_of(&engine).id;
+    // The editor has to be open, or there is no point editor to box over at all — the same
+    // `isEditing` term the marquee's reachability turns on, and the reason this test would
+    // otherwise just see a point drag (which holds exactly one index: the tail).
+    open_arrow_editor(&mut engine, &id);
+    let el = arrow_of(&engine);
+    let n = el.points.as_ref().unwrap().len() as i64;
+    assert!(
+        n > 2,
+        "the route has interior corners for the filter to refuse"
+    );
+
+    // Press on the tail and drag past the head, so the whole route is inside the band. The
+    // tail's own coordinates are on the ink.
+    let tail = el.points.as_ref().unwrap()[0];
+    engine.begin_pointer(el.x + tail[0], el.y + tail[1], true, false);
+    engine.move_pointer(el.x + el.width + 30.0, el.y + el.height + 30.0, true, false);
+
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![0, n as usize - 1]),
+        "`:290-299` — only the ends of an elbow arrow are selectable"
+    );
+}
+
+/// Without shift there is no point marquee: the press goes to the point handle and the drag
+/// **moves that point**, which is `isSelectingPointsInLineEditor`'s `event.shiftKey` term
+/// (`App.tsx@1118751f:10895-10899`).
+///
+/// The control for every test above: without it, "shift+drag holds points" could be passing
+/// because any drag on the line does. Here the drag starts **on** point 1 and ends 50px from
+/// where it was, and the assertion is that the point followed the pointer.
+#[test]
+fn without_shift_a_drag_on_a_point_moves_it_instead_of_box_selecting() {
+    let mut engine = three_point_line();
+    let id = first_id(&engine);
+
+    engine.begin_pointer(300.0, 100.0, false, false);
+    engine.move_pointer(350.0, 150.0, false, false);
     engine.end_pointer();
 
     assert_eq!(
         engine.selected_points(),
-        None,
-        "a marquee is an element marquee here, as in the oracle"
+        Some(vec![1]),
+        "one point is held — the one the press named, which is all the click path ever holds"
     );
-    assert_eq!(engine.get_selection(), vec![id]);
+    assert_eq!(
+        points_of(&engine, &id),
+        vec![[100.0, 100.0], [350.0, 150.0], [100.0, 300.0]],
+        "and it followed the pointer, so no box was drawn"
+    );
 }
 
-// ---------------------------------------------------------------------------
+/// The other control: the same press **without** shift, starting on the stroke between two
+/// points rather than on one, is a drag of the whole line. Without this, a port that began a
+/// box on any press over the line would pass every test above.
+#[test]
+fn without_shift_a_drag_on_the_stroke_moves_the_whole_line() {
+    let mut engine = straight_three_point_line();
+    let id = first_id(&engine);
+    let before = points_of(&engine, &id);
+
+    engine.begin_pointer(150.0, 150.0, false, false);
+    engine.move_pointer(200.0, 210.0, false, false);
+    engine.end_pointer();
+
+    assert_eq!(engine.selected_points(), None, "a move holds no point");
+    assert_ne!(
+        points_of(&engine, &id),
+        before,
+        "and the line moved, so this really was a drag of the element"
+    );
+}
+
+/// The gesture is a **Shift+drag on the line being edited**, and the reachability is not
+/// obvious — this comment is here so the next reader does not have to re-derive it, having
+/// already been told once that it was dead.
+///
+/// The call graph, at `1118751f`:
+///
+/// - `handleBoxSelection` needs `isEditing` **and** `selectionElement`
+///   (`linearElementEditor.ts:255-259`), and its only call site is `App.tsx:11275`, behind
+///   `:11274 if (this.state.selectedLinearElement?.isEditing)`;
+/// - `selectionElement` is assigned in exactly one place, `App.tsx:10497`, inside
+///   `createGenericElementOnPointerDown` (`:10439`) under `if (element.type ===
+///   "selection")` (`:10495`) — **not** in `maybeDragNewGenericElement` (`:13330`), which
+///   only *reads* it (`:13335`). `createGenericElementOnPointerDown` has two call sites:
+///   `:8985` on pointer-down with `this.state.activeTool.type`, so the selection tool makes
+///   the band on **every** press, and `:11158` with the literal `"selection"` in the lasso
+///   branch;
+/// - so on a *plain* box-drag the band exists and `isEditing` exists — but
+///   `handleSelectionOnPointerDown` (`:9427-9448`) and then `:9591-9607` turn `isEditing`
+///   **off** on any press that does not land on the element, and a press that does land on it
+///   starts a drag of the element at `:10901-11132`, which `return`s at `:11132` before
+///   `:11268`. Neither reaches `:11274` with both true;
+/// - the branch that *is* skipped for a line being edited is `:10901-10904`, whose guard
+///   reads `!isSelectingPointsInLineEditor`, where (`:10895-10899`)
+///
+///   ```ts
+///   const isSelectingPointsInLineEditor =
+///     this.state.selectedLinearElement?.isEditing &&
+///     event.shiftKey &&
+///     this.state.selectedLinearElement.elementId === pointerDownState.hit.element?.id;
+///   ```
+///
+///   With **shift held on a press that lands on the line being edited**, the
+///   drag-the-element branch is skipped, `:11136`'s `if (this.state.selectionElement)` is
+///   true (the band was made on pointer-down at `:8985`), `:11154` grows it, and control
+///   falls through to `:11268` and `:11274`. The marquee runs.
+///
+/// So: **shift-click adds points one at a time, shift-drag box-selects them**, and the press
+/// only has to land on the line — on its stroke or on a handle, since `:10898` compares the
+/// element id. The `:11155-11158` lasso round-trip is a real path to a recreated band, but
+/// it is not the way in: `:11140` sits inside `:11136`, which is only reached when the
+/// `:10901` branch was skipped, which needs shift.
+#[test]
+fn the_gesture_is_a_shift_drag_on_the_line_being_edited() {
+    // A plain click on a point still selects that point, without shift.
+    let mut engine = three_point_line();
+    click(&mut engine, 300.0, 100.0, false);
+    assert_eq!(
+        engine.selected_points(),
+        Some(vec![1]),
+        "the click path, unchanged"
+    );
+
+    // Shift-click accumulates, as `normalizeSelectedPoints` has it.
+    click(&mut engine, 100.0, 100.0, true);
+    assert_eq!(engine.selected_points(), Some(vec![0, 1]));
+
+    // And shift-drag box-selects: the Q half of the pair above.
+    let mut engine = three_point_line();
+    engine.begin_pointer(100.0, 100.0, true, false);
+    engine.move_pointer(100.0, 320.0, true, false);
+    assert_eq!(engine.selected_points(), Some(vec![0, 2]));
+}
+
 // 10. `keyTest` — Backspace and Delete, and never ⌘/Ctrl.
 // ---------------------------------------------------------------------------
 
