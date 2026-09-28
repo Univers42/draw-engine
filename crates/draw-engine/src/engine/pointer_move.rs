@@ -315,6 +315,20 @@ impl DrawEngine {
                     base,
                 })
             }
+            Interaction::PointBox { ref id, start } => {
+                // Re-derived from scratch on **every** move, as the oracle does
+                // (`App.tsx:11275` is inside the pointer-move handler, and the reduce at
+                // `linearElementEditor.ts:276-289` rebuilds the whole set from
+                // `selectedPointsIndices` each time). That is what makes the shift latch
+                // work across moves rather than only within one, and it is why the band
+                // follows the pointer instead of only being judged at the release.
+                let rect = crate::selection::marquee_rect(start.x, start.y, world.x, world.y);
+                self.select_points_in_box(id, rect, square);
+                Some(Interaction::PointBox {
+                    id: id.clone(),
+                    start,
+                })
+            }
         }
     }
 

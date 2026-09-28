@@ -227,7 +227,7 @@ impl DrawEngine {
             | Interaction::MultiLinearPress
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
             Interaction::Erase { .. } => HoverCursor::Crosshair,
-            Interaction::Marquee { .. } => HoverCursor::Default,
+            Interaction::Marquee { .. } | Interaction::PointBox { .. } => HoverCursor::Default,
             Interaction::Lasso { .. } => HoverCursor::Crosshair,
             // The trail is the pointer here, so a crosshair marks exactly where the beam
             // comes from — an arrow would sit beside its own tip.

@@ -459,25 +459,59 @@ impl DrawEngine {
                 // box, so the box handles never apply to it — Excalidraw gives one
                 // circles on its ends and no selection rectangle at all. A longer one has
                 // both, and the box handles are taken first (`App.tsx@1118751f:9406-9445`).
-                let handle = if self.shows_point_handles(&single) {
-                    None
-                } else {
+                // The five conditions behind that decision are
+                // `offers_transform_handles`'.
+                let handle = if self.offers_transform_handles(&single) {
                     // The same layout the painter uses, so a grab can only land on a
                     // handle that is actually on screen — and its own reach, which is
                     // sized to stay clear of the element so the outline still moves it.
                     self.resize_handle_at(&single, press)
+                } else {
+                    None
                 };
                 if handle.is_none() {
                     let handles = self.point_handles(&single);
                     if let Some(handle) =
                         crate::selection::linear::hit_handle(&handles, press.x, press.y, world_tol)
                     {
+                        // A press on a point holds it, which is the gesture that makes a
+                        // later Delete remove a point rather than the element
+                        // (`LinearElementEditor.handlePointerDown`,
+                        // `linearElementEditor.ts@1118751f:1204-1216`). Recorded on the
+                        // press, as the oracle does — so dragging the point away still
+                        // leaves it held, and a release without a move needs no special
+                        // case. A midpoint is not a point, so it selects nothing.
+                        if let crate::selection::LinearHandle::Point(index) = handle {
+                            // A press on a point holds it, which is the gesture that makes a
+                            // later Delete remove a point rather than the element
+                            // (`LinearElementEditor.handlePointerDown`,
+                            // `linearElementEditor.ts@1118751f:1204-1216`). Recorded on the
+                            // press, as the oracle does — so dragging the point away still
+                            // leaves it held, and a release without a move needs no special
+                            // case.
+                            self.select_point(&single.id, Some(index), additive);
+                        }
+                        if self.selecting_points_in_line_editor(&single.id, additive) {
+                            // ...unless shift is held, which makes this a box over the
+                            // points rather than a drag of one. See
+                            // `selecting_points_in_line_editor` for the oracle's flag.
+                            self.interaction = Some(Interaction::PointBox {
+                                id: single.id,
+                                start: press,
+                            });
+                            return;
+                        }
                         self.interaction = Some(Interaction::LinearPoint {
                             id: single.id,
                             handle,
                         });
                         return;
                     }
+                    // A press that reached the point branch and named no point, with no
+                    // shift, leaves the points held as they were: the oracle's
+                    // `clickedPointIndex > -1 || event.shiftKey` guard at `:1204` sits
+                    // outside the assignment, so nothing is written at all.
+                    self.select_point(&single.id, None, additive);
                 }
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
@@ -602,6 +636,19 @@ impl DrawEngine {
             }
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
+            }
+            // A shift-press **on the line being edited** is a box over its points, even
+            // when the press missed every handle and landed on the stroke: the oracle's
+            // flag tests the element, not a handle (`:10898`). Without this the second half
+            // of the gesture — dragging out from a point you did not press on — would fall
+            // through to a move of the whole line.
+            if self.selecting_points_in_line_editor(&hit.id, additive) {
+                self.interaction = Some(Interaction::PointBox {
+                    id: hit.id,
+                    start: press,
+                });
+                self.request_draw();
+                return;
             }
             self.begin_move(world);
             return;

@@ -254,6 +254,73 @@ pub fn elbow_handle_points(element: &DrawElement, min_segment: f64) -> Vec<Linea
     out
 }
 
+/// Whether the point at `index` is a handle at all — the elbow-arrow filter.
+///
+/// Transcribed from `LinearElementEditor.isPointHandle`
+/// (`packages/element/src/linearElementEditor.ts@1118751f:1424-1431`) at the SHA pinned in
+/// `scripts/oracle-sha.txt`:
+///
+/// ```ts
+/// static isPointHandle(element: ExcalidrawLinearElement, index: number) {
+///   return (
+///     index >= 0 &&
+///     (!isElbowArrow(element) ||
+///       index === 0 ||
+///       index === element.points.length - 1)
+///   );
+/// }
+/// ```
+///
+/// An elbow arrow's middle points are the **router's** corners, not the author's: they
+/// exist only because the route bends there, and the router re-derives them on every
+/// move, so a person cannot move one and must not be offered it. That is the whole of
+/// the rule — the last index is named, not "the second one", so a route of any length
+/// offers exactly its two ends.
+///
+/// `index` is signed because `-1` is the oracle's "no point under the cursor"
+/// (`getPointIndexUnderCursor`, `:1444-1458`), and `index >= 0` is part of the predicate
+/// rather than a type-level guarantee. The same test appears a second time in
+/// `handleBoxSelection` (`:290-299`).
+pub fn is_point_handle(element: &DrawElement, index: i64) -> bool {
+    if index < 0 {
+        return false;
+    }
+    if !crate::scene::elbow::is_elbow(element) {
+        return true;
+    }
+    let Some(points) = element.points.as_deref() else {
+        return false;
+    };
+    let len = points.len();
+    let index = index as usize;
+    index == 0 || index + 1 == len
+}
+
+/// The set of points a line editor is holding, as `normalizeSelectedPoints` keeps it
+/// (`linearElementEditor.ts@1118751f:2367-2375`):
+///
+/// ```ts
+/// let nextPoints = [...new Set(points.filter((p) => p !== null && p !== -1))];
+/// nextPoints = nextPoints.sort((a, b) => a - b);
+/// return nextPoints.length ? nextPoints : null;
+/// ```
+///
+/// Dropped: `null` and `-1`. De-duplicated, so shift-clicking a point already held is
+/// idempotent — this **accumulates, it does not toggle**. Sorted ascending, which is what
+/// makes `selectedPointsIndices[0]` the *lowest* selected index in the delete path
+/// (`actionDeleteSelected.tsx@1118751f:265-268`). And an empty set is `None`, not an
+/// empty vector: the difference is the whole of the delete action's first branch
+/// (`:229-231`).
+pub fn normalize_selected_points(points: &[i64]) -> Option<Vec<usize>> {
+    let mut out: Vec<i64> = points.iter().copied().filter(|p| *p >= 0).collect();
+    out.sort_unstable();
+    out.dedup();
+    if out.is_empty() {
+        return None;
+    }
+    Some(out.into_iter().map(|p| p as usize).collect())
+}
+
 /// The handle under the pointer, if any.
 ///
 /// Real points are tested before midpoints so that a midpoint sitting near an endpoint

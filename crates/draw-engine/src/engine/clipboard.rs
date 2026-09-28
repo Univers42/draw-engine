@@ -518,7 +518,80 @@ impl DrawEngine {
         self.push_history();
     }
 
+    /// Whether a delete with these indices held takes the **element** rather than its
+    /// points — the second branch of `actionDeleteSelected.perform`
+    /// (`actionDeleteSelected.tsx@1118751f:234`).
+    ///
+    /// A **comparison and not an equality**, and the oracle never asks what the indices
+    /// mean — only how many there are. So three indices on a three-point line take the
+    /// element even if two of them name no point, and the only count that does *not* is
+    /// one short of the point count, which is the case a person can reach by clicking.
+    pub fn delete_takes_the_element(&self, element: &DrawElement, point_indices: &[usize]) -> bool {
+        point_indices.len() >= element.points.as_deref().map_or(0, |p| p.len())
+    }
+
+    /// Backspace and Delete.
+    ///
+    /// `actionDeleteSelected.perform` (`actionDeleteSelected.tsx@1118751f:213-303`) is a
+    /// decision with a point branch in front of the ordinary one, and the order is the
+    /// spec:
+    ///
+    /// 1. `selectedPointsIndices == null` → `return false` (`:229-231`). This action
+    ///    deletes nothing and the element branch below takes the element instead. The
+    ///    comment above the branch in the oracle says why that is the right default: if
+    ///    you meant a point and missed, taking the whole element is "most likely a
+    ///    mistake" — but with no point held, deleting what is held is what was asked for.
+    /// 2. every point held → delete the **element** (`:234-251`).
+    /// 3. some points held → [`Self::delete_points`], and re-map the selection
+    ///    (`:253-272`).
+    ///
+    /// Branches 2 and 3 are `engine/point_edit.rs`, which cites them in full.
     pub fn delete_selection(&mut self) {
+        // Branch 1: no point held, so the whole element — which is what the body below
+        // has always done, and the only thing it does. `selected_points` is `None` here
+        // and not merely empty: that is the distinction the oracle draws at `:229`.
+        if let Some(indices) = self.selected_points() {
+            let Some(id) = self.selected_points_of().map(str::to_owned) else {
+                return;
+            };
+            let Some(element) = self.scene.get(&id).cloned() else {
+                // The element the points belonged to is gone — erased, or undone out from
+                // under the selection. The oracle's `:222-224`, `if (!linearElement)
+                // return false`: with nothing to take a point off, this action declines
+                // rather than falling through to deleting whatever else is held.
+                self.forget_selected_points();
+                return;
+            };
+            if self.delete_takes_the_element(&element, &indices) {
+                // Branch 2: every point held, so the element goes —
+                // `selectedLinearElement: null` at `:247` and
+                // `CaptureUpdateAction.IMMEDIATELY` at `:249`. Clearing the editor first
+                // is what makes the body below the ordinary element delete rather than a
+                // second trip through this branch.
+                self.editing_linear = None;
+                self.forget_selected_points();
+                self.delete_selected_elements();
+                return;
+            }
+            // Branch 3: the points go, the element stays, and the selection follows.
+            // `[selectedPointsIndices[0] - 1]`, or `[0]` when the first index was `0`
+            // (`:265-268`) — the set is sorted, so `[0]` is the lowest held index.
+            self.delete_points(&id, &indices);
+            let first = indices[0];
+            self.selected_points = Some(super::PointSelection {
+                id,
+                indices: vec![if first > 0 { first - 1 } else { 0 }],
+            });
+            self.request_draw();
+            return;
+        }
+        if self.selected_ids.is_empty() {
+            return;
+        }
+        self.delete_selected_elements();
+    }
+
+    fn delete_selected_elements(&mut self) {
         if self.selected_ids.is_empty() {
             return;
         }

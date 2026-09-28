@@ -209,9 +209,80 @@ fn the_box_follows_a_path_that_grows_backwards() {
     assert_points(&engine, &[(300.0, 300.0), (200.0, 260.0), (100.0, 400.0)]);
 }
 
+/// Clicking the point just placed removes the **preview point** by index — and this is
+/// the line worth naming, because the whole "Remove point" question has been re-opened
+/// against it.
+///
+/// `LinearElementEditor.handlePointerDown`
+/// (`packages/element/src/linearElementEditor.ts@1118751f:1278-1281`):
+///
+/// ```ts
+/// if (!event.altKey) {
+///   if (lastPoint === lastUncommittedPoint) {
+///     LinearElementEditor.deletePoints(element, app, [points.length - 1]);
+///   }
+/// ```
+///
+/// Three things that test pins, and which are easy to mistake for three other things:
+///
+/// 1. **The preview is a point in `element.points`, at the last index.** It is not a
+///    separate thing the click-back discards; it is `points[points.length - 1]`, which is
+///    why the removal can be expressed as an index at all — and why the same
+///    `deletePoints` this task extends serves both callers.
+/// 2. **The removal is conditional** on `lastPoint === lastUncommittedPoint`, i.e. only
+///    the preview is removed. Clicking back on a *placed* point when the cursor is
+///    resting inside its commit zone leaves the point list alone (the press finishes the
+///    path; `finish_multi_linear` then discards the preview).
+/// 3. **`event.altKey` short-circuits the whole thing** (`:1278`), so Alt-click-back takes
+///    the branch below, which *adds* a point instead. That is the same split
+///    `press_multi_linear` reads for its own click-back, and the reason this test does not
+///    use Alt.
+///
+/// Note what is **not** here: any Backspace handling. `linearElementEditor.ts` contains
+/// no `Backspace` at `1118751f`, and `BUNNY.md:768`'s "5.1 Backspace removes the last point
+/// while placing a multi-point line" would have had to be built out of thin air. The
+/// "remove a point" behaviour is in `actionDeleteSelected.tsx:213-273`, and this engine
+/// has it in `engine/point_edit.rs` — see `ci_point_delete.rs`.
+#[test]
+fn the_preview_is_the_last_point_and_a_click_back_removes_it_by_index() {
+    let mut engine = line_engine();
+    click(&mut engine, 100.0, 100.0);
+    place(&mut engine, &[(200.0, 100.0)]);
+
+    // The cursor leaves the commit zone, so a preview point is appended — and it is a
+    // point like any other, at the end of the list. This is the `points[points.length -
+    // 1]` that `:1280` indexes.
+    hover(&mut engine, 200.0, 200.0);
+    let with_preview = engine
+        .get_scene()
+        .into_iter()
+        .next()
+        .and_then(|el| el.points)
+        .expect("the path has points");
+    assert_eq!(
+        with_preview.len(),
+        3,
+        "the preview is point 2 of a two-point path, not a separate object"
+    );
+
+    // The click back on the point just placed is `:1279-1281`.
+    click(&mut engine, 200.0, 100.0);
+
+    assert!(
+        engine.linear_in_progress().is_none(),
+        "the click back ended the path"
+    );
+    // The placed points are untouched and the preview is gone. `assert_points` reports
+    // both lists when they differ, so the failure says which of the two moved.
+    assert_points(&engine, &[(100.0, 100.0), (200.0, 100.0)]);
+}
+
 /// Backing out of a segment without placing it: Excalidraw takes the preview point away
 /// again when the cursor comes back inside the last point's commit zone
-/// (`App.tsx@1118751f:8031-8066`).
+/// (`App.tsx@1118751f:8031-8066`). The oracle reaches the same `truncate` from the other
+/// side — see `the_preview_is_the_last_point_and_a_click_back_removes_it_by_index` for
+/// `linearElementEditor.ts@1118751f:1278-1281`, which is the line that removes the preview
+/// on a click rather than on a cursor return.
 #[test]
 fn the_preview_backs_out_when_the_cursor_returns() {
     let mut engine = line_engine();
