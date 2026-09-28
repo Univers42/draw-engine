@@ -43,7 +43,9 @@ export { loadDrawEngine } from "./wasmLoad";
  * CSS cursors, indexed by the engine's `HoverCursor` discriminant.
  *
  * The order is the contract with `engine/hover.rs` and is append-only — inserting in the
- * middle silently reassigns every cursor after it. `ci_ts_parity` asserts the two agree.
+ * middle silently reassigns every cursor after it. `ci_cursor_parity.rs` asserts the two agree;
+ * it replaced a sentence here that named a `ci_ts_parity` which has never existed anywhere in
+ * this repository, so the risk was real and the guarantee was not.
  */
 const HOVER_CURSORS = [
   "default", // Default
