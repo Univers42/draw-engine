@@ -81,12 +81,29 @@ impl DrawEngine {
     /// lit once a drag had begun, so where an arrow would attach was a guess until it was
     /// already being drawn. Only the arrow tool, and only between gestures: a drag or a
     /// path being placed shows its own.
+    ///
+    /// **The pointer is read raw, and that is not a Ctrl question.** Their
+    /// `handleCanvasPointerMove` computes `scenePointer = viewportCoordsToSceneCoords(event,
+    /// this.state)` — a pure camera transform (`common/src/utils.ts@1118751f:317-337`) — reads
+    /// it at `:7822` and hands it to `getHoveredElementForBinding` at `:7947-7954`. There is no
+    /// `getGridPoint` on the way, and none inside the callee either: `scene` walks
+    /// `getBindingCandidates` (`collision.ts@1118751f:432`), which reads no grid. Of their
+    /// sixteen `getGridPoint` call sites none is on this path — the three a report named for
+    /// it (`:9974`, `:10014`, `:10067`) are `insertIframeElement`,
+    /// `insertEmbeddableElement` and `newImagePlaceholder`, which *create* an element from a
+    /// paste, a drop and the AI magic-frame button, and are gated on
+    /// `lastPointerDownEvent?.[CTRL_OR_CMD]` — an earlier press, not a hover.
+    ///
+    /// So this is deliberately not [`Self::snap_gesture`]. A hit test asks what is under the
+    /// pointer, and rounding the pointer first asks a different question: with the grid on, an
+    /// outline a few units off an intersection lights whatever that intersection is over, and
+    /// near the tolerance's edge it lights **nothing** at all.
     pub fn hover_pointer(&mut self, sx: f64, sy: f64) {
         if self.tool != DrawTool::Arrow || self.interaction.is_some() || self.multi_linear.is_some()
         {
             return;
         }
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.screen_to_world(sx, sy);
         let target = if self.ctrl_held {
             None
         } else {

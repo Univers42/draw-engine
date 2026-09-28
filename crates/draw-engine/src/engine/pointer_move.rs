@@ -711,10 +711,14 @@ impl DrawEngine {
     }
 
     /// Where a resize puts the edge it moves: the pointer, less where in the handle it was
-    /// taken, snapped (`App.tsx@1118751f:13578-13582` — the grab first, then the grid).
+    /// taken, then the grid unless Ctrl/Cmd is held (`App.tsx@1118751f:13578-13582` — the
+    /// grab first, then `event[KEYS.CTRL_OR_CMD] ? null : this.getEffectiveGridSize()`).
+    ///
+    /// Both a single element (`:264`) and a group (`:89`) land here, and the oracle's one
+    /// site serves both, so the gate is here rather than at either call site.
     fn resize_pointer(&self, sx: f64, sy: f64, grab: Point) -> Point {
         let raw = self.screen_to_world(sx, sy);
-        self.snap(Point {
+        self.snap_gesture(Point {
             x: raw.x - grab.x,
             y: raw.y - grab.y,
         })
