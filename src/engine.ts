@@ -31,6 +31,7 @@ import type {
   FlowchartShape,
   GridSettings,
   PngExport,
+  RestoreOutcome,
   SelectionStyle,
   SecondaryPanEnd,
   SecondaryPanStart,
@@ -144,6 +145,32 @@ function readClipboardCopy(raw: unknown, format: ClipboardFormatName): Clipboard
     return declined;
   }
   return copy;
+}
+
+/**
+ * The engine's answer to "did that file open", read defensively for the reason
+ * `readClipboardCopy` gives: the binding is a `JsValue`, so nothing here is checked by the
+ * type system, and the failure this guards against is a host that read a missing `refused`
+ * as `undefined` and reported success — an empty board after opening a file.
+ *
+ * So an answer that does not hold up is a **refusal**, never a success, and the one
+ * refusal used for that is `unreadable`: "it carries a scene of ours and we cannot read it"
+ * is the sentence a person can be given, and a shape this host did not expect is
+ * indistinguishable from one it did.
+ */
+function readRestoreOutcome(raw: unknown): RestoreOutcome {
+  if (typeof raw !== "object" || raw === null) return { refused: "unreadable" };
+  const answer = raw as Record<string, unknown>;
+  if (answer["restored"] === true) return { restored: true };
+  const refusal = answer["refused"];
+  if (
+    refusal === "malformed" ||
+    refusal === "not-ours" ||
+    refusal === "unreadable"
+  ) {
+    return { refused: refusal };
+  }
+  return { refused: "unreadable" };
 }
 
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
@@ -1129,6 +1156,32 @@ export class DrawEngine {
       options.canWriteText ?? true,
     );
     return readClipboardCopy(raw, format);
+  }
+
+  /**
+   * The scene inside a saved picture or drawing, loaded — or why there is none.
+   *
+   * The other door beside [`loadScene`](./engine.ts), and the one the oracle's
+   * `decodePngMetadata` (`data/image.ts@1118751f:49-71`) and `decodeSvgBase64Payload`
+   * (`export.ts@1118751f:531-563`) are. What the bytes *are* is the engine's question and
+   * is answered in Rust: this takes a `File`'s bytes and nothing else, so a host cannot
+   * pick a container, a key, or a reading of a bad chunk (BUNNY.md §2).
+   *
+   * **The scene is loaded here rather than handed back**, which is why this returns an
+   * outcome and not a string. The alternative was a result object the host then fed to
+   * `loadScene`, and it puts the whole thing at risk in one line of the front — a host
+   * that forgot the second call would open a file and see the board it already had, which is
+   * the same silence as a blank board. A refusal cannot touch the scene at all, because the
+   * scene is replaced on the one path that succeeded and on no other.
+   *
+   * `Uint8Array` rather than a `Blob` or an `ArrayBuffer`: a `Blob` has to be read before
+   * anything can look at it, and `File.arrayBuffer()` gives bytes directly. The engine
+   * sniffs the PNG signature and treats everything else as the vector container, so this
+   * one call opens a `.png`, an `.svg` and nothing it should not.
+   */
+  restoreFromImage(bytes: Uint8Array): RestoreOutcome {
+    const raw = this.inner.restoreFromImage(bytes);
+    return readRestoreOutcome(raw);
   }
 
   loadScene(json: string): boolean {

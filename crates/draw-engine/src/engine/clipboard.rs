@@ -690,20 +690,34 @@ impl DrawEngine {
         crate::scene_to_json(&self.scene.ordered_cloned())
     }
 
-    /// The scene as an SVG, framed by `scope`.
+    /// The scene as an SVG, framed by `scope`, carrying the scene when `options` says so.
     ///
     /// The same [`Self::export_scope`] the PNG path uses, so the two formats cannot frame one
     /// drawing differently — which they did, and which the oracle has no way of doing: it
     /// builds one `getCanvasSize` and hands it to both (`export.ts@1118751f:232-235, 341-344`).
     /// `None` only for an empty scene, where the oracle has no element to measure.
-    pub fn export_svg_of(&self, scope: &crate::export::ExportScope<'_>) -> Option<String> {
+    ///
+    /// The payload is [`crate::scene_payload`] over the scope's own elements, so the SVG
+    /// carries exactly the elements it drew. It is computed here rather than inside
+    /// `scene_to_svg` because a copy must not carry one (`data/index.ts@1118751f:132`), and
+    /// the difference between a file and a copy is the one thing about an export a host may
+    /// not decide for itself.
+    pub fn export_svg_of(
+        &self,
+        scope: &crate::export::ExportScope<'_>,
+        options: &crate::export::ExportOptions,
+    ) -> Option<String> {
         if scope.elements.is_empty() {
             return None;
         }
+        let scene = options
+            .embed_scene
+            .then(|| crate::export::scene_payload(&scope.elements));
         Some(crate::scene_to_svg(
             &scope.elements,
             &scope.frame,
             &self.theme.background,
+            scene.as_deref(),
         ))
     }
 
@@ -776,11 +790,33 @@ impl DrawEngine {
             supported: true,
             refusal: None,
             mime: format.mime(),
-            text: match format {
-                crate::export::ClipboardFormat::Svg => self.export_svg_of(&scope),
-                crate::export::ClipboardFormat::Png => None,
-            },
+            text: self.copied_text(format, &scope, options),
             scope,
+        }
+    }
+
+    /// The vector payload of a copy, and `None` for a raster.
+    ///
+    /// **`embed_scene` is `false` here whatever the options say**, and the oracle's line is
+    /// why: `exportEmbedScene: appState.exportEmbedScene && type === "svg"`
+    /// (`data/index.ts@1118751f:132`) is false for `type === "clipboard-svg"`. Set here
+    /// rather than left to the caller, so that no options value can make a clipboard carry
+    /// a whole board into somebody's mail client.
+    fn copied_text(
+        &self,
+        format: crate::export::ClipboardFormat,
+        scope: &crate::export::ExportScope<'_>,
+        options: &crate::export::ExportOptions,
+    ) -> Option<String> {
+        match format {
+            crate::export::ClipboardFormat::Svg => self.export_svg_of(
+                scope,
+                &crate::export::ExportOptions {
+                    embed_scene: false,
+                    ..*options
+                },
+            ),
+            crate::export::ClipboardFormat::Png => None,
         }
     }
 

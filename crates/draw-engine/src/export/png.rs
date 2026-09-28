@@ -42,6 +42,21 @@ pub struct ExportOptions {
     /// (`export.ts@1118751f:169-172`, inside `prepareElementsForRender`), so ours is one
     /// flag and not a per-format argument.
     pub frame_labels: bool,
+    /// Whether the scene goes into the file with the picture — `appState.exportEmbedScene`
+    /// (`export.ts@1118751f:378-391`, and the dialog's checkbox at
+    /// `actionExport.tsx@1118751f:99-105`).
+    ///
+    /// **True here where the oracle's default is `false`**, and it is a deliberate
+    /// difference: dropping a saved PNG back on the board has to restore the drawing, which
+    /// is what `design.md:1352` asks for, and a picture that carries nothing is a lossy
+    /// format wearing a `.png` name. What the oracle gates on is a *person's* choice to make
+    /// a picture into a scene file, and we have no such picture: the lossless format is the
+    /// `.osidraw` save, and the embed is the travel case.
+    ///
+    /// **False for a clipboard copy**, which is the oracle's own line rather than ours:
+    /// `exportEmbedScene: appState.exportEmbedScene && type === "svg"`
+    /// (`data/index.ts@1118751f:132`) is false for `type === "clipboard-svg"`.
+    pub embed_scene: bool,
 }
 
 impl Default for ExportOptions {
@@ -55,6 +70,7 @@ impl Default for ExportOptions {
             scale: 1.0,
             background: true,
             frame_labels: true,
+            embed_scene: true,
         }
     }
 }

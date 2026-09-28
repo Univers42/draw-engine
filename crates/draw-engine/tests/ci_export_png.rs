@@ -275,6 +275,10 @@ fn a_frame_can_be_built_from_bounds_someone_else_chose() {
             scale: 2.0,
             background: true,
             frame_labels: true,
+            // Spelled out because this is the test that says every field of the struct is
+            // reachable from outside the module, and a field added since would otherwise
+            // stop being read here without anything failing.
+            embed_scene: true,
         },
     );
 

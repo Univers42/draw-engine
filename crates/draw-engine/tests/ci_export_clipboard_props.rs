@@ -146,19 +146,29 @@ fn browser() -> ClipboardHost {
 // The property.
 // ---------------------------------------------------------------------------
 
-/// **The clipboard carries the file export's own bytes, for every scene and every
-/// selection.**
+/// **The clipboard carries the file export's own picture, for every scene and every
+/// selection — and nothing but the scene with it.**
 ///
 /// The invariant, in the form that catches a scope decided in the front: over a swept
 /// corpus, for **every** selection — none, one, two, all, and the frame's own combinations
-/// — the text a copy offers is byte-identical to what the same engine exports to a file
-/// with the same options, and the copy says the same thing about what it copied.
+/// — the *picture* a copy offers is what the same engine exports to a file with the same
+/// options, and the copy says the same thing about what it copied.
 ///
 /// Both halves matter. The string catches a different element list; the `scope` catches a
 /// right picture described wrongly, which is the failure a toast makes: "Copied canvas to
 /// clipboard" above a picture of two selected shapes.
+///
+/// **The one difference is the scene, and it is the oracle's own difference.**
+/// `exportEmbedScene: appState.exportEmbedScene && type === "svg"`
+/// (`data/index.ts@1118751f:132`) is false for `type === "clipboard-svg"`, so a copy is a
+/// picture and a file is a picture *and* the drawing. The comparison is therefore the file
+/// with its `<metadata>` element taken out — and the presence of that element on one side
+/// and its absence on the other is **asserted** rather than divided out, because a
+/// comparison that quietly removed the difference would sail straight through a clipboard
+/// that started carrying a scene, and a picture somebody pastes into a mail would then
+/// carry a whole board with it.
 #[test]
-fn every_copy_is_byte_for_byte_the_file_export_of_the_same_scope() {
+fn every_copy_is_the_file_export_of_the_same_scope_without_the_scene() {
     let options = ExportOptions::default();
 
     for seed in 1..=CORPORA {
@@ -170,15 +180,42 @@ fn every_copy_is_byte_for_byte_the_file_export_of_the_same_scope() {
             engine.select(selected.clone());
 
             let file_scope = engine.export_scope(true, &options);
-            let file = engine.export_svg_of(&file_scope);
+            let file = engine.export_svg_of(&file_scope, &options);
             let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
 
             assert!(
                 copy.supported,
                 "seed {seed}, selection {selected:?}: nothing to copy"
             );
+            let copied = copy.text.as_deref().expect("a copy carries a picture");
+            let drawn = file.as_deref().expect("a file export carries a picture");
+            assert!(
+                drawn.contains("<!-- payload-start -->"),
+                "seed {seed}, selection {selected:?}: a file export carries the scene"
+            );
+            assert!(
+                !copied.contains("payload-start") && !copied.contains("payload-end"),
+                "seed {seed}, selection {selected:?}: a copy carries no scene, \
+                 as `data/index.ts@1118751f:132` has it"
+            );
+            // The file export with the scene turned off, which is what a copy is. Stated
+            // that way rather than by cutting the payload out of `drawn` with a string
+            // operation, because the `<metadata>` element and the `svg-source` comment are
+            // in **both** — `exportToSvg` appends them unconditionally
+            // (`export.ts@1118751f:363-370`) and only the payload inside is the oracle's
+            // `exportEmbedScene` — and a helper that removed the element too would have
+            // compared two documents neither of which a reader ever sees.
+            let as_a_copy = engine
+                .export_svg_of(
+                    &file_scope,
+                    &ExportOptions {
+                        embed_scene: false,
+                        ..options
+                    },
+                )
+                .expect("a scene with elements exports");
             assert_eq!(
-                copy.text, file,
+                copied, as_a_copy,
                 "seed {seed}, selection {selected:?}: the clipboard's picture is not the file's"
             );
             // **Not** `copy.scope == file_scope.kind`. Both come from the same field, so
@@ -223,7 +260,7 @@ fn a_copied_frame_is_measured_by_its_own_box() {
         engine.select(vec![frame.id.clone()]);
 
         let file = engine
-            .export_svg_of(&engine.export_scope(true, &options))
+            .export_svg_of(&engine.export_scope(true, &options), &options)
             .expect("a frame exports");
         let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
         let copied = copy.text.as_deref().expect("a copy carries a picture");
