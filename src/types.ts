@@ -454,6 +454,15 @@ export interface ClipboardCopy {
    * write, and the `mime` and the payload are then both absent.
    */
   supported: boolean;
+  /**
+   * Why not, when `supported` is false. Two, because the oracle's `predicate` is a
+   * conjunction (`actionClipboard.tsx@1118751f:186-188, 247-249`) and it says two different
+   * things about the two ways to be false: a browser that cannot take the payload makes the
+   * menu entry absent (`ContextMenu.tsx@1118751f:38-48`), while an empty board leaves the
+   * entry visible and reports `alerts.cannotExportEmptyCanvas`
+   * (`data/index.ts@1118751f:120-122`).
+   */
+  refusal?: "browser-cannot-take" | "nothing-to-copy";
   /** `image/png` or `text/plain`, from the engine. Never the host's to pick. */
   mime: string;
   /**

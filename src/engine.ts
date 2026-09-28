@@ -105,7 +105,15 @@ function readClipboardCopy(raw: unknown, format: ClipboardFormatName): Clipboard
   const declined: ClipboardCopy = { supported: false, mime: "", scope: "scene" };
   if (typeof raw !== "object" || raw === null) return declined;
   const answer = raw as Record<string, unknown>;
-  if (answer["supported"] !== true) return declined;
+  if (answer["supported"] !== true) {
+    const refusal = answer["refusal"];
+    // The two reasons the engine declines are carried through, so the host can say the
+    // oracle's own sentence for each instead of one "no" for both.
+    if (refusal === "browser-cannot-take" || refusal === "nothing-to-copy") {
+      declined.refusal = refusal;
+    }
+    return declined;
+  }
   const mime = answer["mime"];
   const scope = answer["scope"];
   if (typeof mime !== "string" || mime === "") return declined;
