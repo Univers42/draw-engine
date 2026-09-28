@@ -123,14 +123,30 @@ impl GridSettings {
 
     /// Rounds a point onto the nearest grid intersection.
     ///
-    /// Excalidraw's `getGridPoint`: `round(v / size) * size`. Returns the point unchanged
-    /// when the grid is off or not snapping, so callers can apply it unconditionally.
+    /// Excalidraw's `getGridPoint`: `Math.round(v / size) * size`
+    /// (`packages/common/src/points.ts@1118751f:76-77`). Returns the point unchanged when
+    /// the grid is off or not snapping, so callers can apply it unconditionally.
+    ///
+    /// **The tie goes towards +infinity, not away from zero.** `Math.round` and `f64::round`
+    /// disagree about exactly one case and it is this one: ECMA-262 rounds a half to the
+    /// larger of the two neighbours, so `Math.round(-0.5)` is `-0`, while `f64::round`
+    /// documents itself as rounding "half away from zero" and gives `-1.0`. On a 20-unit
+    /// grid that is a whole cell, at every negative half-cell: a point at x = -10 belongs
+    /// on **0** and `f64::round` puts it on -20. `floor(v + 0.5)` is `Math.round` on every
+    /// input, which `f64::round` is not.
+    ///
+    /// Each axis rounds on its own, so this is never a distance from a candidate: a
+    /// pointer at the corner of a cell moves `size / 2 * 2` diagonally, not `size / 2`.
+    /// `ci_end_snap.rs` pins both halves of that.
     pub fn snap_point(&self, x: f64, y: f64) -> (f64, f64) {
         if !self.enabled || !self.snap {
             return (x, y);
         }
         let size = self.effective_size();
-        ((x / size).round() * size, (y / size).round() * size)
+        (
+            (x / size + 0.5).floor() * size,
+            (y / size + 0.5).floor() * size,
+        )
     }
 }
 
