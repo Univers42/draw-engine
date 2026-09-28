@@ -115,6 +115,17 @@ impl DrawEngine {
                 self.end_elbow_handle(&id, handle, released_at);
                 self.settle_gesture();
             }
+            // The oracle's `pointerDownState.drag.hasOccurred`: a press on a label that
+            // never travelled is a **click** on the label, which is how it is reopened for
+            // typing (`App.tsx@1118751f:11564`, `:11622`). Anything that did travel is one
+            // step of history and nothing else.
+            Interaction::LabelDrag { .. } => {
+                if let Some((id, at)) = self.reopen_text_on_click.take() {
+                    self.reopen_text_at(&id, at);
+                } else {
+                    self.settle_gesture();
+                }
+            }
             Interaction::Move { ids, .. } => {
                 self.renormalize_elbows_of(&ids);
                 self.leave_edited_group_across_a_frame(&ids);
@@ -692,7 +703,8 @@ impl DrawEngine {
                 | Interaction::Rotate { .. }
                 | Interaction::ResizeGroup { .. }
                 | Interaction::RotateGroup { .. }
-                | Interaction::LinearPoint { .. },
+                | Interaction::LinearPoint { .. }
+                | Interaction::LabelDrag { .. },
             ) => self.settle_gesture(),
             _ => {}
         }

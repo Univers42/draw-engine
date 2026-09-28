@@ -139,6 +139,7 @@ fn interaction_kind(interaction: &Interaction) -> &'static str {
         Interaction::ResizeGroup { .. } => "resize-group",
         Interaction::RotateGroup { .. } => "rotate-group",
         Interaction::LinearPoint { .. } => "linear-point",
+        Interaction::LabelDrag { .. } => "label-drag",
         Interaction::Lasso { .. } => "lasso",
         Interaction::Laser => "laser",
         Interaction::Marquee { .. } => "marquee",

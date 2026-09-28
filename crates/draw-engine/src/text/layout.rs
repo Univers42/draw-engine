@@ -279,10 +279,27 @@ pub fn container_dimension_for_bound_text(
     }
 }
 
-/// Where an arrow's label is centred (`getBoundTextElementCenter`,
-/// `linearElementEditor.ts@1118751f:1942-1960`): on the middle point of an odd count, or
-/// half way along the middle segment of an even one — along its curve when it is round.
-pub fn linear_label_center(container: &DrawElement) -> Option<Point> {
+/// Where an arrow's label is centred: where it was put, if anybody has put it, and
+/// otherwise on the middle point of an odd count or half way along the middle segment of an
+/// even one — along its curve when it is round.
+///
+/// The first branch is the oracle's `computeBoundTextElementPosition`
+/// (`linearElementEditor.ts@1118751f:2087-2117`): an arrow whose label carries a
+/// `labelPosition` sits **on the path, at that fraction of its length**. That is why `label`
+/// is a parameter here, and why this stays the only place a line or arrow's label is ever
+/// placed — every bind, every re-layout and every text edit comes through
+/// [`bound_text_position`], so a label told where to sit follows the arrow when the arrow is
+/// bent and there is no second answer to keep in step.
+///
+/// The second branch is `getBoundTextElementCenter` (`:1942-1960`), left as it was. The two
+/// are not the same place on a bowed path, and a label nobody dragged must not move.
+pub fn linear_label_center(container: &DrawElement, label: &DrawElement) -> Option<Point> {
+    if let Some(fraction) = label.label_fraction() {
+        if let Some(anchor) = crate::selection::linear::path_point_at_fraction(container, fraction)
+        {
+            return Some(anchor);
+        }
+    }
     let count = container.points.as_ref().map_or(0, Vec::len);
     if count < 2 {
         return None;
@@ -304,7 +321,7 @@ pub fn linear_label_center(container: &DrawElement) -> Option<Point> {
 /// `computeBoundTextPosition`: where `label`, at its current size, goes in `container`.
 pub fn bound_text_position(container: &DrawElement, label: &DrawElement) -> Point {
     if crate::scene::is_linear_element(container) {
-        return linear_label_center(container).map_or(
+        return linear_label_center(container, label).map_or(
             Point {
                 x: label.x,
                 y: label.y,

@@ -303,6 +303,17 @@ export interface DrawElement extends DrawElementStyle {
    * hard lines while the shape grows wide enough for them (`false`).
    */
   wrap?: boolean;
+  /**
+   * Only a label's: how far along its arrow's drawn path it sits, as a **fraction of that
+   * path's length** — a label dragged along its arrow, the gesture being a primary press on
+   * the label and a drag (Excalidraw's `labelPosition`,
+   * `packages/element/src/types.ts@1118751f:290`). A fraction and not a world-unit offset,
+   * so the label stays where it was put when the arrow is lengthened.
+   *
+   * Absent is the middle of the path, which is where every label drawn before labels could
+   * be dragged was drawn. Read through the engine, which clamps it into `[0, 1]`.
+   */
+  labelPosition?: number | null;
   containerId?: string | null;
   boundTextId?: string | null;
   /**

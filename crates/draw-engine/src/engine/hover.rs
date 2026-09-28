@@ -194,6 +194,12 @@ impl DrawEngine {
                 if crate::selection::linear::hit_handle(&handles, world.x, world.y, tol).is_some() {
                     return HoverCursor::PointHandle;
                 }
+                // A grabbable label reads as grabbable, last and for the same reason the
+                // press that starts a label drag is last: the handles under it keep their
+                // own cursor. `App.tsx@1118751f:8432-8449` sets `CURSOR_TYPE.GRAB` here.
+                if self.label_grab(&single, world).is_some() {
+                    return HoverCursor::Grab;
+                }
             }
         } else if self.selected_ids.len() > 1 {
             if let Some(kind) = self.group_handle_at(world) {
@@ -233,6 +239,9 @@ impl DrawEngine {
             Interaction::LinearPoint { .. } | Interaction::CornerRadius { .. } => {
                 HoverCursor::PointHandle
             }
+            // A label is being carried: `CURSOR_TYPE.GRABBING`, set by
+            // `arrowText.maybeDragLabel` (`App.arrowText.ts@1118751f:294`).
+            Interaction::LabelDrag { .. } => HoverCursor::Grabbing,
             Interaction::Resize { id, handle, .. } => {
                 let angle = self.scene.get(id).map(|el| el.angle).unwrap_or(0.0);
                 resize_cursor(*handle, angle)
