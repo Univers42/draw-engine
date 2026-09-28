@@ -735,6 +735,42 @@ impl DrawEngine {
         crate::export::ExportFrame::for_scene(self.scene.iter_ordered(), options)
     }
 
+    /// One copy for a host that can take it: what to write, under what type, of what.
+    ///
+    /// The oracle's `actionCopyAsSvg` and `actionCopyAsPng` differ in their payload and in
+    /// nothing else that matters here — both pass the literal `true` for
+    /// `exportSelectionOnly` (`actionClipboard.tsx@1118751f:139`, `:212`) into
+    /// `prepareElementsForExport`, so a copy is "the export scope, unchanged", and this is
+    /// [`Self::export_scope`] with `true` plus the two questions a file never asks: the MIME
+    /// type, and whether the host can take it.
+    ///
+    /// **`text` is the file export's own string**, from [`Self::export_svg_of`] over the
+    /// scope built here. Not a second rendering and not a second element list, which is
+    /// what makes "the clipboard carries exactly what the export would have produced" true
+    /// by construction rather than by agreement. The PNG payload is absent because only a
+    /// browser can encode a canvas; the host asks `wasm::export` for it **with this
+    /// scope's frame**, and there is nothing here to disagree about.
+    pub fn clipboard_copy(
+        &self,
+        format: crate::export::ClipboardFormat,
+        host: &crate::export::ClipboardHost,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ClipboardCopy {
+        let scope = self.export_scope(true, options);
+        if !format.host_can_take(host) || scope.elements.is_empty() {
+            return crate::export::ClipboardCopy::declined();
+        }
+        crate::export::ClipboardCopy {
+            supported: true,
+            mime: format.mime(),
+            scope: scope.kind,
+            text: match format {
+                crate::export::ClipboardFormat::Svg => self.export_svg_of(&scope),
+                crate::export::ClipboardFormat::Png => None,
+            },
+        }
+    }
+
     pub fn load_scene(&mut self, json: &str) -> bool {
         let Some(elements) = crate::elements_from_json(json) else {
             return false;

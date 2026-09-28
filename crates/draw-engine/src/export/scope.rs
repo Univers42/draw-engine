@@ -30,6 +30,25 @@ pub struct ExportScope<'a> {
     /// requirement: "it also requires that the exportToSvg is being supplied with only the
     /// elements that we're exporting, and no extra" (`export.ts@1118751f:384-385`).
     pub elements: Vec<&'a DrawElement>,
+    /// Which of the three answers this is, said by the function that decided it.
+    ///
+    /// Here so that nobody has to ask the question a second way. A host that wanted to
+    /// print "selection" or "canvas" — which the oracle's copy toast does
+    /// (`actionClipboard.tsx@1118751f:165-167, 225-227`) — and re-derived it from its own
+    /// `selectedCount` would be making a scope decision in the front, off a number that is
+    /// not the same number (a selection of ids that are not on the board is not a
+    /// selection, `selection.ts@1118751f:141-143`). The kind is two-valued, like the
+    /// oracle's two words, and a lone frame is [`Self::Selection`].
+    pub kind: ExportScopeKind,
+}
+
+/// The two answers a caller can report about a scope. See [`ExportScope::kind`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportScopeKind {
+    /// The selection, or one frame's contents — the `isExportingSelection` arm.
+    Selection,
+    /// Every live element — the `else` arm at `data/index.ts@1118751f:69`.
+    Scene,
 }
 
 /// `prepareElementsForExport` (`data/index.ts@1118751f:48-96`).
@@ -74,6 +93,7 @@ fn of_the_whole_scene<'a>(scene: &'a Scene, options: &ExportOptions) -> ExportSc
     ExportScope {
         frame: ExportFrame::for_elements(scene.iter_ordered(), options),
         elements,
+        kind: ExportScopeKind::Scene,
     }
 }
 
@@ -102,6 +122,7 @@ fn of_the_frame<'a>(
     ExportScope {
         frame: ExportFrame::of_frame(frame, options),
         elements,
+        kind: ExportScopeKind::Selection,
     }
 }
 
@@ -135,6 +156,7 @@ fn of_the_selection<'a>(
     ExportScope {
         frame: ExportFrame::for_elements(elements.iter().copied(), options),
         elements,
+        kind: ExportScopeKind::Selection,
     }
 }
 
