@@ -23,6 +23,14 @@ use crate::engine::DrawEngine;
 /// leaving it alone is what "no background" means here. Not a white fill, and not a
 /// transparent-coloured fill: nothing.
 ///
+/// `options.dark_mode` is the oracle's `exportWithDarkMode`, and it is a flag on the painter
+/// rather than a second palette: the export's colours are the same colours with the filter
+/// over them, which is what the oracle renders with too
+/// (`renderConfig.theme: exportWithDarkMode ? THEME.DARK : THEME.LIGHT`,
+/// `export.ts@1118751f:268, 279`). Set before the paint and cleared after, so a later
+/// on-screen frame cannot inherit it — the flag is thread-local state and this is a
+/// one-shot render in the middle of a page's life.
+///
 /// The payload is built here, from **this scope's** elements, and is why the answer is a
 /// promise: a `toBlob` result is an immutable `Blob`, and the scene has to be *inside* the
 /// file rather than beside it. The oracle has the same shape and reaches it the same way —
@@ -37,7 +45,9 @@ pub fn export_png(
     let frame = &scope.frame;
     let (canvas, ctx) = super::paint::make_layer(frame.pixel_width(), frame.pixel_height())?;
     let view = engine.export_view_of(frame, &scope.elements);
+    super::paint::dark_export(options.dark_mode);
     super::paint::paint_static(&ctx, &view, None, options.background);
+    super::paint::dark_export(false);
     let scene = options
         .embed_scene
         .then(|| crate::export::scene_payload(&scope.elements));

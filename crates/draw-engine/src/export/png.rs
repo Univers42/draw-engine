@@ -22,10 +22,10 @@ pub const DEFAULT_EXPORT_PADDING: f64 = 10.0;
 /// `exportToCanvas` (`export.ts@1118751f:184-194`) and `exportToSvg`
 /// (`export.ts@1118751f:293-305`) differ only in that the canvas is a raster.
 ///
-/// **`scene_to_svg` does not take this yet.** Its `padding` and its always-drawn
-/// background are 4.5's to move over, and until then this is where the policy lives for
-/// the PNG path alone — which is still the point of putting it here rather than in the
-/// painter: 4.2 and 4.5 change what is *in* this struct, not where they change it.
+/// **The SVG path takes this too**, since 4.5: it answers whether there is paper, what
+/// colour it is, and whether the dark filter is on, and [`crate::export::ExportPalette`] is
+/// the one place those three are decided. Before then this was where the policy lived for
+/// the PNG path alone, and the SVG had a `<rect>` nobody could talk it out of.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExportOptions {
     /// `exportPadding` — the oracle's 10 (`constants.ts@1118751f:398`), in world units.
@@ -37,7 +37,23 @@ pub struct ExportOptions {
     /// `exportBackground` — whether there is paper at all. False leaves the canvas as
     /// transparent as a fresh one already is, and drops the SVG's `<rect>`
     /// (`export.ts@1118751f:458`).
+    ///
+    /// **True by default**, which is the oracle's own `exportBackground: true`
+    /// (`appState.ts@1118751f:69`) and the opposite of the PNG path's first argument: that
+    /// one is the dialog's "transparent background" switch, so a host that passes nothing
+    /// here gets paper, and a host that passes `true` gets paper off. The flag is the
+    /// oracle's, and the inversion happens in the binding rather than being baked in here.
     pub background: bool,
+    /// `exportWithDarkMode` — whether every colour this export writes goes through the
+    /// dark-mode filter (`export.ts@1118751f:322, 466, 501`; the dialog's switch at
+    /// `ImageExportDialog.tsx@1118751f:249-262`).
+    ///
+    /// **False by default** (`appState.ts@1118751f:72`), and the default is the whole
+    /// answer to "what does an export look like": unchanged. A person who has not asked for
+    /// a dark export gets the drawing as the board shows it, whatever the board's theme is —
+    /// which is the oracle's behaviour too, and the reason the flag exists rather than the
+    /// theme being read straight through.
+    pub dark_mode: bool,
     /// Whether a frame's name is drawn. The oracle gates this once, for both formats
     /// (`export.ts@1118751f:169-172`, inside `prepareElementsForRender`), so ours is one
     /// flag and not a per-format argument.
@@ -69,6 +85,7 @@ impl Default for ExportOptions {
             // expression answers on a dpr-1 machine anyway.
             scale: 1.0,
             background: true,
+            dark_mode: false,
             frame_labels: true,
             embed_scene: true,
         }

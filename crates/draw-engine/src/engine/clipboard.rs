@@ -697,11 +697,11 @@ impl DrawEngine {
     /// builds one `getCanvasSize` and hands it to both (`export.ts@1118751f:232-235, 341-344`).
     /// `None` only for an empty scene, where the oracle has no element to measure.
     ///
-    /// The payload is [`crate::scene_payload`] over the scope's own elements, so the SVG
-    /// carries exactly the elements it drew. It is computed here rather than inside
-    /// `scene_to_svg` because a copy must not carry one (`data/index.ts@1118751f:132`), and
-    /// the difference between a file and a copy is the one thing about an export a host may
-    /// not decide for itself.
+    /// **The paper is the theme's own background colour**, and the theme is this engine's:
+    /// there is no colour to hand in. The host picks a paper by choosing a theme
+    /// (`setTheme`), which is the oracle's own route — `viewBackgroundColor` is app state
+    /// the canvas picker writes (`actionCanvas.tsx@1118751f:73-74`) and the export only
+    /// reads it.
     pub fn export_svg_of(
         &self,
         scope: &crate::export::ExportScope<'_>,
@@ -710,14 +710,11 @@ impl DrawEngine {
         if scope.elements.is_empty() {
             return None;
         }
-        let scene = options
-            .embed_scene
-            .then(|| crate::export::scene_payload(&scope.elements));
         Some(crate::scene_to_svg(
             &scope.elements,
             &scope.frame,
-            &self.theme.background,
-            scene.as_deref(),
+            options,
+            &self.theme,
         ))
     }
 

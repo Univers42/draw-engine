@@ -311,6 +311,10 @@ pub fn svg_at(elements: &[DrawElement], bounds: WorldBounds, padding: f64) -> St
 /// A separate function rather than a fourth argument on `svg_at`: the background is what the
 /// `<rect>` paints and what an outline arrowhead is punched through with, so the tests that
 /// care pass their own and the ones that do not should not have to name one.
+///
+/// The colour goes in as a **theme**, because that is the only route into an export's paper
+/// (`scene_to_svg` reads `theme.background`): a caller cannot hand the document a colour
+/// that the engine's own theme does not also hold.
 pub fn svg_at_over(
     elements: &[DrawElement],
     bounds: WorldBounds,
@@ -318,19 +322,21 @@ pub fn svg_at_over(
     background: &str,
 ) -> String {
     let borrowed: Vec<&DrawElement> = elements.iter().collect();
+    let options = ExportOptions {
+        padding,
+        // `false`: these are the tests about *markup*, and a payload would be a wall of
+        // base64 in every failure message. The payload has its own file.
+        embed_scene: false,
+        ..Default::default()
+    };
     draw_engine::scene_to_svg(
         &borrowed,
-        &ExportFrame::for_bounds(
-            bounds,
-            &ExportOptions {
-                padding,
-                ..Default::default()
-            },
-        ),
-        background,
-        // `None`: these are the tests about *markup*, and a payload would be a wall of
-        // base64 in every failure message. The payload has its own file.
-        None,
+        &ExportFrame::for_bounds(bounds, &options),
+        &options,
+        &DrawTheme {
+            background: background.into(),
+            ..draw_engine::light_theme()
+        },
     )
 }
 

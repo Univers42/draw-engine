@@ -415,8 +415,24 @@ export const DEFAULT_GRID: GridSettings = {
 export interface PngExport {
   /** Device pixels per CSS pixel. Taken as given — the engine does not clamp it. */
   scale?: number;
-  /** No background at all, rather than the theme's. */
+  /**
+   * No background at all, rather than the theme's.
+   *
+   * The dialog's "Transparent background" switch, the oracle's `exportBackground`
+   * (`ImageExportDialog.tsx@1118751f:232-247`), and the default is the other way round: an
+   * export that is not asked for anything keeps its paper (`appState.ts@1118751f:69`).
+   */
   transparent?: boolean;
+  /**
+   * The dialog's "Dark mode" switch, and the oracle's `exportWithDarkMode`
+   * (`ImageExportDialog.tsx@1118751f:249-262`).
+   *
+   * Off unless asked for (`appState.ts@1118751f:72`), which is what makes an export the
+   * drawing as the board shows it. The engine puts every colour through one filter rather
+   * than reading a second dark palette, so there is nothing here to keep in step with the
+   * theme and nothing for a second caller to define again.
+   */
+  darkMode?: boolean;
   /**
    * The dialog's "selection only" checkbox, and the oracle's `exportSelectionOnly`
    * (`data/index.ts@1118751f:56-58`).
@@ -431,14 +447,24 @@ export interface PngExport {
 }
 
 /**
- * The SVG export's only option, which is the PNG's minus the raster two.
+ * The SVG export's options: the PNG's minus the raster one, plus the two the vector path
+ * honours too.
  *
- * A type of its own rather than `Pick<PngExport, "selectionOnly">` because the two are
- * asked separately and a shared one would grow a `scale` that the vector path has no use for.
+ * A type of its own rather than `Pick<PngExport, "selectionOnly" | "transparent" |
+ * "darkMode">` because the two are asked separately and a shared one would grow a `scale`
+ * that the vector path has no use for.
  */
 export interface SvgExport {
   /** See [`PngExport.selectionOnly`]. */
   selectionOnly?: boolean;
+  /**
+   * See [`PngExport.transparent`]. **New to the vector path in 4.5**: the SVG exporter
+   * always wrote its paper `<rect>`, so this switch did nothing for an SVG and the dialog
+   * showed it as though it did.
+   */
+  transparent?: boolean;
+  /** See [`PngExport.darkMode`]. */
+  darkMode?: boolean;
 }
 
 /**
