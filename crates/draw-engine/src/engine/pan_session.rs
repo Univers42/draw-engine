@@ -36,7 +36,7 @@ impl DrawEngine {
         // returns from the pointer down before creating one (`App.tsx:8698-8700`).
         self.finished_by_press = None;
         self.interaction = Some(Interaction::SecondaryPan);
-        if self.editing_text_id().is_some() {
+        if self.is_editing_text() {
             SecondaryPanStart::StartedWhileEditingText
         } else {
             SecondaryPanStart::Started
@@ -91,6 +91,9 @@ impl DrawEngine {
 
     /// Whether a text is open for typing, which is what decides whether a press may
     /// prevent its own default (`App.pan.ts:118-125`).
+    ///
+    /// Not on the WASM surface: the host is told in [`Self::begin_secondary_pan`]'s answer,
+    /// because a host with this as a method of its own would be deciding it per press.
     pub fn is_editing_text(&self) -> bool {
         self.editing_text_id().is_some()
     }

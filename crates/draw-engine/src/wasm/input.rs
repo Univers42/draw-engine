@@ -277,13 +277,6 @@ impl WasmEngine {
         self.cell.borrow().engine.wants_pointer_moves()
     }
 
-    /// Whether a text is open for typing, which is what decides whether a press may
-    /// prevent its own default. See [`DrawEngine::is_editing_text`].
-    #[wasm_bindgen(js_name = isEditingText)]
-    pub fn is_editing_text(&self) -> bool {
-        self.cell.borrow().engine.is_editing_text()
-    }
-
     #[wasm_bindgen(js_name = movePointer)]
     pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));

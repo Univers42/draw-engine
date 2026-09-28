@@ -786,11 +786,6 @@ export class DrawEngine {
     return this.inner.wantsPointerMoves();
   }
 
-  /** Whether a text is open for typing. */
-  isEditingText(): boolean {
-    return this.inner.isEditingText();
-  }
-
   /** Alt, as held for the move about to be reported. The eraser un-marks with it. */
   setAltHeld(held: boolean): void {
     this.inner.setAltHeld(held);
