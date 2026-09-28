@@ -153,6 +153,21 @@ export type FlowchartDirection = "up" | "down" | "left" | "right";
 /** The three shapes 1/2/3 chooses while a flowchart cluster is being created. */
 export type FlowchartShape = "rectangle" | "diamond" | "ellipse";
 
+/**
+ * The four a line or an arrow switches between, in the order Tab walks them
+ * (`LINEAR_TYPES`, `ConvertElementTypePopup.tsx@1118751f:113-120`). Three of the four are
+ * the same element type — an arrow — and differ only in `roundness` and `elbowed`, which is
+ * why these are names of their own and not `DrawElementType`s.
+ */
+export type LinearType = "line" | "sharpArrow" | "curvedArrow" | "elbowArrow";
+
+/**
+ * Everything the shape switch can switch to: the three closed shapes, or the four linear
+ * types. A conversion never crosses between the two families
+ * (`ConvertElementTypePopup.tsx@1118751f:929-950`).
+ */
+export type ConversionType = FlowchartShape | LinearType;
+
 export interface DrawElementStyle {
   strokeColor: string;
   backgroundColor: string;

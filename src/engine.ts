@@ -20,6 +20,7 @@ import type {
   DebugSnapshot,
   DrawElement,
   DrawElementStyle,
+  ConversionType,
   DrawEngineOptions,
   DrawPeer,
   DrawTheme,
@@ -42,6 +43,20 @@ import type {
 } from "./types";
 
 export { loadDrawEngine } from "./wasmLoad";
+
+/** The seven names `ConvertTo::name` writes — the boundary check on `sharedConversionType`. */
+const CONVERSION_TYPES: readonly string[] = [
+  "rectangle",
+  "diamond",
+  "ellipse",
+  "line",
+  "sharpArrow",
+  "curvedArrow",
+  "elbowArrow",
+];
+
+const isConversionType = (name: string): name is ConversionType =>
+  CONVERSION_TYPES.includes(name);
 
 /**
  * CSS cursors, indexed by the engine's `HoverCursor` discriminant.
@@ -1001,9 +1016,25 @@ export class DrawEngine {
     this.inner.wrapTextInContainer();
   }
 
-  /** Whether Tab has a rectangle, diamond or ellipse selected to switch. */
+  /** Whether Tab has a closed shape, or a line or an unbound arrow, selected to switch. */
   canConvertSelection(): boolean {
     return this.inner.canConvertSelection();
+  }
+
+  /**
+   * The type the panel shows pressed, or `null` when the selection disagrees on it or
+   * holds nothing to switch.
+   *
+   * The engine's to answer, not the host's: for a line or an arrow it is a reading of
+   * `roundness` and `elbowed` (`LinearType::of`, `engine/convert.rs`), and a host that
+   * worked it out from the scene JSON would be running an engine formula in TypeScript.
+   */
+  sharedConversionType(): ConversionType | null {
+    // wasm-bindgen hands an `Option<String>` back as a plain string, so the union is a
+    // claim to check rather than a type it can carry. The engine writes only these seven
+    // names (`ConvertTo::name`), and anything else is a binding that has drifted.
+    const name = this.inner.sharedConversionType();
+    return name !== undefined && isConversionType(name) ? name : null;
   }
 
   /** The shape switch opened: until `endConversion`, a label shrunk by a switch grows back. */
@@ -1017,11 +1048,14 @@ export class DrawEngine {
   }
 
   /**
-   * Switches the selected rectangles, diamonds and ellipses to `to`, or a step round from
-   * their type — forward for Tab, back for Shift+Tab. One step of undo. Whether anything
-   * changed.
+   * Switches the selection to `to`, or a step round from the type it is at — forward for
+   * Tab, back for Shift+Tab. One step of undo. Whether anything changed.
+   *
+   * A closed shape, a line or an unbound arrow, whichever the selection holds first: the
+   * generic branch has preference (`ConvertElementTypePopup.tsx@1118751f:648-653`). Asking
+   * for a type from the other family changes nothing (`isValidConversion`, `:929-950`).
    */
-  convertSelection(to: FlowchartShape | null, forward = true): boolean {
+  convertSelection(to: ConversionType | null, forward = true): boolean {
     return this.inner.convertSelection(to ?? undefined, forward);
   }
 
