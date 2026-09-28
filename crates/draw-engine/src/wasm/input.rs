@@ -857,6 +857,33 @@ impl WasmEngine {
             .export_svg(padding.unwrap_or(16.0))
     }
 
+    /// The whole scene as a PNG, at `scale`, with or without the background.
+    ///
+    /// A promise, because the canvas is encoded by the browser and `toBlob` is
+    /// asynchronous — `export.ts@1118751f:198-203` hands back a canvas and the app
+    /// converts it itself. A `None` scale is 1, and the padding is the oracle's default
+    /// rather than the SVG path's own.
+    ///
+    /// The two are folded into one [`crate::export::ExportOptions`] here rather than passed
+    /// on separately, so the same struct is what a second format will be asked. `frame_labels`
+    /// is not a parameter yet: its one consumer is the painter, which reads it off the
+    /// frame, and the format that would let a person choose it is 4.5's.
+    #[wasm_bindgen(js_name = exportPng)]
+    pub fn export_png(
+        &self,
+        scale: Option<f64>,
+        transparent: Option<bool>,
+    ) -> Option<js_sys::Promise> {
+        let options = crate::export::ExportOptions {
+            scale: scale.unwrap_or(1.0),
+            background: !transparent.unwrap_or(false),
+            ..Default::default()
+        };
+        let engine = self.cell.borrow();
+        let frame = engine.engine.export_frame(&options);
+        super::export::export_png(&engine.engine, &frame, &options)
+    }
+
     #[wasm_bindgen(js_name = cameraJson)]
     pub fn camera_json(&self) -> String {
         serde_json::to_string(&self.cell.borrow().engine.camera).unwrap_or_else(|_| "{}".into())

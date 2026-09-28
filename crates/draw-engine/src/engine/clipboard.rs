@@ -627,6 +627,18 @@ impl DrawEngine {
         ))
     }
 
+    /// The box and the camera a whole-scene PNG export is framed by.
+    ///
+    /// The raster half is `crate::wasm::export`'s; this is the half that decides how big
+    /// the picture is and what is in it, and it is here so it can be asked without a
+    /// browser. See [`crate::export::ExportFrame`].
+    pub fn export_frame(
+        &self,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ExportFrame {
+        crate::export::ExportFrame::for_scene(self.scene.iter_ordered(), options)
+    }
+
     pub fn load_scene(&mut self, json: &str) -> bool {
         let Some(elements) = crate::elements_from_json(json) else {
             return false;

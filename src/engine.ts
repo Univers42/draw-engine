@@ -26,6 +26,7 @@ import type {
   FlowchartDirection,
   FlowchartShape,
   GridSettings,
+  PngExport,
   SelectionStyle,
   StylePatch,
   TextAlign,
@@ -56,13 +57,27 @@ const HOVER_CURSORS = [
   "text", // Text
 ] as const;
 
+/**
+ * The blob the browser encoded, or `null`.
+ *
+ * The binding hands back whatever `toBlob` resolved with, typed no more precisely than
+ * `any` because the value crosses the WASM boundary as a JS object — so this is where it
+ * becomes a `Blob` or is found not to be one. `null` is also the answer for a canvas too
+ * large to encode (`data/blob.ts@1118751f:245-252`), which the oracle reports as a
+ * `CanvasError` and we leave to the host to notice.
+ */
+function encodedBlob(value: unknown): Blob | null {
+  return value instanceof Blob ? value : null;
+}
+
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
 export class DrawEngine {
   private readonly inner: InstanceType<typeof WasmDrawEngine>;
-  private readonly canvas: HTMLCanvasElement;
 
   constructor(options: DrawEngineOptions) {
-    this.canvas = options.canvas;
+    // The canvas itself belongs to WASM, which paints into it — this side no longer holds
+    // a reference, because the only thing that used one was encoding the visible canvas as
+    // the export, and the export is now the engine's own offscreen target.
     this.inner = new WasmDrawEngine(options.canvas);
     wireCallbacks(this.inner, options);
   }
@@ -918,8 +933,21 @@ export class DrawEngine {
     return this.inner.exportSvg(padding) ?? null;
   }
 
-  async exportPng(): Promise<Blob | null> {
-    return new Promise((resolve) => this.canvas.toBlob((blob) => resolve(blob), "image/png"));
+  /**
+   * The whole scene as a PNG, framed by the scene's own bounds.
+   *
+   * The framing, the size and the background are the engine's — `ExportFrame` in
+   * `crates/draw-engine/src/export/png.rs`, ported from the oracle's `exportToCanvas`
+   * (`packages/excalidraw/scene/export.ts@1118751f:180-284`). Nothing is computed here and
+   * the defaults are the binding's, so this is a forward and nothing else.
+   *
+   * The on-screen canvas is not what gets encoded. It never was meant to be: an export is
+   * the scene, not wherever the camera happens to be, and a scene scrolled half off screen
+   * used to export half a picture.
+   */
+  exportPng(options: PngExport = {}): Promise<Blob | null> {
+    const pending = this.inner.exportPng(options.scale, options.transparent);
+    return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
   }
 
   loadScene(json: string): boolean {

@@ -12,6 +12,7 @@ use crate::engine::{DrawEngine, Painter};
 mod camera_api;
 mod convert_api;
 mod edit_api;
+pub(crate) mod export;
 mod flowchart_api;
 mod input;
 mod paint;

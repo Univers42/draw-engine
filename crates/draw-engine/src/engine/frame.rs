@@ -134,6 +134,50 @@ impl<'a> PaintView<'a> {
     }
 }
 
+/// Where the frames go: the clip box for each child that pokes out of its frame, by child
+/// id, and each frame's name anchor with its label and the frame it belongs to.
+type FrameChrome = (
+    std::collections::HashMap<String, WorldBounds>,
+    Vec<(crate::camera::Point, String, String)>,
+);
+
+/// A mark set with nothing in it, for a view that must not inherit the editor's.
+///
+/// [`PaintView::erasing`] is a borrow, so an export cannot hand it an empty set it made —
+/// but it must: the oracle exports the committed scene, and an eraser sweep in progress
+/// has marked the elements it is about to remove (`export.ts@1118751f:277`). A `OnceLock`
+/// rather than a per-call `HashSet` because the set is never written, only read.
+fn no_marks() -> &'static std::collections::HashSet<String> {
+    static NONE: std::sync::OnceLock<std::collections::HashSet<String>> =
+        std::sync::OnceLock::new();
+    NONE.get_or_init(Default::default)
+}
+
+/// Strips a view of everything that is the editor over the drawing rather than the
+/// drawing: no selection, no handles, no marquee, no guides, no peers, no laser, no
+/// previews. An export is a picture of the drawing, so a host that wants one asks for it
+/// and does not get to pick which of these to leave in.
+fn without_editor_chrome(view: &mut PaintView<'_>) {
+    view.selected = Vec::new();
+    view.group_box = None;
+    view.marquee = None;
+    view.lasso = Vec::new();
+    view.flowchart_pending = Vec::new();
+    view.laser = Vec::new();
+    view.peer_lasers = Vec::new();
+    view.peer_marks = Vec::new();
+    view.snap_guides = Vec::new();
+    view.linear_handles = Vec::new();
+    view.linear_handles_framed = false;
+    view.active_handle = None;
+    view.radius_handles = Vec::new();
+    view.active_radius_handle = None;
+    view.previews = std::collections::HashMap::new();
+    view.binding_highlight = None;
+    view.binding_midpoint = None;
+    view.erasing = no_marks();
+}
+
 /// One peer's hold, as the painter draws it. See `peers.rs`.
 #[derive(Clone)]
 pub struct PeerMark<'a> {
@@ -200,6 +244,103 @@ impl DrawEngine {
         let focus = focus_point(shape, anchor.fixed_point);
         snapped_midpoint(shape, pointer, super::MIDPOINT_SNAP_PX / self.camera.scale)
             .is_some_and(|m| (m.x - focus.x).hypot(m.y - focus.y) < 0.01 / self.camera.scale)
+    }
+
+    /// Where the frame chrome goes: every frame `visible` reaches, its name anchor and
+    /// label, and the clip box for each child that pokes out of it.
+    ///
+    /// Frame chrome, decided here so every host paints the same boundaries and clips the
+    /// same children. A host is handed boxes and labels, not rules.
+    fn frame_chrome(&self, visible: &WorldBounds) -> FrameChrome {
+        let mut frame_clips = std::collections::HashMap::new();
+        let mut frame_names = Vec::new();
+        for frame in self.scene.iter_ordered().filter(|el| {
+            crate::scene::is_frame(el)
+                && !el.is_deleted
+                && crate::render::bounds::intersects_viewport(el, visible)
+        }) {
+            // Never blank: a rename emptied to nothing shows the generic default, exactly
+            // as the oracle's `getFrameLikeTitle` does.
+            frame_names.push((
+                crate::scene::frame_name_anchor(frame),
+                crate::scene::frame_display_name(frame),
+                frame.id.clone(),
+            ));
+            let clip = crate::scene::frame_clip_bounds(frame);
+            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
+                if let Some(child) = self.scene.get(&child_id) {
+                    if crate::scene::needs_frame_clip(child, frame) {
+                        frame_clips.insert(child_id, clip);
+                    }
+                }
+            }
+        }
+        (frame_clips, frame_names)
+    }
+
+    /// The scene as a whole-scene export paints it: framed by `frame` rather than by the
+    /// viewport, and with none of the editor's own furniture. See [`Self::export_view_of`]
+    /// for the same picture of a subset.
+    pub fn export_view(&self, frame: &crate::export::ExportFrame) -> PaintView<'_> {
+        let elements: Vec<&DrawElement> = self.scene.iter_ordered().collect();
+        self.export_view_of(frame, &elements)
+    }
+
+    /// [`Self::export_view`] of `elements` rather than of the whole scene: the same
+    /// picture, cut to a subset — a selection, or one frame (4.2).
+    ///
+    /// The subset is carried, not filtered down to: what the caller hands over is what gets
+    /// painted, and the target is `frame`, so a shape outside that box is the caller's
+    /// business rather than the camera's. The oracle's own SVG entry point says the same
+    /// requirement in as many words — "it also requires that the exportToSvg is being
+    /// supplied with only the elements that we're exporting, and no extra"
+    /// (`packages/excalidraw/scene/export.ts@1118751f:384-385`).
+    ///
+    /// An export is a picture of the drawing, not of the editor over it, and of the
+    /// committed scene rather than of what is in flight: a peer's shape still being dragged
+    /// is not in it, the flowchart cluster being previewed is not in it, and neither is the
+    /// erasure an in-progress sweep has marked — the oracle hands the renderer an empty
+    /// `elementsPendingErasure` for exactly this (`export.ts@1118751f:277`), so an element
+    /// about to be deleted exports undeleted and at full strength. The grid goes too (the
+    /// oracle passes `renderGrid: false`, `export.ts@1118751f:272`).
+    pub fn export_view_of<'a>(
+        &'a self,
+        frame: &crate::export::ExportFrame,
+        elements: &[&'a DrawElement],
+    ) -> PaintView<'a> {
+        let camera = frame.camera();
+        let visible = crate::camera::visible_world_rect(camera, frame.width, frame.height);
+        let (frame_clips, mut frame_names) = self.frame_chrome(&visible);
+        if !frame.frame_labels {
+            frame_names.clear();
+        }
+        let mut view = self.paint_view();
+        view.camera = camera;
+        view.width = frame.width;
+        view.height = frame.height;
+        // The scale is the **device** ratio and the camera stays at 1, because that is how
+        // the oracle splits the two: `scale` goes to the renderer as the factor it draws
+        // at, and `zoom` stays at the default (`export.ts@1118751f:259, 266`).
+        view.dpr = frame.scale;
+        view.detail_scale = frame.scale;
+        view.in_motion = false;
+        view.grid = GridSettings {
+            enabled: false,
+            ..self.grid
+        };
+        // Every element of the subset, not the ones the viewport reaches: the export's box
+        // is its own, so culling to the editor's camera would cut off whatever the person
+        // had scrolled away from. The text being typed stays out, as on screen — it is the
+        // host editor's to show (`Renderer.ts@1118751f:259-267`).
+        view.elements = elements
+            .iter()
+            .copied()
+            .filter(|element| self.editing_text_id() != Some(element.id.as_str()))
+            .collect();
+        view.frame_clips = frame_clips;
+        view.frame_names = frame_names;
+        without_editor_chrome(&mut view);
+        view
     }
 
     pub fn paint_view(&self) -> PaintView<'_> {
@@ -278,31 +419,7 @@ impl DrawEngine {
             Some(super::Interaction::CornerRadius { corner, .. }) => Some(*corner),
             _ => None,
         };
-        // Frame chrome, decided here so every host paints the same boundaries and clips
-        // the same children. A host is handed boxes and labels, not rules.
-        let mut frame_clips = std::collections::HashMap::new();
-        let mut frame_names = Vec::new();
-        for frame in self.scene.iter_ordered().filter(|el| {
-            crate::scene::is_frame(el)
-                && !el.is_deleted
-                && crate::render::bounds::intersects_viewport(el, &visible)
-        }) {
-            // Never blank: a rename emptied to nothing shows the generic default, exactly
-            // as the oracle's `getFrameLikeTitle` does.
-            frame_names.push((
-                crate::scene::frame_name_anchor(frame),
-                crate::scene::frame_display_name(frame),
-                frame.id.clone(),
-            ));
-            let clip = crate::scene::frame_clip_bounds(frame);
-            for child_id in crate::scene::frame_children(self.scene.iter_ordered(), &frame.id) {
-                if let Some(child) = self.scene.get(&child_id) {
-                    if crate::scene::needs_frame_clip(child, frame) {
-                        frame_clips.insert(child_id, clip);
-                    }
-                }
-            }
-        }
+        let (frame_clips, frame_names) = self.frame_chrome(&visible);
 
         // What peers are doing right now, painted in place of what is committed: a shape
         // moves on every screen while it is being moved. See `peers.rs`.
