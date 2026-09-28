@@ -30,6 +30,7 @@ import type {
   SelectionStyle,
   SecondaryPanEnd,
   SecondaryPanStart,
+  SvgExport,
   StylePatch,
   TextAlign,
   TextEditLayout,
@@ -988,12 +989,22 @@ export class DrawEngine {
     return this.inner.exportJson();
   }
 
-  exportSvg(padding = 16): string | null {
-    return this.inner.exportSvg(padding) ?? null;
+  /**
+   * The drawing as an SVG, of the selection when `selectionOnly` says so.
+   *
+   * The margin is the engine's own now — `ExportOptions`'s 10, the same one the PNG uses —
+   * and it used to be a `16` this signature took. §2 does not allow the front to pick a
+   * margin: it made the two formats disagree by 6px per side, and there was no way to tell
+   * from here which of the two was meant. `selectionOnly` is the whole of the front's
+   * contribution; whether that means the scene, a selection or one frame is decided in Rust,
+   * because an empty selection is the scene (`data/index.ts@1118751f:48-96`).
+   */
+  exportSvg(options: SvgExport = {}): string | null {
+    return this.inner.exportSvg(options.selectionOnly) ?? null;
   }
 
   /**
-   * The whole scene as a PNG, framed by the scene's own bounds.
+   * The drawing as a PNG, of the selection when `selectionOnly` says so.
    *
    * The framing, the size and the background are the engine's — `ExportFrame` in
    * `crates/draw-engine/src/export/png.rs`, ported from the oracle's `exportToCanvas`
@@ -1003,9 +1014,17 @@ export class DrawEngine {
    * The on-screen canvas is not what gets encoded. It never was meant to be: an export is
    * the scene, not wherever the camera happens to be, and a scene scrolled half off screen
    * used to export half a picture.
+   *
+   * `selectionOnly` is the dialog's checkbox and the whole of what the front chooses. It
+   * does not say *which* thing to export: an empty selection is still the scene, and
+   * selecting exactly one frame is a frame export, both decided in Rust.
    */
   exportPng(options: PngExport = {}): Promise<Blob | null> {
-    const pending = this.inner.exportPng(options.scale, options.transparent);
+    const pending = this.inner.exportPng(
+      options.scale,
+      options.transparent,
+      options.selectionOnly,
+    );
     return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
   }
 

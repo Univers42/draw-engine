@@ -1,5 +1,7 @@
 #![allow(clippy::cloned_ref_to_slice_refs)]
 
+mod common;
+use common::*;
 use draw_engine::*;
 
 fn box_at(x: f64, y: f64, w: f64, h: f64) -> DrawElement {
@@ -543,7 +545,7 @@ fn export_svg_emits_primitives() {
             height: 20.0,
         },
     );
-    let svg = scene_to_svg(
+    let svg = svg_at(
         &[rect, ellipse],
         WorldBounds {
             min_x: 0.0,
@@ -552,7 +554,6 @@ fn export_svg_emits_primitives() {
             max_y: 20.0,
         },
         8.0,
-        "#ffffff",
     );
     assert!(svg.starts_with("<svg "));
     assert!(svg.contains("<rect "));

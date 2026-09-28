@@ -391,6 +391,28 @@ export interface PngExport {
   scale?: number;
   /** No background at all, rather than the theme's. */
   transparent?: boolean;
+  /**
+   * The dialog's "selection only" checkbox, and the oracle's `exportSelectionOnly`
+   * (`data/index.ts@1118751f:56-58`).
+   *
+   * It says *whether to narrow*, never *narrow to what*. With nothing selected this is the
+   * whole scene — the oracle's flag never becomes true, so the export falls through to the
+   * scene rather than to an empty canvas — and with exactly one frame selected this is a
+   * frame export, measured by the frame at no padding. Both are decided in Rust, because a
+   * front that picked either would be a second answer to the same question.
+   */
+  selectionOnly?: boolean;
+}
+
+/**
+ * The SVG export's only option, which is the PNG's minus the raster two.
+ *
+ * A type of its own rather than `Pick<PngExport, "selectionOnly">` because the two are
+ * asked separately and a shared one would grow a `scale` that the vector path has no use for.
+ */
+export interface SvgExport {
+  /** See [`PngExport.selectionOnly`]. */
+  selectionOnly?: boolean;
 }
 
 export interface DrawTheme {

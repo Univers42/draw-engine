@@ -86,6 +86,13 @@ pub struct ExportFrame {
     pub padding: f64,
     /// Whether a frame's name is drawn. See [`ExportOptions::frame_labels`].
     pub frame_labels: bool,
+    /// Whether what a frame holds is clipped to the frame.
+    ///
+    /// False for an export *of* a frame, and the oracle says why in a comment rather than
+    /// in a flag: "for canvas export, don't clip if exporting a specific frame as it would
+    /// clip the corners of the content" (`export.ts@1118751f:217-219`). Everything else
+    /// clips, which is what crops a child poking out past its frame's edge.
+    pub frame_clip: bool,
 }
 
 impl ExportFrame {
@@ -103,7 +110,45 @@ impl ExportFrame {
             scale: options.scale,
             padding: options.padding,
             frame_labels: options.frame_labels,
+            // True here, and false only where a caller has said it is exporting a specific
+            // frame — the one question `for_bounds` is not asked, so it is not asked here.
+            frame_clip: true,
         }
+    }
+
+    /// The export target for a set of elements: the same [`Self::for_bounds`], over
+    /// `getRootElements(elements)`.
+    ///
+    /// The one the whole-scene arm is built from, and the one a selection is framed by.
+    /// Exposing it rather than adding a second constructor is the point: there is exactly
+    /// one place in the engine that turns a set of elements into an export's box, and
+    /// `prepare_elements_for_export` (4.2) goes through here like `for_scene` does.
+    pub fn for_elements<'a>(
+        elements: impl IntoIterator<Item = &'a DrawElement> + Clone,
+        options: &ExportOptions,
+    ) -> Self {
+        Self::for_bounds(root_bounds(elements), options)
+    }
+
+    /// The target for an export *of* a frame: the frame element's own box, at no padding,
+    /// and not clipping.
+    ///
+    /// `exportingFrame ? [exportingFrame] : …` with `exportPadding = 0` in front of it
+    /// (`export.ts@1118751f:228-233`, and `:337-342` for the SVG). So a frame export is
+    /// measured by the frame and *not* by the union of what it holds — a child poking out
+    /// past the edge is cropped, and that is the oracle's answer rather than an oversight.
+    /// The frame's own turned box, because `getCommonBounds` folds `getElementBounds` and
+    /// a frame is no exception (`bounds.ts@1118751f:210-235`).
+    pub fn of_frame(frame: &DrawElement, options: &ExportOptions) -> Self {
+        let mut target = Self::for_bounds(
+            crate::scene::geometry::element_outline_bounds(frame),
+            &ExportOptions {
+                padding: 0.0,
+                ..*options
+            },
+        );
+        target.frame_clip = false;
+        target
     }
 
     /// The whole scene as one export target — `getCanvasSize` over
@@ -116,7 +161,7 @@ impl ExportFrame {
         elements: impl IntoIterator<Item = &'a DrawElement> + Clone,
         options: &ExportOptions,
     ) -> Self {
-        Self::for_bounds(root_bounds(elements), options)
+        Self::for_elements(elements, options)
     }
 
     /// The canvas's width in device pixels.
@@ -132,6 +177,26 @@ impl ExportFrame {
     /// The canvas's height in device pixels. See [`Self::pixel_width`].
     pub fn pixel_height(&self) -> u32 {
         (self.height * self.scale).trunc() as u32
+    }
+
+    /// Whether this target is an export *of* a frame, which the oracle signals by handing
+    /// `getCanvasSize` a one-element list instead of the roots
+    /// (`export.ts@1118751f:233`, `:342`).
+    ///
+    /// Derived from the two facts that travel together — the frame's own box, and no padding
+    /// — rather than stored as a third flag that could disagree with them.
+    pub fn is_frame_export(&self) -> bool {
+        self.padding == 0.0 && !self.frame_clip
+    }
+
+    /// The bounds of the export over `elements`: the union, measured the way
+    /// `getCommonBounds` measures, with the same `getRootElements` filtering.
+    ///
+    /// The per-element form of [`ExportFrame::for_elements`], for a caller that is walking a
+    /// scene one element at a time and needs each element's own contribution. Not a second
+    /// framing path: it is the same function with one element in the list.
+    pub fn bounds_of(&self, elements: &[&DrawElement]) -> WorldBounds {
+        root_bounds(elements.iter().copied())
     }
 
     /// The camera that puts the scene's top-left corner `padding` in from the canvas's own.

@@ -245,7 +245,7 @@ fn export_json_valid_header() {
 fn export_svg_starts_with_svg_tag() {
     let rect = box_at(0.0, 0.0, 100.0, 60.0);
     let engine = engine_with_scene(vec![rect]);
-    let svg = engine.export_svg(10.0).unwrap();
+    let svg = svg_of(&engine, 10.0);
     assert!(svg.starts_with("<svg "));
     assert!(svg.ends_with("</svg>"));
 }

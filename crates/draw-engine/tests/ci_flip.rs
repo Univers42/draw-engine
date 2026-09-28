@@ -629,7 +629,7 @@ fn an_image_mirrors_its_pixels_and_an_embed_does_not() {
     let image = get(&engine, "img");
     assert_eq!(mirror_signs(&image), (-1.0, 1.0));
     let scene = engine.get_scene();
-    let svg = scene_to_svg(&scene, scene_bounds(&scene).unwrap(), 10.0, "#ffffff");
+    let svg = svg_at(&scene, scene_bounds(&scene).unwrap(), 10.0);
     assert!(svg.contains("scale(-1 1)"), "{svg}");
     flip(&mut engine, &["img"], FlipAxis::Vertical);
     assert_eq!(mirror_signs(&get(&engine, "img")), (-1.0, -1.0));
