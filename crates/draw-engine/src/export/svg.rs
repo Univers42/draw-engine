@@ -1,6 +1,6 @@
 use draw_rough::ops::Op;
 
-use crate::export::ExportFrame;
+use crate::export::{ExportFrame, ExportOptions, ExportPalette};
 use crate::render::arrowheads::{
     arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
 };
@@ -58,9 +58,10 @@ fn escape_xml(value: &str) -> String {
 /// SVG-export gap, not one this change introduces), so a translation is all that is
 /// needed to place a primitive computed in element-local space.
 ///
-/// `background` is [`scene_to_svg`]'s own `background` argument, the colour its `<rect>`
-/// paints under everything else — this export is never actually transparent, so an
-/// outline head's fill always has a real colour to punch its hole in, not a fallback.
+/// `palette` is this export's own [`ExportPalette`]: the colour the paper behind everything
+/// is, and whether every colour goes through the dark filter. An outline head is punched
+/// through with the colour that will be behind it, so it needs the paper even when the
+/// export has none.
 fn arrowhead_svg(
     element: &DrawElement,
     ops: &[Op],
@@ -68,7 +69,7 @@ fn arrowhead_svg(
     opacity: f64,
     dx: f64,
     dy: f64,
-    background: &str,
+    palette: &ExportPalette<'_>,
 ) -> String {
     let end = if position == Position::Start {
         "start"
@@ -79,28 +80,26 @@ fn arrowhead_svg(
     let points = element.points.as_deref().unwrap_or(&[[0.0, 0.0]]);
     let shapes = arrowhead_shapes(points, element.stroke_width, ops, position, kind);
 
-    let fill_of = |role: FillRole| {
-        crate::render::arrowheads::arrowhead_fill_color(role, &element.stroke_color, background)
-    };
+    let stroke = palette.color(&element.stroke_color).into_owned();
+    let fill_of = |role: FillRole| palette.arrowhead_fill(role, &element.stroke_color);
     let pt = |[x, y]: [f64; 2]| format!("{},{}", x + dx, y + dy);
 
     shapes
         .into_iter()
         .map(|shape| match shape {
             ArrowheadPrimitive::Line([a, b]) => format!(
-                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" opacity=\"{opacity}\"/>",
-                a[0] + dx, a[1] + dy, b[0] + dx, b[1] + dy, element.stroke_color, element.stroke_width
+                "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" fill=\"none\" stroke=\"{stroke}\" stroke-width=\"{}\" stroke-linecap=\"round\" opacity=\"{opacity}\"/>",
+                a[0] + dx, a[1] + dy, b[0] + dx, b[1] + dy, element.stroke_width
             ),
             ArrowheadPrimitive::Polygon(pts, role) => format!(
-                "<polygon points=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"round\" opacity=\"{opacity}\"/>",
+                "<polygon points=\"{}\" fill=\"{}\" stroke=\"{stroke}\" stroke-width=\"{}\" stroke-linejoin=\"round\" opacity=\"{opacity}\"/>",
                 pts.into_iter().map(pt).collect::<Vec<_>>().join(" "),
                 fill_of(role),
-                element.stroke_color,
                 element.stroke_width
             ),
             ArrowheadPrimitive::Circle { center, diameter, role } => format!(
-                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{}\" stroke-width=\"{}\" opacity=\"{opacity}\"/>",
-                center[0] + dx, center[1] + dy, diameter / 2.0, fill_of(role), element.stroke_color, element.stroke_width
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"{}\" stroke=\"{stroke}\" stroke-width=\"{}\" opacity=\"{opacity}\"/>",
+                center[0] + dx, center[1] + dy, diameter / 2.0, fill_of(role), element.stroke_width
             ),
         })
         .collect()
@@ -117,17 +116,13 @@ fn arrowhead_svg(
 /// draws a straight two-point shaft with arrowheads — correct for an open line or an
 /// arrow, but it silently dropped every waypoint of a closed one and never painted its
 /// fill at all.
-fn closed_line_svg(element: &DrawElement) -> Option<String> {
+fn closed_line_svg(element: &DrawElement, palette: &ExportPalette<'_>) -> Option<String> {
     let points = element.points.as_deref()?;
     if !crate::scene::geometry::is_path_a_loop(points) {
         return None;
     }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
-    let fill = if element.background_color.is_empty() || element.background_color == "transparent" {
-        "none"
-    } else {
-        element.background_color.as_str()
-    };
+    let fill = palette.fill(&element.background_color);
     let pts = points
         .iter()
         .map(|&[px, py]| format!("{},{}", element.x + px, element.y + py))
@@ -145,15 +140,19 @@ fn closed_line_svg(element: &DrawElement) -> Option<String> {
     };
     Some(format!(
         "<polygon points=\"{pts}\" stroke=\"{}\" stroke-width=\"{}\" fill=\"{fill}\"{} opacity=\"{}\"{transform}/>",
-        element.stroke_color,
+        palette.color(&element.stroke_color),
         element.stroke_width,
         dash(element.stroke_style),
         element.opacity / 100.0
     ))
 }
 
-fn linear_svg(element: &DrawElement, label: Option<&DrawElement>, background: &str) -> String {
-    let body = linear_body_svg(element, background);
+fn linear_svg(
+    element: &DrawElement,
+    label: Option<&DrawElement>,
+    palette: &ExportPalette<'_>,
+) -> String {
+    let body = linear_body_svg(element, palette);
     let Some(label) = label.filter(|_| !body.is_empty()) else {
         return body;
     };
@@ -175,16 +174,17 @@ fn linear_svg(element: &DrawElement, label: Option<&DrawElement>, background: &s
     )
 }
 
-fn linear_body_svg(element: &DrawElement, background: &str) -> String {
+fn linear_body_svg(element: &DrawElement, palette: &ExportPalette<'_>) -> String {
     let (start, end) = linear_endpoints(element);
     let length = (end.x - start.x).hypot(end.y - start.y);
     if length < 0.5 {
         return String::new();
     }
     let opacity = element.opacity / 100.0;
+    let stroke = palette.color(&element.stroke_color);
     let shaft = format!(
-        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" fill=\"none\" opacity=\"{opacity}\"{}/>",
-        start.x, start.y, end.x, end.y, element.stroke_color, element.stroke_width, dash(element.stroke_style)
+        "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" stroke-width=\"{}\" stroke-linecap=\"round\" fill=\"none\" opacity=\"{opacity}\"{}/>",
+        start.x, start.y, end.x, end.y, element.stroke_width, dash(element.stroke_style)
     );
 
     if element.kind != DrawElementType::Arrow {
@@ -196,37 +196,20 @@ fn linear_body_svg(element: &DrawElement, background: &str) -> String {
     // which is a WASM-canvas-only, per-frame concern this one-shot export does not share.
     let drawable = element_drawable(element);
     let ops: &[Op] = drawable.as_ref().map_or(&[] as &[Op], curve_path_ops);
-    let heads = format!(
-        "{}{}",
-        arrowhead_svg(
-            element,
-            ops,
-            Position::End,
-            opacity,
-            element.x,
-            element.y,
-            background
-        ),
-        arrowhead_svg(
-            element,
-            ops,
-            Position::Start,
-            opacity,
-            element.x,
-            element.y,
-            background
-        ),
-    );
+    let heads = [Position::End, Position::Start]
+        .iter()
+        .map(|end| arrowhead_svg(element, ops, *end, opacity, element.x, element.y, palette))
+        .collect::<String>();
     format!("{shaft}{heads}")
 }
 
 fn element_svg<'a>(
     element: &DrawElement,
     lookup: impl Fn(&str) -> Option<&'a DrawElement>,
-    background: &str,
+    palette: &ExportPalette<'_>,
 ) -> String {
     if element.kind == DrawElementType::Line {
-        if let Some(svg) = closed_line_svg(element) {
+        if let Some(svg) = closed_line_svg(element, palette) {
             return svg;
         }
     }
@@ -234,22 +217,18 @@ fn element_svg<'a>(
         return linear_svg(
             element,
             crate::render::linear_label(element, lookup),
-            background,
+            palette,
         );
     }
     if element.kind == DrawElementType::StickyNote {
-        return sticky_svg(element, crate::scene::sticky::wall_clock_ms());
+        return sticky_svg(element, crate::scene::sticky::wall_clock_ms(), palette);
     }
     let rect = normalize_rect(element.x, element.y, element.width, element.height);
-    let fill = if element.background_color.is_empty() || element.background_color == "transparent" {
-        "none"
-    } else {
-        element.background_color.as_str()
-    };
     let common = format!(
-        "stroke=\"{}\" stroke-width=\"{}\" fill=\"{fill}\" opacity=\"{}\"",
-        element.stroke_color,
+        "stroke=\"{}\" stroke-width=\"{}\" fill=\"{}\" opacity=\"{}\"",
+        palette.color(&element.stroke_color),
         element.stroke_width,
+        palette.fill(&element.background_color),
         element.opacity / 100.0
     );
     let dash = dash(element.stroke_style);
@@ -293,12 +272,12 @@ fn element_svg<'a>(
                 .join(" ");
             format!(
                 "<polyline points=\"{pts}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"round\" stroke-linecap=\"round\" opacity=\"{}\"/>",
-                element.stroke_color,
+                palette.color(&element.stroke_color),
                 element.stroke_width,
                 element.opacity / 100.0
             )
         }
-        DrawElementType::Text => text_svg(element),
+        DrawElementType::Text => text_svg(element, palette),
         // The picture itself. This fell through to the arm below and was written as a
         // stroked `<rect>`, so a board with a photo on it exported an empty box. An image
         // with no picture yet — a board loaded without its file — exports as nothing
@@ -336,7 +315,7 @@ fn element_svg<'a>(
                 svg.push_str(&format!(
                     "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\" opacity=\"{}\"{dash}{transform}/>",
                     pts(stroke),
-                    element.stroke_color,
+                    palette.color(&element.stroke_color),
                     element.stroke_width,
                     element.opacity / 100.0
                 ));
@@ -362,7 +341,7 @@ fn element_svg<'a>(
 /// shadow, its paper, an edge shadow clipped to the paper, and the date — in a group
 /// placed at the note and turned about its centre. The date is absolute, so an export
 /// never goes stale; `now` only decides whether it shows the year.
-pub(crate) fn sticky_svg(element: &DrawElement, now: f64) -> String {
+pub(crate) fn sticky_svg(element: &DrawElement, now: f64, palette: &ExportPalette<'_>) -> String {
     use crate::scene::sticky::{
         sticky_footer, sticky_path_commands, sticky_path_data, STICKY_NOTE_EDGE_SHADOW_OPACITY,
         STICKY_NOTE_EDGE_SHADOW_WIDTH, STICKY_NOTE_FOOTER_FONT_FAMILY,
@@ -382,7 +361,7 @@ pub(crate) fn sticky_svg(element: &DrawElement, now: f64) -> String {
             "<text x=\"{}\" y=\"{}\" font-family=\"{STICKY_NOTE_FOOTER_FONT_FAMILY}\" font-size=\"{STICKY_NOTE_FOOTER_FONT_SIZE}px\" text-anchor=\"end\" direction=\"ltr\" fill=\"{}\" fill-opacity=\"{STICKY_NOTE_FOOTER_OPACITY}\">{}</text>",
             footer.x,
             footer.y,
-            escape_xml(&element.stroke_color),
+            escape_xml(&palette.color(&element.stroke_color)),
             escape_xml(&footer.text)
         )
     });
@@ -398,7 +377,7 @@ pub(crate) fn sticky_svg(element: &DrawElement, now: f64) -> String {
         (element.angle * 180.0) / std::f64::consts::PI,
         element.width / 2.0,
         element.height / 2.0,
-        escape_xml(&element.background_color),
+        escape_xml(&palette.fill(&element.background_color)),
         STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0,
     )
 }
@@ -411,7 +390,7 @@ pub(crate) fn sticky_svg(element: &DrawElement, now: f64) -> String {
 /// export has always put it.
 ///
 /// ponytail: no `direction` — the canvas does not lay out right-to-left text either.
-fn text_svg(element: &DrawElement) -> String {
+fn text_svg(element: &DrawElement, palette: &ExportPalette<'_>) -> String {
     let text = element.text.as_deref().unwrap_or("");
     let font_size = crate::text::layout::font_size_of(element);
     let family = crate::scene::resolved_font_family(element);
@@ -429,7 +408,7 @@ fn text_svg(element: &DrawElement) -> String {
         crate::scene::TextAlign::Right => "end",
     };
     let css = crate::text::font::css_stack(family);
-    let fill = escape_xml(&element.stroke_color);
+    let fill = escape_xml(&palette.color(&element.stroke_color));
     let lines = text
         .split('\n')
         .enumerate()
@@ -452,7 +431,7 @@ fn text_svg(element: &DrawElement) -> String {
     )
 }
 
-/// The drawing as one SVG document, cut to `frame`, carrying `scene` when there is one.
+/// The drawing as one SVG document, cut to `frame`, carrying the scene when `options` says so.
 ///
 /// `frame` rather than a bounds and a padding, so the box is arithmetic this engine has
 /// already done in one place. `exportToSvg` builds the very same
@@ -460,33 +439,40 @@ fn text_svg(element: &DrawElement) -> String {
 /// (`export.ts@1118751f:341-344` against `:232-235`) — one framing decision, two formats —
 /// and a function taking `(bounds, padding)` can only ever be the second one.
 ///
-/// `scene` is the payload from [`crate::scene_payload`], and `None` is the oracle's
-/// `exportEmbedScene` off (`export.ts@1118751f:378-391`). The `<metadata>` element is
-/// written either way, because `exportToSvg` appends it unconditionally (`:363-369`), so
-/// the document has one shape and "has a metadata element" is not a second thing to be
-/// right about. The root also carries a `svg-source` comment, which is the oracle's
-/// `createHTMLComment("svg-source:excalidraw")` at `:368`.
+/// **The paper is `options.background` and the theme's own colour, or nothing at all.** It
+/// used to always draw a `<rect>`, in a colour a caller handed it, which is the one place a
+/// background could be *decided* outside this engine's own theme. `ExportPalette::paper` is
+/// that decision now, and there is no argument left to pass a second opinion through:
+/// `exportBackground && viewBackgroundColor` (`export.ts@1118751f:458`).
+///
+/// The `<metadata>` element is written either way, because `exportToSvg` appends it
+/// unconditionally (`:363-369`), so the document has one shape and "has a metadata element"
+/// is not a second thing to be right about. The root also carries a `svg-source` comment,
+/// which is the oracle's `createHTMLComment("svg-source:excalidraw")` at `:368`.
+///
+/// The payload is built here from **these** elements rather than handed in, because they
+/// are the elements the document draws and the oracle's own entry point says the export
+/// "is being supplied with only the elements that we're exporting, and no extra"
+/// (`export.ts@1118751f:384-385`). A caller could otherwise pass `embed_scene: true` and
+/// no payload and get a file with no scene in it; the option is now the only switch, and
+/// the clipboard's own `embed_scene: false` (`data/index.ts@1118751f:132`) is what decides.
 ///
 /// The `<defs>` is written whether or not it holds anything, for the oracle's own reason:
 /// `exportToSvg` creates the `<style>` and appends it unconditionally (`:445-451`), so a
 /// shapes-only drawing has a `<defs>` with an empty `<style>`. What is in it is
 /// [`crate::export::font_face`]'s decision, made from the elements — the host is given no
 /// way to add a family, because it is not asked for one.
-///
-/// The background is still always drawn: `exportBackground` is 4.5's, and it is a colour
-/// this path has no option for yet (`png.rs`). It stays its own argument rather than joining
-/// the group the other two could have made, because that is where 4.5's change lands.
-///
 pub fn scene_to_svg(
     elements: &[&DrawElement],
     frame: &ExportFrame,
-    background: &str,
-    scene: Option<&str>,
+    options: &ExportOptions,
+    theme: &crate::render::DrawTheme,
 ) -> String {
     let width = frame.width;
     let height = frame.height;
     let camera = frame.camera();
     let defs = crate::export::font_face::font_face_defs(elements);
+    let palette = ExportPalette::of(theme, options);
     // Labels by id, for the arrows whose stroke is cut away under theirs.
     let labels: std::collections::HashMap<&str, &DrawElement> = elements
         .iter()
@@ -496,18 +482,23 @@ pub fn scene_to_svg(
     let body = elements
         .iter()
         .filter(|el| !el.is_deleted)
-        .map(|el| element_svg(el, |id| labels.get(id).copied(), background))
+        .map(|el| element_svg(el, |id| labels.get(id).copied(), &palette))
         .collect::<Vec<_>>()
         .join("\n");
+    let scene = options
+        .embed_scene
+        .then(|| crate::export::scene_payload(elements));
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">{source}{metadata}{defs}<rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({x} {y})\">{body}</g></svg>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">{source}{metadata}{defs}{paper}<g transform=\"translate({x} {y})\">{body}</g></svg>",
         x = camera.x,
         y = camera.y,
         source = crate::export::roundtrip::svg_source_comment(),
-        metadata = crate::export::roundtrip::svg_metadata_element(scene),
+        metadata = crate::export::roundtrip::svg_metadata_element(scene.as_deref()),
         // Between the `<metadata>` and the paper, as in `exportToSvg`: it appends the comment,
         // the metadata and then the `<defs>` (`:368-370`), and the background `<rect>` after
-        // that (`:458-468`).
-        defs = defs,
+        // that (`:458-468`) — or, with no paper, nothing there at all.
+        paper = palette.paper().map_or(String::new(), |fill| {
+            format!("<rect width=\"{width}\" height=\"{height}\" fill=\"{fill}\"/>")
+        }),
     )
 }

@@ -467,6 +467,48 @@ thread_local! {
     /// Set per element by the scene loop and read where every element sets its alpha, so
     /// no painting function has to take the eraser as a parameter.
     static ERASE_FADE: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
+
+    /// Whether every colour set on the context goes through the dark-mode filter first.
+    ///
+    /// The oracle's `applyDarkModeFilter(color, renderConfig.theme === THEME.DARK)`, and it
+    /// is put at the one place a colour becomes a paint style rather than at each of the
+    /// ~35 that write one, for the oracle's own reason: the interactive canvas used to
+    /// invert itself with a CSS filter and they moved the arithmetic into JS because a
+    /// browser compositing in software cannot afford the filter
+    /// (`renderer/interactiveScene.ts@1118751f:116-120`). There is no per-element copy to
+    /// write and therefore no way for one element to be filtered and its neighbour not.
+    ///
+    /// **Off everywhere except an export that asked for a dark picture** — the oracle's
+    /// `exportWithDarkMode`, whose default is `false` (`appState.ts@1118751f:72`), and which
+    /// reaches here as [`crate::export::ExportOptions::dark_mode`]. The on-screen canvas
+    /// already has a theme of its own and must not be filtered a second time.
+    ///
+    /// **A raw `strokeStyle` written past [`set_stroke`] is not an oversight**: a sticky
+    /// note's shadow and its edge shadow are written directly, and the oracle leaves both
+    /// unfiltered too — `createPath(commands, "#000", STICKY_NOTE_SHADOW_OPACITY)` and
+    /// `edgeShadow.setAttribute("stroke", "#000")`
+    /// (`staticSvgScene.ts@1118751f:199-203, 222-224`), with only the note's paper and its
+    /// date going through the filter (`:205-212, 247-254`). A shadow of the same darkness
+    /// on a dark sheet is a shadow.
+    static DARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this render's colours go through the dark-mode filter.
+pub(crate) fn dark_export(dark: bool) {
+    DARK.with(|cell| cell.set(dark));
+}
+
+/// The colour to actually put on the context, as this render's palette paints it.
+///
+/// The filter's own arithmetic is [`crate::export::dark_mode_filter`] — one function, one
+/// place — and this is only the decision about whether to call it, kept here so the on-screen
+/// path pays a `Cell` read and a branch and never an allocation.
+fn themed(color: &str) -> std::borrow::Cow<'_, str> {
+    if DARK.with(|cell| cell.get()) {
+        std::borrow::Cow::Owned(crate::export::dark_mode_filter(color))
+    } else {
+        std::borrow::Cow::Borrowed(color)
+    }
 }
 
 /// How visible an element marked by the eraser stays — and a flowchart node not yet
@@ -529,37 +571,51 @@ fn color_value(color: &str) -> JsValue {
     })
 }
 
+/// The fill style, put through the dark filter when this render asked for one.
+///
+/// **The cache keys on the colour that is written, not the one asked for.** Deduplicating on
+/// the input would let a render whose flag flips between two elements keep a stale style:
+/// the cache would say "#1e1e1e is already set" and the canvas would still hold whatever
+/// the first element put there. The flag cannot change inside one render today, so the two
+/// agree — and this is the line that keeps them agreeing.
 fn set_fill(ctx: &CanvasRenderingContext2d, color: &str) {
+    let color = themed(color);
+    // Before the cache test, and not after it: `color_value` is itself an interned lookup
+    // that used to run on every call whether or not the style had changed, so this is the
+    // cost it already had — and the alternative is a clone on every call of the function
+    // that runs tens of thousands of times a frame.
+    let value = color_value(&color);
     let changed = STATE.with(|s| {
         let mut s = s.borrow_mut();
-        if s.fill.as_deref() == Some(color) {
+        if s.fill.as_deref() == Some(color.as_ref()) {
             return false;
         }
-        s.fill = Some(color.to_string());
+        s.fill = Some(color.into_owned());
         true
     });
     if !changed {
         return;
     }
-    let value = color_value(color);
     FILL_KEY.with(|key| {
         let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
     });
 }
 
+/// The stroke style, filtered as [`set_fill`] is. See it for the cache key and the order.
 fn set_stroke(ctx: &CanvasRenderingContext2d, color: &str) {
+    let color = themed(color);
+    let value = color_value(&color);
     let changed = STATE.with(|s| {
         let mut s = s.borrow_mut();
-        if s.stroke.as_deref() == Some(color) {
+        if s.stroke.as_deref() == Some(color.as_ref()) {
             return false;
         }
-        s.stroke = Some(color.to_string());
+        s.stroke = Some(color.into_owned());
         true
     });
     if !changed {
         return;
     }
-    let value = color_value(color);
     STROKE_KEY.with(|key| {
         let _ = js_sys::Reflect::set(ctx.as_ref(), key, &value);
     });

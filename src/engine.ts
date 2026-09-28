@@ -1103,9 +1103,18 @@ export class DrawEngine {
    * from here which of the two was meant. `selectionOnly` is the whole of the front's
    * contribution; whether that means the scene, a selection or one frame is decided in Rust,
    * because an empty selection is the scene (`data/index.ts@1118751f:48-96`).
+   *
+   * `transparent` and `darkMode` are the dialog's other two switches, forwarded whole. The
+   * SVG used to ignore both — it always wrote its paper `<rect>` in the theme's colour —
+   * which is what `shortkey.md:450` was half-open about. The **colour** of that paper is
+   * not a parameter and never was a front's to pass: it is the engine's theme, which is the
+   * oracle's arrangement too (`viewBackgroundColor` is app state the export reads,
+   * `export.ts@1118751f:466`).
    */
   exportSvg(options: SvgExport = {}): string | null {
-    return this.inner.exportSvg(options.selectionOnly) ?? null;
+    return (
+      this.inner.exportSvg(options.selectionOnly, options.transparent, options.darkMode) ?? null
+    );
   }
 
   /**
@@ -1129,6 +1138,7 @@ export class DrawEngine {
       options.scale,
       options.transparent,
       options.selectionOnly,
+      options.darkMode,
     );
     return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
   }
