@@ -262,7 +262,7 @@ fn tools_is_shape_tool() {
 #[test]
 fn shape_drag_rect_from_drag() {
     assert_eq!(
-        rect_from_drag(10.0, 10.0, 40.0, 30.0, false),
+        rect_from_drag(10.0, 10.0, 40.0, 30.0, false, false),
         Rect {
             x: 10.0,
             y: 10.0,
@@ -271,7 +271,7 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(40.0, 30.0, 10.0, 10.0, false),
+        rect_from_drag(40.0, 30.0, 10.0, 10.0, false, false),
         Rect {
             x: 10.0,
             y: 10.0,
@@ -280,7 +280,7 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(0.0, 0.0, 30.0, 10.0, true),
+        rect_from_drag(0.0, 0.0, 30.0, 10.0, true, false),
         Rect {
             x: 0.0,
             y: 0.0,
@@ -289,12 +289,44 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(0.0, 0.0, -10.0, -30.0, true),
+        rect_from_drag(0.0, 0.0, -10.0, -30.0, true, false),
         Rect {
             x: -30.0,
             y: -30.0,
             width: 30.0,
             height: 30.0
+        }
+    );
+}
+
+/// Alt puts the press at the middle of the box and doubles each reach
+/// (`dragElements.ts@1118751f:371-376`), and it does so after Shift's lock, so the square
+/// is the reach and the box is twice it — the unit cases, sign-free.
+#[test]
+fn shape_drag_rect_from_drag_from_the_centre() {
+    // From (10, 10), a reach of 30 by 20 — the three signs of it.
+    for to in [(40.0, 30.0), (-20.0, 30.0), (-20.0, -10.0)] {
+        let want = Rect {
+            x: -20.0,
+            y: -10.0,
+            width: 60.0,
+            height: 40.0,
+        };
+        assert_eq!(
+            rect_from_drag(10.0, 10.0, to.0, to.1, false, true),
+            want,
+            "{to:?}"
+        );
+    }
+    // Shift squares the reach (30, not 20) and the centre doubles that: 60 square, from
+    // (10, 10).
+    assert_eq!(
+        rect_from_drag(10.0, 10.0, 40.0, 30.0, true, true),
+        Rect {
+            x: -20.0,
+            y: -20.0,
+            width: 60.0,
+            height: 60.0
         }
     );
 }

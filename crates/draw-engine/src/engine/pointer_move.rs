@@ -47,7 +47,20 @@ impl DrawEngine {
                     // A note is square unless Shift frees it, where a shape is free unless
                     // Shift squares it (`App.tsx@1118751f:13419-13425`).
                     let sticky = element.kind == DrawElementType::StickyNote;
-                    let rect = rect_from_drag(start.x, start.y, world.x, world.y, square != sticky);
+                    // Alt, as of the last move: a drafted shape grows about the press
+                    // instead of out of it (`shouldResizeFromCenter`, `dragElements.ts
+                    // @1118751f:371-376`). A text is not one of these — the oracle
+                    // anchors it at half its box and leaves its height alone
+                    // (`dragElements.ts@1118751f:352-366`), which is a different change.
+                    let from_center = self.alt_held && !matches!(it, Interaction::TextDraft { .. });
+                    let rect = rect_from_drag(
+                        start.x,
+                        start.y,
+                        world.x,
+                        world.y,
+                        square != sticky,
+                        from_center,
+                    );
                     element.x = rect.x;
                     element.y = rect.y;
                     element.width = rect.width;
