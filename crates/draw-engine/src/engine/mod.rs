@@ -528,8 +528,14 @@ impl DrawEngine {
     /// Counting it as "fifteen call sites that all do this" was my error, and it became a
     /// comment in this file by way of a brief. 6.4 measured the real shape: **16 sites, 12 on
     /// the event, 5 on `lastPointerDownEvent`, one on a disjunction, and one that opts out.**
-    /// The number that matters is the opt-out, because `freedraw`'s press origin is a
-    /// behaviour change rather than a gate, and is filed rather than fixed here.
+    ///
+    /// **6.3 settled the opt-out.** It was filed as "a behaviour change rather than a gate",
+    /// which was right about the mechanism and wrong about the scope: the freedraw press
+    /// origin and the freedraw move are **one** rule, because a stroke's points are the raw
+    /// pointer less the raw origin (`App.tsx@1118751f:11181-11196`). A freedraw stroke no
+    /// longer comes through here at all, press and move alike, so this gate has fifteen
+    /// sites behind it — which is what the count above means. `docs/reference/drawing.md`
+    /// › "A freedraw stroke is outside the grid entirely", and `ci_freedraw_origin.rs`.
     ///
     /// Deliberately not [`Self::snap`], which the paste path uses. Duplicating and
     /// pasting grid-snap with no modifier test at all (`App.duplicate.ts@1118751f:97-101`
