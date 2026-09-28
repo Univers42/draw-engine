@@ -1,3 +1,4 @@
+pub mod base64;
 pub mod clipboard;
 pub mod json;
 pub mod png;
