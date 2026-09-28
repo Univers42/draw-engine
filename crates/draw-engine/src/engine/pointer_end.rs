@@ -450,7 +450,11 @@ impl DrawEngine {
             && note.height * zoom < super::DRAGGING_THRESHOLD_PX;
         if click {
             let size = DEFAULT_STICKY_NOTE_SIZE;
-            let at = self.snap(Point {
+            // Centred on the raw press, then the grid — and Ctrl takes the grid away, the
+            // oracle's `childEvent[KEYS.CTRL_OR_CMD] ? null : this.getEffectiveGridSize()` at
+            // `App.tsx@1118751f:11825`. Half the default size need not be on the grid, so the
+            // snap comes after the centring and not before it.
+            let at = self.snap_gesture(Point {
                 x: press.x - size / 2.0,
                 y: press.y - size / 2.0,
             });
