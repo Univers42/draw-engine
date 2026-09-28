@@ -26,6 +26,74 @@ pub fn round_px(value: f64) -> f64 {
     value.round()
 }
 
+/// The step Shift snaps a drag or a rotation to: **15 degrees**.
+///
+/// Excalidraw's `SHIFT_LOCKING_ANGLE` (`packages/common/src/constants.ts@1118751f:31`,
+/// `Math.PI / 12`). One constant, and below it **two** functions, because the oracle
+/// rounds its two locks differently — they are not one rule with a flag, and folding them
+/// together would have to pick one and call it parity.
+pub const SHIFT_LOCKING_ANGLE: f64 = std::f64::consts::PI / 12.0;
+
+/// `Math.round`, which breaks a tie **toward +infinity** (`Math.round(-0.5) === -0`).
+/// `f64::round` breaks it away from zero, which is a whole step out on every negative tie.
+/// The same trap `getGridPoint` has, and the same fix: `Math.round` is `floor(x + 0.5)`
+/// for every input.
+fn round_half_up(value: f64) -> f64 {
+    (value + 0.5).floor()
+}
+
+/// The delta a Shift-locked drag leaves from its anchor.
+///
+/// Excalidraw's `getLockedLinearCursorAlignSize` (`sizeHelpers.ts@1118751f:187-254`): the
+/// drag's angle is rounded to a step, and the endpoint is then the pointer's **orthogonal
+/// projection onto the ray that step names** — the intersection of the locked ray with the
+/// line through the cursor across it (`:236-250`) — with the flat and square cases written
+/// out as branches of their own (`:229-234`).
+///
+/// The projection is the part that is easy to miss. Rotating the delta onto the locked
+/// angle also yields a delta *at* the locked angle, so an assertion about the angle alone
+/// cannot tell the two apart. The lengths differ: the projection stands
+/// `|drag| * cos(delta)` from the anchor where a rotation stands `|drag|`, and the two
+/// agree only once the drag was already on a step.
+pub fn shift_locked_delta(dx: f64, dy: f64) -> (f64, f64) {
+    let steps = round_half_up(dy.atan2(dx) / SHIFT_LOCKING_ANGLE);
+    // The oracle's two branches, decided on the step count rather than on the angle that
+    // count multiplies out to. `k * (PI / 12)` is not reliably exactly `FRAC_PI_2` in
+    // binary, so the oracle's own `lockedAngle === Math.PI / 2` is a test that can miss —
+    // and a miss lands in the general case, where `1 / tan(locked)` is a very large number
+    // and the two axes are then right by luck rather than by construction.
+    if steps.rem_euclid(12.0) == 0.0 {
+        return (dx, 0.0);
+    }
+    if steps.rem_euclid(12.0) == 6.0 {
+        return (0.0, dy);
+    }
+    let (sin, cos) = (steps * SHIFT_LOCKING_ANGLE).sin_cos();
+    let along = dx * cos + dy * sin;
+    (along * cos, along * sin)
+}
+
+/// The angle a Shift-locked rotation lands on, in `[0, 2*PI)`.
+///
+/// Excalidraw's two rotation locks, `rotateSingleElement`
+/// (`resizeElements.ts@1118751f:229-233`) and `rotateMultipleElements` (`:424-427`), round
+/// with `angle += step / 2; angle -= angle % step` and then `normalizeRadians`
+/// (`packages/math/src/angle.ts@1118751f:11-14`). Neither half matches
+/// [`shift_locked_delta`], which is why this is a second function.
+///
+/// The rounding is not "to the nearest", and the difference is load-bearing. `%` truncates
+/// toward zero, so each step owns the half-open cell running from the step *below* it
+/// (exclusive) to itself (inclusive): a raw `-20` degrees belongs to `0`, where a round to
+/// the nearest would say `345`. A pointer sweeps continuously past the top of a turn, and
+/// the oracle's lock answers `0` on the way in and `15` on the way out. Copying that is
+/// the point; a "friendlier" symmetric round here would be a divergence that only a
+/// screenshot would ever catch.
+pub fn shift_locked_angle(angle: f64) -> f64 {
+    let shifted = angle + SHIFT_LOCKING_ANGLE / 2.0;
+    let locked = shifted - shifted % SHIFT_LOCKING_ANGLE;
+    locked.rem_euclid(std::f64::consts::TAU)
+}
+
 /// One cubic Bézier: start, two controls, end.
 pub type Cubic = [[f64; 2]; 4];
 
