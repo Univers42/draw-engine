@@ -440,8 +440,8 @@ fn transform_resize_min_size() {
 #[test]
 fn transform_rotate_handle() {
     let el = box_at(0.0, 0.0, 100.0, 60.0);
-    assert!((rotate_element(&el, 50.0, -100.0) - 0.0).abs() < 1e-9);
-    assert!((rotate_element(&el, 150.0, 30.0) - std::f64::consts::PI / 2.0).abs() < 1e-9);
+    assert!((rotate_element(&el, 50.0, -100.0, false) - 0.0).abs() < 1e-9);
+    assert!((rotate_element(&el, 150.0, 30.0, false) - std::f64::consts::PI / 2.0).abs() < 1e-9);
 }
 
 #[test]

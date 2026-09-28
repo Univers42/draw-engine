@@ -412,17 +412,29 @@ pub fn resize_group(
 /// the arrangement untouched. A line, an arrow or a stroke turns through its points
 /// instead (see [`map_points`]), so it keeps no angle of its own: an arrow's ends are
 /// then exactly where its bindings will look for them.
+///
+/// `locked` is the host's Shift, and the quantisation is the same one
+/// [`rotate_element`](crate::selection::rotate_element) applies — the oracle holds the two
+/// to one rule as well (`resizeElements.ts@1118751f:424-427`). It lands the members'
+/// *deltas* on 15 degrees, so the group as a whole stops at a step, not each member on its
+/// own.
 pub fn rotate_group(
     elements: &[DrawElement],
     frame: &GroupFrame,
     pointer: Point,
+    locked: bool,
 ) -> Vec<DrawElement> {
     let b = &frame.bounds;
     let cx = (b.min_x + b.max_x) / 2.0;
     let cy = (b.min_y + b.max_y) / 2.0;
 
     // The same convention as single-element rotation: straight up is zero.
-    let target = (pointer.y - cy).atan2(pointer.x - cx) + std::f64::consts::FRAC_PI_2;
+    let raw = (pointer.y - cy).atan2(pointer.x - cx) + std::f64::consts::FRAC_PI_2;
+    let target = if locked {
+        crate::math::shift_locked_angle(raw)
+    } else {
+        raw
+    };
 
     elements
         .iter()
@@ -782,6 +794,7 @@ mod tests {
                 x: 150.0,
                 y: 1000.0,
             },
+            false,
         );
 
         let a = out.iter().find(|e| e.id == "a").unwrap();

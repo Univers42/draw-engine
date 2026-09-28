@@ -38,7 +38,11 @@ pub const SHIFT_LOCKING_ANGLE: f64 = std::f64::consts::PI / 12.0;
 /// `f64::round` breaks it away from zero, which is a whole step out on every negative tie.
 /// The same trap `getGridPoint` has, and the same fix: `Math.round` is `floor(x + 0.5)`
 /// for every input.
-fn round_half_up(value: f64) -> f64 {
+///
+/// Public because it is the one rounding both Shift locks are built on, and because a tie
+/// in the *composed* result cannot be held to a number in floating point — the halves never
+/// line up in radians — so the rule is tested here, where it is exact.
+pub fn round_half_up(value: f64) -> f64 {
     (value + 0.5).floor()
 }
 
@@ -78,18 +82,24 @@ pub fn shift_locked_delta(dx: f64, dy: f64) -> (f64, f64) {
 /// Excalidraw's two rotation locks, `rotateSingleElement`
 /// (`resizeElements.ts@1118751f:229-233`) and `rotateMultipleElements` (`:424-427`), round
 /// with `angle += step / 2; angle -= angle % step` and then `normalizeRadians`
-/// (`packages/math/src/angle.ts@1118751f:11-14`). Neither half matches
-/// [`shift_locked_delta`], which is why this is a second function.
+/// (`packages/math/src/angle.ts@1118751f:11-14`).
 ///
-/// The rounding is not "to the nearest", and the difference is load-bearing. `%` truncates
-/// toward zero, so each step owns the half-open cell running from the step *below* it
-/// (exclusive) to itself (inclusive): a raw `-20` degrees belongs to `0`, where a round to
-/// the nearest would say `345`. A pointer sweeps continuously past the top of a turn, and
-/// the oracle's lock answers `0` on the way in and `15` on the way out. Copying that is
-/// the point; a "friendlier" symmetric round here would be a divergence that only a
-/// screenshot would ever catch.
+/// **The input is normalised before it is floored, and that is load-bearing.** The oracle
+/// builds the raw angle as `5 * PI / 2 + atan2(..)` (`:227`) — two and a half turns, not
+/// one — so the number it floors always sits in `(3PI/2, 7PI/2]` and is never negative.
+/// Ours is built as `PI / 2 + atan2(..)` (`selection/transform.rs:293`), the same angle a
+/// whole turn smaller, which does go negative. `%` truncates toward zero, so a negative
+/// operand lands in a cell **twice as wide**: everything within 7.5 degrees either side of
+/// straight up folds onto 0. Handed a raw -20 degrees the oracle answers 345 and this
+/// answered 0, and the whole lower-left quadrant of a turn with it.
+///
+/// Normalising first puts the input back in the range the oracle's own is in, which makes
+/// the lock an ordinary round-to-nearest over 15 degrees — the same answer
+/// [`shift_locked_delta`] gives for the same raw angle, as it should, since they are the
+/// same rounding. `2 * PI` is exactly 24 steps, so folding the angle into `[0, 2PI)` moves
+/// it by a whole number of steps and cannot change which cell it is in.
 pub fn shift_locked_angle(angle: f64) -> f64 {
-    let shifted = angle + SHIFT_LOCKING_ANGLE / 2.0;
+    let shifted = angle.rem_euclid(std::f64::consts::TAU) + SHIFT_LOCKING_ANGLE / 2.0;
     let locked = shifted - shifted % SHIFT_LOCKING_ANGLE;
     locked.rem_euclid(std::f64::consts::TAU)
 }

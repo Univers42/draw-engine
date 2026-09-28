@@ -42,11 +42,13 @@
 //! stands `|drag| * cos(delta)` from the anchor where a rotation stands `|drag|`.
 //! `the_lock_keeps_the_component_along_the_locked_ray` below is the assertion that can.
 //!
-//! **The rotation handle is a different lock, not this one.** `selection/transform.rs`
-//! calls none of the four; it quantises through the oracle's *other* rule, which floors to
-//! the step rather than rounding to the nearest
-//! (`resizeElements.ts@1118751f:229-232`). One constant, two functions — see
-//! `math::shift_locked_angle`, and `ci_rotate_lock.rs` for that path's tests.
+//! **The rotation handle reaches the same step by a different route.** `selection/transform.rs`
+//! calls none of the four — it is the rotation handle, and the checklist's "rotation" is
+//! that path, not this one. It quantises over the same
+//! [`SHIFT_LOCKING_ANGLE`](math::SHIFT_LOCKING_ANGLE) and by the same rounding once the
+//! angle is folded into `[0, 2PI)`, so the two locks agree step for step; what differs is
+//! that the rotation normalises and the drag does not, and that the drag's *geometry* is a
+//! projection rather than a rotation. See `ci_rotate_lock.rs`.
 //!
 //! **What is not in the list**, each with the line that keeps it out:
 //!

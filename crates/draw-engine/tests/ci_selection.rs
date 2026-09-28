@@ -290,14 +290,14 @@ fn resize_rotate_handle_is_noop() {
 #[test]
 fn rotate_handle_north_is_zero_angle() {
     let element = box_at(0.0, 0.0, 100.0, 100.0);
-    let angle = rotate_element(&element, 50.0, -50.0);
+    let angle = rotate_element(&element, 50.0, -50.0, false);
     assert!(angle.abs() < EPS || (angle - std::f64::consts::PI * 2.0).abs() < EPS);
 }
 
 #[test]
 fn rotate_handle_east_is_pi_half() {
     let element = box_at(0.0, 0.0, 100.0, 100.0);
-    let angle = rotate_element(&element, 150.0, 50.0);
+    let angle = rotate_element(&element, 150.0, 50.0, false);
     assert_close(angle, std::f64::consts::PI / 2.0);
 }
 
