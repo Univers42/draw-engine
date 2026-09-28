@@ -810,6 +810,46 @@ mod tests {
         assert!(b.x < 150.0, "member b swapped sides: {}", b.x);
     }
 
+    /// Shift holds a **group**'s turn to the same 15-degree steps a single element's is,
+    /// which is what the oracle does with one rule for both
+    /// (`resizeElements.ts@1118751f:424-427`). The lock lands on the *turn about the
+    /// group's centre*, so the members' deltas are what come out on a step, not each
+    /// member's own angle.
+    ///
+    /// 20 degrees off the vertical is the case that fails without the lock: every 45 is a
+    /// multiple of 15 and a 45-degree step would have sent 20 to 0, so both the "on a step"
+    /// and the "not the pointer's own angle" halves are load-bearing.
+    #[test]
+    fn shift_holds_a_group_turn_to_15_degree_steps() {
+        let els = trio();
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+        let centre = Point { x: 150.0, y: 150.0 };
+        // 20 degrees round from straight up, at a reach well clear of the group.
+        let reach = 400.0;
+        let raw = 20.0_f64.to_radians();
+        let pointer = Point {
+            x: centre.x + reach * raw.sin(),
+            y: centre.y - reach * raw.cos(),
+        };
+
+        let locked = rotate_group(&els, &frame, pointer, true);
+        let free = rotate_group(&els, &frame, pointer, false);
+        let turned = |out: &Vec<DrawElement>| {
+            let a = out.iter().find(|e| e.id == "a").unwrap();
+            a.angle.to_degrees().rem_euclid(360.0)
+        };
+
+        let got = turned(&locked);
+        assert!(
+            (got - 15.0).abs() < 1e-9,
+            "a group turn 20 degrees off the vertical landed on {got}, not 15"
+        );
+        assert!(
+            (turned(&free) - 20.0).abs() < 1e-9,
+            "without Shift the turn is the pointer's own angle"
+        );
+    }
+
     #[test]
     fn an_empty_selection_has_no_frame() {
         assert!(GroupFrame::capture(std::iter::empty()).is_none());
