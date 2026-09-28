@@ -515,13 +515,21 @@ impl DrawEngine {
 
     /// Where a **pointer gesture** lands: the grid, unless Ctrl/Cmd is held.
     ///
-    /// The oracle's `getGridPoint(..., event[KEYS.CTRL_OR_CMD] ? null :
-    /// this.getEffectiveGridSize())`, and the `null` is a null *grid*, which
-    /// `getGridPoint` returns the point unchanged for (`points.ts@1118751f:74-80`). All
-    /// **fifteen** of its pointer call sites write the test that way — the press origin
-    /// (`App.tsx@1118751f:9228`, `:10443`, `:10512`), the first point of a placed line
-    /// (`:10238`), every pointer move (`:10722`), the resize (`:13579`) — because Ctrl is
-    /// the modifier that *inverts* snapping, so the grid is what it switches off.
+    /// The oracle gates a grid lookup on a held modifier, in two spellings, and
+    /// **not everywhere**: `getGridPoint(..., event[KEYS.CTRL_OR_CMD] ? null : gridSize)`
+    /// where the live event carries it (`points.ts@1118751f:74-80` is where the `null` grid
+    /// returns the point unchanged), and
+    /// `getGridPoint(..., lastPointerDownEvent?.[KEYS.CTRL_OR_CMD] ? null : gridSize)`
+    /// where the call happens on a key event and reads the modifier of an *earlier press* --
+    /// `:9974`, `:10014`, `:10067`, `:10443`, `:10512`. Two sites differ again: `:9229` ORs in
+    /// `|| isElbowArrowOnly`, and `:9899` passes **bare `null`**, so a freedraw press origin is
+    /// never rounded at all.
+    ///
+    /// Counting it as "fifteen call sites that all do this" was my error, and it became a
+    /// comment in this file by way of a brief. 6.4 measured the real shape: **16 sites, 12 on
+    /// the event, 5 on `lastPointerDownEvent`, one on a disjunction, and one that opts out.**
+    /// The number that matters is the opt-out, because `freedraw`'s press origin is a
+    /// behaviour change rather than a gate, and is filed rather than fixed here.
     ///
     /// Deliberately not [`Self::snap`], which the paste path uses. Duplicating and
     /// pasting grid-snap with no modifier test at all (`App.duplicate.ts@1118751f:97-101`
