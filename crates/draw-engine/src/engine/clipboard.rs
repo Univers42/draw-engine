@@ -735,6 +735,55 @@ impl DrawEngine {
         crate::export::ExportFrame::for_scene(self.scene.iter_ordered(), options)
     }
 
+    /// One copy for a host that can take it: what to write, under what type, of what.
+    ///
+    /// The oracle's `actionCopyAsSvg` and `actionCopyAsPng` differ in their payload and in
+    /// nothing else that matters here — both pass the literal `true` for
+    /// `exportSelectionOnly` (`actionClipboard.tsx@1118751f:139`, `:212`) into
+    /// `prepareElementsForExport`, so a copy is "the export scope, unchanged", and this is
+    /// [`Self::export_scope`] with `true` plus the two questions a file never asks: the MIME
+    /// type, and whether the host can take it.
+    ///
+    /// **`text` is the file export's own string**, from [`Self::export_svg_of`] over the
+    /// scope built here. Not a second rendering and not a second element list, which is
+    /// what makes "the clipboard carries exactly what the export would have produced" true
+    /// by construction rather than by agreement.
+    ///
+    /// The raster payload is absent, and the [`crate::export::ClipboardCopy`] carries the
+    /// scope instead: encoding a canvas needs a browser, and the host encodes *this* scope's
+    /// elements into *this* scope's box (`wasm::export::export_png`, which is also what a
+    /// file uses). Nothing is left for the host to decide and nothing to disagree about.
+    pub fn clipboard_copy<'a>(
+        &'a self,
+        format: crate::export::ClipboardFormat,
+        host: &crate::export::ClipboardHost,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ClipboardCopy<'a> {
+        let scope = self.export_scope(true, options);
+        if !format.host_can_take(host) {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::BrowserCannotTake,
+            );
+        }
+        if scope.elements.is_empty() {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::NothingToCopy,
+            );
+        }
+        crate::export::ClipboardCopy {
+            supported: true,
+            refusal: None,
+            mime: format.mime(),
+            text: match format {
+                crate::export::ClipboardFormat::Svg => self.export_svg_of(&scope),
+                crate::export::ClipboardFormat::Png => None,
+            },
+            scope,
+        }
+    }
+
     pub fn load_scene(&mut self, json: &str) -> bool {
         let Some(elements) = crate::elements_from_json(json) else {
             return false;

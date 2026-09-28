@@ -935,6 +935,63 @@ impl WasmEngine {
         super::export::export_png(&engine.engine, &scope, &options)
     }
 
+    /// One clipboard copy: whether the host may make it, what to write it as, of what, and
+    /// the vector payload.
+    ///
+    /// The host's two booleans are the only thing it contributes, and they are facts about
+    /// the browser rather than decisions: `probablySupportsClipboardWriteText` is
+    /// `"clipboard" in navigator && "writeText" in navigator.clipboard` and
+    /// `probablySupportsClipboardBlob` adds `"write" in navigator.clipboard &&
+    /// "ClipboardItem" in window && "toBlob" in HTMLCanvasElement.prototype`
+    /// (`clipboard.ts@1118751f:65-72`). The oracle reads the same two at its own
+    /// `predicate` (`actionClipboard.tsx@1118751f:186-188, 247-249`) — except that it
+    /// reads them off `navigator` itself, which the engine cannot see.
+    ///
+    /// There is deliberately **no `selectionOnly`**, and the oracle has none either: both
+    /// actions pass the literal `true` to `prepareElementsForExport`
+    /// (`actionClipboard.tsx@1118751f:139, 212`). The scope is the engine's alone
+    /// (`data/index.ts@1118751f:48-96`), and the payload is the same string a file export
+    /// of that scope produces, so a host cannot ask for a narrower or a different one.
+    ///
+    /// **One call, one scope, one format.** Not both payloads at once: a copy is one
+    /// format, and a call that built each from a scope of its own would be two element-list
+    /// decisions where the oracle has one (`prepareElementsForExport` is called once per
+    /// action, `actionClipboard.tsx@1118751f:136-140` and `:209-213`).
+    ///
+    /// `blob` is the raster payload and `text` the vector one; whichever this format is not
+    /// stays `undefined`. `scope` is `"selection"` or `"scene"` — the oracle's toast word
+    /// (`actionClipboard.tsx@1118751f:165-167, 225-227`), taken from the scope rather than
+    /// from the front's own selection count, which is not the same number: a selection of
+    /// ids that are not on the board is not a selection
+    /// (`packages/element/src/selection.ts@1118751f:141-143`).
+    ///
+    /// `null` for a format this build does not have, which is the boundary's answer rather
+    /// than a default: an unknown name is a caller's mistake and is worth seeing.
+    #[wasm_bindgen(js_name = clipboardCopy)]
+    pub fn clipboard_copy(
+        &self,
+        format: &str,
+        can_write_blob: bool,
+        can_write_text: bool,
+    ) -> JsValue {
+        let Some(format) = crate::export::ClipboardFormat::parse(format) else {
+            return JsValue::NULL;
+        };
+        let host = crate::export::ClipboardHost {
+            can_write_blob,
+            can_write_text,
+        };
+        let options = crate::export::ExportOptions::default();
+        let engine = self.cell.borrow();
+        let copy = engine.engine.clipboard_copy(format, &host, &options);
+        let blob = if format == crate::export::ClipboardFormat::Png && copy.supported {
+            super::export::export_png(&engine.engine, &copy.scope, &options)
+        } else {
+            None
+        };
+        super::export::clipboard_json(format, &copy, blob)
+    }
+
     #[wasm_bindgen(js_name = cameraJson)]
     pub fn camera_json(&self) -> String {
         serde_json::to_string(&self.cell.borrow().engine.camera).unwrap_or_else(|_| "{}".into())

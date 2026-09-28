@@ -56,13 +56,9 @@
 
 mod common;
 use common::*;
+use draw_engine::camera::visible_world_rect;
 use draw_engine::*;
-use draw_engine::{camera::visible_world_rect, create_element_default, Geometry};
 use std::collections::HashSet;
-
-/// The oracle's eighth turn. A square turned through it spans `100 * √2`; a quarter turn
-/// would land back on the box it started in and prove nothing.
-const EIGHTH_TURN: f64 = std::f64::consts::FRAC_PI_4;
 
 /// The oracle's padding, named once so a change to it is one edit.
 const PADDING: f64 = draw_engine::DEFAULT_EXPORT_PADDING;
@@ -72,57 +68,11 @@ fn reach() -> f64 {
     50.0 * 2f64.sqrt()
 }
 
-/// The `width` attribute of an SVG's root element.
-///
-/// The root is the first `width="…"` in the document (`export/svg.rs` writes the root tag
-/// before any element's own geometry), so this is the export's own box and not a shape's.
-/// Parsed rather than compared as a string: the value is a `f64` and its printed form is
-/// Rust's to decide, not the test's to pin.
-fn svg_width(svg: &str) -> f64 {
-    root_attribute(svg, "width")
-}
-
-/// The `height` attribute of an SVG's root element. See [`svg_width`].
-fn svg_height(svg: &str) -> f64 {
-    root_attribute(svg, "height")
-}
-
-fn root_attribute(svg: &str, name: &str) -> f64 {
-    let tag = svg.split_once('>').expect("an svg root element").0;
-    let marker = format!("{name}=\"");
-    let start = tag
-        .find(&marker)
-        .unwrap_or_else(|| panic!("the svg root should carry a {name}"))
-        + marker.len();
-    let rest = &tag[start..];
-    let end = rest
-        .find('"')
-        .unwrap_or_else(|| panic!("the {name} attribute should be closed"));
-    rest[..end]
-        .parse()
-        .unwrap_or_else(|_| panic!("the {name} attribute should be a number"))
-}
-
 /// A 100×100 square at the origin, turned through the eighth turn.
 fn turned_square() -> DrawElement {
     let mut square = box_at(0.0, 0.0, 100.0, 100.0);
     square.angle = EIGHTH_TURN;
     square
-}
-
-/// A frame of `size` at the origin, named so it is not a blank rename.
-fn frame_at_origin(size: f64) -> DrawElement {
-    let mut frame = create_element_default(
-        DrawElementType::Frame,
-        Geometry {
-            x: 0.0,
-            y: 0.0,
-            width: size,
-            height: size,
-        },
-    );
-    frame.name = Some("Frame 1".to_string());
-    frame
 }
 
 /// A box, parented to `frame`.
