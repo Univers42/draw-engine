@@ -46,6 +46,7 @@ mod text_session;
 mod types;
 pub mod vectorize;
 
+pub use convert::{ConvertTo, LinearType};
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use flowchart::LinkDirection;
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
@@ -311,6 +312,12 @@ pub struct DrawEngine {
     /// Each switched shape's label size while the shape switch is open, `None` while it
     /// is closed. See `convert.rs`.
     conversion_font_sizes: Option<HashMap<String, f64>>,
+    /// Each selected line or arrow, under the linear type it had when the shape switch
+    /// opened, so switching away and back hands the same element back rather than a
+    /// rebuild of it. `None` while the switch is closed. The oracle's
+    /// `LINEAR_ELEMENT_CONVERSION_CACHE`
+    /// (`ConvertElementTypePopup.tsx@1118751f:157-161`). See `convert.rs`.
+    conversion_lines: Option<HashMap<String, DrawElement>>,
     /// An in-flight eased camera move. See `style.rs`.
     camera_anim: Option<style::CameraAnim>,
     /// The host's UI over each side of the canvas, which a reveal keeps clear of. See
@@ -399,6 +406,7 @@ impl DrawEngine {
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
             conversion_font_sizes: None,
+            conversion_lines: None,
             camera_anim: None,
             viewport_offsets: crate::Offsets::default(),
             reduced_motion: false,
