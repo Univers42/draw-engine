@@ -12,6 +12,10 @@ use draw_engine::*;
 /// that do not are an `unused_imports` error under `clippy -D warnings`.
 pub mod png;
 
+/// A second implementation of the SVG document, written for the tests rather than for the
+/// engine. See `svg.rs` for why there are two.
+pub mod svg;
+
 pub const EPS: f64 = 1e-9;
 
 pub fn assert_close(a: f64, b: f64) {

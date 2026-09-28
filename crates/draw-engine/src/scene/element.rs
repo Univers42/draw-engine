@@ -252,6 +252,13 @@ where
 /// An id the engine does not know is ignored rather than trusted: it may be a newer
 /// client's font, so the field keeps it as it came, but it is drawn with the stack.
 pub fn resolved_font_family(element: &DrawElement) -> Option<u8> {
+    resolved_font_family_id(element)
+}
+
+/// [`resolved_font_family`], named for the callers that want the id rather than the
+/// drawing decision — the SVG exporter, which asks what to put in a file, and the two are
+/// the same answer.
+pub fn resolved_font_family_id(element: &DrawElement) -> Option<u8> {
     element
         .font_family
         .filter(|id| crate::text::font::family(*id).is_some())
