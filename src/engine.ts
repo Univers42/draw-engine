@@ -27,6 +27,8 @@ import type {
   FlowchartShape,
   GridSettings,
   SelectionStyle,
+  SecondaryPanEnd,
+  SecondaryPanStart,
   StylePatch,
   TextAlign,
   TextEditLayout,
@@ -55,6 +57,18 @@ const HOVER_CURSORS = [
   "crosshair", // Crosshair
   "text", // Text
 ] as const;
+
+/**
+ * A right-button press, indexed by the engine's `SecondaryPanStart` discriminant.
+ *
+ * The order is the contract with `pan.rs` and is append-only, like the cursor table
+ * above. `editing-text` is last because it is the same session with one difference, and
+ * a host that read index 1 as it would prevent the default of a press that must keep it.
+ */
+const SECONDARY_PAN_START = ["declined", "started", "editing-text"] as const;
+
+/** A right-button release, indexed by the engine's `SecondaryPanEnd` discriminant. */
+const SECONDARY_PAN_END = ["none", "drag", "menu"] as const;
 
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
 export class DrawEngine {
@@ -727,6 +741,54 @@ export class DrawEngine {
 
   beginPan(sx: number, sy: number): void {
     this.inner.beginPan(sx, sy);
+  }
+
+  /**
+   * Starts a right-button pan session, or declines it: `"declined"` when more than one
+   * pointer is down, and otherwise a session that is a pan only once the pointer has
+   * travelled past the threshold — see `pan.rs` and `App.pan.ts@1118751f:88-125`.
+   *
+   * `"started"` also answers whether the press may prevent its own default: it may not
+   * while a text is open (`App.pan.ts:1118751f:118-125`, issue #4489), which is the
+   * `"editing-text"` case. That rule is here rather than in the host so two hosts cannot
+   * answer it differently.
+   *
+   * `pointersDown` is the host's count of pointers on the canvas — the platform's count,
+   * which the engine cannot read for itself.
+   */
+  beginSecondaryPan(sx: number, sy: number, pointersDown: number): SecondaryPanStart {
+    return SECONDARY_PAN_START[this.inner.beginSecondaryPan(sx, sy, pointersDown)] ?? "declined";
+  }
+
+  /** Ends a right-button session. See `beginSecondaryPan`. */
+  endSecondaryPan(): SecondaryPanEnd {
+    return SECONDARY_PAN_END[this.inner.endSecondaryPan()] ?? "none";
+  }
+
+  /**
+   * Whether a `contextmenu` event belongs to a right-button session and must not open the
+   * menu: it came with the press, or it follows a release that turned out to be a drag.
+   *
+   * Platforms disagree about which of those it is — macOS and Linux fire it on mousedown,
+   * Windows on mouseup — and swallowing the wrong one is how a right-drag to pan ends up
+   * with a menu open over it (`App.pan.ts@1118751f:74-84`, and the doc comment at `:12-25`
+   * that is the design).
+   */
+  consumesContextMenu(): boolean {
+    return this.inner.consumesContextMenu();
+  }
+
+  /**
+   * Whether pointer moves arriving with no button of the host's own down are wanted: a path
+   * placed point by point, or a right-button session deciding whether it is a click or a pan.
+   */
+  wantsPointerMoves(): boolean {
+    return this.inner.wantsPointerMoves();
+  }
+
+  /** Whether a text is open for typing. */
+  isEditingText(): boolean {
+    return this.inner.isEditingText();
   }
 
   /** Alt, as held for the move about to be reported. The eraser un-marks with it. */

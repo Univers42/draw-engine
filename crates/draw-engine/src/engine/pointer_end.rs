@@ -629,6 +629,14 @@ impl DrawEngine {
 
     fn cancel_pointer_step(&mut self) {
         self.clear_binding_suggestion();
+        // A right-button session is over with the gesture that cancelled it, as it is in
+        // the oracle (`App.pan.ts@1118751f:65-67`, `pan.end`, called from the
+        // missing-pointerup cleanup at `App.tsx:9119`). Left live it would answer for
+        // every `contextmenu` after it, and none of them would open a menu again.
+        //
+        // Without the release's latch, unlike the oracle's `pan.end`: there is no release
+        // here, so there is no platform event for the latch to swallow.
+        self.secondary_pan = None;
         // A press Escape interrupted is no click, and what it would have narrowed to was
         // worked out at a level Escape may be about to leave.
         self.narrow_on_click = None;

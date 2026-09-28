@@ -155,6 +155,12 @@ pub(crate) enum Interaction {
         last_x: f64,
         last_y: f64,
     },
+    /// A right-button press that has not yet decided whether it is a right-click.
+    ///
+    /// Becomes [`Interaction::Pan`] the moment the pointer travels past the threshold, with
+    /// its origin at that move — a right-click has to leave the board where it found it.
+    /// See [`crate::pan`].
+    SecondaryPan,
     Move {
         ids: Vec<String>,
         start: Point,

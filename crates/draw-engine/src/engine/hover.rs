@@ -207,6 +207,10 @@ impl DrawEngine {
         let it = self.interaction.as_ref()?;
         Some(match it {
             Interaction::Pan { .. } => HoverCursor::Grabbing,
+            // Not grabbing yet: a right-click must not flash a pan cursor under the
+            // pointer (`App.pan.ts:130-132` sets it only for a session that is not
+            // secondary, and `:145` for one that has engaged).
+            Interaction::SecondaryPan => HoverCursor::Default,
             Interaction::Move { .. } => HoverCursor::Grabbing,
             Interaction::Rotate { .. } | Interaction::RotateGroup { .. } => HoverCursor::Grabbing,
             Interaction::LinearPoint { .. } | Interaction::CornerRadius { .. } => {

@@ -294,6 +294,19 @@ impl WasmEngine {
         self.flush();
     }
 
+    /// [`Self::with_now`] for a step that answers the host, rather than only changing
+    /// what the engine knows.
+    pub(crate) fn with_now_answering<T>(&self, f: impl FnOnce(&mut DrawEngine) -> T) -> T {
+        let now = now_ms();
+        let answer = {
+            let mut cell = self.cell.borrow_mut();
+            cell.engine.set_now(now);
+            f(&mut cell.engine)
+        };
+        self.flush();
+        answer
+    }
+
     pub(crate) fn flush(&self) {
         emit_events(&self.cell);
         self.schedule();
