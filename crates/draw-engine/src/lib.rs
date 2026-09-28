@@ -44,15 +44,15 @@ pub use history::SnapshotHistory;
 pub use interaction::{
     constrain_to_angle, ease_out, is_degenerate_linear, is_degenerate_rect, is_linear_tool,
     is_shape_tool, is_toggle_tool, linear_from_drag, rect_from_drag, size_mapping, snap_move,
-    tool_for_chord, tool_for_key, Axis, DrawTool, LaserOptions, LaserPoint, LaserStroke,
-    LaserTrails, LinearDrag, SnapGuide, SnapResult, ALL_TOOLS, CORNER_DETECTION_MAX_ANGLE_DEG,
-    DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH,
-    LASER_SIZE, LASER_STREAMLINE,
+    snap_points, tool_for_chord, tool_for_key, Axis, DrawTool, LaserOptions, LaserPoint,
+    LaserStroke, LaserTrails, LinearDrag, SnapGuide, SnapResult, ALL_TOOLS,
+    CORNER_DETECTION_MAX_ANGLE_DEG, DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS,
+    LASER_MAX_TAIL_LENGTH, LASER_SIZE, LASER_STREAMLINE,
 };
 pub use math::{
-    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp,
-    round_half_up, round_px, shift_locked_angle, shift_locked_delta, smoothstep, Cubic,
-    CURVE_TIGHTNESS, SHIFT_LOCKING_ANGLE,
+    are_roughly_equal, bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp,
+    hash_string, lerp, round_half_up, round_px, shift_locked_angle, shift_locked_delta, smoothstep,
+    Cubic, CURVE_TIGHTNESS, SHIFT_LOCKING_ANGLE,
 };
 pub use pan::{
     SecondaryPan, SecondaryPanEnd, SecondaryPanStart, SecondaryStep, SECONDARY_BUTTON_PAN_THRESHOLD,

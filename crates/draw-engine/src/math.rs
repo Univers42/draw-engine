@@ -26,6 +26,15 @@ pub fn round_px(value: f64) -> f64 {
     value.round()
 }
 
+/// Whether two numbers are the same to within a hundredth of a unit.
+///
+/// Excalidraw's `areRoughlyEqual` (`packages/excalidraw/snapping.ts@1118751f:194-196`),
+/// whose default precision is `0.01` and whose comparison is `<=`, so a difference of
+/// exactly a hundredth counts as equal.
+pub fn are_roughly_equal(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 0.01
+}
+
 /// The step Shift snaps a drag or a rotation to: **15 degrees**.
 ///
 /// Excalidraw's `SHIFT_LOCKING_ANGLE` (`packages/common/src/constants.ts@1118751f:31`,

@@ -542,6 +542,54 @@ impl DrawEngine {
         self.snap(point)
     }
 
+    /// Whether **objects** snap for the gesture about to be reported.
+    ///
+    /// The preference, inverted for as long as Ctrl/Cmd is held, and never while the grid
+    /// is snapping. The oracle's own expression
+    /// (`snapping.ts@1118751f:178-184`) consults the grid only for the *inverted* case;
+    /// this one refuses both, because a grid and a nearby object give different answers
+    /// and a result that depends on which won by a pixel is worse than either.
+    ///
+    /// One function for all three paths — moving (`pointer_move.rs` › `move_selection`),
+    /// drawing (`move_draft`) and resizing (`move_resize`) — so the rule cannot drift
+    /// between them, which is the way this codebase got a move-only gate in the first
+    /// place.
+    pub(crate) fn objects_snap_gesture(&self, invert_snap: bool) -> bool {
+        if self.grid().enabled && self.grid().snap {
+            return false;
+        }
+        self.objects_snap != invert_snap
+    }
+
+    /// The objects a snap may aim at, as boxes: on screen, and none of the gesture's own.
+    ///
+    /// `moving` says whether an id belongs to the gesture — a predicate rather than a
+    /// collection because a move has a set, a draft has one id and a resize one or a
+    /// group, and this runs on every frame of every one of them.
+    ///
+    /// Culled to the viewport for the two reasons `begin_move` already gave, and the
+    /// oracle's `getVisibleAndNonSelectedElements` for the same two
+    /// (`snapping.ts@1118751f:315-326`): a guide to something off screen is drawn where
+    /// nobody can see it, and gathering candidates from the whole document makes the snap
+    /// cost the size of the board on *every frame of every drag*.
+    pub(crate) fn snap_targets(
+        &self,
+        moving: impl Fn(&str) -> bool,
+    ) -> Vec<crate::camera::WorldBounds> {
+        let view = crate::visible_world_rect(self.camera, self.width, self.height);
+        self.scene
+            .iter_ordered()
+            .filter(|el| !moving(&el.id) && el.container_id.as_ref().is_none_or(|id| !moving(id)))
+            .map(crate::scene::element_bounds)
+            .filter(|b| {
+                b.min_x <= view.max_x
+                    && b.max_x >= view.min_x
+                    && b.min_y <= view.max_y
+                    && b.max_y >= view.min_y
+            })
+            .collect()
+    }
+
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {
         self.width = width;
         self.height = height;

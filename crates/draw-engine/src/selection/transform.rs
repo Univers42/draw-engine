@@ -268,14 +268,18 @@ fn sign(value: f64) -> f64 {
 }
 
 impl HandleKind {
-    fn has_ew(self) -> bool {
+    /// Whether the handle moves the box along x — a side handle or any corner. The oracle
+    /// spells it `transformHandle.includes("e")` (`snapping.ts@1118751f:1132-1137`),
+    /// which is a substring test on the handle's name and so true for both.
+    pub(crate) fn has_ew(self) -> bool {
         matches!(
             self,
             Self::E | Self::W | Self::Ne | Self::Nw | Self::Se | Self::Sw
         )
     }
 
-    fn has_ns(self) -> bool {
+    /// Whether the handle moves the box along y. See [`Self::has_ew`].
+    pub(crate) fn has_ns(self) -> bool {
         matches!(
             self,
             Self::N | Self::S | Self::Ne | Self::Nw | Self::Se | Self::Sw
