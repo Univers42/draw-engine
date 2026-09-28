@@ -34,9 +34,10 @@ pub use engine::{
     TextEditSession,
 };
 pub use export::{
-    elements_from_json, scene_to_json, scene_to_svg, ClipboardCopy, ClipboardFormat, ClipboardHost,
-    ClipboardRefusal, ExportFrame, ExportOptions, ExportScopeKind, OsidrawFile,
-    DEFAULT_EXPORT_PADDING,
+    elements_from_json, insert_text_chunk, restore, scene_payload, scene_to_json, scene_to_svg,
+    ClipboardCopy, ClipboardFormat, ClipboardHost, ClipboardRefusal, ExportFrame, ExportOptions,
+    ExportScopeKind, OsidrawFile, PngError, Restore, RestoreRefusal, DEFAULT_EXPORT_PADDING,
+    SCENE_FORMAT, SCENE_PAYLOAD_VERSION,
 };
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;

@@ -28,6 +28,12 @@ web-sys = { version = "0.3", features = [
     "Performance",
     "TextMetrics",
     "Blob",
+    # BlobPropertyBag, for `Blob::new_with_u8_slice_sequence_and_options`. The splice back
+    # a `tEXt` chunk produces has to be a `Blob` typed `image/png` — the oracle's
+    # `new Blob([encodePng(chunks)], { type: MIME_TYPES.png })` (`data/image.ts:46`) — and
+    # without the bag the only constructor left is one that types the Blob as "". Same crate,
+    # same pinned version, one feature.
+    "BlobPropertyBag",
     # Path2D lets a shape be built once and stroked with a single call per frame,
     # instead of thousands of move/line/curve calls crossing the WASM boundary.
     "Path2d",

@@ -452,7 +452,7 @@ fn text_svg(element: &DrawElement) -> String {
     )
 }
 
-/// The drawing as one SVG document, cut to `frame`.
+/// The drawing as one SVG document, cut to `frame`, carrying `scene` when there is one.
 ///
 /// `frame` rather than a bounds and a padding, so the box is arithmetic this engine has
 /// already done in one place. `exportToSvg` builds the very same
@@ -460,9 +460,21 @@ fn text_svg(element: &DrawElement) -> String {
 /// (`export.ts@1118751f:341-344` against `:232-235`) — one framing decision, two formats —
 /// and a function taking `(bounds, padding)` can only ever be the second one.
 ///
+/// `scene` is the payload from [`crate::scene_payload`], and `None` is the oracle's
+/// `exportEmbedScene` off (`export.ts@1118751f:378-391`). The `<metadata>` element is
+/// written either way, because `exportToSvg` appends it unconditionally (`:363-369`), so
+/// the document has one shape and "has a metadata element" is not a second thing to be
+/// right about. The root also carries a `svg-source` comment, which is the oracle's
+/// `createHTMLComment("svg-source:excalidraw")` at `:368`.
+///
 /// The background is still always drawn: `exportBackground` is 4.5's, and it is a colour
 /// this path has no option for yet (`png.rs`).
-pub fn scene_to_svg(elements: &[&DrawElement], frame: &ExportFrame, background: &str) -> String {
+pub fn scene_to_svg(
+    elements: &[&DrawElement],
+    frame: &ExportFrame,
+    background: &str,
+    scene: Option<&str>,
+) -> String {
     let width = frame.width;
     let height = frame.height;
     let camera = frame.camera();
@@ -479,8 +491,10 @@ pub fn scene_to_svg(elements: &[&DrawElement], frame: &ExportFrame, background: 
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({x} {y})\">{body}</g></svg>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">{source}{metadata}<rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({x} {y})\">{body}</g></svg>",
         x = camera.x,
-        y = camera.y
+        y = camera.y,
+        source = crate::export::roundtrip::svg_source_comment(),
+        metadata = crate::export::roundtrip::svg_metadata_element(scene),
     )
 }

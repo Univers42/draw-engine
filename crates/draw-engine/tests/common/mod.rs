@@ -4,6 +4,14 @@ use std::collections::HashSet;
 
 use draw_engine::*;
 
+/// A second implementation of the PNG container, written for the tests rather than for the
+/// engine. See `png.rs` for why there are two.
+///
+/// Reached as `common::png::*` and **not** re-exported here: a glob this module exports is
+/// an import every one of the eighty-odd test binaries would have to use, and the ones
+/// that do not are an `unused_imports` error under `clippy -D warnings`.
+pub mod png;
+
 pub const EPS: f64 = 1e-9;
 
 pub fn assert_close(a: f64, b: f64) {
@@ -307,6 +315,9 @@ pub fn svg_at_over(
             },
         ),
         background,
+        // `None`: these are the tests about *markup*, and a payload would be a wall of
+        // base64 in every failure message. The payload has its own file.
+        None,
     )
 }
 
@@ -323,5 +334,6 @@ pub fn svg_of(engine: &DrawEngine, padding: f64) -> String {
             ..Default::default()
         },
     );
-    engine.export_svg_of(&scope).unwrap_or_default()
+    let options = ExportOptions::default();
+    engine.export_svg_of(&scope, &options).unwrap_or_default()
 }

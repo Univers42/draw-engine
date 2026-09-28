@@ -289,11 +289,37 @@ fn the_clipboard_carries_exactly_what_the_file_export_would() {
         let mut engine = engine_with_scene(elements.clone());
         engine.select(selected.clone());
 
-        let file = engine.export_scope(true, &options);
-        let expected = engine.export_svg_of(&file);
+        let scope = engine.export_scope(true, &options);
         let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
 
-        assert_eq!(copy.text, expected, "selected {selected:?}");
+        // The file export **with the scene turned off**, which is what a copy is: the
+        // oracle's own line is `exportEmbedScene: appState.exportEmbedScene && type ===
+        // "svg"` (`data/index.ts@1118751f:132`), and `type === "clipboard-svg"` is not
+        // `"svg"`. Compared that way rather than by cutting the `<metadata>` out of the
+        // file's string, because this is the statement: a copy is the file export, minus
+        // the one thing that is not a picture.
+        let expected = engine
+            .export_svg_of(
+                &scope,
+                &ExportOptions {
+                    embed_scene: false,
+                    ..options
+                },
+            )
+            .expect("a scene with elements exports");
+        assert_eq!(copy.text, Some(expected), "selected {selected:?}");
+
+        // And the default *is* embedded, so "minus the scene" is a difference and not an
+        // identity. A regression that turned the scene off everywhere would make the line
+        // above pass and this one fail.
+        let with_scene = engine
+            .export_svg_of(&scope, &options)
+            .expect("a scene with elements exports");
+        assert!(
+            with_scene.contains("<!-- payload-start -->"),
+            "selected {selected:?}: a file export carries the scene"
+        );
+        assert_ne!(copy.text, Some(with_scene), "selected {selected:?}");
     }
 }
 

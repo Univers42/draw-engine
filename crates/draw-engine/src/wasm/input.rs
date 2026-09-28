@@ -895,7 +895,57 @@ impl WasmEngine {
         let scope = engine
             .engine
             .export_scope(selection_only.unwrap_or(false), &options);
-        engine.engine.export_svg_of(&scope)
+        engine.engine.export_svg_of(&scope, &options)
+    }
+
+    /// The scene in a saved file, loaded — or why it could not be.
+    ///
+    /// The other door beside `loadScene`, and the one the oracle's `decodePngMetadata`
+    /// (`data/image.ts@1118751f:49-71`) and `decodeSvgBase64Payload`
+    /// (`export.ts@1118751f:531-563`) are. What the bytes *are* is the engine's question
+    /// and is answered in Rust: this takes a `File`'s bytes and nothing else, so a host
+    /// cannot pick a container, a key, or a reading of a bad chunk.
+    ///
+    /// **The scene is loaded here rather than handed back.** Two answers were available: a
+    /// result object the host then feeds to `loadScene`, or this. The first puts the whole
+    /// thing at risk in one line of the front — a host that forgot the second call would
+    /// open a file and see the board it already had, which is the same silence as a blank
+    /// board. Here a refusal cannot touch the scene at all, because the scene is replaced
+    /// on the one path that succeeded and on no other.
+    ///
+    /// `{ restored: true }`, or `{ refused: "malformed" | "not-ours" | "unreadable" }` —
+    /// the engine's three answers, and the host's whole job is to say one to a person.
+    #[wasm_bindgen(js_name = restoreFromImage)]
+    pub fn restore_from_image(&self, bytes: &[u8]) -> JsValue {
+        let refused = match crate::export::restore(bytes) {
+            crate::export::Restore::Payload(json) => {
+                if self.cell.borrow_mut().engine.load_scene(&json) {
+                    None
+                } else {
+                    // Unreachable in practice — `load_scene` runs the same
+                    // `elements_from_json` the restore just ran — and answered as a refusal
+                    // rather than as a success, so a future divergence shows up as a board
+                    // that did not open rather than as a promise that was not kept.
+                    Some(crate::export::RestoreRefusal::Unreadable)
+                }
+            }
+            crate::export::Restore::Refused(why) => Some(why),
+        };
+        let out = js_sys::Object::new();
+        match refused {
+            Some(why) => {
+                let name = match why {
+                    crate::export::RestoreRefusal::Malformed => "malformed",
+                    crate::export::RestoreRefusal::NotOurs => "not-ours",
+                    crate::export::RestoreRefusal::Unreadable => "unreadable",
+                };
+                let _ = js_sys::Reflect::set(&out, &"refused".into(), &JsValue::from_str(name));
+            }
+            None => {
+                let _ = js_sys::Reflect::set(&out, &"restored".into(), &JsValue::TRUE);
+            }
+        }
+        out.into()
     }
 
     /// The scene as a PNG, at `scale`, with or without the background, of the selection

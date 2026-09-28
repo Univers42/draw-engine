@@ -422,6 +422,39 @@ export interface SvgExport {
 export type ClipboardFormatName = "png" | "svg";
 
 /**
+ * Why a saved file did not open, in the engine's three answers.
+ *
+ * The oracle has two and calls them `INVALID` and `FAILED`
+ * (`data/image.ts@1118751f:62, 67, 70`): "this file carries no scene of ours", and "it
+ * carries ours and we cannot read it". It cannot tell a PNG with no `tEXt` chunk from one
+ * whose first `tEXt` chunk is somebody else's — `:51`'s keyword test fails the same way for
+ * both — and neither can we, so those are one answer here too.
+ *
+ * The third is a file that is not an image at all. The oracle reports that as a raw throw
+ * from `png-chunks-extract`, which escapes `decodePngMetadata` because `getTEXtChunk` is
+ * awaited outside its `try` (`image.ts:111`… `:50`), and a person is told a library's name
+ * instead of being told the file is not a picture.
+ */
+export type RestoreRefusal = "malformed" | "not-ours" | "unreadable";
+
+/**
+ * Opening a saved file, as the engine answers it.
+ *
+ * **The scene is loaded by the engine, not handed back.** `restored: true` means the board
+ * on screen is the file now, and no refusal can have touched it. The other shape available
+ * was a result object the host then fed to `loadScene`, and it puts the whole thing at risk
+ * in one line of the front: a host that forgot the second call would open a file and see
+ * the board it already had, which is the same silence as a blank board.
+ *
+ * So there is one field for success and one for failure, never both — and never a success
+ * with nothing in it. The engine refuses a payload whose scene has no elements, because a
+ * restore that yields nothing is indistinguishable from a fresh board.
+ */
+export type RestoreOutcome =
+  | { restored: true; refused?: undefined }
+  | { restored?: undefined; refused: RestoreRefusal };
+
+/**
  * What the browser can take, and nothing else.
  *
  * The oracle reads these off `navigator` and `window` at its own `predicate`

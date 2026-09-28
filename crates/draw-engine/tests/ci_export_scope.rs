@@ -101,14 +101,14 @@ fn inside(frame: &DrawElement, x: f64, y: f64, size: f64) -> DrawElement {
 #[test]
 fn the_svg_export_measures_a_turned_element_by_what_it_draws() {
     let engine = engine_with_scene(vec![turned_square()]);
-    let scope = engine.export_scope(
-        false,
-        &ExportOptions {
-            padding: 0.0,
-            ..Default::default()
-        },
-    );
-    let svg = engine.export_svg_of(&scope).expect("a square exports");
+    let options = ExportOptions {
+        padding: 0.0,
+        ..Default::default()
+    };
+    let scope = engine.export_scope(false, &options);
+    let svg = engine
+        .export_svg_of(&scope, &options)
+        .expect("a square exports");
 
     assert_close(svg_width(&svg), 2.0 * reach());
     assert_close(svg_height(&svg), 2.0 * reach());
@@ -129,7 +129,9 @@ fn the_two_formats_frame_the_same_drawing_identically() {
     };
     let png = engine.export_frame(&options);
     let scope = engine.export_scope(false, &options);
-    let svg = engine.export_svg_of(&scope).expect("a square exports");
+    let svg = engine
+        .export_svg_of(&scope, &options)
+        .expect("a square exports");
 
     assert_close(svg_width(&svg), png.width);
     assert_close(svg_height(&svg), png.height);
@@ -147,8 +149,11 @@ fn both_formats_of_a_selection_are_the_same_picture() {
     let mut engine = engine_with_scene(vec![left.clone(), right.clone(), turned_square()]);
     engine.select(vec![left.id.clone(), right.id.clone()]);
 
-    let scope = engine.export_scope(true, &ExportOptions::default());
-    let svg = engine.export_svg_of(&scope).expect("a selection exports");
+    let options = ExportOptions::default();
+    let scope = engine.export_scope(true, &options);
+    let svg = engine
+        .export_svg_of(&scope, &options)
+        .expect("a selection exports");
 
     assert_close(svg_width(&svg), scope.frame.width);
     assert_close(svg_height(&svg), scope.frame.height);
