@@ -31,7 +31,7 @@ impl DrawEngine {
         }
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.snap_gesture(self.screen_to_world(sx, sy));
         if is_shape_tool(self.tool) {
             self.begin_shape(world);
             return;

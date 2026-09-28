@@ -198,6 +198,42 @@ fn placing_a_line_lands_its_first_point_on_the_grid() {
     );
 }
 
+/// R. The same press, same grid, Ctrl held: the oracle passes a `null` grid
+/// (`App.tsx@1118751f:10238`), and the point lands where the pointer is.
+///
+/// This is the half that can fail. A test which only asserted Q would also pass if the
+/// endpoint snapped to something, to everything, always.
+#[test]
+fn holding_ctrl_takes_the_first_point_off_the_grid() {
+    let mut engine = grid_engine();
+    engine.set_ctrl_held(true);
+    click(&mut engine, 37.0, 23.0);
+    assert_at(
+        "R: the grid still snapped under Ctrl",
+        first_point(&engine),
+        (37.0, 23.0),
+    );
+}
+
+/// Both halves in one test, so a regression cannot satisfy one and break the other, and
+/// so the pair is shown to actually differ — a Q and an R that agree prove nothing.
+#[test]
+fn the_press_snaps_to_the_grid_unless_ctrl_is_held() {
+    let mut snapped = grid_engine();
+    click(&mut snapped, 37.0, 23.0);
+    let mut free = grid_engine();
+    free.set_ctrl_held(true);
+    click(&mut free, 37.0, 23.0);
+
+    assert_at("snapped", first_point(&snapped), (40.0, 20.0));
+    assert_at("ctrl held", first_point(&free), (37.0, 23.0));
+    assert_ne!(
+        first_point(&snapped),
+        first_point(&free),
+        "the pair must differ, or one of the two sides is not answering"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Placing: the preview point that follows the cursor
 // ---------------------------------------------------------------------------
@@ -221,6 +257,25 @@ fn the_preview_point_of_a_path_is_snapped_to_the_grid() {
     );
 }
 
+/// R. Same preview, same grid, Ctrl held: the raw pointer, to `1e-9`.
+#[test]
+fn holding_ctrl_takes_the_preview_point_off_the_grid() {
+    let mut engine = grid_engine();
+    click(&mut engine, 100.0, 100.0);
+    engine.set_ctrl_held(true);
+    hover(&mut engine, 137.0, 123.0);
+    assert_eq!(
+        points(&engine).len(),
+        2,
+        "the preview point should be there"
+    );
+    assert_at(
+        "R: the preview still snapped",
+        points(&engine)[1],
+        (137.0, 123.0),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Dragging: an existing line's endpoint
 // ---------------------------------------------------------------------------
@@ -235,6 +290,19 @@ fn a_dragged_endpoint_snaps_to_the_grid() {
         "Q: the dragged endpoint did not snap",
         last_point(&engine),
         (340.0, 100.0),
+    );
+}
+
+/// R. Same drag, same grid, Ctrl held: the raw pointer.
+#[test]
+fn holding_ctrl_takes_a_dragged_endpoint_off_the_grid() {
+    let mut engine = placed_line();
+    engine.set_ctrl_held(true);
+    drag_end_to(&mut engine, (337.0, 103.0));
+    assert_at(
+        "R: the dragged endpoint still snapped",
+        last_point(&engine),
+        (337.0, 103.0),
     );
 }
 
@@ -263,6 +331,37 @@ fn shift_holds_a_dragged_endpoint_to_a_multiple_of_45_degrees() {
         }
     }
     panic!("expected a multiple of 45 degrees, got {angle}");
+}
+
+/// Q and R together. The grid runs **first** and the angle is measured from the
+/// grid-snapped pointer (`linearElementEditor.ts@1118751f:1916`), so on a 20-unit grid
+/// switching the grid off changes which segment comes out — which is the order, stated as
+/// a difference rather than as a comment.
+#[test]
+fn the_angle_lock_is_measured_from_the_grid_snapped_pointer() {
+    let mut on_grid = placed_line();
+    drag_end_to_shifted(&mut on_grid, (337.0, 173.0), true);
+    let snapped = last_point(&on_grid);
+
+    let mut off_grid = placed_line();
+    off_grid.set_ctrl_held(true);
+    drag_end_to_shifted(&mut off_grid, (337.0, 173.0), true);
+    let raw = last_point(&off_grid);
+
+    // The pivot is the line's other point, (100, 100). The angle lock preserves the
+    // distance from the pivot to the pointer it was given, so the length of the segment
+    // says which pointer that was.
+    let on_grid_length = (snapped.0 - 100.0).hypot(snapped.1 - 100.0);
+    let raw_length = (raw.0 - 100.0).hypot(raw.1 - 100.0);
+    let measured_from_grid = (340.0 - 100.0f64).hypot(180.0 - 100.0);
+    let measured_from_pointer = (337.0 - 100.0f64).hypot(173.0 - 100.0);
+
+    assert_close(on_grid_length, measured_from_grid);
+    assert_close(raw_length, measured_from_pointer);
+    assert!(
+        (measured_from_grid - measured_from_pointer).abs() > 1.0,
+        "the two pointers must be measurably different, or the pair proves nothing"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +515,55 @@ fn lattice() -> Vec<f64> {
     out
 }
 
+/// The world positions the sweep works in: a line from `HOME` to `TIP`, and pointers
+/// around it. The camera has to keep both on an 800x600 screen — a press that lands
+/// off-canvas starts no gesture, which would make the swept cases pass or fail for a
+/// reason that has nothing to do with snapping.
+const HOME: (f64, f64) = (200.0, 200.0);
+const TIP: (f64, f64) = (400.0, 100.0);
+
+/// Cameras to sweep. The snap is in world units, so scaling and panning must not change
+/// the answer — only where the pointer has to be put to name a given world position.
+/// Every translation is a multiple of 0.5, so `world_to_screen` and `screen_to_world` are
+/// exact inverses here and the sweep is not measuring floating-point noise.
+fn cameras() -> Vec<Camera> {
+    vec![
+        Camera {
+            x: 0.0,
+            y: 0.0,
+            scale: 1.0,
+        },
+        Camera {
+            x: -200.0,
+            y: -200.0,
+            scale: 2.0,
+        },
+        Camera {
+            x: 50.0,
+            y: 100.0,
+            scale: 0.5,
+        },
+        Camera {
+            x: -500.0,
+            y: -300.0,
+            scale: 3.0,
+        },
+    ]
+}
+
+/// Asserts what the camera list exists to guarantee, so a future camera added to
+/// [`cameras`] cannot quietly take the swept cases off screen.
+fn the_line_is_on_screen(camera: Camera) {
+    for world in [HOME, TIP] {
+        let screen = world_to_screen(camera, world.0, world.1);
+        assert!(
+            screen.x >= 0.0 && screen.x <= 800.0 && screen.y >= 0.0 && screen.y <= 600.0,
+            "camera {camera:?} puts {world:?} at {screen:?}, off the 800x600 screen, so \
+             the sweep would be measuring a press that never happened"
+        );
+    }
+}
+
 /// How far a per-axis round can actually reach: the corner of the cell, `size/2 * 2`.
 /// Not half a cell — that is the axis-aligned reach, and it is the wrong bound for a
 /// snap that rounds each axis on its own.
@@ -493,4 +641,96 @@ fn assert_axis_is_nearest(pointer: f64, chosen: f64, axis: &str) {
             );
         }
     }
+}
+
+/// P3. Both gestures, swept. With the grid snapping, the endpoint is on an intersection
+/// and within half a cell per axis; with Ctrl held it is the raw pointer exactly. Camera
+/// scale and pan are in the sweep, because a snap computed in screen pixels would pass at
+/// 1:1 and fail at 2x.
+#[test]
+fn both_gestures_land_on_the_raw_pointer_unless_the_grid_is_snapping() {
+    for camera in cameras() {
+        the_line_is_on_screen(camera);
+        for world in [(37.0, 23.0), (-10.0, -30.0), (137.0, 123.0), (0.5, 0.5)] {
+            check_placement(camera, world);
+            check_dragged_endpoint(camera, world);
+        }
+    }
+}
+
+/// The screen position that names the world position `world` under `camera` — the
+/// engine's own `world_to_screen` (`camera.rs:147-151`), so this cannot drift from it.
+fn screen_of(camera: Camera, world: (f64, f64)) -> (f64, f64) {
+    let p = world_to_screen(camera, world.0, world.1);
+    (p.x, p.y)
+}
+
+fn check_placement(camera: Camera, world: (f64, f64)) {
+    let (sx, sy) = screen_of(camera, world);
+    let mut snapped = line_engine_at(camera);
+    snapped.begin_pointer(sx, sy, false, false);
+    snapped.end_pointer();
+    let mut free = line_engine_at(camera);
+    free.set_ctrl_held(true);
+    free.begin_pointer(sx, sy, false, false);
+    free.end_pointer();
+    assert_landing(
+        "placement",
+        world,
+        first_point(&snapped),
+        first_point(&free),
+    );
+}
+
+fn check_dragged_endpoint(camera: Camera, world: (f64, f64)) {
+    // Dragged to a point offset from `world`, so the four cases are four different drags
+    // and not four copies of one.
+    let to = (world.0 + 37.0, world.1 + 23.0);
+    let mut snapped = placed_line_at(camera);
+    drag_end_to(&mut snapped, to);
+    let mut free = placed_line_at(camera);
+    free.set_ctrl_held(true);
+    drag_end_to(&mut free, to);
+    assert_landing(
+        "dragged endpoint",
+        to,
+        last_point(&snapped),
+        last_point(&free),
+    );
+}
+
+fn line_engine_at(camera: Camera) -> DrawEngine {
+    let mut engine = engine();
+    engine.set_camera(camera);
+    engine.set_grid(grid_on());
+    engine.set_tool(DrawTool::Line);
+    engine
+}
+
+/// A two-point line on grid intersections, left selected, so an endpoint can be grabbed.
+fn placed_line_at(camera: Camera) -> DrawEngine {
+    let mut engine = line_engine_at(camera);
+    let first = screen_of(camera, HOME);
+    let second = screen_of(camera, TIP);
+    place(&mut engine, &[(first.0, first.1), (second.0, second.1)]);
+    engine.finish_linear();
+    engine
+}
+
+fn assert_landing(where_: &str, world: (f64, f64), snapped: (f64, f64), raw: (f64, f64)) {
+    let moved = (snapped.0 - world.0).hypot(snapped.1 - world.1);
+    assert!(
+        moved <= diagonal_reach() + 1e-6,
+        "{where_}: the grid snap threw the endpoint {moved} from the pointer"
+    );
+    for (got, axis) in [(snapped.0, "x"), (snapped.1, "y")] {
+        assert!(
+            (got / GRID - (got / GRID).round()).abs() < 1e-6,
+            "{where_}: {axis} {got} is not on a grid intersection"
+        );
+    }
+    assert!(
+        (raw.0 - world.0).abs() < 1e-6 && (raw.1 - world.1).abs() < 1e-6,
+        "{where_}: with Ctrl held the endpoint is {raw:?}, not the pointer {world:?}"
+    );
 }

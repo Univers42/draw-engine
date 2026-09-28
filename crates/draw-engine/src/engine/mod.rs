@@ -505,6 +505,27 @@ impl DrawEngine {
         Point { x, y }
     }
 
+    /// Where a **pointer gesture** lands: the grid, unless Ctrl/Cmd is held.
+    ///
+    /// The oracle's `getGridPoint(..., event[KEYS.CTRL_OR_CMD] ? null :
+    /// this.getEffectiveGridSize())`, and the `null` is a null *grid*, which
+    /// `getGridPoint` returns the point unchanged for (`points.ts@1118751f:74-80`). All
+    /// **fifteen** of its pointer call sites write the test that way — the press origin
+    /// (`App.tsx@1118751f:9228`, `:10443`, `:10512`), the first point of a placed line
+    /// (`:10238`), every pointer move (`:10722`), the resize (`:13579`) — because Ctrl is
+    /// the modifier that *inverts* snapping, so the grid is what it switches off.
+    ///
+    /// Deliberately not [`Self::snap`], which the paste path uses. Duplicating and
+    /// pasting grid-snap with no modifier test at all (`App.duplicate.ts@1118751f:97-101`
+    /// passes `getEffectiveGridSize()` bare), and a Ctrl+V would then arrive as a paste
+    /// that had silently stopped snapping.
+    pub(crate) fn snap_gesture(&self, point: Point) -> Point {
+        if self.ctrl_held {
+            return point;
+        }
+        self.snap(point)
+    }
+
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {
         self.width = width;
         self.height = height;

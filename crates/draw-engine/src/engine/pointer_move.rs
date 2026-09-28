@@ -20,12 +20,12 @@ impl DrawEngine {
             // follows the cursor between its clicks, which is the whole of how it is
             // aimed. It is the only thing in the engine that moves with no button held.
             if self.multi_linear.is_some() {
-                let world = self.snap(self.screen_to_world(sx, sy));
+                let world = self.snap_gesture(self.screen_to_world(sx, sy));
                 self.track_multi_linear(world, square);
             }
             return;
         };
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.snap_gesture(self.screen_to_world(sx, sy));
         let next = self.advance_interaction(it, sx, sy, world, square, invert_snap);
         self.interaction = next;
     }
