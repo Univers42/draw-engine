@@ -29,7 +29,10 @@ mod live;
 pub use image::EmbedFrame;
 pub use peers::Peer;
 mod multi_linear;
+mod pan_session;
+mod paste_text;
 mod peers;
+mod point_edit;
 mod pointer;
 mod pointer_end;
 mod pointer_move;
@@ -43,13 +46,14 @@ mod text_session;
 mod types;
 pub mod vectorize;
 
+pub use convert::{ConvertTo, LinearType};
 pub use debug::{DebugInteraction, DebugScene, DebugState, DebugViewport};
 pub use flowchart::LinkDirection;
 pub use frame::{NoopPainter, PaintView, Painter, PeerMark};
 pub use hover::HoverCursor;
 pub use selection_style::{ArrowType, ColorDomain, Edges, SelectionStyle};
 pub use text_session::{TextEditLayout, TextEditSession};
-pub(crate) use types::{default_measure, Interaction};
+pub(crate) use types::{default_measure, Interaction, PointSelection};
 pub use types::{merge_style_patch, EngineEvents, FrameRenameRequest, Notice, TextEditRequest};
 
 const HANDLE_PX: f64 = 8.0;
@@ -157,6 +161,24 @@ pub struct DrawEngine {
     ///
     /// Held by id rather than by index because the scene is reordered underneath it.
     editing_linear: Option<String>,
+    /// Which of that element's points are held, if any.
+    ///
+    /// The oracle's `appState.selectedLinearElement.selectedPointsIndices`
+    /// (`packages/element/src/linearElementEditor.ts@1118751f:196`, set to `null` by the
+    /// constructor at `:199`). **`None` means no point is held, and it is not the same
+    /// thing as holding an empty set**: the difference is the entire first branch of the
+    /// delete action — a `null` index list falls through to deleting whole elements,
+    /// which is the common case and the one that must not be confused with "the points
+    /// went" (`actionDeleteSelected.tsx@1118751f:225-231`). So this type has no
+    /// `Some(vec![])`, and [`Self::select_point`] is the only thing that writes it.
+    ///
+    /// A press on a point is the only gesture that fills it, and that is faithful: the
+    /// oracle's other writer, the marquee `handleBoxSelection`
+    /// (`linearElementEditor.ts:248-309`), cannot run — its only call site is guarded by
+    /// `!isEditing` (`:11274`) while its own guard needs a `selectionElement` that only
+    /// the sibling branch on the other side of that same guard ever sets
+    /// (`App.tsx:11282`, `:10497`).
+    selected_points: Option<PointSelection>,
     /// The group that has been stepped into, if any.
     ///
     /// Session state, not document state: which level you are looking at is a property of
@@ -257,6 +279,14 @@ pub struct DrawEngine {
     settled_selection: std::rc::Rc<stamp::SelectionState>,
     /// Between a press and its release, when what the press selects is not settled yet.
     pointer_open: bool,
+    /// The right-button session in progress, if one is. Outlives the gesture it holds,
+    /// because the platform's `contextmenu` can arrive after the release that ended it —
+    /// see [`Self::consumes_context_menu`] and [`crate::pan`].
+    secondary_pan: Option<crate::pan::SecondaryPan>,
+    /// A release that turned out to be a drag, whose platform `contextmenu` is still to
+    /// come and is not a click. A latch rather than a flag: only that one event
+    /// (`App.pan.ts@1118751f:216-219`).
+    suppress_next_context_menu: bool,
     /// A peer's copy of an element with an uncommitted local change, refused because a
     /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
     /// it if the gesture came to nothing. See `stamp.rs`.
@@ -285,6 +315,12 @@ pub struct DrawEngine {
     /// Each switched shape's label size while the shape switch is open, `None` while it
     /// is closed. See `convert.rs`.
     conversion_font_sizes: Option<HashMap<String, f64>>,
+    /// Each selected line or arrow, under the linear type it had when the shape switch
+    /// opened, so switching away and back hands the same element back rather than a
+    /// rebuild of it. `None` while the switch is closed. The oracle's
+    /// `LINEAR_ELEMENT_CONVERSION_CACHE`
+    /// (`ConvertElementTypePopup.tsx@1118751f:157-161`). See `convert.rs`.
+    conversion_lines: Option<HashMap<String, DrawElement>>,
     /// An in-flight eased camera move. See `style.rs`.
     camera_anim: Option<style::CameraAnim>,
     /// The host's UI over each side of the canvas, which a reveal keeps clear of. See
@@ -336,6 +372,7 @@ impl DrawEngine {
             original_container_heights: HashMap::new(),
             interaction: None,
             editing_linear: None,
+            selected_points: None,
             editing_group_id: None,
             narrow_on_click: None,
             reopen_text_on_click: None,
@@ -360,6 +397,8 @@ impl DrawEngine {
             history_seq: 0,
             settled_selection: std::rc::Rc::default(),
             pointer_open: false,
+            secondary_pan: None,
+            suppress_next_context_menu: false,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
             peers: Vec::new(),
@@ -371,6 +410,7 @@ impl DrawEngine {
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
             conversion_font_sizes: None,
+            conversion_lines: None,
             camera_anim: None,
             viewport_offsets: crate::Offsets::default(),
             reduced_motion: false,
@@ -475,6 +515,89 @@ impl DrawEngine {
     pub(crate) fn snap(&self, point: Point) -> Point {
         let (x, y) = self.grid.snap_point(point.x, point.y);
         Point { x, y }
+    }
+
+    /// Where a **pointer gesture** lands: the grid, unless Ctrl/Cmd is held.
+    ///
+    /// The oracle gates a grid lookup on a held modifier, in two spellings, and
+    /// **not everywhere**: `getGridPoint(..., event[KEYS.CTRL_OR_CMD] ? null : gridSize)`
+    /// where the live event carries it (`points.ts@1118751f:74-80` is where the `null` grid
+    /// returns the point unchanged), and
+    /// `getGridPoint(..., lastPointerDownEvent?.[KEYS.CTRL_OR_CMD] ? null : gridSize)`
+    /// where the call happens on a key event and reads the modifier of an *earlier press* --
+    /// `:9974`, `:10014`, `:10067`, `:10443`, `:10512`. Two sites differ again: `:9229` ORs in
+    /// `|| isElbowArrowOnly`, and `:9899` passes **bare `null`**, so a freedraw press origin is
+    /// never rounded at all.
+    ///
+    /// Counting it as "fifteen call sites that all do this" was my error, and it became a
+    /// comment in this file by way of a brief. 6.4 measured the real shape: **16 sites, 12 on
+    /// the event, 5 on `lastPointerDownEvent`, one on a disjunction, and one that opts out.**
+    ///
+    /// **6.3 settled the opt-out.** It was filed as "a behaviour change rather than a gate",
+    /// which was right about the mechanism and wrong about the scope: the freedraw press
+    /// origin and the freedraw move are **one** rule, because a stroke's points are the raw
+    /// pointer less the raw origin (`App.tsx@1118751f:11181-11196`). A freedraw stroke no
+    /// longer comes through here at all, press and move alike, so this gate has fifteen
+    /// sites behind it — which is what the count above means. `docs/reference/drawing.md`
+    /// › "A freedraw stroke is outside the grid entirely", and `ci_freedraw_origin.rs`.
+    ///
+    /// Deliberately not [`Self::snap`], which the paste path uses. Duplicating and
+    /// pasting grid-snap with no modifier test at all (`App.duplicate.ts@1118751f:97-101`
+    /// passes `getEffectiveGridSize()` bare), and a Ctrl+V would then arrive as a paste
+    /// that had silently stopped snapping.
+    pub(crate) fn snap_gesture(&self, point: Point) -> Point {
+        if self.ctrl_held {
+            return point;
+        }
+        self.snap(point)
+    }
+
+    /// Whether **objects** snap for the gesture about to be reported.
+    ///
+    /// The preference, inverted for as long as Ctrl/Cmd is held, and never while the grid
+    /// is snapping. The oracle's own expression
+    /// (`snapping.ts@1118751f:178-184`) consults the grid only for the *inverted* case;
+    /// this one refuses both, because a grid and a nearby object give different answers
+    /// and a result that depends on which won by a pixel is worse than either.
+    ///
+    /// One function for all three paths — moving (`pointer_move.rs` › `move_selection`),
+    /// drawing (`move_draft`) and resizing (`move_resize`) — so the rule cannot drift
+    /// between them, which is the way this codebase got a move-only gate in the first
+    /// place.
+    pub(crate) fn objects_snap_gesture(&self, invert_snap: bool) -> bool {
+        if self.grid().enabled && self.grid().snap {
+            return false;
+        }
+        self.objects_snap != invert_snap
+    }
+
+    /// The objects a snap may aim at, as boxes: on screen, and none of the gesture's own.
+    ///
+    /// `moving` says whether an id belongs to the gesture — a predicate rather than a
+    /// collection because a move has a set, a draft has one id and a resize one or a
+    /// group, and this runs on every frame of every one of them.
+    ///
+    /// Culled to the viewport for the two reasons `begin_move` already gave, and the
+    /// oracle's `getVisibleAndNonSelectedElements` for the same two
+    /// (`snapping.ts@1118751f:315-326`): a guide to something off screen is drawn where
+    /// nobody can see it, and gathering candidates from the whole document makes the snap
+    /// cost the size of the board on *every frame of every drag*.
+    pub(crate) fn snap_targets(
+        &self,
+        moving: impl Fn(&str) -> bool,
+    ) -> Vec<crate::camera::WorldBounds> {
+        let view = crate::visible_world_rect(self.camera, self.width, self.height);
+        self.scene
+            .iter_ordered()
+            .filter(|el| !moving(&el.id) && el.container_id.as_ref().is_none_or(|id| !moving(id)))
+            .map(crate::scene::element_bounds)
+            .filter(|b| {
+                b.min_x <= view.max_x
+                    && b.max_x >= view.min_x
+                    && b.min_y <= view.max_y
+                    && b.max_y >= view.min_y
+            })
+            .collect()
     }
 
     pub fn set_viewport(&mut self, width: f64, height: f64, dpr: f64) {
@@ -767,6 +890,14 @@ impl DrawEngine {
                 self.editing_linear = None;
             }
         }
+        // The points held belong to the editor that is closing. Left behind, a fresh
+        // `LinearElementEditor` over the next line would open already holding indices
+        // that name somebody else's points, and the first Delete would remove them —
+        // the oracle never has this state to get wrong, because it constructs a new
+        // editor with `selectedPointsIndices: null` on every selection change
+        // (`linearElementEditor.ts@1118751f:199`, `_getLinearElementEditor`,
+        // `selection.ts@1118751f:248-266`).
+        self.selected_points = None;
         self.revalidate_editing();
         self.settle_selection();
         self.touch_style();
@@ -814,8 +945,81 @@ impl DrawEngine {
     /// The shape of the element decides it — two points or fewer — plus the one element
     /// the person has explicitly opened by double clicking it.
     pub(crate) fn shows_point_handles(&self, element: &DrawElement) -> bool {
-        crate::selection::linear::is_point_edited(element)
-            || self.editing_linear.as_deref() == Some(element.id.as_str())
+        !self.offers_transform_handles(element)
+    }
+
+    /// Whether a press on this element offers a bounding box with handles on it.
+    ///
+    /// The negation of [`Self::shows_point_handles`], named for what the five gates on
+    /// `handleSelectionOnPointerDown` are about
+    /// (`packages/excalidraw/components/App.tsx@1118751f:9351-9364`):
+    ///
+    /// ```ts
+    /// if (
+    ///   selectedElements.length === 1 &&                        // :9352
+    ///   !this.state.selectedLinearElement?.isEditing &&          // :9353
+    ///   !isElbowArrow(selectedElements[0]) &&                    // :9354
+    ///   !(isLinearElement(selectedElements[0]) &&
+    ///     (this.editorInterface.userAgent.isMobileDevice ||
+    ///      selectedElements[0].points.length === 2)) &&          // :9355-9359
+    ///   !(this.state.selectedLinearElement &&
+    ///     this.state.selectedLinearElement.hoverPointIndex !== -1)  // :9360-9363
+    /// ) {
+    /// ```
+    ///
+    /// The first four of those, read one at a time:
+    ///
+    /// - **`:9352`** is about the *selection*, not the element, so it is
+    ///   [`Self::selection_offers_transform_handles`] — five gates in a row, and this one
+    ///   is about what is held rather than what was pressed.
+    /// - **`:9353`** is this element's point editor being open, which is
+    ///   [`Self::editing_linear`] — the same `isEditing` the oracle keeps beside
+    ///   `selectedPointsIndices` in one object (`linearElementEditor.ts:196-197`).
+    /// - **`:9354`** and **`:9355-9359`** are both [`is_point_edited`], which is the
+    ///   elbow and the two-point rule in one predicate: an elbow arrow of any length is
+    ///   routed rather than drawn, and two points make a degenerate box, so neither is
+    ///   offered one (`transformHandles.ts@1118751f:352` is
+    ///   `element.points.length > 2`). The oracle's `isMobileDevice` half of `:9357` has
+    ///   no counterpart and needs none — a touch device gets its own treatment of the
+    ///   point handles rather than a different answer to this question.
+    /// - **`:9360-9363`** is `hoverPointIndex`, which **this engine does not have**. The
+    ///   oracle's is `-1` until a point drag sets it (`linearElementEditor.ts:214`), and
+    ///   it exists so that a press on a point under the cursor is not read as a resize.
+    ///   Here that press is routed by the point-hit test in `pointer.rs` instead, which
+    ///   is the same answer reached a different way, so the gate is trivially true and
+    ///   **no field was invented to satisfy it**.
+    pub fn offers_transform_handles(&self, element: &DrawElement) -> bool {
+        !crate::selection::linear::is_point_edited(element)
+            && self.editing_linear.as_deref() != Some(element.id.as_str())
+    }
+
+    /// Whether the press path would offer a bounding box for what is selected — gate one
+    /// on top of [`Self::offers_transform_handles`] (`App.tsx@1118751f:9352`).
+    ///
+    /// `selectedElements.length === 1` and nothing else in the branch, so with a
+    /// multi-selection the whole block is skipped: a press that misses a handle is a
+    /// marquee, and no element in it is offered its points.
+    pub fn selection_offers_transform_handles(&self) -> bool {
+        match self.get_selected_elements().as_slice() {
+            [single] => self.offers_transform_handles(single),
+            _ => false,
+        }
+    }
+
+    /// The points of a line or arrow that are held, if any — the oracle's
+    /// `selectedPointsIndices`. `None` for "none", never an empty set; see
+    /// [`Self::selected_points`].
+    pub fn selected_points(&self) -> Option<Vec<usize>> {
+        self.selected_points
+            .as_ref()
+            .map(|held| held.indices.clone())
+    }
+
+    /// Which element those points belong to, if any — the oracle's
+    /// `selectedLinearElement.elementId`, reached through the index list
+    /// (`actionDeleteSelected.tsx@1118751f:215`).
+    pub fn selected_points_of(&self) -> Option<&str> {
+        self.selected_points.as_ref().map(|held| held.id.as_str())
     }
 
     /// Open a longer path for point editing, if this element is one.

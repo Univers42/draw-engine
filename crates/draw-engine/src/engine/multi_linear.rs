@@ -428,7 +428,12 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 ///
 /// World positions are preserved exactly — every point moves by the same amount the
 /// origin does, in the opposite direction.
-fn reseat_points(element: &mut DrawElement) {
+///
+/// Also the `_updatePoints` of the oracle's `deletePoints`
+/// (`linearElementEditor.ts@1118751f:1605-1617`): removing the point that was the origin
+/// needs the same reseat, and a second normaliser would be a second answer to the same
+/// question.
+pub(crate) fn reseat_points(element: &mut DrawElement) {
     let Some(points) = element.points.as_mut() else {
         return;
     };

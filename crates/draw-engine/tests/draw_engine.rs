@@ -1,5 +1,7 @@
 #![allow(clippy::cloned_ref_to_slice_refs)]
 
+mod common;
+use common::*;
 use draw_engine::*;
 
 fn box_at(x: f64, y: f64, w: f64, h: f64) -> DrawElement {
@@ -262,7 +264,7 @@ fn tools_is_shape_tool() {
 #[test]
 fn shape_drag_rect_from_drag() {
     assert_eq!(
-        rect_from_drag(10.0, 10.0, 40.0, 30.0, false),
+        rect_from_drag(10.0, 10.0, 40.0, 30.0, false, false),
         Rect {
             x: 10.0,
             y: 10.0,
@@ -271,7 +273,7 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(40.0, 30.0, 10.0, 10.0, false),
+        rect_from_drag(40.0, 30.0, 10.0, 10.0, false, false),
         Rect {
             x: 10.0,
             y: 10.0,
@@ -280,7 +282,7 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(0.0, 0.0, 30.0, 10.0, true),
+        rect_from_drag(0.0, 0.0, 30.0, 10.0, true, false),
         Rect {
             x: 0.0,
             y: 0.0,
@@ -289,12 +291,44 @@ fn shape_drag_rect_from_drag() {
         }
     );
     assert_eq!(
-        rect_from_drag(0.0, 0.0, -10.0, -30.0, true),
+        rect_from_drag(0.0, 0.0, -10.0, -30.0, true, false),
         Rect {
             x: -30.0,
             y: -30.0,
             width: 30.0,
             height: 30.0
+        }
+    );
+}
+
+/// Alt puts the press at the middle of the box and doubles each reach
+/// (`dragElements.ts@1118751f:371-376`), and it does so after Shift's lock, so the square
+/// is the reach and the box is twice it — the unit cases, sign-free.
+#[test]
+fn shape_drag_rect_from_drag_from_the_centre() {
+    // From (10, 10), a reach of 30 by 20 — the three signs of it.
+    for to in [(40.0, 30.0), (-20.0, 30.0), (-20.0, -10.0)] {
+        let want = Rect {
+            x: -20.0,
+            y: -10.0,
+            width: 60.0,
+            height: 40.0,
+        };
+        assert_eq!(
+            rect_from_drag(10.0, 10.0, to.0, to.1, false, true),
+            want,
+            "{to:?}"
+        );
+    }
+    // Shift squares the reach (30, not 20) and the centre doubles that: 60 square, from
+    // (10, 10).
+    assert_eq!(
+        rect_from_drag(10.0, 10.0, 40.0, 30.0, true, true),
+        Rect {
+            x: -20.0,
+            y: -20.0,
+            width: 60.0,
+            height: 60.0
         }
     );
 }
@@ -406,8 +440,8 @@ fn transform_resize_min_size() {
 #[test]
 fn transform_rotate_handle() {
     let el = box_at(0.0, 0.0, 100.0, 60.0);
-    assert!((rotate_element(&el, 50.0, -100.0) - 0.0).abs() < 1e-9);
-    assert!((rotate_element(&el, 150.0, 30.0) - std::f64::consts::PI / 2.0).abs() < 1e-9);
+    assert!((rotate_element(&el, 50.0, -100.0, false) - 0.0).abs() < 1e-9);
+    assert!((rotate_element(&el, 150.0, 30.0, false) - std::f64::consts::PI / 2.0).abs() < 1e-9);
 }
 
 #[test]
@@ -511,7 +545,7 @@ fn export_svg_emits_primitives() {
             height: 20.0,
         },
     );
-    let svg = scene_to_svg(
+    let svg = svg_at(
         &[rect, ellipse],
         WorldBounds {
             min_x: 0.0,
@@ -520,7 +554,6 @@ fn export_svg_emits_primitives() {
             max_y: 20.0,
         },
         8.0,
-        "#ffffff",
     );
     assert!(svg.starts_with("<svg "));
     assert!(svg.contains("<rect "));

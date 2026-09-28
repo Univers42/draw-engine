@@ -33,6 +33,7 @@
 
 mod common;
 use common::*;
+use draw_engine::selection::linear;
 use draw_engine::*;
 
 /// Excalidraw's `LINE_CONFIRM_THRESHOLD`. The viewport is 1:1, so screen and world agree.
@@ -80,6 +81,22 @@ fn world_points(engine: &DrawEngine) -> Vec<(f64, f64)> {
         .unwrap_or_default()
         .iter()
         .map(|p| (line.x + p[0], line.y + p[1]))
+        .collect()
+}
+
+/// `line`'s points in world space **with its rotation applied** — the positions the
+/// painter draws. The plain `world_points` above deliberately reads `x + p[0]`, which is
+/// the unturned point; a turned line needs the transform, and reading the wrong one of the
+/// two is how a rotation test comes out green while nothing moved.
+fn turned_points(engine: &DrawEngine) -> Vec<(f64, f64)> {
+    let line = only_line(engine);
+    world_points_of(&line)
+}
+
+fn world_points_of(line: &DrawElement) -> Vec<(f64, f64)> {
+    linear::world_points(line)
+        .into_iter()
+        .map(|p| (p.x, p.y))
         .collect()
 }
 
@@ -192,9 +209,80 @@ fn the_box_follows_a_path_that_grows_backwards() {
     assert_points(&engine, &[(300.0, 300.0), (200.0, 260.0), (100.0, 400.0)]);
 }
 
+/// Clicking the point just placed removes the **preview point** by index — and this is
+/// the line worth naming, because the whole "Remove point" question has been re-opened
+/// against it.
+///
+/// `LinearElementEditor.handlePointerDown`
+/// (`packages/element/src/linearElementEditor.ts@1118751f:1278-1281`):
+///
+/// ```ts
+/// if (!event.altKey) {
+///   if (lastPoint === lastUncommittedPoint) {
+///     LinearElementEditor.deletePoints(element, app, [points.length - 1]);
+///   }
+/// ```
+///
+/// Three things that test pins, and which are easy to mistake for three other things:
+///
+/// 1. **The preview is a point in `element.points`, at the last index.** It is not a
+///    separate thing the click-back discards; it is `points[points.length - 1]`, which is
+///    why the removal can be expressed as an index at all — and why the same
+///    `deletePoints` this task extends serves both callers.
+/// 2. **The removal is conditional** on `lastPoint === lastUncommittedPoint`, i.e. only
+///    the preview is removed. Clicking back on a *placed* point when the cursor is
+///    resting inside its commit zone leaves the point list alone (the press finishes the
+///    path; `finish_multi_linear` then discards the preview).
+/// 3. **`event.altKey` short-circuits the whole thing** (`:1278`), so Alt-click-back takes
+///    the branch below, which *adds* a point instead. That is the same split
+///    `press_multi_linear` reads for its own click-back, and the reason this test does not
+///    use Alt.
+///
+/// Note what is **not** here: any Backspace handling. `linearElementEditor.ts` contains
+/// no `Backspace` at `1118751f`, and `BUNNY.md:768`'s "5.1 Backspace removes the last point
+/// while placing a multi-point line" would have had to be built out of thin air. The
+/// "remove a point" behaviour is in `actionDeleteSelected.tsx:213-273`, and this engine
+/// has it in `engine/point_edit.rs` — see `ci_point_delete.rs`.
+#[test]
+fn the_preview_is_the_last_point_and_a_click_back_removes_it_by_index() {
+    let mut engine = line_engine();
+    click(&mut engine, 100.0, 100.0);
+    place(&mut engine, &[(200.0, 100.0)]);
+
+    // The cursor leaves the commit zone, so a preview point is appended — and it is a
+    // point like any other, at the end of the list. This is the `points[points.length -
+    // 1]` that `:1280` indexes.
+    hover(&mut engine, 200.0, 200.0);
+    let with_preview = engine
+        .get_scene()
+        .into_iter()
+        .next()
+        .and_then(|el| el.points)
+        .expect("the path has points");
+    assert_eq!(
+        with_preview.len(),
+        3,
+        "the preview is point 2 of a two-point path, not a separate object"
+    );
+
+    // The click back on the point just placed is `:1279-1281`.
+    click(&mut engine, 200.0, 100.0);
+
+    assert!(
+        engine.linear_in_progress().is_none(),
+        "the click back ended the path"
+    );
+    // The placed points are untouched and the preview is gone. `assert_points` reports
+    // both lists when they differ, so the failure says which of the two moved.
+    assert_points(&engine, &[(100.0, 100.0), (200.0, 100.0)]);
+}
+
 /// Backing out of a segment without placing it: Excalidraw takes the preview point away
 /// again when the cursor comes back inside the last point's commit zone
-/// (`App.tsx@1118751f:8031-8066`).
+/// (`App.tsx@1118751f:8031-8066`). The oracle reaches the same `truncate` from the other
+/// side — see `the_preview_is_the_last_point_and_a_click_back_removes_it_by_index` for
+/// `linearElementEditor.ts@1118751f:1278-1281`, which is the line that removes the preview
+/// on a click rather than on a cursor return.
 #[test]
 fn the_preview_backs_out_when_the_cursor_returns() {
     let mut engine = line_engine();
@@ -775,5 +863,217 @@ fn one_undo_takes_the_whole_path_away() {
             .filter(|el| !el.is_deleted)
             .all(|el| el.kind != DrawElementType::Line),
         "one undo should take the whole path"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Moving and turning the finished path (design.md:278 "Move entire line",
+// design.md:280 "Rotate")
+// ---------------------------------------------------------------------------
+
+/// The path these two cases are about: three points, so it is a *longer* line and gets
+/// the selection box rather than the two end circles a two-point one gets.
+///
+/// `hasBoundingBox` is `element.points.length > 2` for a linear element
+/// (`transformHandles.ts@1118751f:353`), and the rotation case fails for the opposite
+/// reason if the path is shorter: a two-point line is grabbed by its points, so there is
+/// no rotation handle to drag at all.
+fn three_point_path() -> (DrawEngine, String) {
+    let mut engine = line_engine();
+    click(&mut engine, 200.0, 120.0);
+    place(&mut engine, &[(300.0, 200.0), (200.0, 300.0)]);
+    engine.finish_linear();
+    let line = only_line(&engine);
+    assert_eq!(
+        line.points.as_deref().unwrap().len(),
+        3,
+        "setup: three points"
+    );
+    let id = line.id;
+    (engine, id)
+}
+
+/// A press, a few moves, a release — the drag every case below is built from, because a
+/// single-move drag cannot see a bug that only shows up once the maths compounds.
+fn drag(engine: &mut DrawEngine, from: (f64, f64), to: (f64, f64), steps: usize) {
+    engine.begin_pointer(from.0, from.1, false, false);
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        engine.move_pointer(
+            from.0 + (to.0 - from.0) * t,
+            from.1 + (to.1 - from.1) * t,
+            false,
+            false,
+        );
+    }
+    engine.end_pointer();
+}
+
+/// The rotate handle where the engine actually paints it, so the drag aims at the same
+/// pixel a person would.
+fn rotate_handle(engine: &DrawEngine) -> (f64, f64) {
+    let view = engine.paint_view();
+    selection_handles(&only_line(engine), view.handle_layout)
+        .into_iter()
+        .find(|h| h.kind == HandleKind::Rotate)
+        .map(|h| (h.x, h.y))
+        .expect("a three-point line offers a rotation handle")
+}
+
+/// "Move entire line": the whole path follows the pointer, and the points that describe
+/// its shape are not rewritten to say so.
+///
+/// Those are the two halves of the same move and they are separately checkable. A move
+/// that rescaled the stored points instead of translating the origin would put every
+/// point in the right place and still be wrong: undo, the exported JSON and a peer's
+/// patch all read `points`, so a move that rewrote them reports a different shape to
+/// everyone else than the one on screen.
+#[test]
+fn dragging_a_finished_path_carries_every_point_by_the_same_delta() {
+    let (mut engine, id) = three_point_path();
+    let before = only_line(&engine);
+    let before_local: Vec<[f64; 2]> = before.points.clone().unwrap();
+    let before_world = world_points(&engine);
+    let before_angle = before.angle;
+    assert_eq!(before_angle, 0.0, "setup: the path starts unturned");
+
+    // Grabbed on the *middle of the first segment*, which is on the stroke and far from
+    // every handle: a press at a vertex would be near the north-west corner, and one in
+    // the middle of the box is not on the line at all — a line is hollow to a pointer
+    // anywhere but its own path.
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id]);
+    drag(&mut engine, (250.0, 160.0), (310.0, 100.0), 4);
+
+    let after = only_line(&engine);
+    let after_world = world_points(&engine);
+
+    assert_close(after.angle, before_angle);
+    assert_eq!(
+        after.points.clone().unwrap(),
+        before_local,
+        "a move must translate the origin, not rewrite the points that are the shape"
+    );
+    for (index, (got, want)) in after_world.iter().zip(&before_world).enumerate() {
+        assert!(
+            (got.0 - want.0 - 60.0).abs() < 0.001 && (got.1 - want.1 + 60.0).abs() < 0.001,
+            "point {index}: expected ({}, {}) — its old self plus (60, -60), got ({}, {})",
+            want.0 + 60.0,
+            want.1 - 60.0,
+            got.0,
+            got.1
+        );
+    }
+}
+
+/// "Rotate": the angle the pointer asks for, and the points carried with it.
+///
+/// The angle is the oracle's own expression (`rotateSingleElement`,
+/// `resizeElements.ts@1118751f:221-233`): `atan2(pointer - centre) + pi / 2`, and the
+/// centre is `(x1 + x2) / 2, (y1 + y2) / 2` of the element's **absolute coords** — the
+/// middle of its box, which for a line is the middle of its points. Aiming the handle due
+/// right of that centre therefore asks for exactly a quarter turn, a number the assertion
+/// can state rather than approximate.
+///
+/// The centre is taken from `element_bounds` on purpose. Reading the engine's own
+/// `rotation_center` here would make the test self-consistent rather than true: any pivot
+/// the engine picked would be the pivot it is then checked against, so a turn about the
+/// middle *point* of the path, or about `x + width / 2`, would pass. This path's middle
+/// vertex is not its middle, so the two are not interchangeable and the numbers below can
+/// only be reached by turning about the box.
+#[test]
+fn turning_a_finished_path_carries_its_points_about_the_centre_of_its_own_points() {
+    let (mut engine, id) = three_point_path();
+    let before = only_line(&engine);
+    let before_turned = turned_points(&engine);
+    // The oracle's centre: the middle of the element's absolute coords.
+    let box_of_before = element_bounds(&before);
+    let centre = (
+        (box_of_before.min_x + box_of_before.max_x) / 2.0,
+        (box_of_before.min_y + box_of_before.max_y) / 2.0,
+    );
+    // A pivot of "the middle point" is the plausible wrong answer, and this path is
+    // chosen so the two differ: its middle vertex is (300, 200), its middle is not.
+    assert!(
+        (before_turned[1].0 - centre.0).abs() > 1.0 || (before_turned[1].1 - centre.1).abs() > 1.0,
+        "setup: the middle point ({}, {}) must not be the middle of the box ({}, {})",
+        before_turned[1].0,
+        before_turned[1].1,
+        centre.0,
+        centre.1
+    );
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id]);
+    let handle = rotate_handle(&engine);
+    // Due right of the centre: `atan2(0, +200) + pi/2` is a quarter turn, exactly.
+    drag(&mut engine, handle, (centre.0 + 200.0, centre.1), 4);
+
+    let after = only_line(&engine);
+    assert!(
+        (after.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+        "expected a quarter turn ({}), got {}",
+        std::f64::consts::FRAC_PI_2,
+        after.angle
+    );
+
+    let after_turned = turned_points(&engine);
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let (sin, cos) = quarter.sin_cos();
+    for (index, (got, want)) in after_turned.iter().zip(&before_turned).enumerate() {
+        let dx = want.0 - centre.0;
+        let dy = want.1 - centre.1;
+        let expected = (
+            centre.0 + dx * cos - dy * sin,
+            centre.1 + dx * sin + dy * cos,
+        );
+        assert!(
+            (got.0 - expected.0).abs() < 1e-6 && (got.1 - expected.1).abs() < 1e-6,
+            "point {index}: expected ({}, {}) — ({}, {}) turned a quarter turn about ({}, {}) — got ({}, {})",
+            expected.0,
+            expected.1,
+            want.0,
+            want.1,
+            centre.0,
+            centre.1,
+            got.0,
+            got.1
+        );
+    }
+}
+
+/// The other half of "Rotate", separately: the shape is described unrotated and the turn
+/// is one number on top of it, so the stored points and the box must not move when the
+/// angle does. A rotation that rewrote them would re-derive a different shape every time
+/// it was turned again — and a quarter turn twice is only a half turn if the points were
+/// left where they were.
+#[test]
+fn turning_a_path_twice_turns_the_same_points_twice() {
+    let (mut engine, id) = three_point_path();
+    let before_local: Vec<[f64; 2]> = only_line(&engine).points.clone().unwrap();
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id]);
+    let pivot = rotation_center(&only_line(&engine));
+    let handle = rotate_handle(&engine);
+    drag(&mut engine, handle, (pivot.x + 200.0, pivot.y), 4);
+    let quarter = only_line(&engine).angle;
+
+    // A second quarter turn from there, and the path must end up at a half turn.
+    let handle = rotate_handle(&engine);
+    let pivot = rotation_center(&only_line(&engine));
+    drag(&mut engine, handle, (pivot.x, pivot.y + 200.0), 4);
+
+    let after = only_line(&engine);
+    assert_eq!(
+        after.points.clone().unwrap(),
+        before_local,
+        "a turn is a number on the element, not a rewrite of the points that are its shape"
+    );
+    assert!(
+        (after.angle - quarter - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+        "expected a half turn ({}), got {} after a quarter turn of {quarter}",
+        quarter + std::f64::consts::FRAC_PI_2,
+        after.angle
     );
 }

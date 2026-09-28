@@ -115,6 +115,17 @@ impl DrawEngine {
                 self.end_elbow_handle(&id, handle, released_at);
                 self.settle_gesture();
             }
+            // The oracle's `pointerDownState.drag.hasOccurred`: a press on a label that
+            // never travelled is a **click** on the label, which is how it is reopened for
+            // typing (`App.tsx@1118751f:11564`, `:11622`). Anything that did travel is one
+            // step of history and nothing else.
+            Interaction::LabelDrag { .. } => {
+                if let Some((id, at)) = self.reopen_text_on_click.take() {
+                    self.reopen_text_at(&id, at);
+                } else {
+                    self.settle_gesture();
+                }
+            }
             Interaction::Move { ids, .. } => {
                 self.renormalize_elbows_of(&ids);
                 self.leave_edited_group_across_a_frame(&ids);
@@ -450,7 +461,11 @@ impl DrawEngine {
             && note.height * zoom < super::DRAGGING_THRESHOLD_PX;
         if click {
             let size = DEFAULT_STICKY_NOTE_SIZE;
-            let at = self.snap(Point {
+            // Centred on the raw press, then the grid — and Ctrl takes the grid away, the
+            // oracle's `childEvent[KEYS.CTRL_OR_CMD] ? null : this.getEffectiveGridSize()` at
+            // `App.tsx@1118751f:11825`. Half the default size need not be on the grid, so the
+            // snap comes after the centring and not before it.
+            let at = self.snap_gesture(Point {
                 x: press.x - size / 2.0,
                 y: press.y - size / 2.0,
             });
@@ -629,6 +644,14 @@ impl DrawEngine {
 
     fn cancel_pointer_step(&mut self) {
         self.clear_binding_suggestion();
+        // A right-button session is over with the gesture that cancelled it, as it is in
+        // the oracle (`App.pan.ts@1118751f:65-67`, `pan.end`, called from the
+        // missing-pointerup cleanup at `App.tsx:9119`). Left live it would answer for
+        // every `contextmenu` after it, and none of them would open a menu again.
+        //
+        // Without the release's latch, unlike the oracle's `pan.end`: there is no release
+        // here, so there is no platform event for the latch to swallow.
+        self.secondary_pan = None;
         // A press Escape interrupted is no click, and what it would have narrowed to was
         // worked out at a level Escape may be about to leave.
         self.narrow_on_click = None;
@@ -680,7 +703,8 @@ impl DrawEngine {
                 | Interaction::Rotate { .. }
                 | Interaction::ResizeGroup { .. }
                 | Interaction::RotateGroup { .. }
-                | Interaction::LinearPoint { .. },
+                | Interaction::LinearPoint { .. }
+                | Interaction::LabelDrag { .. },
             ) => self.settle_gesture(),
             _ => {}
         }

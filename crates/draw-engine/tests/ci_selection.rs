@@ -290,14 +290,14 @@ fn resize_rotate_handle_is_noop() {
 #[test]
 fn rotate_handle_north_is_zero_angle() {
     let element = box_at(0.0, 0.0, 100.0, 100.0);
-    let angle = rotate_element(&element, 50.0, -50.0);
+    let angle = rotate_element(&element, 50.0, -50.0, false);
     assert!(angle.abs() < EPS || (angle - std::f64::consts::PI * 2.0).abs() < EPS);
 }
 
 #[test]
 fn rotate_handle_east_is_pi_half() {
     let element = box_at(0.0, 0.0, 100.0, 100.0);
-    let angle = rotate_element(&element, 150.0, 50.0);
+    let angle = rotate_element(&element, 150.0, 50.0, false);
     assert_close(angle, std::f64::consts::PI / 2.0);
 }
 
@@ -448,5 +448,224 @@ fn what_was_just_drawn_stays_selected() {
         engine.get_selection().len(),
         1,
         "and the new shape is still held"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// A selection that survives its own transform
+// -----------------------------------------------------------------------------
+
+/// `design.md:689`, "Selection" — the eighth row of §15's "Transform consequences", the
+/// list of what *every* transform has to update. Seven of the eight are about the scene
+/// (bindings, text, groups, frames, arrows, containers, attached labels) and this one is
+/// about the selection itself: the things you moved are still the things that are held.
+///
+/// Nothing asserted it. Every resize and rotate test in this file calls `resize_element` or
+/// `rotate_element` — the pure functions — and reads the element back **by id**, which
+/// passes whether or not the selection survived; and the gesture-level tests in
+/// `ci_handles.rs` assert the new geometry for the same reason. The claim is only visible
+/// from outside, after the gesture: what `get_selection` says.
+///
+/// The oracle's is the same shape. `transformElements` takes `selectedElements` as its
+/// input and writes the new geometry onto them, returning a boolean and no selection
+/// (`packages/element/src/resizeElements.ts@1118751f:94-107`) — the ids in
+/// `appState.selectedElementIds` are never rewritten, so the same elements stay held.
+///
+/// Every test below goes through the engine's own pointer, so what is asserted is the state
+/// a person is left in, not a function's return value.
+///
+/// The layout the engine uses at 1:1 zoom, so a handle can be aimed at where it is drawn.
+fn layout() -> HandleLayout {
+    HandleLayout::screen(8.0, 26.0, 1.0)
+}
+
+fn found(engine: &DrawEngine, id: &str) -> DrawElement {
+    engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("element is gone")
+}
+
+/// A drag of the shape itself: the selection is the same before and after, and the shape
+/// really did move — so this cannot pass by the drag having done nothing.
+#[test]
+fn a_selection_survives_its_own_move() {
+    let rect = filled(box_at(100.0, 100.0, 200.0, 150.0));
+    let id = rect.id.clone();
+    let mut engine = engine_with_scene(vec![rect]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+
+    engine.begin_pointer(150.0, 150.0, false, false);
+    engine.move_pointer(190.0, 210.0, false, false);
+    engine.end_pointer();
+
+    let moved = found(&engine, &id);
+    assert_close(moved.x, 140.0);
+    assert_close(moved.y, 160.0);
+    assert_eq!(
+        engine.get_selection(),
+        vec![id],
+        "and it is still the thing being held"
+    );
+}
+
+/// A resize by its corner, which is the transform that rewrites x, y, width and height at
+/// once — the one most likely to leave a selection describing a box the element no longer
+/// occupies.
+#[test]
+fn a_selection_survives_its_own_resize() {
+    let rect = filled(box_at(100.0, 100.0, 200.0, 150.0));
+    let id = rect.id.clone();
+    let mut engine = engine_with_scene(vec![rect]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+
+    // The south-east handle sits `handle_offset` beyond the corner.
+    let offset = layout().handle_offset;
+    engine.begin_pointer(300.0 + offset, 250.0 + offset, false, false);
+    engine.move_pointer(360.0 + offset, 300.0 + offset, false, false);
+    engine.end_pointer();
+
+    let resized = found(&engine, &id);
+    // The corner went where it was dragged.
+    assert_close(resized.width, 260.0);
+    assert_close(resized.height, 200.0);
+    assert_eq!(engine.get_selection(), vec![id], "still held");
+}
+
+/// ...and the frame and the handles have followed the new geometry, which is the part that
+/// would be wrong if only the element moved and the selection kept describing the old box.
+#[test]
+fn the_selection_frame_follows_the_element_it_is_a_frame_for() {
+    let rect = filled(box_at(100.0, 100.0, 200.0, 150.0));
+    let id = rect.id.clone();
+    let mut engine = engine_with_scene(vec![rect]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+
+    let before = found(&engine, &id);
+    let offset = layout().handle_offset;
+    engine.begin_pointer(300.0 + offset, 250.0 + offset, false, false);
+    engine.move_pointer(360.0 + offset, 300.0 + offset, false, false);
+    engine.end_pointer();
+
+    let after = found(&engine, &id);
+    assert_ne!(before.width, after.width, "setup: it really was resized");
+    let frame = |element: &DrawElement| {
+        let corners = selection_corners_padded(element, layout().frame_pad);
+        let [min_x, min_y, max_x, max_y] = freehand::points_bounds(&corners.map(|p| [p.x, p.y]));
+        (max_x - min_x, max_y - min_y)
+    };
+    assert_eq!(
+        frame(&after),
+        (after.width + 8.0, after.height + 8.0),
+        "the frame is the resized element's own box, not the one it used to be"
+    );
+    // The handles are on that same ring, so a person can grab the shape again straight
+    // after the resize instead of having to click it once to re-select it.
+    let handles = selection_handles(&after, layout());
+    let se = handles
+        .iter()
+        .find(|h| h.kind == HandleKind::Se)
+        .expect("a shape this size keeps all eight");
+    let corners = selection_corners_padded(&after, layout().handle_offset);
+    assert_close(se.x, corners[2].x);
+    assert_close(se.y, corners[2].y);
+}
+
+/// A rotation rewrites the angle and the position, and it is the transform most likely to
+/// take the pointer off the shape it was grabbed from: the selection must not be dropped
+/// just because the element moved under the cursor.
+#[test]
+fn a_selection_survives_its_own_rotation() {
+    let rect = filled(box_at(200.0, 200.0, 200.0, 200.0));
+    let id = rect.id.clone();
+    let mut engine = engine_with_scene(vec![rect.clone()]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+
+    // Press on the rotation handle **where it is**, rather than at a point worked out from
+    // the layout: it sits `rotate_gap` above the element's own top edge
+    // (`src/selection/handles.rs:258-263`), not above the frame.
+    let rotate = selection_handles(&rect, layout())
+        .into_iter()
+        .find(|h| h.kind == HandleKind::Rotate)
+        .expect("a shape this size offers a rotation handle");
+    engine.begin_pointer(rotate.x, rotate.y, false, false);
+    engine.move_pointer(rotate.x + 120.0, rotate.y - 40.0, false, false);
+    engine.end_pointer();
+
+    let turned = found(&engine, &id);
+    assert!(
+        turned.angle.abs() > 1e-6,
+        "setup: it really was turned, angle is {}",
+        turned.angle
+    );
+    assert_eq!(engine.get_selection(), vec![id], "and still held");
+}
+
+/// A multi-selection, which is the case the single-element tests cannot reach: the
+/// transform moves every member and the selection has to keep **all** of them — nothing
+/// joining and nothing dropped.
+///
+/// The **order** is not asserted, and deliberately so: `selected_ids` is a `HashSet`
+/// (`src/engine/mod.rs:196`) and `get_selection` walks it (`src/engine/mod.rs:741-743`), so
+/// what comes back is the hash order rather than the order the ids were selected in. That
+/// is a fact about the type, not a claim this test is entitled to make in either direction,
+/// and pinning an order here would be pinning an accident. See the Phase 3.4a report.
+#[test]
+fn a_multi_selection_survives_its_own_transform() {
+    let elements: Vec<DrawElement> = [(0.0, 0.0), (300.0, 0.0), (600.0, 0.0), (900.0, 0.0)]
+        .into_iter()
+        .map(|(x, y)| filled(box_at(x, y, 100.0, 100.0)))
+        .collect();
+    let ids: Vec<String> = elements.iter().map(|el| el.id.clone()).collect();
+    let mut engine = engine_with_scene(elements);
+    engine.set_tool(DrawTool::Select);
+    engine.select(ids.clone());
+
+    let mut held = engine.get_selection();
+    held.sort();
+    assert_eq!(held.len(), 4, "setup: all four selected");
+
+    // Drag from the middle of the first one, which carries the whole selection with it.
+    engine.begin_pointer(50.0, 50.0, false, false);
+    engine.move_pointer(50.0, 250.0, false, false);
+    engine.end_pointer();
+
+    let mut after = engine.get_selection();
+    after.sort();
+    let mut expected = ids.clone();
+    expected.sort();
+    assert_eq!(
+        after, expected,
+        "the same four, none joined and none dropped"
+    );
+    for id in &ids {
+        let element = found(&engine, id);
+        assert_close(element.y, 200.0);
+    }
+}
+
+/// The edge of the claim: a transform that changes what is selected would be right if the
+/// element *left* the selection — deleted, say. So the selection survives a transform, but
+/// not past the element's own removal. Without this, "survives its own transform" could be
+/// satisfied by a selection that simply never updates.
+#[test]
+fn a_selection_does_not_survive_the_element_being_deleted() {
+    let rect = filled(box_at(100.0, 100.0, 200.0, 150.0));
+    let id = rect.id.clone();
+    let mut engine = engine_with_scene(vec![rect]);
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+    assert_eq!(engine.get_selection(), vec![id.clone()]);
+
+    engine.delete_selection();
+
+    assert!(
+        engine.get_selection().is_empty(),
+        "there is nothing left to hold, so the selection does not pretend otherwise"
     );
 }

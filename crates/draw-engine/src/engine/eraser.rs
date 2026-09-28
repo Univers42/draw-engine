@@ -143,30 +143,7 @@ impl DrawEngine {
             .filter_map(|el| el.bound_text_id.clone())
             .collect();
         doomed.extend(labels);
-        let released: Vec<(String, bool, bool)> = self
-            .scene
-            .iter_ordered()
-            .filter(|el| !doomed.contains(&el.id))
-            .filter_map(|el| {
-                let start = el
-                    .start_binding
-                    .as_ref()
-                    .is_some_and(|b| doomed.contains(b));
-                let end = el.end_binding.as_ref().is_some_and(|b| doomed.contains(b));
-                (start || end).then(|| (el.id.clone(), start, end))
-            })
-            .collect();
-        for (id, start, end) in released {
-            self.scene.update(&id, |arrow| {
-                use crate::scene::binding::{set_anchor, End};
-                if start {
-                    set_anchor(arrow, End::Start, None);
-                }
-                if end {
-                    set_anchor(arrow, End::End, None);
-                }
-            });
-        }
+        crate::scene::binding::release_bindings_to_removed(&mut self.scene, &doomed);
 
         let now = self.now_ms;
         let mut selection_changed = false;

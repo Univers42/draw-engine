@@ -14,6 +14,7 @@
 //! nothing else, which works identically whatever direction the element runs in.
 
 use crate::camera::Point;
+use crate::math::Cubic;
 use crate::scene::element::{DrawElement, DrawElementType};
 use crate::scene::geometry::is_valid_polygon;
 
@@ -252,6 +253,193 @@ pub fn elbow_handle_points(element: &DrawElement, min_segment: f64) -> Vec<Linea
         });
     }
     out
+}
+
+/// The cubics a linear element is **drawn as**, one per segment, in world space.
+///
+/// `getLinearElementPathSegments` (`packages/element/src/utils.ts@1118751f:206-233`) forks
+/// three ways and this is that fork:
+///
+/// - a **rounded** path is its Catmull-Rom spline, so a fraction of the way along it is a
+///   fraction of the way along a curve and not along the chords;
+/// - a **sharp** path is its chords, and [`chord_cubic`] gives those the same shape of
+///   answer, so a caller measuring "a fraction along" never has to branch on it;
+/// - an **elbow** arrow is its unrounded logical polyline whatever `roundness` says
+///   (`utils.ts@1118751f:211-227`) — its corners are the router's right angles, and a
+///   spline through them would round off every one.
+///
+/// The curve is built from the **world** points, which is safe for the same reason it is in
+/// [`handle_points`]: a Catmull-Rom control point is a weighted sum of the points it spans,
+/// so turning the points and then building the curve gives the same answer as building it
+/// and then turning.
+pub fn path_cubics(element: &DrawElement) -> Vec<Cubic> {
+    let points = world_points(element);
+    let flat: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
+    if element.roundness.is_some() && !crate::scene::elbow::is_elbow(element) {
+        crate::math::catmull_rom_cubics(&flat, crate::math::CURVE_TIGHTNESS)
+    } else {
+        flat.windows(2)
+            .map(|pair| crate::math::chord_cubic(pair[0], pair[1]))
+            .collect()
+    }
+}
+
+/// A drawn path's cubics and the arc-length model over them: the length of each piece, the
+/// ground covered *before* each — the oracle's `prefixSums`
+/// (`linearElementEditor.ts@1118751f:2792-2800`), one entry longer than the pieces for
+/// exactly that reason — and the whole.
+///
+/// `None` for a path that is not there: fewer than two points, or a total length of
+/// nothing.
+pub struct PathMetrics {
+    pub cubics: Vec<Cubic>,
+    pub lengths: Vec<f64>,
+    pub prefix: Vec<f64>,
+    pub total: f64,
+}
+
+pub fn path_metrics(element: &DrawElement) -> Option<PathMetrics> {
+    let cubics = path_cubics(element);
+    let lengths: Vec<f64> = cubics.iter().map(crate::math::bezier_length).collect();
+    let mut prefix = Vec::with_capacity(lengths.len() + 1);
+    prefix.push(0.0);
+    for length in &lengths {
+        let walked = prefix[prefix.len() - 1] + length;
+        prefix.push(walked);
+    }
+    let total = *prefix.last()?;
+    (total > f64::EPSILON).then_some(PathMetrics {
+        cubics,
+        lengths,
+        prefix,
+        total,
+    })
+}
+
+/// The piece a length along the path falls in, and how far into it — the oracle's
+/// `getPointAtPathParameter` walk (`:2044-2064`): the first piece whose end reaches the
+/// target, the last one catching a target that floating point pushed past the end.
+fn piece_at(metrics: &PathMetrics, length: f64) -> (usize, f64) {
+    let index = metrics
+        .prefix
+        .windows(2)
+        .position(|ends| length <= ends[1])
+        .unwrap_or(metrics.cubics.len().saturating_sub(1));
+    let span = metrics.lengths[index];
+    let within = if span <= f64::EPSILON {
+        0.0
+    } else {
+        crate::math::clamp((length - metrics.prefix[index]) / span, 0.0, 1.0)
+    };
+    (index, within)
+}
+
+/// The point a fraction of the way along a drawn path — `getPointAtPathParameter`
+/// (`linearElementEditor.ts@1118751f:2030-2066`), including its clamp.
+///
+/// `fraction` is a fraction of the path's **arc length**, not of its parameter: the pieces
+/// are located by the ground they cover, which is the whole difference between this and
+/// walking the points.
+pub fn path_point_at_fraction(element: &DrawElement, fraction: f64) -> Option<Point> {
+    let metrics = path_metrics(element)?;
+    let target = crate::math::clamp(fraction, 0.0, 1.0) * metrics.total;
+    let (index, within) = piece_at(&metrics, target);
+    let point = crate::math::bezier_point_at_fraction(&metrics.cubics[index], within);
+    Some(Point {
+        x: point[0],
+        y: point[1],
+    })
+}
+
+/// The fraction along a drawn path nearest a world point — the reading a drag needs, and
+/// the same one `handleBoundTextDragging` takes
+/// (`linearElementEditor.ts@1118751f:1985-2018`): the nearest place on the whole path,
+/// measured as `(prefix before the piece + ground covered within it) / total`.
+///
+/// The answer is a fraction and never an offset, which is what keeps a label where it was
+/// put when the arrow is lengthened.
+pub fn path_fraction_at_point(element: &DrawElement, at: Point) -> Option<f64> {
+    let metrics = path_metrics(element)?;
+    let mut best = (f64::INFINITY, 0.0);
+    for (index, cubic) in metrics.cubics.iter().enumerate() {
+        let t = crate::math::cubic_closest_parameter(cubic, [at.x, at.y]);
+        let point = crate::math::bezier_point(cubic, t);
+        let away = (point[0] - at.x).hypot(point[1] - at.y);
+        if away < best.0 {
+            best = (
+                away,
+                metrics.prefix[index] + crate::math::bezier_length_to(cubic, t),
+            );
+        }
+    }
+    Some(crate::math::clamp(best.1 / metrics.total, 0.0, 1.0))
+}
+
+/// Whether the point at `index` is a handle at all — the elbow-arrow filter.
+///
+/// Transcribed from `LinearElementEditor.isPointHandle`
+/// (`packages/element/src/linearElementEditor.ts@1118751f:1424-1431`) at the SHA pinned in
+/// `scripts/oracle-sha.txt`:
+///
+/// ```ts
+/// static isPointHandle(element: ExcalidrawLinearElement, index: number) {
+///   return (
+///     index >= 0 &&
+///     (!isElbowArrow(element) ||
+///       index === 0 ||
+///       index === element.points.length - 1)
+///   );
+/// }
+/// ```
+///
+/// An elbow arrow's middle points are the **router's** corners, not the author's: they
+/// exist only because the route bends there, and the router re-derives them on every
+/// move, so a person cannot move one and must not be offered it. That is the whole of
+/// the rule — the last index is named, not "the second one", so a route of any length
+/// offers exactly its two ends.
+///
+/// `index` is signed because `-1` is the oracle's "no point under the cursor"
+/// (`getPointIndexUnderCursor`, `:1444-1458`), and `index >= 0` is part of the predicate
+/// rather than a type-level guarantee. The same test appears a second time in
+/// `handleBoxSelection` (`:290-299`).
+pub fn is_point_handle(element: &DrawElement, index: i64) -> bool {
+    if index < 0 {
+        return false;
+    }
+    if !crate::scene::elbow::is_elbow(element) {
+        return true;
+    }
+    let Some(points) = element.points.as_deref() else {
+        return false;
+    };
+    let len = points.len();
+    let index = index as usize;
+    index == 0 || index + 1 == len
+}
+
+/// The set of points a line editor is holding, as `normalizeSelectedPoints` keeps it
+/// (`linearElementEditor.ts@1118751f:2367-2375`):
+///
+/// ```ts
+/// let nextPoints = [...new Set(points.filter((p) => p !== null && p !== -1))];
+/// nextPoints = nextPoints.sort((a, b) => a - b);
+/// return nextPoints.length ? nextPoints : null;
+/// ```
+///
+/// Dropped: `null` and `-1`. De-duplicated, so shift-clicking a point already held is
+/// idempotent — this **accumulates, it does not toggle**. Sorted ascending, which is what
+/// makes `selectedPointsIndices[0]` the *lowest* selected index in the delete path
+/// (`actionDeleteSelected.tsx@1118751f:265-268`). And an empty set is `None`, not an
+/// empty vector: the difference is the whole of the delete action's first branch
+/// (`:229-231`).
+pub fn normalize_selected_points(points: &[i64]) -> Option<Vec<usize>> {
+    let mut out: Vec<i64> = points.iter().copied().filter(|p| *p >= 0).collect();
+    out.sort_unstable();
+    out.dedup();
+    if out.is_empty() {
+        return None;
+    }
+    Some(out.into_iter().map(|p| p as usize).collect())
 }
 
 /// The handle under the pointer, if any.

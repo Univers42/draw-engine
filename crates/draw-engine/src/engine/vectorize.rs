@@ -8,9 +8,12 @@
 //! refused. One call is one commit, so one undo takes the whole trace away and gives the
 //! original back. See `docs/reference/vectorize.md`.
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 
 use crate::engine::DrawEngine;
+use crate::scene::binding::release_bindings_to_removed;
 use crate::scene::element::rand_int;
 use crate::scene::geometry::{mirror_signs, rotation_center};
 use crate::scene::{
@@ -362,9 +365,21 @@ impl DrawEngine {
 
     /// The part both modes share: directly above the image, the image gone unless kept,
     /// the trace selected — all one step of history.
+    ///
+    /// The image going is a delete, so it takes the arrows bound to it with it: they are
+    /// let go, exactly as the Delete key and the eraser let them go, and **not** moved to
+    /// the trace's new ids. The oracle does the same on a deletion — nothing
+    /// `fixBindingsAfterDeletion` reaches rewrites a bound id
+    /// (`binding.ts@1118751f:2569`) — and where it does substitute an `elementId`
+    /// (`fixDuplicatedBindingsAfterDuplication`, `:2256-2281`) the shape was copied too.
+    /// A vectorize is not a duplication: the arrow
+    /// is not part of what was replaced. See `docs/reference/binding.md` › When the shape
+    /// is deleted. With `keep_original` the image is still on the board under its own id,
+    /// so every binding on it is still good and is left alone.
     fn commit_trace(&mut self, image_id: &str, ids: &[String], keep_original: bool) {
         self.scene.place_above(ids, image_id);
         if !keep_original {
+            release_bindings_to_removed(&mut self.scene, &HashSet::from([image_id.to_string()]));
             self.scene.remove(image_id, self.now_ms);
         }
         self.set_selection(ids.to_vec());

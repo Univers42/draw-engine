@@ -8,6 +8,7 @@ pub mod freehand;
 pub mod history;
 pub mod interaction;
 pub mod math;
+pub mod pan;
 pub mod render;
 pub mod scene;
 pub mod selection;
@@ -28,24 +29,33 @@ pub use edit::{
     FlipAxis, ZOrderMode,
 };
 pub use engine::{
-    DrawEngine, EmbedFrame, EngineEvents, FrameRenameRequest, HoverCursor, LinkDirection,
-    NoopPainter, Notice, PaintView, Painter, Peer, PeerMark, TextEditLayout, TextEditRequest,
-    TextEditSession,
+    ConvertTo, DrawEngine, EmbedFrame, EngineEvents, FrameRenameRequest, HoverCursor, LinearType,
+    LinkDirection, NoopPainter, Notice, PaintView, Painter, Peer, PeerMark, TextEditLayout,
+    TextEditRequest, TextEditSession,
 };
-pub use export::{elements_from_json, scene_to_json, scene_to_svg, OsidrawFile};
+pub use export::{
+    elements_from_json, font_face_files, insert_text_chunk, restore, scene_payload, scene_to_json,
+    scene_to_svg, ClipboardCopy, ClipboardFormat, ClipboardHost, ClipboardRefusal, ExportFrame,
+    ExportOptions, ExportScopeKind, OsidrawFile, PngError, Restore, RestoreRefusal, ShippedFace,
+    DEFAULT_EXPORT_PADDING, SCENE_FORMAT, SCENE_PAYLOAD_VERSION, SHIPPED_FONT_FACES,
+};
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;
 pub use interaction::{
     constrain_to_angle, ease_out, is_degenerate_linear, is_degenerate_rect, is_linear_tool,
     is_shape_tool, is_toggle_tool, linear_from_drag, rect_from_drag, size_mapping, snap_move,
-    tool_for_chord, tool_for_key, Axis, DrawTool, LaserOptions, LaserPoint, LaserStroke,
-    LaserTrails, LinearDrag, SnapGuide, SnapResult, ALL_TOOLS, CORNER_DETECTION_MAX_ANGLE_DEG,
-    DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS, LASER_MAX_TAIL_LENGTH,
-    LASER_SIZE, LASER_STREAMLINE,
+    snap_points, tool_for_chord, tool_for_key, Axis, DrawTool, LaserOptions, LaserPoint,
+    LaserStroke, LaserTrails, LinearDrag, SnapGuide, SnapResult, ALL_TOOLS,
+    CORNER_DETECTION_MAX_ANGLE_DEG, DEFAULT_LASER_COLOR, LASER_DECAY_LENGTH, LASER_DECAY_TIME_MS,
+    LASER_MAX_TAIL_LENGTH, LASER_SIZE, LASER_STREAMLINE,
 };
 pub use math::{
-    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp, round_px,
-    smoothstep, Cubic, CURVE_TIGHTNESS,
+    are_roughly_equal, bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp,
+    hash_string, lerp, round_half_up, round_px, shift_locked_angle, shift_locked_delta, smoothstep,
+    Cubic, CURVE_TIGHTNESS, SHIFT_LOCKING_ANGLE,
+};
+pub use pan::{
+    SecondaryPan, SecondaryPanEnd, SecondaryPanStart, SecondaryStep, SECONDARY_BUTTON_PAN_THRESHOLD,
 };
 pub use render::{
     canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, light_theme,
@@ -58,12 +68,12 @@ pub use scene::{
     element_rotated_bounds, hit_test, hit_test_element, is_auto_resize, is_bindable_element,
     is_binding_element, is_linear_element, is_path_a_loop_within, is_transparent, layout_label,
     linear_endpoints, linear_from_endpoints, linear_retarget, local_box, local_center, merge_style,
-    new_element_id, normalize_rect, refresh_bindings, resolved_font_family, resolved_line_height,
-    resolved_text_align, resolved_vertical_align, rotation_center, scene_bounds,
-    scene_outline_bounds, segment_hits_element, source_text, Arrowhead, DrawElement,
-    DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle, Geometry, Rect, Scene,
-    StrokeStyle, TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP, LABEL_PADDING, TEXT_ALIGNS,
-    VERTICAL_ALIGNS,
+    new_element_id, normalize_rect, refresh_bindings, resolved_font_family,
+    resolved_font_family_id, resolved_line_height, resolved_text_align, resolved_vertical_align,
+    rotation_center, scene_bounds, scene_outline_bounds, segment_hits_element, source_text,
+    Arrowhead, DrawElement, DrawElementStyle, DrawElementStylePatch, DrawElementType, FillStyle,
+    Geometry, Rect, Scene, StrokeStyle, TextAlign, VerticalAlign, ARROWHEADS, BINDING_GAP,
+    LABEL_PADDING, TEXT_ALIGNS, VERTICAL_ALIGNS,
 };
 pub use scene::{
     arrow_endpoints, classify, convex_hull, elongation, extract_features, kurtosis, polygon_area,

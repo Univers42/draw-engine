@@ -33,6 +33,19 @@ use serde::Serialize;
 
 use crate::engine::{DrawEngine, Interaction};
 
+/// Which points of which line or arrow are held, as [`DebugState::selected_points`]
+/// reports it. Split out so the debug view does not hand out the engine's own state
+/// object, and so the JSON keeps the two names the oracle has — the element, and the
+/// indices on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedPointsDebug {
+    pub element_id: String,
+    /// Sorted and without duplicates, as `normalizeSelectedPoints` keeps them
+    /// (`linearElementEditor.ts@1118751f:2373`).
+    pub indices: Vec<usize>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebugState {
@@ -86,6 +99,15 @@ pub struct DebugInteraction {
     pub placing_linear: Option<String>,
     /// The linear element whose points are on offer.
     pub editing_linear: Option<String>,
+    /// Which of that element's points are held, and which element they belong to.
+    ///
+    /// The oracle's `selectedLinearElement.selectedPointsIndices` reached through its
+    /// `elementId` (`linearElementEditor.ts@1118751f:196-197`). `null` for "no point is
+    /// held", which is **not** the same as holding none of an empty list — the delete
+    /// action's first branch turns on exactly that difference
+    /// (`actionDeleteSelected.tsx@1118751f:229-231`), so a debug view that flattened it
+    /// to `[]` would hide the one state that matters most.
+    pub selected_points: Option<SelectedPointsDebug>,
     /// The group that has been stepped into, if any. Session state, never serialized:
     /// which level you are looking at is a property of your view, not of the drawing.
     pub editing_group_id: Option<String>,
@@ -110,15 +132,18 @@ fn interaction_kind(interaction: &Interaction) -> &'static str {
         Interaction::Freedraw { .. } => "freedraw",
         Interaction::Erase { .. } => "erase",
         Interaction::Pan { .. } => "pan",
+        Interaction::SecondaryPan => "secondary-pan",
         Interaction::Move { .. } => "move",
         Interaction::Resize { .. } => "resize",
         Interaction::Rotate { .. } => "rotate",
         Interaction::ResizeGroup { .. } => "resize-group",
         Interaction::RotateGroup { .. } => "rotate-group",
         Interaction::LinearPoint { .. } => "linear-point",
+        Interaction::LabelDrag { .. } => "label-drag",
         Interaction::Lasso { .. } => "lasso",
         Interaction::Laser => "laser",
         Interaction::Marquee { .. } => "marquee",
+        Interaction::PointBox { .. } => "point-box",
         Interaction::CornerRadius { .. } => "corner-radius",
     }
 }
@@ -173,6 +198,13 @@ impl DrawEngine {
                 ),
                 placing_linear: self.linear_in_progress(),
                 editing_linear: self.editing_linear.clone(),
+                selected_points: self
+                    .selected_points
+                    .as_ref()
+                    .map(|held| SelectedPointsDebug {
+                        element_id: held.id.clone(),
+                        indices: held.indices.clone(),
+                    }),
                 editing_group_id: self.editing_group_id.clone(),
                 objects_snap: self.objects_snap,
                 marked_for_erasure: self.marked_for_erasure(),

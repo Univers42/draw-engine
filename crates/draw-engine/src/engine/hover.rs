@@ -81,12 +81,29 @@ impl DrawEngine {
     /// lit once a drag had begun, so where an arrow would attach was a guess until it was
     /// already being drawn. Only the arrow tool, and only between gestures: a drag or a
     /// path being placed shows its own.
+    ///
+    /// **The pointer is read raw, and that is not a Ctrl question.** Their
+    /// `handleCanvasPointerMove` computes `scenePointer = viewportCoordsToSceneCoords(event,
+    /// this.state)` — a pure camera transform (`common/src/utils.ts@1118751f:317-337`) — reads
+    /// it at `:7822` and hands it to `getHoveredElementForBinding` at `:7947-7954`. There is no
+    /// `getGridPoint` on the way, and none inside the callee either: `scene` walks
+    /// `getBindingCandidates` (`collision.ts@1118751f:432`), which reads no grid. Of their
+    /// sixteen `getGridPoint` call sites none is on this path — the three a report named for
+    /// it (`:9974`, `:10014`, `:10067`) are `insertIframeElement`,
+    /// `insertEmbeddableElement` and `newImagePlaceholder`, which *create* an element from a
+    /// paste, a drop and the AI magic-frame button, and are gated on
+    /// `lastPointerDownEvent?.[CTRL_OR_CMD]` — an earlier press, not a hover.
+    ///
+    /// So this is deliberately not [`Self::snap_gesture`]. A hit test asks what is under the
+    /// pointer, and rounding the pointer first asks a different question: with the grid on, an
+    /// outline a few units off an intersection lights whatever that intersection is over, and
+    /// near the tolerance's edge it lights **nothing** at all.
     pub fn hover_pointer(&mut self, sx: f64, sy: f64) {
         if self.tool != DrawTool::Arrow || self.interaction.is_some() || self.multi_linear.is_some()
         {
             return;
         }
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.screen_to_world(sx, sy);
         let target = if self.ctrl_held {
             None
         } else {
@@ -179,6 +196,12 @@ impl DrawEngine {
                 if crate::selection::linear::hit_handle(&handles, world.x, world.y, tol).is_some() {
                     return HoverCursor::PointHandle;
                 }
+                // A grabbable label reads as grabbable, last and for the same reason the
+                // press that starts a label drag is last: the handles under it keep their
+                // own cursor. `App.tsx@1118751f:8432-8449` sets `CURSOR_TYPE.GRAB` here.
+                if self.label_grab(&single, world).is_some() {
+                    return HoverCursor::Grab;
+                }
             }
         } else if self.selected_ids.len() > 1 {
             if let Some(kind) = self.group_handle_at(world) {
@@ -209,11 +232,18 @@ impl DrawEngine {
         let it = self.interaction.as_ref()?;
         Some(match it {
             Interaction::Pan { .. } => HoverCursor::Grabbing,
+            // Not grabbing yet: a right-click must not flash a pan cursor under the
+            // pointer (`App.pan.ts:130-132` sets it only for a session that is not
+            // secondary, and `:145` for one that has engaged).
+            Interaction::SecondaryPan => HoverCursor::Default,
             Interaction::Move { .. } => HoverCursor::Grabbing,
             Interaction::Rotate { .. } | Interaction::RotateGroup { .. } => HoverCursor::Grabbing,
             Interaction::LinearPoint { .. } | Interaction::CornerRadius { .. } => {
                 HoverCursor::PointHandle
             }
+            // A label is being carried: `CURSOR_TYPE.GRABBING`, set by
+            // `arrowText.maybeDragLabel` (`App.arrowText.ts@1118751f:294`).
+            Interaction::LabelDrag { .. } => HoverCursor::Grabbing,
             Interaction::Resize { id, handle, .. } => {
                 let angle = self.scene.get(id).map(|el| el.angle).unwrap_or(0.0);
                 resize_cursor(*handle, angle)
@@ -225,7 +255,7 @@ impl DrawEngine {
             | Interaction::MultiLinearPress
             | Interaction::Freedraw { .. } => HoverCursor::Crosshair,
             Interaction::Erase { .. } => HoverCursor::Crosshair,
-            Interaction::Marquee { .. } => HoverCursor::Default,
+            Interaction::Marquee { .. } | Interaction::PointBox { .. } => HoverCursor::Default,
             Interaction::Lasso { .. } => HoverCursor::Crosshair,
             // The trail is the pointer here, so a crosshair marks exactly where the beam
             // comes from — an arrow would sit beside its own tip.

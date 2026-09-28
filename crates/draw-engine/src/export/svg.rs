@@ -1,6 +1,6 @@
 use draw_rough::ops::Op;
 
-use crate::camera::WorldBounds;
+use crate::export::ExportFrame;
 use crate::render::arrowheads::{
     arrowhead_shapes, curve_path_ops, ArrowheadPrimitive, FillRole, Position,
 };
@@ -452,21 +452,46 @@ fn text_svg(element: &DrawElement) -> String {
     )
 }
 
+/// The drawing as one SVG document, cut to `frame`, carrying `scene` when there is one.
+///
+/// `frame` rather than a bounds and a padding, so the box is arithmetic this engine has
+/// already done in one place. `exportToSvg` builds the very same
+/// `getCanvasSize(getRootElements(...), exportPadding)` the canvas path builds
+/// (`export.ts@1118751f:341-344` against `:232-235`) — one framing decision, two formats —
+/// and a function taking `(bounds, padding)` can only ever be the second one.
+///
+/// `scene` is the payload from [`crate::scene_payload`], and `None` is the oracle's
+/// `exportEmbedScene` off (`export.ts@1118751f:378-391`). The `<metadata>` element is
+/// written either way, because `exportToSvg` appends it unconditionally (`:363-369`), so
+/// the document has one shape and "has a metadata element" is not a second thing to be
+/// right about. The root also carries a `svg-source` comment, which is the oracle's
+/// `createHTMLComment("svg-source:excalidraw")` at `:368`.
+///
+/// The `<defs>` is written whether or not it holds anything, for the oracle's own reason:
+/// `exportToSvg` creates the `<style>` and appends it unconditionally (`:445-451`), so a
+/// shapes-only drawing has a `<defs>` with an empty `<style>`. What is in it is
+/// [`crate::export::font_face`]'s decision, made from the elements — the host is given no
+/// way to add a family, because it is not asked for one.
+///
+/// The background is still always drawn: `exportBackground` is 4.5's, and it is a colour
+/// this path has no option for yet (`png.rs`). It stays its own argument rather than joining
+/// the group the other two could have made, because that is where 4.5's change lands.
+///
 pub fn scene_to_svg(
-    elements: &[DrawElement],
-    bounds: WorldBounds,
-    padding: f64,
+    elements: &[&DrawElement],
+    frame: &ExportFrame,
     background: &str,
+    scene: Option<&str>,
 ) -> String {
-    let width = bounds.max_x - bounds.min_x + padding * 2.0;
-    let height = bounds.max_y - bounds.min_y + padding * 2.0;
-    let dx = padding - bounds.min_x;
-    let dy = padding - bounds.min_y;
+    let width = frame.width;
+    let height = frame.height;
+    let camera = frame.camera();
+    let defs = crate::export::font_face::font_face_defs(elements);
     // Labels by id, for the arrows whose stroke is cut away under theirs.
     let labels: std::collections::HashMap<&str, &DrawElement> = elements
         .iter()
         .filter(|el| el.kind == DrawElementType::Text && el.container_id.is_some())
-        .map(|el| (el.id.as_str(), el))
+        .map(|el| (el.id.as_str(), *el))
         .collect();
     let body = elements
         .iter()
@@ -475,6 +500,14 @@ pub fn scene_to_svg(
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\"><rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({dx} {dy})\">{body}</g></svg>"
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">{source}{metadata}{defs}<rect width=\"{width}\" height=\"{height}\" fill=\"{background}\"/><g transform=\"translate({x} {y})\">{body}</g></svg>",
+        x = camera.x,
+        y = camera.y,
+        source = crate::export::roundtrip::svg_source_comment(),
+        metadata = crate::export::roundtrip::svg_metadata_element(scene),
+        // Between the `<metadata>` and the paper, as in `exportToSvg`: it appends the comment,
+        // the metadata and then the `<defs>` (`:368-370`), and the background `<rect>` after
+        // that (`:458-468`).
+        defs = defs,
     )
 }

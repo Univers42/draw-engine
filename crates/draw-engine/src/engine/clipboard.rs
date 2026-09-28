@@ -237,7 +237,6 @@ impl DrawEngine {
         let pending_placement = self.scene.placement();
 
         let mut changed = false;
-        let mut reordered = false;
         for mut element in incoming {
             if self
                 .scene
@@ -287,31 +286,57 @@ impl DrawEngine {
         }
 
         if let Some(order_ids) = &patch.order {
+            // Resolved to what this scene holds before the pass below reads it: a named id it
+            // cannot produce — erased here and still live on the peer that has not been told,
+            // or an edit this tab has not received — spends a slot in a positional cursor that
+            // the scan can never fill. That is one O(m) pass over the order, on a path that was
+            // already O(n) over the board.
             let ids: Vec<&str> = order_ids
                 .iter()
                 .filter_map(serde_json::Value::as_str)
+                .filter(|id| self.scene.get(id).is_some_and(|e| !e.is_deleted))
                 .collect();
             if !ids.is_empty() {
-                let mut live: Vec<DrawElement> = Vec::with_capacity(ids.len());
-                for id in &ids {
-                    if let Some(element) = self.scene.get(id) {
-                        if !element.is_deleted {
-                            live.push(element.clone());
-                        }
-                    }
-                }
-                // What the order leaves out stays on top. Told by a set: searched in the
-                // list once per element, a peer's order cost the board squared — 533ms on
-                // 20,000 shapes — and every shape a peer draws into a frame sends one.
+                // Told by a set: searched in the list once per element, a peer's order
+                // cost the board squared — 533ms on 20,000 shapes — and every shape a
+                // peer draws into a frame sends one.
                 let listed: HashSet<&str> = ids.iter().copied().collect();
-                live.extend(
-                    self.scene
-                        .iter_ordered()
-                        .filter(|element| !listed.contains(element.id.as_str()))
-                        .cloned(),
-                );
+                // What the order names, in the order it names it, with what it leaves out
+                // dropped back into the slot it held rather than piled on top.
+                //
+                // The oracle's `syncMovedIndices` returns an element the incoming order
+                // does not name untouched — its own fractional index and all
+                // (`packages/element/src/fractionalIndex.ts@1118751f:185-193`) — and a
+                // peer cannot name what it has never seen. Sent to the top instead, a
+                // shape drawn into a frame came back above the frame it was drawn in, and
+                // a redo kept it there: the step that drew it records no order of its own
+                // to replay, a new element's place being part of its creation
+                // (`scene/store.rs` › `place_beside`).
+                //
+                // Each one goes back above the last of the order's elements the stack
+                // put under it, so a label stays above its shape and a frame child below
+                // its frame even where the peer's order moved those. The ids are resolved
+                // to this scene's own live elements above, so every one of the order's slots
+                // is an element the scan can meet: read as a count of the order's elements
+                // met so far, which only rises, this is one pass and one stack.
+                let mut live: Vec<DrawElement> = Vec::with_capacity(self.scene.total_len());
+                let mut sent = 0usize;
+                let mut named = 0usize;
+                for element in self.scene.iter_ordered() {
+                    if listed.contains(element.id.as_str()) {
+                        named += 1;
+                        continue;
+                    }
+                    while sent < named {
+                        live.push(self.scene.get(ids[sent]).expect("resolved above").clone());
+                        sent += 1;
+                    }
+                    live.push(element.clone());
+                }
+                for id in &ids[sent..] {
+                    live.push(self.scene.get(id).expect("resolved above").clone());
+                }
                 self.scene.set_order(live);
-                reordered = true;
                 changed = true;
             }
         }
@@ -327,15 +352,13 @@ impl DrawEngine {
             let _ = self.scene.take_delta();
             // ...but not the local changes that were pending in it, which the host has
             // not been told about yet — nor where they put things in the stack: a new
-            // label above its shape, told as a delta without the order, went on top of
-            // the host's copy, and of the saved board.
+            // label above its shape, or a shape below the frame it was drawn in, told as
+            // a delta without the order, went on top of the host's copy, and of the saved
+            // board.
             for id in &pending {
                 self.scene.mark_dirty(id);
             }
             self.scene.restore_placement(pending_placement);
-            if reordered {
-                self.put_back_new_labels(&pending);
-            }
             self.request_draw();
         }
         // What the peer's edit changed here — its elements, arrows re-routed to follow
@@ -344,22 +367,6 @@ impl DrawEngine {
         self.scene.retain_baseline(|id| pending.contains(id));
         self.scene.set_order_baseline(pending_order);
         changed
-    }
-
-    /// Puts a label made for the edit in progress back directly above its shape, where
-    /// the oracle's fractional index keeps it, after a peer's order put it on top — they
-    /// have never seen it, and what an order leaves out stays on top. A placement of ours,
-    /// told to the host with the edit's commit.
-    fn put_back_new_labels(&mut self, pending: &HashSet<String>) {
-        let labels: Vec<(String, String)> = pending
-            .iter()
-            .filter(|id| self.scene.created_since_commit(id))
-            .filter_map(|id| self.scene.get(id))
-            .filter_map(|label| Some((label.id.clone(), label.container_id.clone()?)))
-            .collect();
-        for (label, container) in labels {
-            self.scene.place_above(&[label], &container);
-        }
     }
 
     pub fn paste_json(&mut self, json: Option<&str>, at: Option<(f64, f64)>) -> bool {
@@ -511,7 +518,80 @@ impl DrawEngine {
         self.push_history();
     }
 
+    /// Whether a delete with these indices held takes the **element** rather than its
+    /// points — the second branch of `actionDeleteSelected.perform`
+    /// (`actionDeleteSelected.tsx@1118751f:234`).
+    ///
+    /// A **comparison and not an equality**, and the oracle never asks what the indices
+    /// mean — only how many there are. So three indices on a three-point line take the
+    /// element even if two of them name no point, and the only count that does *not* is
+    /// one short of the point count, which is the case a person can reach by clicking.
+    pub fn delete_takes_the_element(&self, element: &DrawElement, point_indices: &[usize]) -> bool {
+        point_indices.len() >= element.points.as_deref().map_or(0, |p| p.len())
+    }
+
+    /// Backspace and Delete.
+    ///
+    /// `actionDeleteSelected.perform` (`actionDeleteSelected.tsx@1118751f:213-303`) is a
+    /// decision with a point branch in front of the ordinary one, and the order is the
+    /// spec:
+    ///
+    /// 1. `selectedPointsIndices == null` → `return false` (`:229-231`). This action
+    ///    deletes nothing and the element branch below takes the element instead. The
+    ///    comment above the branch in the oracle says why that is the right default: if
+    ///    you meant a point and missed, taking the whole element is "most likely a
+    ///    mistake" — but with no point held, deleting what is held is what was asked for.
+    /// 2. every point held → delete the **element** (`:234-251`).
+    /// 3. some points held → [`Self::delete_points`], and re-map the selection
+    ///    (`:253-272`).
+    ///
+    /// Branches 2 and 3 are `engine/point_edit.rs`, which cites them in full.
     pub fn delete_selection(&mut self) {
+        // Branch 1: no point held, so the whole element — which is what the body below
+        // has always done, and the only thing it does. `selected_points` is `None` here
+        // and not merely empty: that is the distinction the oracle draws at `:229`.
+        if let Some(indices) = self.selected_points() {
+            let Some(id) = self.selected_points_of().map(str::to_owned) else {
+                return;
+            };
+            let Some(element) = self.scene.get(&id).cloned() else {
+                // The element the points belonged to is gone — erased, or undone out from
+                // under the selection. The oracle's `:222-224`, `if (!linearElement)
+                // return false`: with nothing to take a point off, this action declines
+                // rather than falling through to deleting whatever else is held.
+                self.forget_selected_points();
+                return;
+            };
+            if self.delete_takes_the_element(&element, &indices) {
+                // Branch 2: every point held, so the element goes —
+                // `selectedLinearElement: null` at `:247` and
+                // `CaptureUpdateAction.IMMEDIATELY` at `:249`. Clearing the editor first
+                // is what makes the body below the ordinary element delete rather than a
+                // second trip through this branch.
+                self.editing_linear = None;
+                self.forget_selected_points();
+                self.delete_selected_elements();
+                return;
+            }
+            // Branch 3: the points go, the element stays, and the selection follows.
+            // `[selectedPointsIndices[0] - 1]`, or `[0]` when the first index was `0`
+            // (`:265-268`) — the set is sorted, so `[0]` is the lowest held index.
+            self.delete_points(&id, &indices);
+            let first = indices[0];
+            self.selected_points = Some(super::PointSelection {
+                id,
+                indices: vec![if first > 0 { first - 1 } else { 0 }],
+            });
+            self.request_draw();
+            return;
+        }
+        if self.selected_ids.is_empty() {
+            return;
+        }
+        self.delete_selected_elements();
+    }
+
+    fn delete_selected_elements(&mut self) {
         if self.selected_ids.is_empty() {
             return;
         }
@@ -561,6 +641,11 @@ impl DrawEngine {
                 }
             }
         }
+        // An arrow that stays is let go of a shape that is going, as the eraser and the
+        // vectorize let it go: the Delete key is a delete, and the release is part of this
+        // same step, so one undo binds the arrow again. An end on a shape that is not
+        // going is still good and is left alone.
+        crate::scene::binding::release_bindings_to_removed(&mut self.scene, &doomed);
         for id in doomed {
             // One made since the last commit — a text never typed into, left selected
             // while its session was ended the old way — was never there: dropped, not
@@ -605,14 +690,134 @@ impl DrawEngine {
         crate::scene_to_json(&self.scene.ordered_cloned())
     }
 
-    pub fn export_svg(&self, padding: f64) -> Option<String> {
-        let bounds = self.scene.bounds()?;
+    /// The scene as an SVG, framed by `scope`, carrying the scene when `options` says so.
+    ///
+    /// The same [`Self::export_scope`] the PNG path uses, so the two formats cannot frame one
+    /// drawing differently — which they did, and which the oracle has no way of doing: it
+    /// builds one `getCanvasSize` and hands it to both (`export.ts@1118751f:232-235, 341-344`).
+    /// `None` only for an empty scene, where the oracle has no element to measure.
+    ///
+    /// The payload is [`crate::scene_payload`] over the scope's own elements, so the SVG
+    /// carries exactly the elements it drew. It is computed here rather than inside
+    /// `scene_to_svg` because a copy must not carry one (`data/index.ts@1118751f:132`), and
+    /// the difference between a file and a copy is the one thing about an export a host may
+    /// not decide for itself.
+    pub fn export_svg_of(
+        &self,
+        scope: &crate::export::ExportScope<'_>,
+        options: &crate::export::ExportOptions,
+    ) -> Option<String> {
+        if scope.elements.is_empty() {
+            return None;
+        }
+        let scene = options
+            .embed_scene
+            .then(|| crate::export::scene_payload(&scope.elements));
         Some(crate::scene_to_svg(
-            &self.scene.ordered_cloned(),
-            bounds,
-            padding,
+            &scope.elements,
+            &scope.frame,
             &self.theme.background,
+            scene.as_deref(),
         ))
+    }
+
+    /// What an export is **of**: the box and the elements, for the current selection.
+    ///
+    /// [`Self::export_svg`] and the PNG binding both go through this, so a selection, a
+    /// single frame and the whole scene are one question with three answers rather than
+    /// three code paths. `selection_only` is the host's one boolean — the dialog's checkbox,
+    /// the oracle's `exportSelectionOnly` (`data/index.ts@1118751f:56-58`). The host does not
+    /// get to say *which* of the three it wants, and does not get to compute a box.
+    pub fn export_scope(
+        &self,
+        selection_only: bool,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ExportScope<'_> {
+        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
+        crate::export::export_scope(&self.scene, &ids, selection_only, options)
+    }
+
+    /// The box and the camera a whole-scene PNG export is framed by.
+    ///
+    /// The raster half is `crate::wasm::export`'s; this is the half that decides how big
+    /// the picture is and what is in it, and it is here so it can be asked without a
+    /// browser. See [`crate::export::ExportFrame`].
+    pub fn export_frame(
+        &self,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ExportFrame {
+        crate::export::ExportFrame::for_scene(self.scene.iter_ordered(), options)
+    }
+
+    /// One copy for a host that can take it: what to write, under what type, of what.
+    ///
+    /// The oracle's `actionCopyAsSvg` and `actionCopyAsPng` differ in their payload and in
+    /// nothing else that matters here — both pass the literal `true` for
+    /// `exportSelectionOnly` (`actionClipboard.tsx@1118751f:139`, `:212`) into
+    /// `prepareElementsForExport`, so a copy is "the export scope, unchanged", and this is
+    /// [`Self::export_scope`] with `true` plus the two questions a file never asks: the MIME
+    /// type, and whether the host can take it.
+    ///
+    /// **`text` is the file export's own string**, from [`Self::export_svg_of`] over the
+    /// scope built here. Not a second rendering and not a second element list, which is
+    /// what makes "the clipboard carries exactly what the export would have produced" true
+    /// by construction rather than by agreement.
+    ///
+    /// The raster payload is absent, and the [`crate::export::ClipboardCopy`] carries the
+    /// scope instead: encoding a canvas needs a browser, and the host encodes *this* scope's
+    /// elements into *this* scope's box (`wasm::export::export_png`, which is also what a
+    /// file uses). Nothing is left for the host to decide and nothing to disagree about.
+    pub fn clipboard_copy<'a>(
+        &'a self,
+        format: crate::export::ClipboardFormat,
+        host: &crate::export::ClipboardHost,
+        options: &crate::export::ExportOptions,
+    ) -> crate::export::ClipboardCopy<'a> {
+        let scope = self.export_scope(true, options);
+        if !format.host_can_take(host) {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::BrowserCannotTake,
+            );
+        }
+        if scope.elements.is_empty() {
+            return crate::export::ClipboardCopy::declined(
+                scope,
+                crate::export::ClipboardRefusal::NothingToCopy,
+            );
+        }
+        crate::export::ClipboardCopy {
+            supported: true,
+            refusal: None,
+            mime: format.mime(),
+            text: self.copied_text(format, &scope, options),
+            scope,
+        }
+    }
+
+    /// The vector payload of a copy, and `None` for a raster.
+    ///
+    /// **`embed_scene` is `false` here whatever the options say**, and the oracle's line is
+    /// why: `exportEmbedScene: appState.exportEmbedScene && type === "svg"`
+    /// (`data/index.ts@1118751f:132`) is false for `type === "clipboard-svg"`. Set here
+    /// rather than left to the caller, so that no options value can make a clipboard carry
+    /// a whole board into somebody's mail client.
+    fn copied_text(
+        &self,
+        format: crate::export::ClipboardFormat,
+        scope: &crate::export::ExportScope<'_>,
+        options: &crate::export::ExportOptions,
+    ) -> Option<String> {
+        match format {
+            crate::export::ClipboardFormat::Svg => self.export_svg_of(
+                scope,
+                &crate::export::ExportOptions {
+                    embed_scene: false,
+                    ..*options
+                },
+            ),
+            crate::export::ClipboardFormat::Png => None,
+        }
     }
 
     pub fn load_scene(&mut self, json: &str) -> bool {

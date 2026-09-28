@@ -356,7 +356,7 @@ fn an_svg_export_carries_the_picture() {
         .expect("inserted");
     let scene = engine.get_scene();
     let bounds = scene_bounds(&scene).unwrap();
-    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+    let svg = svg_at(&scene, bounds, 10.0);
     assert!(svg.contains("<image"), "no <image> element in {svg}");
     assert!(svg.contains(url), "the data URL is not in the export");
     assert_eq!(
@@ -386,7 +386,7 @@ fn a_flipped_image_exports_flipped() {
     assert!(scene[0].width < 0.0, "setup: a flip is a negative width");
 
     let bounds = scene_bounds(&scene).unwrap();
-    let svg = scene_to_svg(&scene, bounds, 10.0, "#ffffff");
+    let svg = svg_at(&scene, bounds, 10.0);
 
     assert!(svg.contains("scale(-1 1)"), "{svg}");
 }
@@ -406,12 +406,310 @@ fn an_image_without_a_picture_exports_no_broken_reference() {
     );
     element.data_url = None;
     let bounds = element_bounds(&element);
-    let svg = scene_to_svg(&[element], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[element], bounds, 10.0);
     assert!(!svg.contains("<image"), "{svg}");
     // Nothing at all: not an `<image>`, and not the stroked box it used to fall through to.
     assert_eq!(
         svg.matches("<rect").count(),
         1,
         "the background only: {svg}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Turning an image (design.md:478 "Rotate")
+// ---------------------------------------------------------------------------
+
+/// A 400×300 picture dropped at (400, 300), and its id, at a viewport 1:1.
+fn placed_image(url: &str) -> (DrawEngine, String) {
+    let mut engine = engine_with_scene(vec![]);
+    engine.set_viewport(1200.0, VIEWPORT_H, 1.0);
+    let id = engine
+        .insert_image(url, 400.0, 300.0, 400.0, 300.0)
+        .expect("image was not inserted");
+    (engine, id)
+}
+
+/// The rotate handle where the engine paints it.
+fn rotate_handle(engine: &DrawEngine, id: &str) -> Point {
+    let image = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("image vanished");
+    let view = engine.paint_view();
+    selection_handles(&image, view.handle_layout)
+        .into_iter()
+        .find(|h| h.kind == HandleKind::Rotate)
+        .map(|h| Point { x: h.x, y: h.y })
+        .expect("an image offers a rotation handle")
+}
+
+/// A press, a few moves, a release.
+fn drag(engine: &mut DrawEngine, from: Point, to: Point) {
+    engine.begin_pointer(from.x, from.y, false, false);
+    for step in 1..=4 {
+        let t = f64::from(step) / 4.0;
+        engine.move_pointer(
+            from.x + (to.x - from.x) * t,
+            from.y + (to.y - from.y) * t,
+            false,
+            false,
+        );
+    }
+    engine.end_pointer();
+}
+
+/// "Rotate", for the one kind whose whole surface is a bitmap: the angle is the pointer's,
+/// and the picture is drawn turned while its own box stays put.
+///
+/// The angle is the oracle's expression for every element
+/// (`resizeElements.ts@1118751f:221-233`), so there is nothing image-specific to get
+/// wrong about the number itself. What is image-specific is what the turn does to the
+/// *drawn* box: the stored one is the unturned rectangle, and only the painted extent
+/// swaps its sides. Reading the stored box to find out what a turned image covers gets
+/// 400×300 for a picture that is standing up.
+#[test]
+fn turning_an_image_gives_it_the_angles_angle() {
+    let (mut engine, id) = placed_image("data:image/png;base64,AAAA");
+    let before = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("image vanished");
+    assert_close(before.angle, 0.0);
+    // The oracle's centre, taken from the element's absolute coords rather than from the
+    // engine's own pivot — see `ci_line_multipoint.rs`'s note on why that matters.
+    let box_before = element_bounds(&before);
+    let centre = (
+        (box_before.min_x + box_before.max_x) / 2.0,
+        (box_before.min_y + box_before.max_y) / 2.0,
+    );
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+    // Due right of the centre, which asks for a quarter turn exactly.
+    let handle = rotate_handle(&engine, &id);
+    drag(
+        &mut engine,
+        handle,
+        Point {
+            x: centre.0 + 300.0,
+            y: centre.1,
+        },
+    );
+
+    let after = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("image vanished");
+    assert!(
+        (after.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
+        "expected a quarter turn ({}), got {}",
+        std::f64::consts::FRAC_PI_2,
+        after.angle
+    );
+    // A quarter-turned 400×300 picture stands up: 300 across, 400 down.
+    let drawn = element_rotated_bounds(&after);
+    assert!(
+        (drawn.max_x - drawn.min_x - 300.0).abs() < 1e-6
+            && (drawn.max_y - drawn.min_y - 400.0).abs() < 1e-6,
+        "a quarter-turned 400×300 picture takes a 300×400 box, got {}×{}",
+        drawn.max_x - drawn.min_x,
+        drawn.max_y - drawn.min_y
+    );
+}
+
+/// The rest of it. A turn is a number on the element, so a picture keeps the size it was
+/// inserted at and the file it was inserted with. Nothing about a turn may reach the
+/// bitmap: a resized image is a stretched one, and a lost `data_url` is a grey box.
+#[test]
+fn turning_an_image_leaves_its_size_and_its_picture_alone() {
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    let (mut engine, id) = placed_image(url);
+    let before = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("image vanished");
+
+    engine.set_tool(DrawTool::Select);
+    engine.select(vec![id.clone()]);
+    let box_before = element_bounds(&before);
+    let centre = (
+        (box_before.min_x + box_before.max_x) / 2.0,
+        (box_before.min_y + box_before.max_y) / 2.0,
+    );
+    let handle = rotate_handle(&engine, &id);
+    drag(
+        &mut engine,
+        handle,
+        Point {
+            x: centre.0,
+            y: centre.1 + 300.0,
+        },
+    );
+
+    let after = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id)
+        .expect("image vanished");
+    // Due *below* the centre asks for `atan2(+300, 0) + pi/2` — a half turn, not a
+    // quarter. Stated rather than approximated, because a turn that came out as anything
+    // else would still leave the stored box and the data URL alone.
+    assert!(
+        (after.angle - std::f64::consts::PI).abs() < 1e-6,
+        "expected a half turn ({}), got {}",
+        std::f64::consts::PI,
+        after.angle
+    );
+    assert_close(after.x, before.x);
+    assert_close(after.y, before.y);
+    assert_close(after.width, before.width);
+    assert_close(after.height, before.height);
+    assert_eq!(
+        after.data_url.as_deref(),
+        Some(url),
+        "the picture is the element's only copy of the file"
+    );
+    assert_eq!(after.kind, DrawElementType::Image);
+}
+
+// ---------------------------------------------------------------------------
+// Copying and duplicating an image (design.md:490 "Copy/paste")
+// ---------------------------------------------------------------------------
+
+/// Every live image on the board, bottom first, so a copy's minted id never has to be
+/// predicted.
+fn images(engine: &DrawEngine) -> Vec<DrawElement> {
+    engine
+        .get_scene()
+        .into_iter()
+        .filter(|el| !el.is_deleted && el.kind == DrawElementType::Image)
+        .collect()
+}
+
+/// "Copy/paste" for a picture, which is the one element kind whose whole content is
+/// something the copy has to carry.
+///
+/// Everything else about the element is a handful of numbers that any round trip keeps by
+/// itself. An image's content is a `data:` URL measured in kilobytes, and the reason it
+/// rides on the element rather than in a side table is that this is the only place that
+/// has to be right: a copy that keeps the numbers and drops the picture is a grey box
+/// exactly where the picture was, and nothing else on the board would show it.
+///
+/// The oracle's copy is `deepCopyElement` (`duplicate.ts@1118751f:109`) — a field-for-field
+/// clone, so a file reference travels with it.
+#[test]
+fn a_copied_image_pastes_with_its_picture_and_a_place_of_its_own() {
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    let (mut engine, id) = placed_image(url);
+    engine.select(vec![id.clone()]);
+    let original = images(&engine);
+    assert_eq!(original.len(), 1, "setup: one image");
+
+    let json = engine
+        .copy_selection()
+        .expect("copying an image produced nothing");
+    assert!(
+        engine.paste_json(Some(&json), None),
+        "the clipboard held no scene"
+    );
+
+    let pasted = images(&engine);
+    assert_eq!(pasted.len(), 2, "the paste did not add an image");
+    let copy = pasted
+        .iter()
+        .find(|el| el.id != id)
+        .expect("the copy should be a second image");
+    assert_eq!(
+        copy.data_url.as_deref(),
+        Some(url),
+        "the pasted copy lost the picture"
+    );
+    assert_ne!(
+        copy.id, id,
+        "a paste is a new element, not the same one again"
+    );
+    // `PASTE_OFFSET` (12) down and to the right, so the copy is somewhere else and the
+    // original is exactly where it was.
+    assert_close(copy.x, original[0].x + 12.0);
+    assert_close(copy.y, original[0].y + 12.0);
+    assert_close(original[0].width, copy.width);
+    assert_close(original[0].height, copy.height);
+    assert_eq!(
+        original[0].data_url.as_deref(),
+        Some(url),
+        "the original is untouched by a copy"
+    );
+    assert_eq!(engine.get_selection(), vec![copy.id.clone()]);
+}
+
+/// Ctrl+D on a picture, which is the same clone by a different road: in place rather than
+/// through the clipboard.
+///
+/// The offset is the oracle's — `DEFAULT_GRID_SIZE / 2` on each axis, `constants.ts@1118751f:
+/// 290` gives the grid and `actionDuplicateSelection.tsx@1118751f:78-79` the half of it —
+/// and it is a number rather than "somewhere nearby", so it can be stated.
+#[test]
+fn a_duplicated_image_keeps_its_picture_and_lands_half_a_grid_away() {
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    let (mut engine, id) = placed_image(url);
+
+    engine.select(vec![id.clone()]);
+    engine.duplicate_selection(10.0, 10.0);
+
+    let pasted = images(&engine);
+    assert_eq!(pasted.len(), 2, "the duplicate did not land");
+    let copy = pasted
+        .iter()
+        .find(|el| el.id != id)
+        .expect("the copy should be a second image");
+    assert_eq!(
+        copy.data_url.as_deref(),
+        Some(url),
+        "the duplicate lost the picture"
+    );
+    assert_close(copy.width, pasted[0].width);
+    assert_close(copy.height, pasted[0].height);
+    let source = pasted.iter().find(|el| el.id == id).unwrap();
+    assert_close(copy.x, source.x + 10.0);
+    assert_close(copy.y, source.y + 10.0);
+    // The copy is what you go on to move, and the original has not been touched.
+    assert_eq!(engine.get_selection(), vec![copy.id.clone()]);
+}
+
+/// The third road, and the one that catches a clone which only copies what the *engine*
+/// knows: a board saved and reloaded. A duplicate that forgot the URL would survive the
+/// clipboard and still lose the picture here, because the URL is what the file format has
+/// to carry.
+#[test]
+fn a_duplicated_image_still_has_its_picture_after_a_save_and_reload() {
+    let url = "data:image/png;base64,iVBORw0KGgo=";
+    let (mut engine, id) = placed_image(url);
+    engine.select(vec![id.clone()]);
+    engine.duplicate_selection(10.0, 10.0);
+    let copy = images(&engine)
+        .into_iter()
+        .find(|el| el.id != id)
+        .expect("the copy should be a second image");
+
+    let json = engine.export_json();
+    let restored = elements_from_json(&json).expect("the scene did not round-trip");
+    let urls: Vec<Option<String>> = restored
+        .iter()
+        .filter(|el| el.kind == DrawElementType::Image)
+        .map(|el| el.data_url.clone())
+        .collect();
+    assert_eq!(
+        urls,
+        vec![Some(url.to_string()); 2],
+        "both pictures should survive the save, got {urls:?}"
+    );
+    assert!(
+        restored.iter().any(|el| el.id == copy.id),
+        "the copy should survive the save under its own id"
     );
 }

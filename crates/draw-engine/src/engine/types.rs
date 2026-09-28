@@ -155,6 +155,12 @@ pub(crate) enum Interaction {
         last_x: f64,
         last_y: f64,
     },
+    /// A right-button press that has not yet decided whether it is a right-click.
+    ///
+    /// Becomes [`Interaction::Pan`] the moment the pointer travels past the threshold, with
+    /// its origin at that move — a right-click has to leave the board where it found it.
+    /// See [`crate::pan`].
+    SecondaryPan,
     Move {
         ids: Vec<String>,
         start: Point,
@@ -227,6 +233,20 @@ pub(crate) enum Interaction {
         id: String,
         handle: crate::selection::LinearHandle,
     },
+    /// Dragging an arrow's label along the arrow.
+    ///
+    /// The label's position along the path is the *only* thing this writes: the arrow keeps
+    /// its points, its extent and its bindings, which is what separates a label drag from a
+    /// drag of the arrow — the oracle's `handleBoundTextDragging`
+    /// (`linearElementEditor.ts@1118751f:1963-2030`) mutates the bound text alone.
+    ///
+    /// `grab` is the press measured from the label's **centre**, so the label follows the
+    /// pointer by the delta from the grab rather than jumping its centre onto the cursor —
+    /// `boundTextGrabOffset`, `linearElementEditor.ts@1118751f:1170-1176`.
+    LabelDrag {
+        id: String,
+        grab: Point,
+    },
     /// A free-form selection loop in progress.
     ///
     /// The path is world-space and accumulates as the pointer moves; the engine
@@ -246,6 +266,24 @@ pub(crate) enum Interaction {
         start: Point,
         current: Point,
         base: HashSet<String>,
+    },
+    /// A box drawn over the points of a line being edited, to hold several of them at once.
+    ///
+    /// Separate from [`Interaction::Marquee`] because it selects **points** rather than
+    /// elements, and the two are mutually exclusive: the oracle draws the same rectangle for
+    /// both and tells them apart at the call site — `handleBoxSelection` on one side of an
+    /// `if`, "regular box-select" on the other (`App.tsx@1118751f:11273-11282`). Folding
+    /// them into one variant would put a flag on it that says which, which is the same
+    /// question asked in the wrong place.
+    ///
+    /// Carries no `base`: the element being edited was already the only thing selected
+    /// before the drag began, and it stays selected — the band takes points off it, it does
+    /// not take elements onto the selection. Nor a `current`: the selection is re-derived
+    /// from `start` and the incoming pointer position on every move, and the release has
+    /// nothing left to settle — the last move already left the right points held.
+    PointBox {
+        id: String,
+        start: Point,
     },
     /// Dragging a corner-radius handle.
     ///
@@ -285,6 +323,25 @@ pub(crate) struct MultiLinear {
     /// than holding the point itself is what makes "throw the preview away" a truncate,
     /// with no chance of dropping a point somebody placed.
     pub committed: usize,
+}
+
+/// Which points of which line or arrow are held.
+///
+/// The oracle keeps this in one place — `appState.selectedLinearElement`, which carries
+/// `elementId`, `isEditing` and `selectedPointsIndices` together
+/// (`linearElementEditor.ts@1118751f:196-197`) — so the element is reached *through* the
+/// index list rather than beside it. That is why the id travels here too: the delete
+/// action resolves `linearElementEditor.elementId` to the element it is about to take
+/// points off (`actionDeleteSelected.tsx@1118751f:215-221`), and the element a set of
+/// points belongs to is not always the open one — a two-point line is edited by its
+/// points without a point editor ever being opened, which is what gate four of
+/// `handleSelectionOnPointerDown` is for (`App.tsx:9355-9359`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PointSelection {
+    pub id: String,
+    /// Sorted and without duplicates — [`super::selection::linear::normalize_selected_points`]
+    /// keeps it that way, so `indices[0]` is the lowest held index.
+    pub indices: Vec<usize>,
 }
 
 /// The measurement used when no browser is available — host tests, and a server-side

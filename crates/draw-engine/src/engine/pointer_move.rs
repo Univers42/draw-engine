@@ -20,12 +20,12 @@ impl DrawEngine {
             // follows the cursor between its clicks, which is the whole of how it is
             // aimed. It is the only thing in the engine that moves with no button held.
             if self.multi_linear.is_some() {
-                let world = self.snap(self.screen_to_world(sx, sy));
+                let world = self.snap_gesture(self.screen_to_world(sx, sy));
                 self.track_multi_linear(world, square);
             }
             return;
         };
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.snap_gesture(self.screen_to_world(sx, sy));
         let next = self.advance_interaction(it, sx, sy, world, square, invert_snap);
         self.interaction = next;
     }
@@ -43,18 +43,8 @@ impl DrawEngine {
             // Same rubber-band as a shape: the box you drag out is the column you get.
             Interaction::TextDraft { ref id, start, .. }
             | Interaction::Draft { ref id, start, .. } => {
-                if let Some(mut element) = self.scene.get(id).cloned() {
-                    // A note is square unless Shift frees it, where a shape is free unless
-                    // Shift squares it (`App.tsx@1118751f:13419-13425`).
-                    let sticky = element.kind == DrawElementType::StickyNote;
-                    let rect = rect_from_drag(start.x, start.y, world.x, world.y, square != sticky);
-                    element.x = rect.x;
-                    element.y = rect.y;
-                    element.width = rect.width;
-                    element.height = rect.height;
-                    self.scene.put(element);
-                    self.request_draw();
-                }
+                let at = self.snap_draft(id, world, invert_snap);
+                self.move_draft(id, start, at, square, &it);
                 match it {
                     Interaction::Draft {
                         id, start, press, ..
@@ -74,6 +64,9 @@ impl DrawEngine {
                 grab,
             } => {
                 let at = self.resize_pointer(sx, sy, grab);
+                // A group is not a single element, so the oracle's angle gate is not its
+                // gate, and it snaps like anything else.
+                let at = self.snap_resize(ids, handle, frame.bounds, at, false, invert_snap);
                 // Alt, as of the last move: every handle then grows the frame about its
                 // own centre instead of the opposite corner or side.
                 let from_center = self.alt_held;
@@ -139,7 +132,8 @@ impl DrawEngine {
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
-                for next in crate::selection::group_transform::rotate_group(&elements, frame, world)
+                for next in
+                    crate::selection::group_transform::rotate_group(&elements, frame, world, square)
                 {
                     self.scene.put(next);
                 }
@@ -175,6 +169,13 @@ impl DrawEngine {
                     handle: next,
                 })
             }
+            Interaction::LabelDrag { ref id, grab } => {
+                self.move_label(id, grab, world);
+                Some(Interaction::LabelDrag {
+                    id: id.clone(),
+                    grab,
+                })
+            }
             Interaction::Linear { ref id, start, .. } => {
                 self.move_linear(id, start, world, square);
                 Some(Interaction::Linear {
@@ -197,7 +198,15 @@ impl DrawEngine {
                         // what is stored is what is drawn and what is exported — a
                         // stroke smoothed only in the painter would change shape the
                         // moment it was saved and reloaded.
-                        let raw = [world.x - start.x, world.y - start.y];
+                        //
+                        // From the **raw** pointer, as the oracle does
+                        // (`App.tsx@1118751f:11181-11182` reads `pointerDownState
+                        // .lastCoords` and no `getGridPoint`): a stroke's points are the
+                        // pointer less its own origin, and that origin is unrounded
+                        // (`:9899-9902`), so rounding either half without the other would
+                        // move the stroke away from the cursor by up to half a cell.
+                        let at = self.screen_to_world(sx, sy);
+                        let raw = [at.x - start.x, at.y - start.y];
                         let next = match points.last() {
                             Some(&previous) => crate::freehand::streamline(
                                 previous,
@@ -226,6 +235,7 @@ impl DrawEngine {
                     last_y: sy,
                 })
             }
+            Interaction::SecondaryPan => self.advance_secondary_pan(sx, sy),
             Interaction::Move { .. } => Some(self.move_selection(it, world, invert_snap)),
             Interaction::CornerRadius {
                 ref id,
@@ -252,6 +262,7 @@ impl DrawEngine {
                     id,
                     at,
                     square,
+                    invert_snap,
                     ResizeDrag {
                         handle,
                         ratio,
@@ -265,7 +276,7 @@ impl DrawEngine {
             }
             Interaction::Rotate { ref id } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
-                    element.angle = rotate_element(&element, world.x, world.y);
+                    element.angle = rotate_element(&element, world.x, world.y, square);
                     // An arrow turned on its own lets go of both ends, as in Excalidraw
                     // (`packages/element/src/resizeElements.ts@1118751f:241-252`): its ends are
                     // being placed by the turn, and holding them to shapes would fight it.
@@ -314,6 +325,20 @@ impl DrawEngine {
                     base,
                 })
             }
+            Interaction::PointBox { ref id, start } => {
+                // Re-derived from scratch on **every** move, as the oracle does
+                // (`App.tsx:11275` is inside the pointer-move handler, and the reduce at
+                // `linearElementEditor.ts:276-289` rebuilds the whole set from
+                // `selectedPointsIndices` each time). That is what makes the shift latch
+                // work across moves rather than only within one, and it is why the band
+                // follows the pointer instead of only being judged at the release.
+                let rect = crate::selection::marquee_rect(start.x, start.y, world.x, world.y);
+                self.select_points_in_box(id, rect, square);
+                Some(Interaction::PointBox {
+                    id: id.clone(),
+                    start,
+                })
+            }
         }
     }
 
@@ -348,6 +373,45 @@ impl DrawEngine {
         self.scene.put(moved);
         let label = crate::scene::binding::refresh_binding_of(&mut self.scene, id);
         self.rewrap_linear_labels(label);
+        self.request_draw();
+    }
+
+    /// Puts `arrow`'s label where the pointer has carried it, along the arrow's own drawn
+    /// path — `handleBoundTextDragging`
+    /// (`linearElementEditor.ts@1118751f:1963-2030`).
+    ///
+    /// Three steps, in the oracle's order: take the pointer off the grab offset, read the
+    /// fraction of the path nearest what is left, and put the label on the path at that
+    /// fraction. Reading a fraction and *then* locating the point is what keeps the label on
+    /// the curve; snapping the pointer's projection straight onto the geometry would put it
+    /// on the polyline, which is a different place on anything bent.
+    ///
+    /// The arrow is read and never written: no points, no extent, no bindings, and no
+    /// `apply_bindings`. The oracle mutates the bound text alone, and an arrow that followed
+    /// its label would be an arrow whose ends no longer touch what they are bound to.
+    fn move_label(&mut self, id: &str, grab: Point, world: Point) {
+        let Some(arrow) = self.scene.get(id).cloned() else {
+            return;
+        };
+        let Some(label) = self.live_label(&arrow).cloned() else {
+            return;
+        };
+        let carried = Point {
+            x: world.x - grab.x,
+            y: world.y - grab.y,
+        };
+        let Some(fraction) = crate::selection::linear::path_fraction_at_point(&arrow, carried)
+        else {
+            return;
+        };
+        let Some(at) = crate::selection::linear::path_point_at_fraction(&arrow, fraction) else {
+            return;
+        };
+        let mut next = label;
+        next.label_position = Some(fraction);
+        next.x = at.x - next.width / 2.0;
+        next.y = at.y - next.height / 2.0;
+        self.scene.put(next);
         self.request_draw();
     }
 
@@ -635,15 +699,9 @@ impl DrawEngine {
         let mut dy = world.y - start.y;
         self.snap_guides.clear();
         // Alignment guides pull toward other elements' edges, which is a different answer
-        // from the grid's. Running both makes the result depend on which won by a pixel,
-        // so the grid takes precedence while it is snapping.
-        //
-        // Otherwise Excalidraw's rule (`snapping.ts@1118751f:180-183`): the preference, inverted
-        // for as long as Ctrl/Cmd is held. Theirs also refuses the inverted case while the
-        // grid is on; here the grid already wins outright, which covers it.
-        let grid_snapping = self.grid().enabled && self.grid().snap;
-        let snap_to_objects = self.objects_snap != invert_snap;
-        if snap_to_objects && !grid_snapping {
+        // from the grid's; the gate is `objects_snap_gesture`, shared with drawing and
+        // resizing so the three cannot drift apart.
+        if self.objects_snap_gesture(invert_snap) {
             let moving: Vec<DrawElement> = ids
                 .iter()
                 .filter_map(|id| self.scene.get(id).cloned())
@@ -683,16 +741,131 @@ impl DrawEngine {
     }
 
     /// Where a resize puts the edge it moves: the pointer, less where in the handle it was
-    /// taken, snapped (`App.tsx@1118751f:13578-13582` — the grab first, then the grid).
+    /// taken, then the grid unless Ctrl/Cmd is held (`App.tsx@1118751f:13578-13582` — the
+    /// grab first, then `event[KEYS.CTRL_OR_CMD] ? null : this.getEffectiveGridSize()`).
+    ///
+    /// Both a single element (`:264`) and a group (`:89`) land here, and the oracle's one
+    /// site serves both, so the gate is here rather than at either call site.
     fn resize_pointer(&self, sx: f64, sy: f64, grab: Point) -> Point {
         let raw = self.screen_to_world(sx, sy);
-        self.snap(Point {
+        self.snap_gesture(Point {
             x: raw.x - grab.x,
             y: raw.y - grab.y,
         })
     }
 
-    fn move_resize(&mut self, id: &str, world: Point, square: bool, drag: ResizeDrag<'_>) {
+    /// Where the corner of a shape being drawn lands.
+    ///
+    /// The oracle's `snapNewElement` (`snapping.ts@1118751f:1246-1316`, from
+    /// `App.tsx@1118751f:13383`), which offers exactly **one** point — the pointer — and
+    /// adds the offset to the corner before the box is computed from it (`:13402-13417`).
+    /// So the shape is sized from the **snapped** corner, and the snap decides where the
+    /// shape lands and nothing else about it.
+    ///
+    /// No tool gate: `snapNewElement`'s only gate is `isSnappingEnabled`, unlike the
+    /// press's (`isActiveToolNonLinearSnappable`, `snapping.ts@1118751f:1402-1414`).
+    fn snap_draft(&mut self, id: &str, corner: Point, invert_snap: bool) -> Point {
+        self.snap_guides.clear();
+        if !self.objects_snap_gesture(invert_snap) {
+            return corner;
+        }
+        // The element being drafted is in the scene already, so it is its own worst
+        // candidate: at 0×0 under the press it would be a target of itself.
+        let snap = crate::interaction::snap_points(
+            &[corner],
+            &self.snap_targets(|other| other == id),
+            super::SNAP_PX / self.camera.scale,
+        );
+        self.snap_guides = snap.guides;
+        Point {
+            x: corner.x + snap.dx,
+            y: corner.y + snap.dy,
+        }
+    }
+
+    /// Where the edge a resize handle holds lands.
+    ///
+    /// The oracle's `snapResizingElements` (`snapping.ts@1118751f:1108-1244`, from
+    /// `App.tsx@1118751f:13625`). Two things make it its own question rather than the
+    /// move path's:
+    ///
+    /// - **the moving points are the dragged edge's, not the box's** — a side handle
+    ///   offers its edge's two endpoints and a corner handle one point
+    ///   (`snapping.ts@1118751f:1146-1183`), measured from the *origin's* bounds plus the
+    ///   drag offset (`:1130-1144`). The box's other corners are not candidates, so a
+    ///   resize is not a move in disguise;
+    /// - **one turned element refuses outright** (`:1121-1122`), which is why `turned` is
+    ///   an argument and not something [`Self::snap_draft`] also has.
+    fn snap_resize(
+        &mut self,
+        moving: &[String],
+        handle: HandleKind,
+        from: crate::camera::WorldBounds,
+        at: Point,
+        turned: bool,
+        invert_snap: bool,
+    ) -> Point {
+        self.snap_guides.clear();
+        if turned || !self.objects_snap_gesture(invert_snap) {
+            return at;
+        }
+        let snap = crate::interaction::snap_points(
+            &resize_snap_points(&from, handle, at),
+            &self.snap_targets(|other| moving.iter().any(|id| id == other)),
+            super::SNAP_PX / self.camera.scale,
+        );
+        self.snap_guides = snap.guides;
+        Point {
+            x: at.x + snap.dx,
+            y: at.y + snap.dy,
+        }
+    }
+
+    /// The rubber band a drafted shape is stretched to. [`Self::snap_draft`] has already
+    /// said where the corner lands.
+    fn move_draft(
+        &mut self,
+        id: &str,
+        start: Point,
+        corner: Point,
+        square: bool,
+        it: &Interaction,
+    ) {
+        let Some(mut element) = self.scene.get(id).cloned() else {
+            return;
+        };
+        // A note is square unless Shift frees it, where a shape is free unless Shift
+        // squares it (`App.tsx@1118751f:13419-13425`).
+        let sticky = element.kind == DrawElementType::StickyNote;
+        // Alt, as of the last move: a drafted shape grows about the press instead of out
+        // of it (`shouldResizeFromCenter`, `dragElements.ts@1118751f:371-376`). A text is
+        // not one of these — the oracle anchors it at half its box and leaves its height
+        // alone (`dragElements.ts@1118751f:352-366`), which is a different change.
+        let from_center = self.alt_held && !matches!(it, Interaction::TextDraft { .. });
+        let rect = rect_from_drag(
+            start.x,
+            start.y,
+            corner.x,
+            corner.y,
+            square != sticky,
+            from_center,
+        );
+        element.x = rect.x;
+        element.y = rect.y;
+        element.width = rect.width;
+        element.height = rect.height;
+        self.scene.put(element);
+        self.request_draw();
+    }
+
+    fn move_resize(
+        &mut self,
+        id: &str,
+        world: Point,
+        square: bool,
+        invert_snap: bool,
+        drag: ResizeDrag<'_>,
+    ) {
         let ResizeDrag {
             handle,
             ratio,
@@ -739,6 +912,16 @@ impl DrawEngine {
         // other way round. A photograph stretched by accident is a mistake you often do
         // not notice until much later.
         let lock = crate::scene::locks_aspect_ratio(&from, square);
+        // The oracle refuses to snap one turned element's resize
+        // (`snapResizingElements`); `snap_resize` says so, and takes the pointer untouched.
+        let world = self.snap_resize(
+            std::slice::from_ref(&id.to_string()),
+            handle,
+            crate::scene::element_bounds(&from),
+            world,
+            !crate::math::are_roughly_equal(element.angle, 0.0),
+            invert_snap,
+        );
         let label = element
             .bound_text_id
             .as_deref()
@@ -1107,6 +1290,31 @@ struct ResizeDrag<'a> {
     origin_points: Option<&'a [[f64; 2]]>,
     label_font: Option<&'a (String, Option<f64>)>,
     sticky: Option<crate::scene::sticky::StickyOrigin>,
+}
+
+/// The points a resize offers to the snap: the corner the handle holds, or both ends of
+/// the edge it holds.
+///
+/// The oracle's switch on the transform handle (`snapResizingElements`,
+/// `snapping.ts@1118751f:1148-1183`), restated over [`HandleKind`]. Its `includes("e")`
+/// spelling is a substring test on the handle's name, so a corner handle is on both
+/// axes — which is the one thing that turns two points into one.
+fn resize_snap_points(
+    from: &crate::camera::WorldBounds,
+    handle: HandleKind,
+    at: Point,
+) -> Vec<Point> {
+    let mut xs = vec![from.min_x, from.max_x];
+    let mut ys = vec![from.min_y, from.max_y];
+    if handle.has_ew() {
+        xs = vec![at.x];
+    }
+    if handle.has_ns() {
+        ys = vec![at.y];
+    }
+    xs.into_iter()
+        .flat_map(|x| ys.iter().map(move |y| Point { x, y: *y }))
+        .collect()
 }
 
 /// The handle a resize holds, as far as a note's layout cares.

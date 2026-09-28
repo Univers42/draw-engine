@@ -13,9 +13,11 @@ export interface WorldBounds {
   maxY: number;
 }
 
-export const MIN_ZOOM = 0.1;
-export const MAX_ZOOM = 30;
+/** The identity camera, `0, 0, 1` — a translation of nothing at 1:1. */
 export const IDENTITY: Camera = { x: 0, y: 0, scale: 1 };
+// `MIN_ZOOM`/`MAX_ZOOM` used to sit here as the literals 0.1 and 30, which is the Rust's
+// pair (`camera.rs:5-6`) written out a second time and nothing compared the two. They are
+// the engine's to answer now — `minZoom()`/`maxZoom()` in `./cameraMath`.
 
 export type DrawElementType =
   | "rectangle"
@@ -83,6 +85,30 @@ export const ARROWHEADS: Arrowhead[] = [
 export type TextAlign = "left" | "center" | "right";
 export const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
 
+/**
+ * What a right-button press did. The order is the contract with `pan.rs` and is
+ * append-only: a host reading index 2 as "editing-text" when the engine writes
+ * `Started` there would prevent the default of a press that must not have it
+ * (`App.pan.ts@1118751f:118-125`, issue #4489).
+ */
+export type SecondaryPanStart = "declined" | "started" | "editing-text";
+export const SECONDARY_PAN_STARTS: SecondaryPanStart[] = [
+  "declined",
+  "started",
+  "editing-text",
+];
+
+/**
+ * What a right-button release owes the menu. The order is the contract with `pan.rs`.
+ *
+ * - `none` — the platform's own `contextmenu` is still to come, and it is a click.
+ * - `drag` — it is still to come, and it is not: the host passes it to
+ *   `consumesContextMenu`, which swallows it.
+ * - `menu` — it was already swallowed with the press, so the host opens the menu itself.
+ */
+export type SecondaryPanEnd = "none" | "drag" | "menu";
+export const SECONDARY_PAN_ENDS: SecondaryPanEnd[] = ["none", "drag", "menu"];
+
 /** Where a label sits down the height of the shape holding it. */
 export type VerticalAlign = "top" | "middle" | "bottom";
 export const VERTICAL_ALIGNS: VerticalAlign[] = ["top", "middle", "bottom"];
@@ -127,6 +153,21 @@ export type FlowchartDirection = "up" | "down" | "left" | "right";
 /** The three shapes 1/2/3 chooses while a flowchart cluster is being created. */
 export type FlowchartShape = "rectangle" | "diamond" | "ellipse";
 
+/**
+ * The four a line or an arrow switches between, in the order Tab walks them
+ * (`LINEAR_TYPES`, `ConvertElementTypePopup.tsx@1118751f:113-120`). Three of the four are
+ * the same element type — an arrow — and differ only in `roundness` and `elbowed`, which is
+ * why these are names of their own and not `DrawElementType`s.
+ */
+export type LinearType = "line" | "sharpArrow" | "curvedArrow" | "elbowArrow";
+
+/**
+ * Everything the shape switch can switch to: the three closed shapes, or the four linear
+ * types. A conversion never crosses between the two families
+ * (`ConvertElementTypePopup.tsx@1118751f:929-950`).
+ */
+export type ConversionType = FlowchartShape | LinearType;
+
 export interface DrawElementStyle {
   strokeColor: string;
   backgroundColor: string;
@@ -141,7 +182,11 @@ export interface DrawElementStyle {
 export const DEFAULT_ELEMENT_STYLE: DrawElementStyle = {
   strokeColor: "#1e1e1e",
   backgroundColor: "transparent",
-  fillStyle: "hachure",
+  // The engine's own `DrawElementStyle::default()`, kept in step with it: the placeholder
+  // a panel shows before an engine exists, and the fallback `parseJson` reaches for. The
+  // oracle's `DEFAULT_ELEMENT_PROPS.fillStyle` is `"solid"`
+  // (packages/common/src/constants.ts@1118751f:522).
+  fillStyle: "solid",
   strokeWidth: 2,
   strokeStyle: "solid",
   roughness: 1,
@@ -258,6 +303,17 @@ export interface DrawElement extends DrawElementStyle {
    * hard lines while the shape grows wide enough for them (`false`).
    */
   wrap?: boolean;
+  /**
+   * Only a label's: how far along its arrow's drawn path it sits, as a **fraction of that
+   * path's length** — a label dragged along its arrow, the gesture being a primary press on
+   * the label and a drag (Excalidraw's `labelPosition`,
+   * `packages/element/src/types.ts@1118751f:290`). A fraction and not a world-unit offset,
+   * so the label stays where it was put when the arrow is lengthened.
+   *
+   * Absent is the middle of the path, which is where every label drawn before labels could
+   * be dragged was drawn. Read through the engine, which clamps it into `[0, 1]`.
+   */
+  labelPosition?: number | null;
   containerId?: string | null;
   boundTextId?: string | null;
   /**
@@ -345,6 +401,139 @@ export const DEFAULT_GRID: GridSettings = {
   step: 5,
   snap: true,
 };
+
+/**
+ * What a whole-scene PNG export is asked for. Mirrors the engine's `ExportFrame`
+ * (`crates/draw-engine/src/export/png.rs`).
+ *
+ * Both fields are optional and **both defaults live in the Rust binding**, not here: the
+ * oracle's own defaults are `exportBackground` true and an `exportScale` of the device
+ * pixel ratio when that is one of its three and 1 otherwise (`appState.ts@1118751f:20-22,
+ * 70`). A host that says nothing gets those; a host that says `2` gets twice the scene's
+ * size in each direction, which is arithmetic the engine does and this only asks for.
+ */
+export interface PngExport {
+  /** Device pixels per CSS pixel. Taken as given — the engine does not clamp it. */
+  scale?: number;
+  /** No background at all, rather than the theme's. */
+  transparent?: boolean;
+  /**
+   * The dialog's "selection only" checkbox, and the oracle's `exportSelectionOnly`
+   * (`data/index.ts@1118751f:56-58`).
+   *
+   * It says *whether to narrow*, never *narrow to what*. With nothing selected this is the
+   * whole scene — the oracle's flag never becomes true, so the export falls through to the
+   * scene rather than to an empty canvas — and with exactly one frame selected this is a
+   * frame export, measured by the frame at no padding. Both are decided in Rust, because a
+   * front that picked either would be a second answer to the same question.
+   */
+  selectionOnly?: boolean;
+}
+
+/**
+ * The SVG export's only option, which is the PNG's minus the raster two.
+ *
+ * A type of its own rather than `Pick<PngExport, "selectionOnly">` because the two are
+ * asked separately and a shared one would grow a `scale` that the vector path has no use for.
+ */
+export interface SvgExport {
+  /** See [`PngExport.selectionOnly`]. */
+  selectionOnly?: boolean;
+}
+
+/**
+ * The two copy actions, which are two formats and not two features
+ * (`actionClipboard.tsx@1118751f:192` and `:124`).
+ */
+export type ClipboardFormatName = "png" | "svg";
+
+/**
+ * Why a saved file did not open, in the engine's three answers.
+ *
+ * The oracle has two and calls them `INVALID` and `FAILED`
+ * (`data/image.ts@1118751f:62, 67, 70`): "this file carries no scene of ours", and "it
+ * carries ours and we cannot read it". It cannot tell a PNG with no `tEXt` chunk from one
+ * whose first `tEXt` chunk is somebody else's — `:51`'s keyword test fails the same way for
+ * both — and neither can we, so those are one answer here too.
+ *
+ * The third is a file that is not an image at all. The oracle reports that as a raw throw
+ * from `png-chunks-extract`, which escapes `decodePngMetadata` because `getTEXtChunk` is
+ * awaited outside its `try` (`image.ts:111`… `:50`), and a person is told a library's name
+ * instead of being told the file is not a picture.
+ */
+export type RestoreRefusal = "malformed" | "not-ours" | "unreadable";
+
+/**
+ * Opening a saved file, as the engine answers it.
+ *
+ * **The scene is loaded by the engine, not handed back.** `restored: true` means the board
+ * on screen is the file now, and no refusal can have touched it. The other shape available
+ * was a result object the host then fed to `loadScene`, and it puts the whole thing at risk
+ * in one line of the front: a host that forgot the second call would open a file and see
+ * the board it already had, which is the same silence as a blank board.
+ *
+ * So there is one field for success and one for failure, never both — and never a success
+ * with nothing in it. The engine refuses a payload whose scene has no elements, because a
+ * restore that yields nothing is indistinguishable from a fresh board.
+ */
+export type RestoreOutcome =
+  | { restored: true; refused?: undefined }
+  | { restored?: undefined; refused: RestoreRefusal };
+
+/**
+ * What the browser can take, and nothing else.
+ *
+ * The oracle reads these off `navigator` and `window` at its own `predicate`
+ * (`clipboard.ts@1118751f:65-72`); the engine cannot see either, so a host reports them.
+ * They default to `true` because a host that has a clipboard at all is the normal case,
+ * and the two entries that matter pass the real answer.
+ */
+export interface ClipboardSupport {
+  /**
+   * `probablySupportsClipboardBlob`: `navigator.clipboard.write`, `ClipboardItem` in the
+   * window, and `toBlob` on the canvas prototype.
+   */
+  canWriteBlob?: boolean;
+  /** `probablySupportsClipboardWriteText`: `navigator.clipboard.writeText`. */
+  canWriteText?: boolean;
+}
+
+/**
+ * One clipboard copy, as the engine answers it: whether to write at all, under what type,
+ * of what, and the payload for the format asked for.
+ *
+ * All four are the engine's (BUNNY.md §2). The host writes the payload under `mime` and
+ * reports whether the browser took it; it does not choose a type, decide a scope, or
+ * measure anything.
+ */
+export interface ClipboardCopy {
+  /**
+   * The oracle's `predicate` (`actionClipboard.tsx@1118751f:186-188, 247-249`): the
+   * browser can take this payload and there is something to take. `false` means do not
+   * write, and the `mime` and the payload are then both absent.
+   */
+  supported: boolean;
+  /**
+   * Why not, when `supported` is false. Two, because the oracle's `predicate` is a
+   * conjunction (`actionClipboard.tsx@1118751f:186-188, 247-249`) and it says two different
+   * things about the two ways to be false: a browser that cannot take the payload makes the
+   * menu entry absent (`ContextMenu.tsx@1118751f:38-48`), while an empty board leaves the
+   * entry visible and reports `alerts.cannotExportEmptyCanvas`
+   * (`data/index.ts@1118751f:120-122`).
+   */
+  refusal?: "browser-cannot-take" | "nothing-to-copy";
+  /** `image/png` or `text/plain`, from the engine. Never the host's to pick. */
+  mime: string;
+  /**
+   * What was copied, as the oracle's toast words it (`locales/en.json@1118751f:579-580`).
+   * A lone selected frame is `"selection"`, because a frame *is* selected.
+   */
+  scope: "selection" | "scene";
+  /** The raster, for `png`: a promise, and `null` if the browser could not encode it. */
+  blob?: Promise<Blob | null>;
+  /** The vector, for `svg`. */
+  text?: string;
+}
 
 export interface DrawTheme {
   background: string;

@@ -456,6 +456,155 @@ fn keeping_the_original_leaves_it_under_the_trace() {
     assert_eq!(live(&engine).len(), 1);
 }
 
+// -------------------------------------------------------------------- bindings
+
+/// The picture at the usual place, with an arrow drawn across it: both its ends land
+/// inside the image, so both are bound to it. Drawn, not assigned — the binding is the
+/// one the engine itself would make, which is the thing that has to survive a trace.
+fn picture_with_an_arrow_across() -> (DrawEngine, String, String) {
+    let image = picture_at(100.0, 50.0, 200.0, 100.0);
+    let image_id = image.id.clone();
+    let mut engine = engine_with_scene(vec![image]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(150.0, 80.0, false, false);
+    engine.move_pointer(250.0, 120.0, false, false);
+    engine.end_pointer();
+    let arrow = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow was drawn");
+    assert_eq!(
+        arrow.start_binding.as_deref(),
+        Some(image_id.as_str()),
+        "setup"
+    );
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(image_id.as_str()),
+        "setup"
+    );
+    (engine, image_id, arrow.id)
+}
+
+/// The image goes, so the arrow is let go of it — the release a delete makes
+/// (`fixBindingsAfterDeletion`, `binding.ts@1118751f:2297-2311`), and not a move to the
+/// trace's new ids: the oracle has no way to rebind an arrow (`binding.ts:2577`,
+/// `delta.ts:2024-2025`) and never writes a substitute id. All three fields of the end
+/// go together, as `set_anchor` is the only writer of them.
+#[test]
+fn an_arrow_bound_to_a_vectorized_image_is_let_go_of_it() {
+    let (mut engine, image_id, arrow_id) = picture_with_an_arrow_across();
+
+    engine
+        .vectorize_to_shapes(&image_id, &trace(), options(false))
+        .unwrap();
+
+    assert!(
+        element(&engine, &image_id).is_deleted,
+        "replaced by its trace"
+    );
+    let arrow = element(&engine, &arrow_id);
+    assert!(!arrow.is_deleted, "the arrow was not in the way");
+    assert_eq!(arrow.start_binding, None, "let go of the start");
+    assert_eq!(arrow.end_binding, None, "let go of the end");
+    assert_eq!(arrow.start_fixed_point, None, "with no anchor left");
+    assert_eq!(arrow.end_fixed_point, None, "with no anchor left");
+    assert_eq!(arrow.start_bind_mode, None, "and no mode left");
+    assert_eq!(arrow.end_bind_mode, None, "and no mode left");
+}
+
+/// The same, for the one-picture mode: the new picture is a new element, so an arrow
+/// bound to the old id is bound to nothing, and is let go.
+#[test]
+fn an_arrow_is_let_go_of_an_image_vectorized_into_a_picture() {
+    let (mut engine, image_id, arrow_id) = picture_with_an_arrow_across();
+
+    engine
+        .vectorize_to_picture(&image_id, SVG, options(false))
+        .unwrap();
+
+    let arrow = element(&engine, &arrow_id);
+    assert_eq!(arrow.start_binding, None);
+    assert_eq!(arrow.end_binding, None);
+}
+
+/// With the original kept there is nothing to let go of: the image is still on the board
+/// under its own id, so the binding is still the binding. Releasing it here would be a
+/// regression, not a fix.
+#[test]
+fn keeping_the_original_leaves_the_arrow_bound_to_it() {
+    let (mut engine, image_id, arrow_id) = picture_with_an_arrow_across();
+
+    engine
+        .vectorize_to_shapes(&image_id, &trace(), options(true))
+        .unwrap();
+
+    assert!(!element(&engine, &image_id).is_deleted, "the image stayed");
+    let arrow = element(&engine, &arrow_id);
+    assert_eq!(arrow.start_binding.as_deref(), Some(image_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(image_id.as_str()));
+}
+
+/// The release is part of the same step of history as the tombstone, as the eraser's is:
+/// one undo gives back the image **and** the arrow's hold on it.
+#[test]
+fn one_undo_binds_the_arrow_to_the_image_again() {
+    let (mut engine, image_id, arrow_id) = picture_with_an_arrow_across();
+
+    engine
+        .vectorize_to_shapes(&image_id, &trace(), options(false))
+        .unwrap();
+    assert_eq!(element(&engine, &arrow_id).start_binding, None);
+
+    engine.undo();
+
+    let arrow = element(&engine, &arrow_id);
+    assert!(!element(&engine, &image_id).is_deleted, "the image is back");
+    assert_eq!(arrow.start_binding.as_deref(), Some(image_id.as_str()));
+    assert_eq!(arrow.end_binding.as_deref(), Some(image_id.as_str()));
+}
+
+/// One-directional, as the oracle's is (`delta.ts@1118751f:1976-1979`): a binding may
+/// not reach from a live element into a deleted one, and nothing else about an arrow
+/// changes. Its far end is on a shape the trace never touched, and stays bound to it.
+#[test]
+fn an_arrow_is_let_go_of_only_the_image_end() {
+    let image = picture_at(100.0, 50.0, 200.0, 100.0);
+    let image_id = image.id.clone();
+    let other = filled(box_at(400.0, 50.0, 200.0, 100.0));
+    let other_id = other.id.clone();
+    let mut engine = engine_with_scene(vec![image, other]);
+    engine.set_tool(DrawTool::Arrow);
+    engine.begin_pointer(150.0, 80.0, false, false);
+    engine.move_pointer(500.0, 100.0, false, false);
+    engine.end_pointer();
+    let arrow_id = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.kind == DrawElementType::Arrow)
+        .expect("the arrow was drawn")
+        .id;
+    assert_eq!(
+        element(&engine, &arrow_id).end_binding.as_deref(),
+        Some(other_id.as_str()),
+        "setup"
+    );
+
+    engine
+        .vectorize_to_shapes(&image_id, &trace(), options(false))
+        .unwrap();
+
+    let arrow = element(&engine, &arrow_id);
+    assert_eq!(arrow.start_binding, None, "the image is gone");
+    assert_eq!(
+        arrow.end_binding.as_deref(),
+        Some(other_id.as_str()),
+        "the box is not, so that end is still good"
+    );
+    assert!(arrow.end_fixed_point.is_some(), "its anchor too");
+}
+
 // --------------------------------------------------------------------- refusals
 
 #[test]

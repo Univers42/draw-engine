@@ -5,8 +5,7 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
-    create_element, default_element_style, element_bounds, merge_style, DrawElement,
-    DrawElementType, Geometry,
+    create_element, default_element_style, merge_style, DrawElement, DrawElementType, Geometry,
 };
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
@@ -31,7 +30,14 @@ impl DrawEngine {
         }
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
-        let world = self.snap(self.screen_to_world(sx, sy));
+        let world = self.snap_gesture(self.screen_to_world(sx, sy));
+        // …and then to the objects around it, for the tools the oracle gives that to; the
+        // long form of why is on `snap_press` and the tool list on `snaps_press_origin`.
+        let world = if self.snaps_press_origin() {
+            self.snap_press(world)
+        } else {
+            world
+        };
         if is_shape_tool(self.tool) {
             self.begin_shape(world);
             return;
@@ -55,7 +61,17 @@ impl DrawEngine {
                 self.mark_along(at, at);
                 self.alt_held = duplicate;
             }
-            DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
+            // A freedraw press is the **raw** pointer, and is the one place the oracle
+            // passes a bare `null` grid to `getGridPoint`
+            // (`App.tsx@1118751f:9899-9902`; a `null` grid returns the point unchanged,
+            // `packages/common/src/points.ts@1118751f:74-80`). It is unrounded *because*
+            // the stroke's points are the raw pointer less this origin
+            // (`:11181-11196`) — rounding the press alone would shift every point by up
+            // to half a cell, which is the shake `points.ts:68` warns of. So the move
+            // half goes with it, and neither is routed through the grid at all.
+            DrawTool::Freedraw | DrawTool::AutoShape => {
+                self.begin_freedraw(self.screen_to_world(sx, sy))
+            }
             DrawTool::Text => self.begin_text(sx, sy, world),
             DrawTool::Lasso => {
                 self.interaction = Some(Interaction::Lasso {
@@ -275,6 +291,56 @@ impl DrawEngine {
         self.request_draw();
     }
 
+    /// Whether this tool's **press** snaps to the objects around it, as Excalidraw's
+    /// `isActiveToolNonLinearSnappable` decides (`snapping.ts@1118751f:1402-1414`).
+    ///
+    /// It lists rectangle, ellipse, diamond, frame, magicframe, image and text — and not
+    /// a line, not the selection, and not a sticky note. The first two absences are not
+    /// omissions: this engine's linear tools draft from a grid-snapped press and nothing
+    /// else, which is what the oracle's `getGridPoint` at
+    /// `App.tsx@1118751f:10235-10239` does, and a sticky note is absent from the oracle's
+    /// list itself.
+    ///
+    /// **The figure tool is ours and has no oracle at all** — `rg '"figure"'` over
+    /// Excalidraw @1118751f finds nothing — so nothing in that list speaks for it. It
+    /// drafts as an ordinary shape and is given the shape's answer, which is the
+    /// conservative reading of a tool that behaves like one. Its sibling
+    /// [`DrawTool::AutoShape`] drafts as a *stroke* and takes the stroke's rule, because
+    /// that is what it is made of. Both are one line to change if the owner says otherwise.
+    pub(crate) fn snaps_press_origin(&self) -> bool {
+        is_shape_tool(self.tool) || matches!(self.tool, DrawTool::Frame | DrawTool::Text)
+    }
+
+    /// A press origin, already on the grid, pulled onto the nearest nearby object's box.
+    ///
+    /// The oracle's `originSnapOffset`. Its press origin is
+    /// `originInGrid + originSnapOffset` (`App.tsx@1118751f:13388-13394`, and
+    /// `dragElements.ts@1118751f:390-391`), where the grid's half is the `originInGrid` of
+    /// `:9228-9236` and the object's half comes from the **hover's**
+    /// `getSnapLinesAtPointer` (`:7866-7897`).
+    ///
+    /// The oracle computes it on hover so the user sees the alignment before pressing. The
+    /// **rule** it is applying is the press, so that is where it is applied here: the
+    /// preview is the part left out, and leaving it out changes when the shape appears to
+    /// settle, not where it settles.
+    ///
+    /// The reach is the same `SNAP_DISTANCE / zoom` a move's is, and the candidates are
+    /// the same reference boxes, because both come out of `getPointSnaps`.
+    fn snap_press(&self, point: Point) -> Point {
+        if !self.objects_snap_gesture(self.ctrl_held) {
+            return point;
+        }
+        let snap = crate::interaction::snap_points(
+            &[point],
+            &self.snap_targets(|_| false),
+            super::SNAP_PX / self.camera.scale,
+        );
+        Point {
+            x: point.x + snap.dx,
+            y: point.y + snap.dy,
+        }
+    }
+
     /// Starts a text gesture, without yet knowing which of the two it is.
     ///
     /// A click makes text that grows with what you type; a drag makes a column fixed to
@@ -459,25 +525,59 @@ impl DrawEngine {
                 // box, so the box handles never apply to it — Excalidraw gives one
                 // circles on its ends and no selection rectangle at all. A longer one has
                 // both, and the box handles are taken first (`App.tsx@1118751f:9406-9445`).
-                let handle = if self.shows_point_handles(&single) {
-                    None
-                } else {
+                // The five conditions behind that decision are
+                // `offers_transform_handles`'.
+                let handle = if self.offers_transform_handles(&single) {
                     // The same layout the painter uses, so a grab can only land on a
                     // handle that is actually on screen — and its own reach, which is
                     // sized to stay clear of the element so the outline still moves it.
                     self.resize_handle_at(&single, press)
+                } else {
+                    None
                 };
                 if handle.is_none() {
                     let handles = self.point_handles(&single);
                     if let Some(handle) =
                         crate::selection::linear::hit_handle(&handles, press.x, press.y, world_tol)
                     {
+                        // A press on a point holds it, which is the gesture that makes a
+                        // later Delete remove a point rather than the element
+                        // (`LinearElementEditor.handlePointerDown`,
+                        // `linearElementEditor.ts@1118751f:1204-1216`). Recorded on the
+                        // press, as the oracle does — so dragging the point away still
+                        // leaves it held, and a release without a move needs no special
+                        // case. A midpoint is not a point, so it selects nothing.
+                        if let crate::selection::LinearHandle::Point(index) = handle {
+                            // A press on a point holds it, which is the gesture that makes a
+                            // later Delete remove a point rather than the element
+                            // (`LinearElementEditor.handlePointerDown`,
+                            // `linearElementEditor.ts@1118751f:1204-1216`). Recorded on the
+                            // press, as the oracle does — so dragging the point away still
+                            // leaves it held, and a release without a move needs no special
+                            // case.
+                            self.select_point(&single.id, Some(index), additive);
+                        }
+                        if self.selecting_points_in_line_editor(&single.id, additive) {
+                            // ...unless shift is held, which makes this a box over the
+                            // points rather than a drag of one. See
+                            // `selecting_points_in_line_editor` for the oracle's flag.
+                            self.interaction = Some(Interaction::PointBox {
+                                id: single.id,
+                                start: press,
+                            });
+                            return;
+                        }
                         self.interaction = Some(Interaction::LinearPoint {
                             id: single.id,
                             handle,
                         });
                         return;
                     }
+                    // A press that reached the point branch and named no point, with no
+                    // shift, leaves the points held as they were: the oracle's
+                    // `clickedPointIndex > -1 || event.shiftKey` guard at `:1204` sits
+                    // outside the assignment, so nothing is written at all.
+                    self.select_point(&single.id, None, additive);
                 }
                 if handle == Some(HandleKind::Rotate) {
                     self.interaction = Some(Interaction::Rotate { id: single.id });
@@ -525,6 +625,19 @@ impl DrawEngine {
                             })
                             .map(|label| (label.id.clone(), label.font_size)),
                         sticky,
+                    });
+                    return;
+                }
+                // An arrow's label, last. Everything above has already said no: the box
+                // handles, the point handles and the segment-midpoint knob. That is the
+                // oracle's precedence exactly, its label losing to the handles sitting
+                // under it so a labelled arrow can still be bent at its middle
+                // (`App.tsx@1118751f:1149-1151`), and winning everywhere else, including
+                // where it reaches past the arrow's own hit area.
+                if let Some(grab) = self.label_grab(&single, press) {
+                    self.interaction = Some(Interaction::LabelDrag {
+                        id: single.id.clone(),
+                        grab,
                     });
                     return;
                 }
@@ -602,6 +715,19 @@ impl DrawEngine {
             }
             if duplicate {
                 self.duplicate_selection(0.0, 0.0);
+            }
+            // A shift-press **on the line being edited** is a box over its points, even
+            // when the press missed every handle and landed on the stroke: the oracle's
+            // flag tests the element, not a handle (`:10898`). Without this the second half
+            // of the gesture — dragging out from a point you did not press on — would fall
+            // through to a move of the whole line.
+            if self.selecting_points_in_line_editor(&hit.id, additive) {
+                self.interaction = Some(Interaction::PointBox {
+                    id: hit.id,
+                    start: press,
+                });
+                self.request_draw();
+                return;
             }
             self.begin_move(world);
             return;
@@ -770,32 +896,10 @@ impl DrawEngine {
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.
         //
-        // Culled to the viewport as well. An alignment guide to something off screen is
-        // drawn where nobody can see it, so the shape appears to stick for no reason —
-        // and gathering candidates from the whole document makes `snap_move` cost the
-        // size of the board on *every frame of every drag*. Excalidraw gathers its
-        // candidates from the visible elements for the same two reasons.
-        //
         // Once, here, rather than per frame: the viewport does not move during a drag.
-        let view = crate::visible_world_rect(self.camera, self.width, self.height);
-        let static_bounds = self
-            .scene
-            .iter_ordered()
-            .filter(|el| {
-                !moving.contains(&el.id)
-                    && el
-                        .container_id
-                        .as_ref()
-                        .is_none_or(|id| !moving.contains(id))
-            })
-            .map(element_bounds)
-            .filter(|b| {
-                b.min_x <= view.max_x
-                    && b.max_x >= view.min_x
-                    && b.min_y <= view.max_y
-                    && b.max_y >= view.min_y
-            })
-            .collect();
+        // The culling itself, and the two reasons for it, are in `snap_targets` — which
+        // drawing and resizing now share, so the candidate set is gathered one way.
+        let static_bounds = self.snap_targets(|id| moving.contains(id));
         self.interaction = Some(Interaction::Move {
             ids: origins.keys().cloned().collect(),
             start: world,
@@ -828,5 +932,33 @@ impl DrawEngine {
         };
         (!text.is_deleted && !self.untouchable(&text) && !self.in_untouchable_shape(&text))
             .then_some(text.id)
+    }
+
+    /// Where in `element`'s label a press at `world` landed: the press measured from the
+    /// label's centre, which is the whole of `boundTextGrabOffset`
+    /// (`linearElementEditor.ts@1118751f:1170-1176`).
+    ///
+    /// `None` unless the press is on the label of an **arrow**: the oracle's guard is
+    /// `boundTextElement && isArrowElement(element)`
+    /// (`linearElementEditor.ts@1118751f:1157-1165`), so a line's label is not draggable
+    /// and neither is anything but a text. Read with [`crate::hit_test_element`], the same
+    /// test [`Self::text_reopen_target`] reads, because it is the oracle's
+    /// `hitElementBoundText` and a text is hit on its box.
+    pub(crate) fn label_grab(&self, element: &DrawElement, world: Point) -> Option<Point> {
+        if !crate::scene::binding::is_binding_element(element) {
+            return None;
+        }
+        let label = self.live_label(element)?;
+        if !crate::hit_test_element(label, world.x, world.y, self.collision_tolerance()) {
+            return None;
+        }
+        let centre = Point {
+            x: label.x + label.width / 2.0,
+            y: label.y + label.height / 2.0,
+        };
+        Some(Point {
+            x: world.x - centre.x,
+            y: world.y - centre.y,
+        })
     }
 }

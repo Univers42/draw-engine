@@ -370,7 +370,7 @@ fn an_element_without_a_radius_writes_no_field() {
 fn an_svg_export_carries_the_radius_the_canvas_draws() {
     let big = rect(0.0, 0.0, 400.0, 400.0, None);
     let bounds = element_bounds(&big);
-    let svg = scene_to_svg(&[big], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[big], bounds, 10.0);
     assert!(
         svg.contains("rx=\"32\""),
         "adaptive corner, as drawn: {svg}"
@@ -381,6 +381,6 @@ fn an_svg_export_carries_the_radius_the_canvas_draws() {
 fn an_svg_export_carries_an_explicit_radius() {
     let element = rect(0.0, 0.0, 200.0, 120.0, Some(45.0));
     let bounds = element_bounds(&element);
-    let svg = scene_to_svg(&[element], bounds, 10.0, "#ffffff");
+    let svg = svg_at(&[element], bounds, 10.0);
     assert!(svg.contains("rx=\"45\""), "{svg}");
 }

@@ -245,6 +245,38 @@ impl WasmEngine {
         self.with_now(|eng| eng.begin_pan(sx, sy));
     }
 
+    /// Starts a right-button pan session, or declines it. See
+    /// [`DrawEngine::begin_secondary_pan`]; `pointers_down` is the host's count of
+    /// pointers on the canvas, the one thing the engine cannot know for itself.
+    ///
+    /// The answer is the discriminant of `SecondaryPanStart`, which also carries the
+    /// `preventDefault` decision: the host is not to have that rule of its own.
+    #[wasm_bindgen(js_name = beginSecondaryPan)]
+    pub fn begin_secondary_pan(&self, sx: f64, sy: f64, pointers_down: u32) -> u8 {
+        self.with_now_answering(|eng| eng.begin_secondary_pan(sx, sy, pointers_down) as u8)
+    }
+
+    /// Ends a right-button pan session and answers what the host owes the menu — the
+    /// discriminant of `SecondaryPanEnd`. See [`DrawEngine::end_secondary_pan`].
+    #[wasm_bindgen(js_name = endSecondaryPan)]
+    pub fn end_secondary_pan(&self) -> u8 {
+        self.with_now_answering(|eng| eng.end_secondary_pan() as u8)
+    }
+
+    /// Whether a `contextmenu` belongs to a right-button session and must not open the
+    /// menu. See [`DrawEngine::consumes_context_menu`].
+    #[wasm_bindgen(js_name = consumesContextMenu)]
+    pub fn consumes_context_menu(&self) -> bool {
+        self.with_now_answering(DrawEngine::consumes_context_menu)
+    }
+
+    /// Whether pointer moves arriving with no button of the host's own down are wanted.
+    /// See [`DrawEngine::wants_pointer_moves`].
+    #[wasm_bindgen(js_name = wantsPointerMoves)]
+    pub fn wants_pointer_moves(&self) -> bool {
+        self.cell.borrow().engine.wants_pointer_moves()
+    }
+
     #[wasm_bindgen(js_name = movePointer)]
     pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));
@@ -849,12 +881,165 @@ impl WasmEngine {
         self.cell.borrow().engine.export_json()
     }
 
+    /// The scene as an SVG, of the selection when `selection_only` says so.
+    ///
+    /// The padding is no longer a parameter and that is the whole change: it was a bare
+    /// `f64` the host chose, disagreeing with the PNG path's oracle 10 by 6px per side
+    /// (§2 does not allow the front to pick a margin). It now comes from
+    /// [`crate::export::ExportOptions`], and a host that wants the old 16 has to say so in
+    /// engine terms — there is nowhere in this signature left to pass it by accident.
     #[wasm_bindgen(js_name = exportSvg)]
-    pub fn export_svg(&self, padding: Option<f64>) -> Option<String> {
-        self.cell
-            .borrow()
+    pub fn export_svg(&self, selection_only: Option<bool>) -> Option<String> {
+        let options = crate::export::ExportOptions::default();
+        let engine = self.cell.borrow();
+        let scope = engine
             .engine
-            .export_svg(padding.unwrap_or(16.0))
+            .export_scope(selection_only.unwrap_or(false), &options);
+        engine.engine.export_svg_of(&scope, &options)
+    }
+
+    /// The scene in a saved file, loaded — or why it could not be.
+    ///
+    /// The other door beside `loadScene`, and the one the oracle's `decodePngMetadata`
+    /// (`data/image.ts@1118751f:49-71`) and `decodeSvgBase64Payload`
+    /// (`export.ts@1118751f:531-563`) are. What the bytes *are* is the engine's question
+    /// and is answered in Rust: this takes a `File`'s bytes and nothing else, so a host
+    /// cannot pick a container, a key, or a reading of a bad chunk.
+    ///
+    /// **The scene is loaded here rather than handed back.** Two answers were available: a
+    /// result object the host then feeds to `loadScene`, or this. The first puts the whole
+    /// thing at risk in one line of the front — a host that forgot the second call would
+    /// open a file and see the board it already had, which is the same silence as a blank
+    /// board. Here a refusal cannot touch the scene at all, because the scene is replaced
+    /// on the one path that succeeded and on no other.
+    ///
+    /// `{ restored: true }`, or `{ refused: "malformed" | "not-ours" | "unreadable" }` —
+    /// the engine's three answers, and the host's whole job is to say one to a person.
+    #[wasm_bindgen(js_name = restoreFromImage)]
+    pub fn restore_from_image(&self, bytes: &[u8]) -> JsValue {
+        let refused = match crate::export::restore(bytes) {
+            crate::export::Restore::Payload(json) => {
+                if self.cell.borrow_mut().engine.load_scene(&json) {
+                    None
+                } else {
+                    // Unreachable in practice — `load_scene` runs the same
+                    // `elements_from_json` the restore just ran — and answered as a refusal
+                    // rather than as a success, so a future divergence shows up as a board
+                    // that did not open rather than as a promise that was not kept.
+                    Some(crate::export::RestoreRefusal::Unreadable)
+                }
+            }
+            crate::export::Restore::Refused(why) => Some(why),
+        };
+        let out = js_sys::Object::new();
+        match refused {
+            Some(why) => {
+                let name = match why {
+                    crate::export::RestoreRefusal::Malformed => "malformed",
+                    crate::export::RestoreRefusal::NotOurs => "not-ours",
+                    crate::export::RestoreRefusal::Unreadable => "unreadable",
+                };
+                let _ = js_sys::Reflect::set(&out, &"refused".into(), &JsValue::from_str(name));
+            }
+            None => {
+                let _ = js_sys::Reflect::set(&out, &"restored".into(), &JsValue::TRUE);
+            }
+        }
+        out.into()
+    }
+
+    /// The scene as a PNG, at `scale`, with or without the background, of the selection
+    /// when `selection_only` says so.
+    ///
+    /// A promise, because the canvas is encoded by the browser and `toBlob` is
+    /// asynchronous — `export.ts@1118751f:198-203` hands back a canvas and the app
+    /// converts it itself. A `None` scale is 1, and the padding is the oracle's default
+    /// rather than the SVG path's own.
+    ///
+    /// The two are folded into one [`crate::export::ExportOptions`] here rather than passed
+    /// on separately, so the same struct is what a second format will be asked. `frame_labels`
+    /// is not a parameter yet: its one consumer is the painter, which reads it off the
+    /// frame, and the format that would let a person choose it is 4.5's.
+    ///
+    /// `selection_only` is the host's whole contribution, and it is the oracle's
+    /// `exportSelectionOnly` — the dialog's checkbox. It does not say *what* to export: an
+    /// empty selection with it set is still the scene, and one selected frame is a frame
+    /// export, because [`crate::export::export_scope`] decides both
+    /// (`data/index.ts@1118751f:48-96`).
+    #[wasm_bindgen(js_name = exportPng)]
+    pub fn export_png(
+        &self,
+        scale: Option<f64>,
+        transparent: Option<bool>,
+        selection_only: Option<bool>,
+    ) -> Option<js_sys::Promise> {
+        let options = crate::export::ExportOptions {
+            scale: scale.unwrap_or(1.0),
+            background: !transparent.unwrap_or(false),
+            ..Default::default()
+        };
+        let engine = self.cell.borrow();
+        let scope = engine
+            .engine
+            .export_scope(selection_only.unwrap_or(false), &options);
+        super::export::export_png(&engine.engine, &scope, &options)
+    }
+
+    /// One clipboard copy: whether the host may make it, what to write it as, of what, and
+    /// the vector payload.
+    ///
+    /// The host's two booleans are the only thing it contributes, and they are facts about
+    /// the browser rather than decisions: `probablySupportsClipboardWriteText` is
+    /// `"clipboard" in navigator && "writeText" in navigator.clipboard` and
+    /// `probablySupportsClipboardBlob` adds `"write" in navigator.clipboard &&
+    /// "ClipboardItem" in window && "toBlob" in HTMLCanvasElement.prototype`
+    /// (`clipboard.ts@1118751f:65-72`). The oracle reads the same two at its own
+    /// `predicate` (`actionClipboard.tsx@1118751f:186-188, 247-249`) — except that it
+    /// reads them off `navigator` itself, which the engine cannot see.
+    ///
+    /// There is deliberately **no `selectionOnly`**, and the oracle has none either: both
+    /// actions pass the literal `true` to `prepareElementsForExport`
+    /// (`actionClipboard.tsx@1118751f:139, 212`). The scope is the engine's alone
+    /// (`data/index.ts@1118751f:48-96`), and the payload is the same string a file export
+    /// of that scope produces, so a host cannot ask for a narrower or a different one.
+    ///
+    /// **One call, one scope, one format.** Not both payloads at once: a copy is one
+    /// format, and a call that built each from a scope of its own would be two element-list
+    /// decisions where the oracle has one (`prepareElementsForExport` is called once per
+    /// action, `actionClipboard.tsx@1118751f:136-140` and `:209-213`).
+    ///
+    /// `blob` is the raster payload and `text` the vector one; whichever this format is not
+    /// stays `undefined`. `scope` is `"selection"` or `"scene"` — the oracle's toast word
+    /// (`actionClipboard.tsx@1118751f:165-167, 225-227`), taken from the scope rather than
+    /// from the front's own selection count, which is not the same number: a selection of
+    /// ids that are not on the board is not a selection
+    /// (`packages/element/src/selection.ts@1118751f:141-143`).
+    ///
+    /// `null` for a format this build does not have, which is the boundary's answer rather
+    /// than a default: an unknown name is a caller's mistake and is worth seeing.
+    #[wasm_bindgen(js_name = clipboardCopy)]
+    pub fn clipboard_copy(
+        &self,
+        format: &str,
+        can_write_blob: bool,
+        can_write_text: bool,
+    ) -> JsValue {
+        let Some(format) = crate::export::ClipboardFormat::parse(format) else {
+            return JsValue::NULL;
+        };
+        let host = crate::export::ClipboardHost {
+            can_write_blob,
+            can_write_text,
+        };
+        let options = crate::export::ExportOptions::default();
+        let engine = self.cell.borrow();
+        let copy = engine.engine.clipboard_copy(format, &host, &options);
+        let blob = if format == crate::export::ClipboardFormat::Png && copy.supported {
+            super::export::export_png(&engine.engine, &copy.scope, &options)
+        } else {
+            None
+        };
+        super::export::clipboard_json(format, &copy, blob)
     }
 
     #[wasm_bindgen(js_name = cameraJson)]

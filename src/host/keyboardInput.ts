@@ -26,7 +26,14 @@ export function attachKeyboardInput(session: HostSession): () => void {
     // falls back to that offset, same as before.
     const { lastPointer } = session;
     const at = lastPointer ? engine.screenToWorld(lastPointer.x, lastPointer.y) : undefined;
-    if (!engine.pasteJson(text || null, at)) engine.pasteJson(null, at);
+    // Two branches, as the oracle's `insertClipboardContent` has: this app's own elements
+    // first (`pasteJson`), then the same text as text elements (`pasteText`, which decides
+    // the lines, the wrap width and the placement — `App.tsx@1118751f:4757`, `:4979-5096`).
+    // Neither is a fallback that pastes twice: `pasteJson(null, at)` pastes the engine's
+    // own buffer, which is what a paste event with nothing on the clipboard still means.
+    if (engine.pasteJson(text || null, at)) return;
+    if (text && engine.pasteText(text, at)) return;
+    engine.pasteJson(null, at);
     event.preventDefault();
   };
 

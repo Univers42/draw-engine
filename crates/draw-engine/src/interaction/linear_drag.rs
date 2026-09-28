@@ -1,5 +1,3 @@
-use std::f64::consts::PI;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinearDrag {
     pub x: f64,
@@ -9,14 +7,21 @@ pub struct LinearDrag {
     pub points: Vec<[f64; 2]>,
 }
 
+/// The single place a Shift-locked drag is worked out, for every caller: a dragged
+/// endpoint, a preview point, a line drawn by dragging, and an elbow's end.
+///
+/// The geometry is [`crate::math::shift_locked_delta`]'s — the oracle's ray-intersection,
+/// not a rotation of the delta — and the step is the oracle's
+/// `SHIFT_LOCKING_ANGLE` (`packages/common/src/constants.ts@1118751f:31`). It was `PI / 4`
+/// and a rotation, which put the length a rotated delta puts it.
+///
+/// A drag too short to have a direction is dropped rather than snapped, so a press that
+/// has not yet moved does not leave a stub pointing at 0 degrees.
 pub fn constrain_to_angle(dx: f64, dy: f64) -> (f64, f64) {
-    let length = dx.hypot(dy);
-    if length < 1e-6 {
+    if dx.hypot(dy) < 1e-6 {
         return (0.0, 0.0);
     }
-    let step = PI / 4.0;
-    let angle = (dy.atan2(dx) / step).round() * step;
-    (angle.cos() * length, angle.sin() * length)
+    crate::math::shift_locked_delta(dx, dy)
 }
 
 pub fn linear_from_drag(

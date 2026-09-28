@@ -255,6 +255,33 @@ pub fn resize_group_flips(
     (sx < 0.0, sy < 0.0)
 }
 
+/// The turn a member comes out of a resize with: its own, reversed by one axis the drag
+/// crossed the anchor on.
+///
+/// The oracle's rule is a **product**, `angle * flipFactorX * flipFactorY`
+/// (`resizeElements.ts@1118751f:1392`, `:1417-1419`), so this is not "negate when the
+/// group flips". One crossing reverses the turn; a crossing on both axes is two mirrors,
+/// a half turn about the anchor, and the turn is left exactly as it was. Negating there
+/// turns every member the wrong way round as soon as a corner goes through.
+///
+/// It is asked only of a shape: a line, an arrow or a stroke is not here, because its
+/// shape *is* its points — [`map_points`] has already mirrored those exactly, and a
+/// point-based element keeps no turn of its own to reverse.
+///
+/// Not folded into `[0, 2π)` as the oracle's `normalizeRadians` does, for the reason
+/// `edit/flip.rs` gives: an unturned member must stay `0.0` rather than become `-0.0`, and
+/// two of them give back the original number exactly.
+fn flipped_angle(angle: f64, flip_by_x: bool, flip_by_y: bool) -> f64 {
+    if angle == 0.0 {
+        return 0.0;
+    }
+    if flip_by_x != flip_by_y {
+        -angle
+    } else {
+        angle
+    }
+}
+
 /// Whether a resize of `elements` keeps its proportions without Shift: any of them
 /// turned, a text, or in a group (`keepAspectRatio`, `resizeElements.ts@1118751f:
 /// 1370-1377`). Labels are not asked: the oracle resizes the selection without them.
@@ -287,6 +314,10 @@ pub fn resize_group(
     let keep_aspect = uniform || resize_keeps_aspect(elements);
     let (sx, sy) = scale_for(handle, frame, pointer, keep_aspect, from_center);
     let (ax, ay) = resize_anchor(handle, &frame.bounds, from_center);
+    // Which axes this drag has taken through the anchor, read once for the whole selection
+    // and then folded into each member's own turn below. Taken before the loop and from
+    // the gesture's start, so a second move of the same drag cannot mirror the mirror.
+    let (flip_by_x, flip_by_y) = resize_group_flips(handle, frame, pointer, from_center);
     let containers: std::collections::HashSet<&str> = elements
         .iter()
         .filter(|e| e.container_id.is_none())
@@ -348,6 +379,8 @@ pub fn resize_group(
                     next.y += next.height;
                     next.height = -next.height;
                 }
+                // The turn goes with the mirror — see `flipped_angle`.
+                next.angle = flipped_angle(from.angle, flip_by_x, flip_by_y);
                 next
             };
 
@@ -379,17 +412,29 @@ pub fn resize_group(
 /// the arrangement untouched. A line, an arrow or a stroke turns through its points
 /// instead (see [`map_points`]), so it keeps no angle of its own: an arrow's ends are
 /// then exactly where its bindings will look for them.
+///
+/// `locked` is the host's Shift, and the quantisation is the same one
+/// [`rotate_element`](crate::selection::rotate_element) applies — the oracle holds the two
+/// to one rule as well (`resizeElements.ts@1118751f:424-427`). It lands the members'
+/// *deltas* on 15 degrees, so the group as a whole stops at a step, not each member on its
+/// own.
 pub fn rotate_group(
     elements: &[DrawElement],
     frame: &GroupFrame,
     pointer: Point,
+    locked: bool,
 ) -> Vec<DrawElement> {
     let b = &frame.bounds;
     let cx = (b.min_x + b.max_x) / 2.0;
     let cy = (b.min_y + b.max_y) / 2.0;
 
     // The same convention as single-element rotation: straight up is zero.
-    let target = (pointer.y - cy).atan2(pointer.x - cx) + std::f64::consts::FRAC_PI_2;
+    let raw = (pointer.y - cy).atan2(pointer.x - cx) + std::f64::consts::FRAC_PI_2;
+    let target = if locked {
+        crate::math::shift_locked_angle(raw)
+    } else {
+        raw
+    };
 
     elements
         .iter()
@@ -565,6 +610,137 @@ mod tests {
         }
     }
 
+    /// The trio with `a` turned by `angle` radians: a group holding an element that has a
+    /// turn of its own, which is what a drag through the anchor has to carry.
+    fn turned_trio(angle: f64) -> Vec<DrawElement> {
+        let mut els = trio();
+        els[0].angle = angle;
+        els
+    }
+
+    /// `got` is the turn `want` asks for, or the same turn a whole number of revolutions
+    /// later — the oracle's own comparison, since `normalizeRadians` folds an angle into
+    /// `[0, 2π)` (`packages/math/src/angle.ts@1118751f:11-14`).
+    fn assert_turn(got: f64, want: f64) {
+        let full = 2.0 * std::f64::consts::PI;
+        let difference = (got - want).rem_euclid(full);
+        assert!(
+            difference < 1e-9 || full - difference < 1e-9,
+            "the angle came out as {got}, and the turn asked for is {want}"
+        );
+    }
+
+    /// A drag through the anchor on **one** axis reverses the direction of a turn, as a
+    /// mirror does — `angle * flipFactorX * flipFactorY` with one factor -1
+    /// (`resizeElements.ts@1118751f:1392`, `:1417-1419`).
+    ///
+    /// The east handle, taken past the frame's own west edge. `flipConditionsMap`
+    /// (`:1189`) never crosses an east handle on y, so exactly one axis flips and the
+    /// product of the two factors is -1.
+    #[test]
+    fn a_drag_through_the_anchor_on_one_axis_negates_a_turned_members_angle() {
+        let els = turned_trio(0.4);
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+
+        let out = resize_group(
+            &els,
+            &frame,
+            HandleKind::E,
+            Point {
+                x: -300.0,
+                y: 150.0,
+            },
+            false,
+            false,
+        );
+
+        let a = out.iter().find(|e| e.id == "a").unwrap();
+        assert_turn(a.angle, -0.4);
+    }
+
+    /// The case a "negate the angle when the group flips" reading gets wrong. A drag
+    /// through the anchor on **both** axes is two mirrors — a half turn about the anchor —
+    /// and the product of the two factors is +1, so the oracle leaves the angle exactly
+    /// where it was (`resizeElements.ts@1118751f:1392`, `:1417-1419`). Negating here
+    /// would turn every member of the group the wrong way round as soon as a corner
+    /// crosses.
+    #[test]
+    fn a_drag_through_the_anchor_on_both_axes_leaves_a_turned_members_angle_alone() {
+        let els = turned_trio(0.4);
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+
+        let out = resize_group(
+            &els,
+            &frame,
+            HandleKind::Se,
+            Point {
+                x: -300.0,
+                y: -300.0,
+            },
+            false,
+            false,
+        );
+
+        let a = out.iter().find(|e| e.id == "a").unwrap();
+        assert_turn(a.angle, 0.4);
+    }
+
+    /// A drag that crosses nothing leaves the turn alone: both factors +1
+    /// (`resizeElements.ts@1118751f:1392`).
+    #[test]
+    fn a_drag_that_crosses_no_anchor_keeps_a_turned_members_angle() {
+        let els = turned_trio(0.4);
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+
+        let out = resize_group(
+            &els,
+            &frame,
+            HandleKind::Se,
+            Point { x: 600.0, y: 600.0 },
+            false,
+            false,
+        );
+
+        let a = out.iter().find(|e| e.id == "a").unwrap();
+        assert_turn(a.angle, 0.4);
+    }
+
+    /// An unturned member is its own mirror image, and must stay `0.0` rather than become
+    /// `-0.0`: a negative zero is a different `f64`, and it is written into the scene, the
+    /// saved file and the geometry fingerprint. `edit/flip.rs` special-cases it for the
+    /// Flip command and this does the same.
+    ///
+    /// The sign is the whole assertion, and it cannot be joined by
+    /// `assert_eq!(a.angle, 0.0)`: `-0.0 == 0.0` in Rust, so that one passes whatever the
+    /// guard does. A real pointer asks the same thing from the other side of the API — the
+    /// assertion on `plain` in `ci_group_resize.rs` ›
+    /// a_turned_member_turns_with_the_group_when_a_drag_crosses_the_anchor — so the
+    /// property does not rest on this one check.
+    #[test]
+    fn an_unturned_member_stays_at_positive_zero_across_the_anchor() {
+        let els = turned_trio(0.0);
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+
+        let out = resize_group(
+            &els,
+            &frame,
+            HandleKind::E,
+            Point {
+                x: -300.0,
+                y: 150.0,
+            },
+            false,
+            false,
+        );
+
+        let a = out.iter().find(|e| e.id == "a").unwrap();
+        assert!(
+            a.angle.is_sign_positive(),
+            "the turn went negative-zero on a member that had none: {}",
+            a.angle
+        );
+    }
+
     /// A group dragged onto its own anchor must stay grabbable.
     #[test]
     fn collapsing_a_group_leaves_something_to_grab() {
@@ -618,6 +794,7 @@ mod tests {
                 x: 150.0,
                 y: 1000.0,
             },
+            false,
         );
 
         let a = out.iter().find(|e| e.id == "a").unwrap();
@@ -631,6 +808,46 @@ mod tests {
             (a.x, a.y)
         );
         assert!(b.x < 150.0, "member b swapped sides: {}", b.x);
+    }
+
+    /// Shift holds a **group**'s turn to the same 15-degree steps a single element's is,
+    /// which is what the oracle does with one rule for both
+    /// (`resizeElements.ts@1118751f:424-427`). The lock lands on the *turn about the
+    /// group's centre*, so the members' deltas are what come out on a step, not each
+    /// member's own angle.
+    ///
+    /// 20 degrees off the vertical is the case that fails without the lock: every 45 is a
+    /// multiple of 15 and a 45-degree step would have sent 20 to 0, so both the "on a step"
+    /// and the "not the pointer's own angle" halves are load-bearing.
+    #[test]
+    fn shift_holds_a_group_turn_to_15_degree_steps() {
+        let els = trio();
+        let frame = GroupFrame::capture(els.iter()).unwrap();
+        let centre = Point { x: 150.0, y: 150.0 };
+        // 20 degrees round from straight up, at a reach well clear of the group.
+        let reach = 400.0;
+        let raw = 20.0_f64.to_radians();
+        let pointer = Point {
+            x: centre.x + reach * raw.sin(),
+            y: centre.y - reach * raw.cos(),
+        };
+
+        let locked = rotate_group(&els, &frame, pointer, true);
+        let free = rotate_group(&els, &frame, pointer, false);
+        let turned = |out: &Vec<DrawElement>| {
+            let a = out.iter().find(|e| e.id == "a").unwrap();
+            a.angle.to_degrees().rem_euclid(360.0)
+        };
+
+        let got = turned(&locked);
+        assert!(
+            (got - 15.0).abs() < 1e-9,
+            "a group turn 20 degrees off the vertical landed on {got}, not 15"
+        );
+        assert!(
+            (turned(&free) - 20.0).abs() < 1e-9,
+            "without Shift the turn is the pointer's own angle"
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { DrawEngine as WasmDrawEngine } from "../pkg/draw_engine.js";
+import { screenToWorld } from "./cameraMath";
 import { readProbe, resetProbe, timeHitTest } from "./host/probe";
 import {
   DEFAULT_ELEMENT_STYLE,
@@ -13,9 +14,13 @@ import type {
   Arrowhead,
   ArrowType,
   Camera,
+  ClipboardCopy,
+  ClipboardFormatName,
+  ClipboardSupport,
   DebugSnapshot,
   DrawElement,
   DrawElementStyle,
+  ConversionType,
   DrawEngineOptions,
   DrawPeer,
   DrawTheme,
@@ -25,7 +30,12 @@ import type {
   FlowchartDirection,
   FlowchartShape,
   GridSettings,
+  PngExport,
+  RestoreOutcome,
   SelectionStyle,
+  SecondaryPanEnd,
+  SecondaryPanStart,
+  SvgExport,
   StylePatch,
   TextAlign,
   TextEditLayout,
@@ -35,11 +45,27 @@ import type {
 
 export { loadDrawEngine } from "./wasmLoad";
 
+/** The seven names `ConvertTo::name` writes — the boundary check on `sharedConversionType`. */
+const CONVERSION_TYPES: readonly string[] = [
+  "rectangle",
+  "diamond",
+  "ellipse",
+  "line",
+  "sharpArrow",
+  "curvedArrow",
+  "elbowArrow",
+];
+
+const isConversionType = (name: string): name is ConversionType =>
+  CONVERSION_TYPES.includes(name);
+
 /**
  * CSS cursors, indexed by the engine's `HoverCursor` discriminant.
  *
  * The order is the contract with `engine/hover.rs` and is append-only — inserting in the
- * middle silently reassigns every cursor after it. `ci_ts_parity` asserts the two agree.
+ * middle silently reassigns every cursor after it. `ci_cursor_parity.rs` asserts the two agree;
+ * it replaced a sentence here that named a `ci_ts_parity` which has never existed anywhere in
+ * this repository, so the risk was real and the guarantee was not.
  */
 const HOVER_CURSORS = [
   "default", // Default
@@ -55,13 +81,106 @@ const HOVER_CURSORS = [
   "text", // Text
 ] as const;
 
+/**
+ * A right-button press, indexed by the engine's `SecondaryPanStart` discriminant.
+ *
+ * The order is the contract with `pan.rs` and is append-only, like the cursor table
+ * above. `editing-text` is last because it is the same session with one difference, and
+ * a host that read index 1 as it would prevent the default of a press that must keep it.
+ */
+const SECONDARY_PAN_START = ["declined", "started", "editing-text"] as const;
+
+/** A right-button release, indexed by the engine's `SecondaryPanEnd` discriminant. */
+const SECONDARY_PAN_END = ["none", "drag", "menu"] as const;
+
+/**
+ * The blob the browser encoded, or `null`.
+ *
+ * The binding hands back whatever `toBlob` resolved with, typed no more precisely than
+ * `any` because the value crosses the WASM boundary as a JS object — so this is where it
+ * becomes a `Blob` or is found not to be one. `null` is also the answer for a canvas too
+ * large to encode (`data/blob.ts@1118751f:245-252`), which the oracle reports as a
+ * `CanvasError` and we leave to the host to notice.
+ */
+function encodedBlob(value: unknown): Blob | null {
+  return value instanceof Blob ? value : null;
+}
+
+/**
+ * The engine's clipboard answer, as a value the host can trust.
+ *
+ * **Every field is read defensively, and a malformed answer is a declined one.** The
+ * binding is a `JsValue` because a promise cannot cross into a plain object, so nothing
+ * here is checked by the type system, and a host that read a missing `mime` as `""` and
+ * wrote it would produce a clipboard nothing can paste — the exact failure this feature
+ * exists to prevent. A shape that does not hold up is reported as `supported: false` with
+ * no payload, which is what the engine says when it declines, so there is one "no" and not
+ * two.
+ */
+function readClipboardCopy(raw: unknown, format: ClipboardFormatName): ClipboardCopy {
+  const declined: ClipboardCopy = { supported: false, mime: "", scope: "scene" };
+  if (typeof raw !== "object" || raw === null) return declined;
+  const answer = raw as Record<string, unknown>;
+  if (answer["supported"] !== true) {
+    const refusal = answer["refusal"];
+    // The two reasons the engine declines are carried through, so the host can say the
+    // oracle's own sentence for each instead of one "no" for both.
+    if (refusal === "browser-cannot-take" || refusal === "nothing-to-copy") {
+      declined.refusal = refusal;
+    }
+    return declined;
+  }
+  const mime = answer["mime"];
+  const scope = answer["scope"];
+  if (typeof mime !== "string" || mime === "") return declined;
+  if (scope !== "selection" && scope !== "scene") return declined;
+  const payload = format === "png" ? answer["blob"] : answer["text"];
+  if (payload === undefined || payload === null) return declined;
+  const copy: ClipboardCopy = { supported: true, mime, scope };
+  if (format === "png") {
+    copy.blob = Promise.resolve(payload).then(encodedBlob);
+  } else if (typeof payload === "string") {
+    copy.text = payload;
+  } else {
+    return declined;
+  }
+  return copy;
+}
+
+/**
+ * The engine's answer to "did that file open", read defensively for the reason
+ * `readClipboardCopy` gives: the binding is a `JsValue`, so nothing here is checked by the
+ * type system, and the failure this guards against is a host that read a missing `refused`
+ * as `undefined` and reported success — an empty board after opening a file.
+ *
+ * So an answer that does not hold up is a **refusal**, never a success, and the one
+ * refusal used for that is `unreadable`: "it carries a scene of ours and we cannot read it"
+ * is the sentence a person can be given, and a shape this host did not expect is
+ * indistinguishable from one it did.
+ */
+function readRestoreOutcome(raw: unknown): RestoreOutcome {
+  if (typeof raw !== "object" || raw === null) return { refused: "unreadable" };
+  const answer = raw as Record<string, unknown>;
+  if (answer["restored"] === true) return { restored: true };
+  const refusal = answer["refused"];
+  if (
+    refusal === "malformed" ||
+    refusal === "not-ours" ||
+    refusal === "unreadable"
+  ) {
+    return { refused: refusal };
+  }
+  return { refused: "unreadable" };
+}
+
 /** Public DrawEngine: same method names as the old TS class, backed by WASM. */
 export class DrawEngine {
   private readonly inner: InstanceType<typeof WasmDrawEngine>;
-  private readonly canvas: HTMLCanvasElement;
 
   constructor(options: DrawEngineOptions) {
-    this.canvas = options.canvas;
+    // The canvas itself belongs to WASM, which paints into it — this side no longer holds
+    // a reference, because the only thing that used one was encoding the visible canvas as
+    // the export, and the export is now the engine's own offscreen target.
     this.inner = new WasmDrawEngine(options.canvas);
     wireCallbacks(this.inner, options);
   }
@@ -161,9 +280,20 @@ export class DrawEngine {
     this.inner.pageBy(pagesX, pagesY);
   }
 
+  /**
+   * Where a screen point is in the world, from the engine's `screen_to_world`.
+   *
+   * The expression used to be written out here — the same one `engine/src/camera.ts`
+   * mirrored and the same one the front called — so this was the third copy. It is now
+   * the engine's own, reached through the wrapper beside it.
+   *
+   * The method and the free function differ only in where the camera comes from: this
+   * one reads it through the `camera` getter, which is a `cameraJson` call and a
+   * `JSON.parse`. A caller that already holds the camera should call the free
+   * `screenToWorld` from `./cameraMath` instead.
+   */
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
-    const camera = this.camera;
-    return { x: (sx - camera.x) / camera.scale, y: (sy - camera.y) / camera.scale };
+    return screenToWorld(this.camera, sx, sy);
   }
 
   hitTest(sx: number, sy: number, tolerance = 0): DrawElement | null {
@@ -478,6 +608,20 @@ export class DrawEngine {
   }
 
   /**
+   * Plain text pasted as text elements — one per line, each wrapped to half the visible
+   * width and centred on `at`, the **world** point the pointer is at (the same convention
+   * `pasteJson` takes). One step of undo, the new texts selected; the clipboard is
+   * untouched, nothing was copied.
+   *
+   * This is the other branch of a paste: `pasteJson` for this app's own element JSON, this
+   * for everything else. `false` for text that would make no element at all, so a caller
+   * can fall through to whatever it had.
+   */
+  pasteText(text: string, at?: { x: number; y: number }): boolean {
+    return this.inner.pasteText(text, at?.x, at?.y);
+  }
+
+  /**
    * A scene made elsewhere — the Mermaid import — placed as `pasteJson` places it, centred
    * on the **world** point `at`, but with every text laid out in this engine's fonts and
    * every shape grown to hold its label. One step of undo; the clipboard is untouched.
@@ -703,6 +847,49 @@ export class DrawEngine {
     this.inner.beginPan(sx, sy);
   }
 
+  /**
+   * Starts a right-button pan session, or declines it: `"declined"` when more than one
+   * pointer is down, and otherwise a session that is a pan only once the pointer has
+   * travelled past the threshold — see `pan.rs` and `App.pan.ts@1118751f:88-125`.
+   *
+   * `"started"` also answers whether the press may prevent its own default: it may not
+   * while a text is open (`App.pan.ts:1118751f:118-125`, issue #4489), which is the
+   * `"editing-text"` case. That rule is here rather than in the host so two hosts cannot
+   * answer it differently.
+   *
+   * `pointersDown` is the host's count of pointers on the canvas — the platform's count,
+   * which the engine cannot read for itself.
+   */
+  beginSecondaryPan(sx: number, sy: number, pointersDown: number): SecondaryPanStart {
+    return SECONDARY_PAN_START[this.inner.beginSecondaryPan(sx, sy, pointersDown)] ?? "declined";
+  }
+
+  /** Ends a right-button session. See `beginSecondaryPan`. */
+  endSecondaryPan(): SecondaryPanEnd {
+    return SECONDARY_PAN_END[this.inner.endSecondaryPan()] ?? "none";
+  }
+
+  /**
+   * Whether a `contextmenu` event belongs to a right-button session and must not open the
+   * menu: it came with the press, or it follows a release that turned out to be a drag.
+   *
+   * Platforms disagree about which of those it is — macOS and Linux fire it on mousedown,
+   * Windows on mouseup — and swallowing the wrong one is how a right-drag to pan ends up
+   * with a menu open over it (`App.pan.ts@1118751f:74-84`, and the doc comment at `:12-25`
+   * that is the design).
+   */
+  consumesContextMenu(): boolean {
+    return this.inner.consumesContextMenu();
+  }
+
+  /**
+   * Whether pointer moves arriving with no button of the host's own down are wanted: a path
+   * placed point by point, or a right-button session deciding whether it is a click or a pan.
+   */
+  wantsPointerMoves(): boolean {
+    return this.inner.wantsPointerMoves();
+  }
+
   /** Alt, as held for the move about to be reported. The eraser un-marks with it. */
   setAltHeld(held: boolean): void {
     this.inner.setAltHeld(held);
@@ -856,9 +1043,25 @@ export class DrawEngine {
     this.inner.wrapTextInContainer();
   }
 
-  /** Whether Tab has a rectangle, diamond or ellipse selected to switch. */
+  /** Whether Tab has a closed shape, or a line or an unbound arrow, selected to switch. */
   canConvertSelection(): boolean {
     return this.inner.canConvertSelection();
+  }
+
+  /**
+   * The type the panel shows pressed, or `null` when the selection disagrees on it or
+   * holds nothing to switch.
+   *
+   * The engine's to answer, not the host's: for a line or an arrow it is a reading of
+   * `roundness` and `elbowed` (`LinearType::of`, `engine/convert.rs`), and a host that
+   * worked it out from the scene JSON would be running an engine formula in TypeScript.
+   */
+  sharedConversionType(): ConversionType | null {
+    // wasm-bindgen hands an `Option<String>` back as a plain string, so the union is a
+    // claim to check rather than a type it can carry. The engine writes only these seven
+    // names (`ConvertTo::name`), and anything else is a binding that has drifted.
+    const name = this.inner.sharedConversionType();
+    return name !== undefined && isConversionType(name) ? name : null;
   }
 
   /** The shape switch opened: until `endConversion`, a label shrunk by a switch grows back. */
@@ -872,11 +1075,14 @@ export class DrawEngine {
   }
 
   /**
-   * Switches the selected rectangles, diamonds and ellipses to `to`, or a step round from
-   * their type — forward for Tab, back for Shift+Tab. One step of undo. Whether anything
-   * changed.
+   * Switches the selection to `to`, or a step round from the type it is at — forward for
+   * Tab, back for Shift+Tab. One step of undo. Whether anything changed.
+   *
+   * A closed shape, a line or an unbound arrow, whichever the selection holds first: the
+   * generic branch has preference (`ConvertElementTypePopup.tsx@1118751f:648-653`). Asking
+   * for a type from the other family changes nothing (`isValidConversion`, `:929-950`).
    */
-  convertSelection(to: FlowchartShape | null, forward = true): boolean {
+  convertSelection(to: ConversionType | null, forward = true): boolean {
     return this.inner.convertSelection(to ?? undefined, forward);
   }
 
@@ -888,12 +1094,94 @@ export class DrawEngine {
     return this.inner.exportJson();
   }
 
-  exportSvg(padding = 16): string | null {
-    return this.inner.exportSvg(padding) ?? null;
+  /**
+   * The drawing as an SVG, of the selection when `selectionOnly` says so.
+   *
+   * The margin is the engine's own now — `ExportOptions`'s 10, the same one the PNG uses —
+   * and it used to be a `16` this signature took. §2 does not allow the front to pick a
+   * margin: it made the two formats disagree by 6px per side, and there was no way to tell
+   * from here which of the two was meant. `selectionOnly` is the whole of the front's
+   * contribution; whether that means the scene, a selection or one frame is decided in Rust,
+   * because an empty selection is the scene (`data/index.ts@1118751f:48-96`).
+   */
+  exportSvg(options: SvgExport = {}): string | null {
+    return this.inner.exportSvg(options.selectionOnly) ?? null;
   }
 
-  async exportPng(): Promise<Blob | null> {
-    return new Promise((resolve) => this.canvas.toBlob((blob) => resolve(blob), "image/png"));
+  /**
+   * The drawing as a PNG, of the selection when `selectionOnly` says so.
+   *
+   * The framing, the size and the background are the engine's — `ExportFrame` in
+   * `crates/draw-engine/src/export/png.rs`, ported from the oracle's `exportToCanvas`
+   * (`packages/excalidraw/scene/export.ts@1118751f:180-284`). Nothing is computed here and
+   * the defaults are the binding's, so this is a forward and nothing else.
+   *
+   * The on-screen canvas is not what gets encoded. It never was meant to be: an export is
+   * the scene, not wherever the camera happens to be, and a scene scrolled half off screen
+   * used to export half a picture.
+   *
+   * `selectionOnly` is the dialog's checkbox and the whole of what the front chooses. It
+   * does not say *which* thing to export: an empty selection is still the scene, and
+   * selecting exactly one frame is a frame export, both decided in Rust.
+   */
+  exportPng(options: PngExport = {}): Promise<Blob | null> {
+    const pending = this.inner.exportPng(
+      options.scale,
+      options.transparent,
+      options.selectionOnly,
+    );
+    return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
+  }
+
+  /**
+   * One clipboard copy: whether to write it, under what type, of what, and the payload.
+   *
+   * The engine decides all four (BUNNY.md §2) — the MIME type is `image/png` or
+   * `text/plain` and never the host's to pick, and the scope is the export scope, so an
+   * empty selection is still the whole scene and a lone selected frame is still a frame
+   * export. The two booleans are the only thing the host contributes, and they are facts
+   * about the browser rather than decisions: `supportsClipboardBlob` and
+   * `supportsClipboardWriteText` in the oracle's own spelling (`clipboard.ts@1118751f:65-72`).
+   *
+   * `blob` is a promise for the raster and `text` a string for the vector; the format's
+   * other payload is absent. The promise is passed through rather than awaited here, so
+   * this stays a forward — and a host that writes it and finds the promise resolved to
+   * `null` has the oracle's `CANVAS_POSSIBLY_TOO_BIG` (`data/blob.ts@1118751f:245-252`),
+   * a canvas too large to encode, which is a browser's answer and not one to retry.
+   */
+  clipboardCopy(format: ClipboardFormatName, options: ClipboardSupport = {}): ClipboardCopy {
+    const raw = this.inner.clipboardCopy(
+      format,
+      options.canWriteBlob ?? true,
+      options.canWriteText ?? true,
+    );
+    return readClipboardCopy(raw, format);
+  }
+
+  /**
+   * The scene inside a saved picture or drawing, loaded — or why there is none.
+   *
+   * The other door beside [`loadScene`](./engine.ts), and the one the oracle's
+   * `decodePngMetadata` (`data/image.ts@1118751f:49-71`) and `decodeSvgBase64Payload`
+   * (`export.ts@1118751f:531-563`) are. What the bytes *are* is the engine's question and
+   * is answered in Rust: this takes a `File`'s bytes and nothing else, so a host cannot
+   * pick a container, a key, or a reading of a bad chunk (BUNNY.md §2).
+   *
+   * **The scene is loaded here rather than handed back**, which is why this returns an
+   * outcome and not a string. The alternative was a result object the host then fed to
+   * `loadScene`, and it puts the whole thing at risk in one line of the front — a host
+   * that forgot the second call would open a file and see the board it already had, which is
+   * the same silence as a blank board. A refusal cannot touch the scene at all, because the
+   * scene is replaced on the one path that succeeded and on no other.
+   *
+   * `Uint8Array` rather than a `Blob` or an `ArrayBuffer`: a `Blob` has to be read before
+   * anything can look at it, and `File.arrayBuffer()` gives bytes directly. The engine
+   * sniffs the PNG signature and treats everything else as the vector container, so this
+   * one call opens a `.png`, an `.svg` and nothing it should not.
+   */
+  restoreFromImage(bytes: Uint8Array): RestoreOutcome {
+    const raw = this.inner.restoreFromImage(bytes);
+    return readRestoreOutcome(raw);
   }
 
   loadScene(json: string): boolean {

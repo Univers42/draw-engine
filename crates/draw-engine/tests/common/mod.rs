@@ -5,10 +5,31 @@ use std::collections::HashSet;
 use draw_engine::scene::binding::is_inside;
 use draw_engine::*;
 
+/// A second implementation of the PNG container, written for the tests rather than for the
+/// engine. See `png.rs` for why there are two.
+///
+/// Reached as `common::png::*` and **not** re-exported here: a glob this module exports is
+/// an import every one of the eighty-odd test binaries would have to use, and the ones
+/// that do not are an `unused_imports` error under `clippy -D warnings`.
+pub mod png;
+
+/// A second implementation of the SVG document, written for the tests rather than for the
+/// engine. See `svg.rs` for why there are two.
+pub mod svg;
+
 pub const EPS: f64 = 1e-9;
 
 pub fn assert_close(a: f64, b: f64) {
     assert!((a - b).abs() < EPS, "expected {a} ~= {b}");
+}
+
+/// [`assert_close`] with a note of what was being compared.
+///
+/// For the cases where a bare "expected a ~= b" would not say **which** half of a pair
+/// failed, or which of a few hundred swept cases. The note comes last so a call reads as
+/// the two numbers it compares and then what they mean.
+pub fn assert_close_msg(a: f64, b: f64, why: impl std::fmt::Display) {
+    assert!((a - b).abs() < EPS, "expected {a} ~= {b} ({why})");
 }
 
 pub fn assert_point_close(a: Point, b: Point) {
@@ -21,6 +42,82 @@ pub fn assert_rect_close(a: Rect, b: Rect) {
     assert_close(a.y, b.y);
     assert_close(a.width, b.width);
     assert_close(a.height, b.height);
+}
+
+/// The oracle's eighth turn, a quarter of the circle.
+///
+/// A square turned through it spans `100 * √2`; a quarter turn would land back on the box
+/// it started in and prove nothing.
+pub const EIGHTH_TURN: f64 = std::f64::consts::FRAC_PI_4;
+
+/// A frame of `size` at the origin, named so it is not a blank rename.
+pub fn frame_at_origin(size: f64) -> DrawElement {
+    let mut frame = create_element_default(
+        DrawElementType::Frame,
+        Geometry {
+            x: 0.0,
+            y: 0.0,
+            width: size,
+            height: size,
+        },
+    );
+    frame.name = Some("Frame 1".to_string());
+    frame
+}
+
+/// A `name="…"` attribute of an SVG's root element.
+///
+/// The root is the first tag in the document (`export/svg.rs` writes the root tag before
+/// any element's own geometry), so its `width` and `height` are the export's own box and
+/// not a shape's. Parsed rather than compared as a string: the value is an `f64` and its
+/// printed form is Rust's to decide, not a test's to pin.
+pub fn root_attribute(svg: &str, name: &str) -> f64 {
+    let tag = svg.split_once('>').expect("an svg root element").0;
+    let marker = format!("{name}=\"");
+    let start = tag
+        .find(&marker)
+        .unwrap_or_else(|| panic!("the svg root should carry a {name}"))
+        + marker.len();
+    let rest = &tag[start..];
+    let end = rest
+        .find('"')
+        .unwrap_or_else(|| panic!("the {name} attribute should be closed"));
+    rest[..end]
+        .parse()
+        .unwrap_or_else(|_| panic!("the {name} attribute should be a number"))
+}
+
+/// The `width` attribute of an SVG's root element — the export's own box. See
+/// [`root_attribute`].
+pub fn svg_width(svg: &str) -> f64 {
+    root_attribute(svg, "width")
+}
+
+/// The `height` attribute of an SVG's root element. See [`svg_width`].
+pub fn svg_height(svg: &str) -> f64 {
+    root_attribute(svg, "height")
+}
+
+/// How many times an element's stroke colour appears in an SVG — how many drawn elements
+/// carry that colour.
+///
+/// **Colours, not ids or tag counts**, and both alternatives are wrong. The SVG carries no
+/// element ids: every `id` in it belongs to the export's own machinery, the
+/// outline-arrowhead `mask` (`export/svg.rs:173`) and the frame `clipPath` (`:390`). And
+/// counting shape tags counts the background `<rect>` (`export.ts@1118751f`'s paper, drawn
+/// first) as an element, so "three rects" does not mean "three elements".
+///
+/// Give each element its own stroke colour with [`tinted`] and this reads the picture
+/// directly: which elements reached it, and how many times.
+pub fn svg_uses(svg: &str, stroke_color: &str) -> usize {
+    svg.matches(&format!("stroke=\"{stroke_color}\"")).count()
+}
+
+/// `element` with its own stroke colour, so a test can ask which elements a picture holds.
+pub fn tinted(element: DrawElement, stroke_color: &str) -> DrawElement {
+    let mut element = element;
+    element.stroke_color = stroke_color.to_string();
+    element
 }
 
 /// A shape with a background, so its whole interior is a hit target.
@@ -267,4 +364,60 @@ impl Draws {
     pub fn pick<T: Copy>(&mut self, list: &[T]) -> T {
         list[((self.next() * list.len() as f64) as usize).min(list.len() - 1)]
     }
+}
+
+/// `scene_to_svg` over a borrowed slice, with the framing built from a bounds and a
+/// padding.
+///
+/// The tests that care about *markup* — a fill, a path, a text run — do not care about how
+/// the box was decided, and writing `ExportFrame::for_bounds` at every one of them says
+/// `for_bounds` is the thing under test. This is the spelling for "these bounds, this
+/// padding"; a test about the framing itself should use `ExportFrame` directly.
+pub fn svg_at(elements: &[DrawElement], bounds: WorldBounds, padding: f64) -> String {
+    svg_at_over(elements, bounds, padding, "#ffffff")
+}
+
+/// [`svg_at`] with the background colour spelled out, for the tests that are about it.
+///
+/// A separate function rather than a fourth argument on `svg_at`: the background is what the
+/// `<rect>` paints and what an outline arrowhead is punched through with, so the tests that
+/// care pass their own and the ones that do not should not have to name one.
+pub fn svg_at_over(
+    elements: &[DrawElement],
+    bounds: WorldBounds,
+    padding: f64,
+    background: &str,
+) -> String {
+    let borrowed: Vec<&DrawElement> = elements.iter().collect();
+    draw_engine::scene_to_svg(
+        &borrowed,
+        &ExportFrame::for_bounds(
+            bounds,
+            &ExportOptions {
+                padding,
+                ..Default::default()
+            },
+        ),
+        background,
+        // `None`: these are the tests about *markup*, and a payload would be a wall of
+        // base64 in every failure message. The payload has its own file.
+        None,
+    )
+}
+
+/// `export_svg` with an explicit padding, for the tests that are about the markup.
+///
+/// Goes through [`DrawEngine::export_scope`] because that is where the scope lives now; a
+/// test about which elements or which box an export covers belongs in `ci_export_scope.rs`,
+/// which asserts on the scope itself rather than on the string.
+pub fn svg_of(engine: &DrawEngine, padding: f64) -> String {
+    let scope = engine.export_scope(
+        false,
+        &ExportOptions {
+            padding,
+            ..Default::default()
+        },
+    );
+    let options = ExportOptions::default();
+    engine.export_svg_of(&scope, &options).unwrap_or_default()
 }

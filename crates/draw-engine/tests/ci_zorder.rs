@@ -1,6 +1,6 @@
 //! Z-order: Bring forward, Send backward, Bring to front, Send to back.
 //!
-//! Two parts.
+//! Three parts.
 //!
 //! - **The oracle's own cases.** Every z-order case of
 //!   `packages/element/tests/zindex.test.tsx@1118751f`, same stacks in, same stacks out,
@@ -8,6 +8,10 @@
 //!   port keeps the oracle's handling of tombstones even though the engine reorders only
 //!   the live stack (tombstones stay at the bottom, `Scene::set_order`). Not ported: the
 //!   duplication cases (`:919-1160`), which test Ctrl+D, not a z-order command.
+//! - **Rules the oracle's cases never drive.** Two refusals inside an entered group, at
+//!   the end of the stack (`zorder.rs:468`) and one step at a time (`zorder.rs:319-321`).
+//!   No oracle stack drives either, and with either guard deleted all seventy cases above
+//!   still pass.
 //! - **Through the engine.** Frames with children, a group inside a frame, a label on a
 //!   frame child, a locked element in the selection, a label whose shape stays (locked,
 //!   held by a peer, or not selected), and a reorder that moves nothing.
@@ -373,6 +377,84 @@ fn the_oracles_z_index_cases() {
     assert!(
         failures.is_empty(),
         "{} of the oracle's steps differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Rules the oracle's own cases never drive
+// ---------------------------------------------------------------------------------------
+
+/// `stack` bottom first, the group entered, the command, and the stack it must leave —
+/// which is the stack it came in as, because a refused command is not an edit.
+///
+/// **The end of the stack.** Inside an entered group the group's range is the whole
+/// world, and a selection holding anything outside it is **refused**: nothing moves, not
+/// even the part that is inside. `shiftElementsToEnd` returns the stack untouched
+/// (`zindex.ts@1118751f:501-508`, whose `:505` is
+/// `indicesToMove.some((index) => index < leadingIndex || index > trailingIndex)` — the
+/// port of which, `lowest < leading || highest > trailing`, is the guard at
+/// `zorder.rs:468`).
+///
+/// The oracle's seventy cases never drive a selection that straddles the range, which
+/// is how that guard came to be deletable: with it taken out, **every case in this file
+/// still passes** — all seventy, and the ones through the engine.
+const REFUSED_AT_END: &[(&str, &str, ZOrderMode, &str)] = &[
+    // Something to move lies above the group: A and C would go to the group's top,
+    // and D, outside it, must refuse the whole thing.
+    ("A/g1* B/g1 C/g1* D*", "g1", Front, "A B C D"),
+    // And the other side: A lies below the group, and the same refusal follows.
+    ("A* B/g1 C/g1* D/g1*", "g1", Back, "A B C D"),
+];
+
+/// **One step at a time.** The same walk, stopped a step sooner: `target_index` refuses
+/// a candidate outside the entered group (`zorder.rs:319-321`,
+/// `zindex.ts@1118751f:250-253`, "candidate element is outside current editing group →
+/// prevent"), and `shift_by_one` then moves nothing.
+///
+/// It bites only where a **containing frame** picks the candidate, because with none the
+/// filter already demands the entered group (`zorder.rs:298`) — so what it stops is a
+/// frame child of a frame that is itself in the group, stepped towards a sibling frame
+/// child that is not in it. Without the guard the member walks out of the group it was
+/// entered from, above elements that lie outside it: the two most-used commands in the
+/// product, unguarded.
+const REFUSED_ONE_STEP: &[(&str, &str, ZOrderMode, &str)] = &[
+    // C1 is a child of frame F and in the entered group, C2 a child of the same frame and
+    // not in it: one Forward step must refuse rather than put C1 above C2 and X.
+    ("F# C1/g1@F* X C2@F", "g1", Forward, "F C1 X C2"),
+    // The same stack from the other side, C2 the member and C1 the one outside it.
+    ("F# C1@F X C2/g1@F*", "g1", Backward, "F C1 X C2"),
+];
+
+/// What a table's refusals would have to be for this file to go red, as `stack: mismatch`.
+fn refusals_that_differ(table: &[(&str, &str, ZOrderMode, &str)]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (stack, group, mode, expected) in table {
+        let (elements, selected) = populate(stack);
+        let next = reorder_within(&elements, &selected, *mode, Some(group));
+        let got = names(&next);
+        if got != *expected {
+            failures.push(format!(
+                "[{stack}] {} in {group}: expected [{expected}], got [{got}]",
+                mode.as_str()
+            ));
+        }
+    }
+    failures
+}
+
+// Four named refusals, one per rule and side, so neither guard is deletable again. A
+// frame's **children** cannot straddle either range: `shift_accounting_for_frames`
+// splits the selection by frame before it moves anything, so the second rule is this
+// path's own refusal, reached only through a frame.
+#[test]
+fn an_entered_group_refuses_what_would_leave_it() {
+    let mut failures = refusals_that_differ(REFUSED_AT_END);
+    failures.append(&mut refusals_that_differ(REFUSED_ONE_STEP));
+    assert!(
+        failures.is_empty(),
+        "{} of the refusals differ:\n{}",
         failures.len(),
         failures.join("\n")
     );
@@ -1063,4 +1145,227 @@ fn undo_and_redo_of_a_shape_drawn_into_a_frame_keep_the_stack() {
     engine.redo();
     assert_eq!(stack(&engine, &cast), vec!["C1", "N", "F", "X"]);
     assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+}
+
+/// A peer's order that has never seen the shape drawn into the frame leaves it where it
+/// is: the oracle's `syncMovedIndices` returns an element the incoming order does not
+/// mention untouched, keeping its own fractional index
+/// (`packages/element/src/fractionalIndex.ts@1118751f:185-193`) — it does not send it to
+/// the top. So does redo: the shape's place is part of its creation, which is why the
+/// draw records no reorder for it (`scene/store.rs` › `place_beside`), and a replay
+/// applies the step's order only when it has one (`engine/stamp.rs` › `replay_step`).
+#[test]
+fn a_peers_order_leaves_a_new_frame_child_where_the_peer_never_saw_it() {
+    let (mut engine, mut cast) = framed(&[("C1", &[], true), ("F", &[], false), ("X", &[], false)]);
+    engine.set_tool(DrawTool::Rectangle);
+    drag(&mut engine, (300.0, 50.0), (360.0, 120.0));
+    selected_as(&engine, &mut cast, "N");
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "drawn below it"
+    );
+
+    // A peer reordering the board it knows about, which cannot list what it has not seen.
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": [id(&cast, "C1"), id(&cast, "F"), id(&cast, "X")],
+    });
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "the peer's order leaves the shape it never saw alone"
+    );
+    assert_eq!(frame_of(&engine, &id(&cast, "N")), Some(id(&cast, "F")));
+
+    engine.undo();
+    assert!(
+        frame_of(&engine, &id(&cast, "N")).is_some(),
+        "still a frame child"
+    );
+    engine.redo();
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["C1", "N", "F", "X"],
+        "redo brings it back below the frame"
+    );
+}
+
+/// Three shapes bottom first — `A`, `N` the one the peer's order will not name, `B` — and a
+/// tombstone `T`: erased here, still live on a peer that has not been told yet.
+fn board_with_a_tombstone() -> (DrawEngine, Cast) {
+    let a = box_at(0.0, 400.0, 60.0, 60.0);
+    let n = box_at(120.0, 400.0, 60.0, 60.0);
+    let b = box_at(240.0, 400.0, 60.0, 60.0);
+    let mut gone = box_at(360.0, 400.0, 60.0, 60.0);
+    gone.is_deleted = true;
+    let cast: Cast = vec![
+        ("A", a.id.clone()),
+        ("N", n.id.clone()),
+        ("B", b.id.clone()),
+        ("T", gone.id.clone()),
+    ];
+    (engine_with_scene(vec![a, n, b, gone]), cast)
+}
+
+/// A peer's order is applied along a **positional** cursor: the pass walks the live stack
+/// counting the order's elements met so far, and hands back that many of the order before
+/// every element the order does not name — so each one lands above the last of the order's
+/// elements the stack had put under it, and below the rest, which is what the oracle's
+/// per-element fractional index gives for nothing
+/// (`packages/element/src/fractionalIndex.ts@1118751f:185-193`). So the ids are resolved to
+/// the elements this scene holds *before* the pass. A named id it cannot produce — erased
+/// here and still live on the peer, or an edit this tab has not received — would otherwise
+/// spend a slot the scan can never fill, and everything the order left out would fall to the
+/// bottom of the board.
+#[test]
+fn a_tombstone_in_a_peers_order_leaves_what_it_left_out_where_it_was() {
+    let (mut engine, cast) = board_with_a_tombstone();
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": [id(&cast, "T"), id(&cast, "B"), id(&cast, "A")],
+    });
+
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["B", "N", "A"],
+        "the order moves B under A, and the shape it left out stays between them — above A, \
+         which it was above, below B, which it was under"
+    );
+    assert!(
+        engine
+            .get_scene()
+            .iter()
+            .any(|element| element.id == id(&cast, "T") && element.is_deleted),
+        "the element the peer still has live stays in the scene, to be told it is gone"
+    );
+}
+
+/// The same, for an id this scene has never been told of at all: a peer reordering the board
+/// names what it holds, and this tab has not caught up with all of it. Same slot, same cost.
+#[test]
+fn an_element_never_received_in_a_peers_order_leaves_what_it_left_out_where_it_was() {
+    let (mut engine, cast) = board_with_a_tombstone();
+    let patch = serde_json::json!({
+        "type": "osidraw",
+        "version": 1,
+        "elements": [],
+        "order": ["never-arrived", id(&cast, "B"), id(&cast, "A")],
+    });
+
+    assert!(engine.apply_remote_patch(&patch.to_string()), "applied");
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["B", "N", "A"],
+        "an id the scene has not got costs the order nothing, and the shape it left out stays \
+         where it was"
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Stable ordering after deletion
+// ---------------------------------------------------------------------------------------
+
+/// `design.md:747`, the last row of §17 Z-order.
+///
+/// A delete does not renumber anything: the oracle's `actionDeleteSelected` maps over the
+/// array and hands each doomed element back with `isDeleted: true` set
+/// (`actions/actionDeleteSelected.tsx@1118751f:78`, `:112`, `:125`) and returns that same
+/// array as `elements` (`:173`) — the array keeps its length and its order, and only the
+/// one flag changes. This engine does the same, tombstoning in place
+/// (`scene/store.rs:412`), which is what makes a delete a message to the other editors
+/// rather than an absence. So the property to pin is the oracle's: the survivors keep
+/// their relative order *and their absolute positions* in the stack.
+///
+/// Absolute positions matter because a z-order command moves an element relative to its
+/// neighbours, not to an index. A delete that shifted everything down one slot would leave
+/// the relative order intact and still make "bring forward" mean something different.
+#[test]
+fn a_deletion_leaves_the_rest_of_the_stack_exactly_where_it_was() {
+    // Five shapes in a row, so a reindex would show: deleting the middle one has to leave
+    // A, C, D, E in that order, and each of them still with the same number of elements
+    // below it as before, minus the one that went.
+    let mut cast: Cast = Vec::new();
+    let mut elements = Vec::new();
+    for (index, name) in ["A", "B", "C", "D", "E"].into_iter().enumerate() {
+        let element = filled(box_at(90.0 * index as f64, 400.0, 60.0, 60.0));
+        cast.push((name, element.id.clone()));
+        elements.push(element);
+    }
+    let mut engine = engine_with_scene(elements);
+
+    assert_eq!(stack(&engine, &cast), vec!["A", "B", "C", "D", "E"]);
+
+    engine.select(vec![id(&cast, "C")]);
+    engine.delete_selection();
+
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["A", "B", "D", "E"],
+        "the two above C and the two below it are still in that order"
+    );
+    // The tombstone is still in the scene, flagged — the oracle keeps it there too, and
+    // that is what lets the delete be sent on.
+    let tombstone = engine
+        .get_scene()
+        .into_iter()
+        .find(|el| el.id == id(&cast, "C"))
+        .expect("the deleted element is still on the board, flagged");
+    assert!(tombstone.is_deleted);
+
+    // And the order commands still read the stack the same way: bringing the bottom one
+    // to the front puts it above E, and sending the top one back puts it under A. If the
+    // delete had reindexed, these would land somewhere else.
+    engine.select(vec![id(&cast, "A")]);
+    engine.reorder_selection(ZOrderMode::Front);
+    assert_eq!(stack(&engine, &cast), vec!["B", "D", "E", "A"]);
+
+    engine.select(vec![id(&cast, "A")]);
+    engine.reorder_selection(ZOrderMode::Back);
+    assert_eq!(
+        stack(&engine, &cast),
+        vec!["A", "B", "D", "E"],
+        "and back to the bottom, into the slot C left rather than a new one"
+    );
+}
+
+/// The other half of the claim: an undo of a deletion is not a new element, so it must
+/// come back **in place** rather than on top or at the bottom. This is the case the
+/// registry's §17 rule leans on for the tombstone handling, and the one a reindexing
+/// store would get wrong.
+#[test]
+fn undoing_a_deletion_puts_the_element_back_where_it_was() {
+    let mut elements = Vec::new();
+    let mut cast: Cast = Vec::new();
+    for (index, name) in ["A", "B", "C"].into_iter().enumerate() {
+        let element = filled(box_at(90.0 * index as f64, 400.0, 60.0, 60.0));
+        cast.push((name, element.id.clone()));
+        elements.push(element);
+    }
+    let mut engine = engine_with_scene(elements);
+    let before = stack(&engine, &cast);
+
+    engine.select(vec![id(&cast, "B")]);
+    engine.delete_selection();
+    assert_eq!(stack(&engine, &cast), vec!["A", "C"]);
+
+    engine.undo();
+    assert_eq!(
+        stack(&engine, &cast),
+        before,
+        "B returns between A and C, not on top and not at the bottom"
+    );
+
+    // ...and the undo of the delete is itself undoable back to the gap.
+    engine.redo();
+    assert_eq!(stack(&engine, &cast), vec!["A", "C"]);
 }

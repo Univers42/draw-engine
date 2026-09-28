@@ -1271,6 +1271,69 @@ pub fn reanchor_to_outline(
     moved.then_some(next)
 }
 
+// ------------------------------------------------------------------------ releasing
+
+/// Lets go of every end bound to one of the elements in `removed` — the release
+/// Excalidraw's `fixBindingsAfterDeletion` makes (`binding.ts@1118751f:2297-2311`), which
+/// only ever calls `unbindAffected` and writes `{ [bindingProp]: null }`
+/// (`binding.ts:2569`).
+///
+/// **On a deletion it releases; it never rebinds.** Nothing `fixBindingsAfterDeletion`
+/// reaches rewrites a bound id: it writes `{ [bindingProp]: null }` on the arrow
+/// (`binding.ts@1118751f:2569`) and drops the entry from the shape's `boundElements`
+/// (`:2452-2457`, `newBoundElements` at `:2313-2330`). The one place the oracle does
+/// substitute a bound `elementId` is `fixDuplicatedBindingsAfterDuplication`
+/// (`:2256-2281`, at `:2264` and `:2277`), and that is a copy, not a removal: the shape
+/// was copied too, so the copy's binding has to follow the copy. That is
+/// [`materialize_within`](crate::edit::materialize_within).
+/// Everywhere else the oracle admits it cannot rebind — *"we cannot rebind arrows atm"*
+/// (`:2577`), *"we cannot rebind arrows with bindable element … TODO: #7348"*
+/// (`delta.ts:2024-2025`) — and even its rebind path releases when the target is gone
+/// (`binding.ts:2489-2492`). The rule is one-directional (`delta.ts@1118751f:1976-1979`):
+/// a binding must not point from a live element into a deleted one, and nothing else
+/// about an arrow changes. An end on a shape that survives is left exactly as it was.
+///
+/// Called **before** the removals, in the same step of history as them, so one undo binds
+/// the arrow again. Every **local** path that takes something somebody drew an arrow to —
+/// the eraser, the Delete key, a vectorize that drops the image it replaces, and a text
+/// emptied out of existence — all go through here, so there is one release and not one
+/// per caller. A **remote** peer's tombstone does not: it arrives already applied
+/// (`clipboard.rs:213`). That is benign, because the arrow the peer let go of arrives in
+/// the same patch, already let go of.
+pub fn release_bindings_to_removed(
+    scene: &mut crate::scene::store::Scene,
+    removed: &std::collections::HashSet<String>,
+) {
+    if removed.is_empty() {
+        return;
+    }
+    // Collected first: `iter_ordered` borrows the scene, and the writes below need it.
+    // An arrow that is itself going is skipped — it is about to be written as a
+    // tombstone, and releasing an end of it would be a change nothing could see.
+    let affected: Vec<(String, bool, bool)> = scene
+        .iter_ordered()
+        .filter(|el| !removed.contains(&el.id))
+        .filter_map(|el| {
+            let start = el
+                .start_binding
+                .as_ref()
+                .is_some_and(|b| removed.contains(b));
+            let end = el.end_binding.as_ref().is_some_and(|b| removed.contains(b));
+            (start || end).then(|| (el.id.clone(), start, end))
+        })
+        .collect();
+    for (id, start, end) in affected {
+        scene.update(&id, |arrow| {
+            if start {
+                set_anchor(arrow, End::Start, None);
+            }
+            if end {
+                set_anchor(arrow, End::End, None);
+            }
+        });
+    }
+}
+
 // -------------------------------------------------------------------------- linears
 
 pub fn linear_endpoints(element: &DrawElement) -> (Point, Point) {
