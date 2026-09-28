@@ -61,40 +61,61 @@ pub struct ClipboardHost {
 }
 
 /// One copy, offered to a host that can deliver it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ClipboardCopy {
+///
+/// The scope is **inside** the copy, not beside it, and that is the design rather than an
+/// arrangement. Only a browser can encode a canvas, so the raster payload cannot be built
+/// here — it has to be built by the host, from the scope. A copy that carried only a
+/// `kind` would send the host back to `export_scope` for the elements, and that second call
+/// is a second element-list decision: one that happens to agree today, in a module whose
+/// whole reason to exist is the agreement. Carrying the scope means there is nothing left
+/// for the host to decide.
+#[derive(Debug)]
+pub struct ClipboardCopy<'a> {
     /// The oracle's `predicate`, decided by the motor from the host's report and the scene.
     pub supported: bool,
     /// What to write it as, or `""` when there is nothing to write. Never the host's
     /// choice: `image/png` and `text/plain` (`clipboard.ts@1118751f:568-570, 596-598`).
     pub mime: &'static str,
-    /// What was copied — the toast's one word, carried by the scope itself
-    /// ([`crate::ExportScopeKind`]) rather than re-derived by the front from its own
-    /// selection count. One enum, not a second one: the two answers are the scope's.
-    pub scope: crate::export::ExportScopeKind,
-    /// The payload, for the vector format. `None` for a raster, which only a browser can
-    /// encode, and `None` whenever `supported` is false.
+    /// What is being copied: the elements, the box, and which of the two answers this is
+    /// ([`crate::ExportScope::kind`] — the toast's one word, carried rather than re-derived
+    /// by the front from its own selection count).
+    pub scope: crate::export::ExportScope<'a>,
+    /// The vector payload, when the format is text. `None` for a raster, which the host
+    /// encodes from `scope`, and `None` whenever `supported` is false.
     pub text: Option<String>,
 }
 
-impl ClipboardCopy {
+impl<'a> ClipboardCopy<'a> {
     /// Nothing, for a copy the engine declines.
     ///
-    /// A named constructor rather than a `Default`, because "declined" is an answer and a
-    /// derived one would make it an accident of the type: a `ClipboardCopy` built with
-    /// `..Default::default()` would be declined *and* carry a MIME type, which is the
-    /// state this whole module exists to make impossible.
-    pub fn declined() -> Self {
+    /// Takes the scope because even a declined copy is scoped — the scene was walked to
+    /// find that there is nothing to walk, and the walk's answer is what says "no". The
+    /// `text` is `None` and the `mime` is empty, so a host that ignored `supported` would
+    /// have nothing to write, which is the state this module exists to make unreachable.
+    pub fn declined(scope: crate::export::ExportScope<'a>) -> Self {
         Self {
             supported: false,
             mime: "",
-            scope: crate::export::ExportScopeKind::Scene,
+            scope,
             text: None,
         }
     }
 }
 
 impl ClipboardFormat {
+    /// The format a host named, or `None` for a name this build does not have.
+    ///
+    /// At the wasm boundary only, and it returns `None` rather than guessing: a typo in a
+    /// format name is a bug worth surfacing, and a default would turn it into a clipboard
+    /// holding the wrong kind of thing.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "png" => Some(Self::Png),
+            "svg" => Some(Self::Svg),
+            _ => None,
+        }
+    }
+
     /// The MIME type the oracle writes this format under.
     ///
     /// `image/png` for the raster (`clipboard.ts@1118751f:568-570`) and **`text/plain`**

@@ -202,7 +202,7 @@ fn a_copy_of_nothing_selected_is_the_whole_scene() {
 
     let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &ExportOptions::default());
 
-    assert_eq!(copy.scope, ExportScopeKind::Scene);
+    assert_eq!(copy.scope.kind, ExportScopeKind::Scene);
     assert!(
         copy.supported,
         "a board with two elements still offers a copy"
@@ -226,7 +226,7 @@ fn a_copy_of_a_selection_is_that_selection() {
 
     let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &ExportOptions::default());
 
-    assert_eq!(copy.scope, ExportScopeKind::Selection);
+    assert_eq!(copy.scope.kind, ExportScopeKind::Selection);
     let svg = copy.text.as_deref().expect("a copy carries a picture");
     assert_eq!(
         svg_uses(svg, LEFT),
@@ -251,7 +251,7 @@ fn a_copy_of_one_frame_is_that_frames_contents() {
     let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &ExportOptions::default());
     let svg = copy.text.as_deref().expect("a copy carries a picture");
 
-    assert_eq!(copy.scope, ExportScopeKind::Selection);
+    assert_eq!(copy.scope.kind, ExportScopeKind::Selection);
     // The frame's outline is in the picture its contents are measured by — it overlaps
     // itself, so `getElementsOverlappingFrame` keeps it (`scope.rs`).
     assert_eq!(svg_uses(svg, FRAME), 1, "the frame's own outline");

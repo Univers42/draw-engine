@@ -747,27 +747,30 @@ impl DrawEngine {
     /// **`text` is the file export's own string**, from [`Self::export_svg_of`] over the
     /// scope built here. Not a second rendering and not a second element list, which is
     /// what makes "the clipboard carries exactly what the export would have produced" true
-    /// by construction rather than by agreement. The PNG payload is absent because only a
-    /// browser can encode a canvas; the host asks `wasm::export` for it **with this
-    /// scope's frame**, and there is nothing here to disagree about.
-    pub fn clipboard_copy(
-        &self,
+    /// by construction rather than by agreement.
+    ///
+    /// The raster payload is absent, and the [`crate::export::ClipboardCopy`] carries the
+    /// scope instead: encoding a canvas needs a browser, and the host encodes *this* scope's
+    /// elements into *this* scope's box (`wasm::export::export_png`, which is also what a
+    /// file uses). Nothing is left for the host to decide and nothing to disagree about.
+    pub fn clipboard_copy<'a>(
+        &'a self,
         format: crate::export::ClipboardFormat,
         host: &crate::export::ClipboardHost,
         options: &crate::export::ExportOptions,
-    ) -> crate::export::ClipboardCopy {
+    ) -> crate::export::ClipboardCopy<'a> {
         let scope = self.export_scope(true, options);
         if !format.host_can_take(host) || scope.elements.is_empty() {
-            return crate::export::ClipboardCopy::declined();
+            return crate::export::ClipboardCopy::declined(scope);
         }
         crate::export::ClipboardCopy {
             supported: true,
             mime: format.mime(),
-            scope: scope.kind,
             text: match format {
                 crate::export::ClipboardFormat::Svg => self.export_svg_of(&scope),
                 crate::export::ClipboardFormat::Png => None,
             },
+            scope,
         }
     }
 

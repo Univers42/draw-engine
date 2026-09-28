@@ -23,6 +23,7 @@ use crate::scene::Scene;
 /// (`data/index.ts@1118751f:92-95`). A frame export is the case where the two disagree on
 /// purpose: what is painted is the frame's contents, and what it is measured by is the
 /// frame.
+#[derive(Debug)]
 pub struct ExportScope<'a> {
     /// The target: the box, the size, the scale. See [`ExportFrame`].
     pub frame: ExportFrame,

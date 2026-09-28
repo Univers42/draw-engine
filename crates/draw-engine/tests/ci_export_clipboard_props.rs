@@ -186,7 +186,7 @@ fn every_copy_is_byte_for_byte_the_file_export_of_the_same_scope() {
             // The expectation is restated from the oracle's own predicate instead, out of
             // the selection and the scene, so it is an independent witness.
             assert_eq!(
-                copy.scope,
+                copy.scope.kind,
                 if names_a_live_element(&elements, &selected) {
                     ExportScopeKind::Selection
                 } else {
@@ -227,7 +227,7 @@ fn a_copied_frame_is_measured_by_its_own_box() {
         let copy = engine.clipboard_copy(ClipboardFormat::Svg, &browser(), &options);
         let copied = copy.text.as_deref().expect("a copy carries a picture");
 
-        assert_eq!(copy.scope, ExportScopeKind::Selection, "seed {seed}");
+        assert_eq!(copy.scope.kind, ExportScopeKind::Selection, "seed {seed}");
         assert_close(svg_width(copied), svg_width(&file));
         assert_close(svg_height(copied), svg_height(&file));
     }
