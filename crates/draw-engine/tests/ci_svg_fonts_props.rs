@@ -88,6 +88,12 @@ fn text_in(family: Option<u8>) -> DrawElement {
 
 fn svg_of_elements(elements: &[DrawElement]) -> String {
     let borrowed: Vec<&DrawElement> = elements.iter().collect();
+    let options = ExportOptions {
+        // No payload: these are the tests about the fonts, and a base64 scene would be a
+        // wall of text in every failure message. It has its own file.
+        embed_scene: false,
+        ..ExportOptions::default()
+    };
     scene_to_svg(
         &borrowed,
         &ExportFrame::for_bounds(
@@ -97,10 +103,11 @@ fn svg_of_elements(elements: &[DrawElement]) -> String {
                 max_x: 400.0,
                 max_y: 400.0,
             },
-            &ExportOptions::default(),
+            &options,
         ),
-        "#ffffff",
-        None,
+        &options,
+        // The paper is the theme's, so these tests ask for white the way the board would.
+        &light_theme(),
     )
 }
 

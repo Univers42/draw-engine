@@ -888,9 +888,29 @@ impl WasmEngine {
     /// (§2 does not allow the front to pick a margin). It now comes from
     /// [`crate::export::ExportOptions`], and a host that wants the old 16 has to say so in
     /// engine terms — there is nowhere in this signature left to pass it by accident.
+    ///
+    /// `transparent` and `dark_mode` are the same two booleans the PNG binding takes, and
+    /// the same dialog's two switches (`ImageExportDialog.tsx@1118751f:232-262`). **The SVG
+    /// had neither before this**: it always wrote its paper `<rect>`, whatever the person
+    /// had unticked, which is half of what `shortkey.md:450` asks for. The colour of that
+    /// paper is not a parameter at all — it is the engine's own theme, which is the oracle's
+    /// arrangement too (`viewBackgroundColor` is app state, read by the export).
+    ///
+    /// `transparent` is the switch, not the state, so it is inverted on the way in exactly
+    /// as the PNG binding inverts it: what the host means is "no background", and
+    /// `ExportOptions::background` is `exportBackground` (`appState.ts@1118751f:69`).
     #[wasm_bindgen(js_name = exportSvg)]
-    pub fn export_svg(&self, selection_only: Option<bool>) -> Option<String> {
-        let options = crate::export::ExportOptions::default();
+    pub fn export_svg(
+        &self,
+        selection_only: Option<bool>,
+        transparent: Option<bool>,
+        dark_mode: Option<bool>,
+    ) -> Option<String> {
+        let options = crate::export::ExportOptions {
+            background: !transparent.unwrap_or(false),
+            dark_mode: dark_mode.unwrap_or(false),
+            ..Default::default()
+        };
         let engine = self.cell.borrow();
         let scope = engine
             .engine
@@ -966,16 +986,26 @@ impl WasmEngine {
     /// empty selection with it set is still the scene, and one selected frame is a frame
     /// export, because [`crate::export::export_scope`] decides both
     /// (`data/index.ts@1118751f:48-96`).
+    ///
+    /// `dark_mode` is the dialog's "Dark mode" switch, the oracle's `exportWithDarkMode`
+    /// (`ImageExportDialog.tsx@1118751f:249-262`), and it puts every colour this picture is
+    /// painted with through one filter — the canvas path's own
+    /// `applyDarkModeFilter(element.strokeColor, renderConfig.theme === THEME.DARK)`
+    /// (`renderElement.ts@1118751f:447-450`) and its `bootstrapCanvas` background
+    /// (`renderer/helpers.ts@1118751f:115-119`). False by default
+    /// (`appState.ts@1118751f:72`), which is what makes an export the drawing as shown.
     #[wasm_bindgen(js_name = exportPng)]
     pub fn export_png(
         &self,
         scale: Option<f64>,
         transparent: Option<bool>,
         selection_only: Option<bool>,
+        dark_mode: Option<bool>,
     ) -> Option<js_sys::Promise> {
         let options = crate::export::ExportOptions {
             scale: scale.unwrap_or(1.0),
             background: !transparent.unwrap_or(false),
+            dark_mode: dark_mode.unwrap_or(false),
             ..Default::default()
         };
         let engine = self.cell.borrow();
