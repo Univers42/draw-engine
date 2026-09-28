@@ -69,6 +69,12 @@ export function attachPointerInput(session: HostSession): () => void {
   const { canvas, engine, callbacks } = session;
   let intercepted = false;
 
+  // Pointers down on the canvas, by id. A platform fact handed to the engine, which is
+  // where the reading of it lives: more than one pointer is a multi-finger gesture, and a
+  // right-button press inside one is not a pan (`getPointerCount() <= 1`,
+  // `App.pan.ts@1118751f:95`).
+  const pointersDown = new Set<number>();
+
   // Linux pastes its primary selection on a middle release, and the one ending a
   // middle-button pan is no exception — every pan pasted the last copied shapes. Once
   // such a pan moves, the next paste is dropped until shortly after the release, as the
@@ -104,9 +110,27 @@ export function attachPointerInput(session: HostSession): () => void {
   };
 
   const onPointerDown = (event: PointerEvent) => {
-    if (event.button === 2) return;
+    pointersDown.add(event.pointerId);
     clearPendingMove(session);
     clearPendingHover(session);
+    if (event.button === 2) {
+      // A right press is a pan session or a right-click, and the engine says which: it is
+      // a pan only once the pointer has travelled past the threshold, so nothing may be
+      // claimed for it here or it would have been decided twice.
+      // (`App.pan.ts@1118751f:88-125`, and `App.tsx:8698-8700`, where the oracle returns
+      // from the pointer down before the press becomes a scene gesture at all.)
+      const { x, y } = localPoint(canvas, event);
+      const start = engine.beginSecondaryPan(x, y, pointersDown.size);
+      if (start === "declined") return;
+      // The default is what scrolls the page and takes the focus (#4489) — but not while a
+      // text is open, where preventing it breaks the caret. The engine reads that state,
+      // so this host does not have a rule of its own about it.
+      if (start === "started") event.preventDefault();
+      // Capture, as the middle-button pan below does: the moves that decide a pan keep
+      // arriving after the pointer has left the canvas.
+      canvas.setPointerCapture(event.pointerId);
+      return;
+    }
     session.down = true;
     session.container.focus();
     const { x, y } = localPoint(canvas, event);
@@ -141,12 +165,13 @@ export function attachPointerInput(session: HostSession): () => void {
    * Whether the engine wants this move.
    *
    * Normally only while a button is held — every other gesture is a drag, and forwarding
-   * the hundreds of hover moves a minute costs a WASM call each for nothing. The
-   * exception is a line or arrow being placed point by point: it follows the cursor
-   * *between* its clicks, so the segment being aimed only appears if the moves with no
-   * button held get through. It is the one gesture in the engine that works that way.
+   * the hundreds of hover moves a minute costs a WASM call each for nothing. The engine
+   * names the two exceptions, which are the gestures that follow the cursor with no
+   * button of the host's own down: a line or arrow placed point by point, whose segment
+   * being aimed only appears if the moves between its clicks get through, and a
+   * right-button session, which cannot tell a click from a drag without them.
    */
-  const wantsMove = (): boolean => session.down || engine.linearInProgress();
+  const wantsMove = (): boolean => session.down || engine.wantsPointerMoves();
 
   const onPointerMove = (event: PointerEvent) => {
     // Counted before the gate, so the ratio of events to engine steps is honest about
@@ -184,6 +209,18 @@ export function attachPointerInput(session: HostSession): () => void {
   };
 
   const onPointerUp = (event: PointerEvent) => {
+    pointersDown.delete(event.pointerId);
+    if (event.button === 2) {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      // The move the frame was still holding is part of this gesture, so it is applied
+      // before the session ends. Then the release, which either is a right-click whose
+      // menu this host has to open — on macOS and Linux the platform's own event came with
+      // the press and was swallowed — or is nothing at all, because the platform's event
+      // is still to come (`App.pan.ts@1118751f:247-264`).
+      flushPendingMove(session);
+      if (engine.endSecondaryPan() === "menu") openContextMenuAt(event);
+      return;
+    }
     if (event.button === 1) {
       middleFrom = null;
       pasteTimer = view.setTimeout(allowPaste, PASTE_AFTER_PAN_MS);
@@ -211,15 +248,26 @@ export function attachPointerInput(session: HostSession): () => void {
     if (!session.down) engine.endHover();
   };
 
+  /**
+   * A pointer the platform took away — a touch the browser claims for a gesture of its
+   * own. Forgets it, so the count it belongs to cannot stay raised and decline every
+   * right press after it.
+   */
+  const onPointerCancel = (event: PointerEvent) => {
+    pointersDown.delete(event.pointerId);
+  };
+
   const onDoubleClick = (event: MouseEvent) => {
     const { x, y } = localPoint(canvas, event);
     engine.handleDoubleClick(x, y);
     event.preventDefault();
   };
 
-  const onContext = (event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
+  /**
+   * The menu for one point, whether the platform's `contextmenu` led here or a
+   * right-button release did.
+   */
+  const openContextMenuAt = (event: MouseEvent | PointerEvent) => {
     const { x, y } = localPoint(canvas, event);
     const hit = engine.hitTest(x, y, 4);
     const onBox = engine.hitsSelectionBox(x, y);
@@ -245,11 +293,28 @@ export function attachPointerInput(session: HostSession): () => void {
     callbacks.onContextMenu?.({ x, y }, hit || onBox ? "element" : "canvas");
   };
 
+  const onContext = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // A right-button session answers for its own menu, and this is the half of it that
+    // matters on the platforms where the event comes with the press — macOS and Linux
+    // fire `contextmenu` on mousedown, before anything can know whether the gesture is a
+    // click or a drag. Opening the menu here would put it under the pointer on the press,
+    // and no right-drag to pan would ever happen. The session opens the menu on the
+    // release instead (`App.pan.ts@1118751f:74-84`, `App.tsx:13230-13236`).
+    //
+    // It also covers the other platform: an event following a release that turned out to
+    // be a drag is not a click, whatever the platform believes about its own timing.
+    if (engine.consumesContextMenu()) return;
+    openContextMenuAt(event);
+  };
+
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointerleave", onPointerLeave);
+  canvas.addEventListener("pointercancel", onPointerCancel);
   canvas.addEventListener("dblclick", onDoubleClick);
   canvas.addEventListener("contextmenu", onContext);
 
@@ -257,11 +322,13 @@ export function attachPointerInput(session: HostSession): () => void {
     clearPendingMove(session);
     clearPendingHover(session);
     allowPaste();
+    pointersDown.clear();
     canvas.removeEventListener("wheel", onWheel);
     canvas.removeEventListener("pointerdown", onPointerDown);
     canvas.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("pointerup", onPointerUp);
     canvas.removeEventListener("pointerleave", onPointerLeave);
+    canvas.removeEventListener("pointercancel", onPointerCancel);
     canvas.removeEventListener("dblclick", onDoubleClick);
     canvas.removeEventListener("contextmenu", onContext);
   };

@@ -85,6 +85,30 @@ export const ARROWHEADS: Arrowhead[] = [
 export type TextAlign = "left" | "center" | "right";
 export const TEXT_ALIGNS: TextAlign[] = ["left", "center", "right"];
 
+/**
+ * What a right-button press did. The order is the contract with `pan.rs` and is
+ * append-only: a host reading index 2 as "editing-text" when the engine writes
+ * `Started` there would prevent the default of a press that must not have it
+ * (`App.pan.ts@1118751f:118-125`, issue #4489).
+ */
+export type SecondaryPanStart = "declined" | "started" | "editing-text";
+export const SECONDARY_PAN_STARTS: SecondaryPanStart[] = [
+  "declined",
+  "started",
+  "editing-text",
+];
+
+/**
+ * What a right-button release owes the menu. The order is the contract with `pan.rs`.
+ *
+ * - `none` — the platform's own `contextmenu` is still to come, and it is a click.
+ * - `drag` — it is still to come, and it is not: the host passes it to
+ *   `consumesContextMenu`, which swallows it.
+ * - `menu` — it was already swallowed with the press, so the host opens the menu itself.
+ */
+export type SecondaryPanEnd = "none" | "drag" | "menu";
+export const SECONDARY_PAN_ENDS: SecondaryPanEnd[] = ["none", "drag", "menu"];
+
 /** Where a label sits down the height of the shape holding it. */
 export type VerticalAlign = "top" | "middle" | "bottom";
 export const VERTICAL_ALIGNS: VerticalAlign[] = ["top", "middle", "bottom"];

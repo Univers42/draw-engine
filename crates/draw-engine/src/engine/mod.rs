@@ -29,6 +29,7 @@ mod live;
 pub use image::EmbedFrame;
 pub use peers::Peer;
 mod multi_linear;
+mod pan_session;
 mod paste_text;
 mod peers;
 mod pointer;
@@ -255,6 +256,14 @@ pub struct DrawEngine {
     settled_selection: std::rc::Rc<stamp::SelectionState>,
     /// Between a press and its release, when what the press selects is not settled yet.
     pointer_open: bool,
+    /// The right-button session in progress, if one is. Outlives the gesture it holds,
+    /// because the platform's `contextmenu` can arrive after the release that ended it —
+    /// see [`Self::consumes_context_menu`] and [`crate::pan`].
+    secondary_pan: Option<crate::pan::SecondaryPan>,
+    /// A release that turned out to be a drag, whose platform `contextmenu` is still to
+    /// come and is not a click. A latch rather than a flag: only that one event
+    /// (`App.pan.ts@1118751f:216-219`).
+    suppress_next_context_menu: bool,
     /// A peer's copy of an element with an uncommitted local change, refused because a
     /// gesture in progress wins, as in Excalidraw. The commit stamps above it, or adopts
     /// it if the gesture came to nothing. See `stamp.rs`.
@@ -357,6 +366,8 @@ impl DrawEngine {
             history_seq: 0,
             settled_selection: std::rc::Rc::default(),
             pointer_open: false,
+            secondary_pan: None,
+            suppress_next_context_menu: false,
             remote_refused: std::collections::HashMap::new(),
             events: EngineEvents::default(),
             peers: Vec::new(),

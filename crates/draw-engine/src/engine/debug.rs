@@ -110,6 +110,7 @@ fn interaction_kind(interaction: &Interaction) -> &'static str {
         Interaction::Freedraw { .. } => "freedraw",
         Interaction::Erase { .. } => "erase",
         Interaction::Pan { .. } => "pan",
+        Interaction::SecondaryPan => "secondary-pan",
         Interaction::Move { .. } => "move",
         Interaction::Resize { .. } => "resize",
         Interaction::Rotate { .. } => "rotate",

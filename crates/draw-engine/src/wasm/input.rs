@@ -245,6 +245,38 @@ impl WasmEngine {
         self.with_now(|eng| eng.begin_pan(sx, sy));
     }
 
+    /// Starts a right-button pan session, or declines it. See
+    /// [`DrawEngine::begin_secondary_pan`]; `pointers_down` is the host's count of
+    /// pointers on the canvas, the one thing the engine cannot know for itself.
+    ///
+    /// The answer is the discriminant of `SecondaryPanStart`, which also carries the
+    /// `preventDefault` decision: the host is not to have that rule of its own.
+    #[wasm_bindgen(js_name = beginSecondaryPan)]
+    pub fn begin_secondary_pan(&self, sx: f64, sy: f64, pointers_down: u32) -> u8 {
+        self.with_now_answering(|eng| eng.begin_secondary_pan(sx, sy, pointers_down) as u8)
+    }
+
+    /// Ends a right-button pan session and answers what the host owes the menu — the
+    /// discriminant of `SecondaryPanEnd`. See [`DrawEngine::end_secondary_pan`].
+    #[wasm_bindgen(js_name = endSecondaryPan)]
+    pub fn end_secondary_pan(&self) -> u8 {
+        self.with_now_answering(|eng| eng.end_secondary_pan() as u8)
+    }
+
+    /// Whether a `contextmenu` belongs to a right-button session and must not open the
+    /// menu. See [`DrawEngine::consumes_context_menu`].
+    #[wasm_bindgen(js_name = consumesContextMenu)]
+    pub fn consumes_context_menu(&self) -> bool {
+        self.with_now_answering(DrawEngine::consumes_context_menu)
+    }
+
+    /// Whether pointer moves arriving with no button of the host's own down are wanted.
+    /// See [`DrawEngine::wants_pointer_moves`].
+    #[wasm_bindgen(js_name = wantsPointerMoves)]
+    pub fn wants_pointer_moves(&self) -> bool {
+        self.cell.borrow().engine.wants_pointer_moves()
+    }
+
     #[wasm_bindgen(js_name = movePointer)]
     pub fn move_pointer(&self, sx: f64, sy: f64, square: bool, invert_snap: bool) {
         self.with_now(|eng| eng.move_pointer(sx, sy, square, invert_snap));

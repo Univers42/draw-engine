@@ -226,6 +226,7 @@ impl DrawEngine {
                     last_y: sy,
                 })
             }
+            Interaction::SecondaryPan => self.advance_secondary_pan(sx, sy),
             Interaction::Move { .. } => Some(self.move_selection(it, world, invert_snap)),
             Interaction::CornerRadius {
                 ref id,

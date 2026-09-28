@@ -8,6 +8,7 @@ pub mod freehand;
 pub mod history;
 pub mod interaction;
 pub mod math;
+pub mod pan;
 pub mod render;
 pub mod scene;
 pub mod selection;
@@ -49,6 +50,9 @@ pub use interaction::{
 pub use math::{
     bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp, round_px,
     smoothstep, Cubic, CURVE_TIGHTNESS,
+};
+pub use pan::{
+    SecondaryPan, SecondaryPanEnd, SecondaryPanStart, SecondaryStep, SECONDARY_BUTTON_PAN_THRESHOLD,
 };
 pub use render::{
     canvas_text_align, dark_theme, default_arrowhead, font_string, is_roughable, light_theme,
