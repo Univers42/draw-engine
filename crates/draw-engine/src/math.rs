@@ -26,6 +26,84 @@ pub fn round_px(value: f64) -> f64 {
     value.round()
 }
 
+/// The step Shift snaps a drag or a rotation to: **15 degrees**.
+///
+/// Excalidraw's `SHIFT_LOCKING_ANGLE` (`packages/common/src/constants.ts@1118751f:31`,
+/// `Math.PI / 12`). One constant, and below it **two** functions, because the oracle
+/// rounds its two locks differently — they are not one rule with a flag, and folding them
+/// together would have to pick one and call it parity.
+pub const SHIFT_LOCKING_ANGLE: f64 = std::f64::consts::PI / 12.0;
+
+/// `Math.round`, which breaks a tie **toward +infinity** (`Math.round(-0.5) === -0`).
+/// `f64::round` breaks it away from zero, which is a whole step out on every negative tie.
+/// The same trap `getGridPoint` has, and the same fix: `Math.round` is `floor(x + 0.5)`
+/// for every input.
+///
+/// Public because it is the one rounding both Shift locks are built on, and because a tie
+/// in the *composed* result cannot be held to a number in floating point — the halves never
+/// line up in radians — so the rule is tested here, where it is exact.
+pub fn round_half_up(value: f64) -> f64 {
+    (value + 0.5).floor()
+}
+
+/// The delta a Shift-locked drag leaves from its anchor.
+///
+/// Excalidraw's `getLockedLinearCursorAlignSize` (`sizeHelpers.ts@1118751f:187-254`): the
+/// drag's angle is rounded to a step, and the endpoint is then the pointer's **orthogonal
+/// projection onto the ray that step names** — the intersection of the locked ray with the
+/// line through the cursor across it (`:236-250`) — with the flat and square cases written
+/// out as branches of their own (`:229-234`).
+///
+/// The projection is the part that is easy to miss. Rotating the delta onto the locked
+/// angle also yields a delta *at* the locked angle, so an assertion about the angle alone
+/// cannot tell the two apart. The lengths differ: the projection stands
+/// `|drag| * cos(delta)` from the anchor where a rotation stands `|drag|`, and the two
+/// agree only once the drag was already on a step.
+pub fn shift_locked_delta(dx: f64, dy: f64) -> (f64, f64) {
+    let steps = round_half_up(dy.atan2(dx) / SHIFT_LOCKING_ANGLE);
+    // The oracle's two branches, decided on the step count rather than on the angle that
+    // count multiplies out to. `k * (PI / 12)` is not reliably exactly `FRAC_PI_2` in
+    // binary, so the oracle's own `lockedAngle === Math.PI / 2` is a test that can miss —
+    // and a miss lands in the general case, where `1 / tan(locked)` is a very large number
+    // and the two axes are then right by luck rather than by construction.
+    if steps.rem_euclid(12.0) == 0.0 {
+        return (dx, 0.0);
+    }
+    if steps.rem_euclid(12.0) == 6.0 {
+        return (0.0, dy);
+    }
+    let (sin, cos) = (steps * SHIFT_LOCKING_ANGLE).sin_cos();
+    let along = dx * cos + dy * sin;
+    (along * cos, along * sin)
+}
+
+/// The angle a Shift-locked rotation lands on, in `[0, 2*PI)`.
+///
+/// Excalidraw's two rotation locks, `rotateSingleElement`
+/// (`resizeElements.ts@1118751f:229-233`) and `rotateMultipleElements` (`:424-427`), round
+/// with `angle += step / 2; angle -= angle % step` and then `normalizeRadians`
+/// (`packages/math/src/angle.ts@1118751f:11-14`).
+///
+/// **The input is normalised before it is floored, and that is load-bearing.** The oracle
+/// builds the raw angle as `5 * PI / 2 + atan2(..)` (`:227`) — two and a half turns, not
+/// one — so the number it floors always sits in `(3PI/2, 7PI/2]` and is never negative.
+/// Ours is built as `PI / 2 + atan2(..)` (`selection/transform.rs:293`), the same angle a
+/// whole turn smaller, which does go negative. `%` truncates toward zero, so a negative
+/// operand lands in a cell **twice as wide**: everything within 7.5 degrees either side of
+/// straight up folds onto 0. Handed a raw -20 degrees the oracle answers 345 and this
+/// answered 0, and the whole lower-left quadrant of a turn with it.
+///
+/// Normalising first puts the input back in the range the oracle's own is in, which makes
+/// the lock an ordinary round-to-nearest over 15 degrees — the same answer
+/// [`shift_locked_delta`] gives for the same raw angle, as it should, since they are the
+/// same rounding. `2 * PI` is exactly 24 steps, so folding the angle into `[0, 2PI)` moves
+/// it by a whole number of steps and cannot change which cell it is in.
+pub fn shift_locked_angle(angle: f64) -> f64 {
+    let shifted = angle.rem_euclid(std::f64::consts::TAU) + SHIFT_LOCKING_ANGLE / 2.0;
+    let locked = shifted - shifted % SHIFT_LOCKING_ANGLE;
+    locked.rem_euclid(std::f64::consts::TAU)
+}
+
 /// One cubic Bézier: start, two controls, end.
 pub type Cubic = [[f64; 2]; 4];
 

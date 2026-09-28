@@ -49,8 +49,9 @@ pub use interaction::{
     LASER_SIZE, LASER_STREAMLINE,
 };
 pub use math::{
-    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp, round_px,
-    smoothstep, Cubic, CURVE_TIGHTNESS,
+    bezier_point, bezier_point_at_fraction, catmull_rom_cubics, clamp, hash_string, lerp,
+    round_half_up, round_px, shift_locked_angle, shift_locked_delta, smoothstep, Cubic,
+    CURVE_TIGHTNESS, SHIFT_LOCKING_ANGLE,
 };
 pub use pan::{
     SecondaryPan, SecondaryPanEnd, SecondaryPanStart, SecondaryStep, SECONDARY_BUTTON_PAN_THRESHOLD,

@@ -19,30 +19,36 @@
 //!    the free branch rather than composing with it — but it grid-snaps the pointer first
 //!    (`:1916`), so the two are ordered: grid, then angle.
 //!
-//! # Two recorded divergences in the angle lock, not fixed here
+//! # The angle lock: the step, and the geometry that goes with it
 //!
 //! The step is `SHIFT_LOCKING_ANGLE = Math.PI / 12` — **15 degrees**
 //! (`packages/common/src/constants.ts@1118751f:31`), used by both
 //! `getLockedLinearCursorAlignSize` (`sizeHelpers.ts@1118751f:196-197`) and the creation
-//! path's `getPerfectElementSize` (`:171-172`). This engine's `constrain_to_angle` steps
-//! by `PI / 4` (`interaction/linear_drag.rs:17`), and it has **four** call sites in this
-//! area: a dragged endpoint (`engine/pointer_move.rs:399`), a preview point
-//! (`engine/multi_linear.rs:279`), a drag-drawn line (`interaction/linear_drag.rs:32`) and
-//! an elbow end (`engine/elbow.rs:87`).
+//! path's `getPerfectElementSize` (`:171-172`). It reaches this engine through
+//! `constrain_to_angle`, which has **four** call sites: a dragged endpoint
+//! (`engine/pointer_move.rs:399`), a preview point (`engine/multi_linear.rs:279`), a
+//! drag-drawn line (`interaction/linear_drag.rs:32`) and an elbow end
+//! (`engine/elbow.rs:87`). All four go through the one function, so the step and the
+//! geometry are decided once, in `math::shift_locked_delta`.
 //!
-//! The brief for this task placed the 45/15 divergence in the *rotation* path. It is not
-//! there: `selection/transform.rs` calls none of the four, and its own open rule is a
-//! different defect — that `rotate_element` takes only the pointer position, so a rotation
-//! is not quantised at all (`registry.ts`, "15. Transform engine", `^Angle snapping$`).
+//! Both were wrong here until Phase 6.2, and the second one is the half that a
+//! "just change the constant" fix would have left behind. This engine stepped by `PI / 4`
+//! and **rotated the delta** onto the locked angle. The oracle keeps the drag's component
+//! **along** the locked ray and discards the one across it — the locked ray intersected
+//! with the line through the cursor perpendicular to it
+//! (`sizeHelpers.ts@1118751f:236-250`) — with the flat and square cases written out as
+//! branches of their own (`:229-234`). The two agree about the *angle* and disagree about
+//! the *length*, so an assertion on the angle alone cannot tell them apart: the projection
+//! stands `|drag| * cos(delta)` from the anchor where a rotation stands `|drag|`.
+//! `the_lock_keeps_the_component_along_the_locked_ray` below is the assertion that can.
 //!
-//! Second, the two languages keep the *length* by different geometry. This one rotates
-//! the delta onto the locked angle; the oracle intersects the locked ray with the line
-//! through the cursor perpendicular to it (`sizeHelpers.ts@1118751f:236-250`), and zeroes
-//! one component outright for the horizontal and vertical cases (`:229-234`). They agree
-//! only when the angle is already locked.
-//!
-//! Neither is fixed here: both are the owner's, and the tests below assert the oracle's
-//! own floor — a multiple of 15 degrees — rather than blessing this engine's 45.
+//! **The rotation handle reaches the same step by a different route.** `selection/transform.rs`
+//! calls none of the four — it is the rotation handle, and the checklist's "rotation" is
+//! that path, not this one. It quantises over the same
+//! [`SHIFT_LOCKING_ANGLE`](math::SHIFT_LOCKING_ANGLE) and by the same rounding once the
+//! angle is folded into `[0, 2PI)`, so the two locks agree step for step; what differs is
+//! that the rotation normalises and the drag does not, and that the drag's *geometry* is a
+//! projection rather than a rotation. See `ci_rotate_lock.rs`.
 //!
 //! **What is not in the list**, each with the line that keeps it out:
 //!
@@ -339,18 +345,15 @@ fn holding_ctrl_takes_a_dragged_endpoint_off_the_grid() {
 /// (`linearElementEditor.ts@1118751f:542-557`) — this is the second entry in the ordered
 /// list, and it is a Q/R pair of its own.
 ///
-/// Asserted as **a multiple of 15 degrees**, which is the oracle's `SHIFT_LOCKING_ANGLE`
-/// (`packages/common/src/constants.ts@1118751f:31`, `Math.PI / 12`) and is therefore the
-/// oracle's own floor. This engine's `constrain_to_angle` steps by `PI / 4`
-/// (`interaction/linear_drag.rs:17`) — every 45 degrees is a multiple of 15, so the
-/// assertion is true here and would stay true if the step were corrected, while failing on
-/// an unquantised angle, on 30-degree steps, or on any step that is not a multiple of the
-/// oracle's. Pinning 45 here would have pinned a **known divergence** as though it were
-/// the reference; see the module header.
+/// Asserted as **a multiple of 15 degrees**, the oracle's own floor. That is deliberately
+/// the weaker claim: every 45 degrees is a multiple of 15, so while the step was `PI / 4`
+/// this assertion was true and the engine was still wrong. It is kept because it is the
+/// one statement that holds for *every* endpoint, and the exact-angle cases in
+/// `the_lock_lands_on_exactly_15_30_165_and_345_degrees` are what pin the step itself.
 ///
-/// The length is deliberately not asserted. `constrain_to_angle` preserves it, and so does
-/// the oracle — but by different geometry, and that difference is a second recorded
-/// divergence rather than something this test should bless either way.
+/// The length is asserted separately, in
+/// `a_locked_endpoint_sits_on_the_locked_ray_at_the_projected_distance`, and against the
+/// oracle's geometry rather than left to whichever of the two this engine happened to use.
 #[test]
 fn shift_locks_a_dragged_endpoint_to_a_multiple_of_15_degrees() {
     let mut engine = placed_line();
@@ -419,6 +422,288 @@ fn the_angle_lock_is_measured_from_the_pointer_the_grid_left_behind() {
         last_point(&off_grid),
         (337.0, 173.0),
         "with Ctrl held the raw pointer should have been the one used"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The lock, at the oracle's own resolution
+// ---------------------------------------------------------------------------
+
+/// `SHIFT_LOCKING_ANGLE` as the oracle spells it: `Math.PI / 12`
+/// (`packages/common/src/constants.ts@1118751f:31`).
+const STEP_DEGREES: f64 = 15.0;
+const STEP_RADIANS: f64 = std::f64::consts::PI / 12.0;
+
+/// How long the dragged segment is before the lock, in world units. Long enough that the
+/// oracle's projection and a rotated delta are far apart: the gap is
+/// `DRAG * (1 - cos(delta))`, which is 12 world units on the gentlest case below.
+const DRAG: f64 = 200.0;
+
+/// `Math.round`, which breaks a tie **toward +infinity** (`Math.round(-0.5) === -0`) where
+/// `f64::round` breaks it away from zero. `Math.round` is `floor(x + 0.5)` for every
+/// input, and a port that uses `.round()` is off by a whole step on every negative tie.
+fn math_round(value: f64) -> f64 {
+    (value + 0.5).floor()
+}
+
+/// The angle of `(x, y)` in degrees, folded into `[0, 360)` so that a locked angle can be
+/// quoted the way the oracle's `normalizeRadians` would leave it.
+fn bearing(x: f64, y: f64) -> f64 {
+    y.atan2(x).to_degrees().rem_euclid(360.0)
+}
+
+/// A drag of [`DRAG`] world units at `degrees` from the anchor.
+fn drag_at(degrees: f64) -> (f64, f64) {
+    let r = degrees.to_radians();
+    (DRAG * r.cos(), DRAG * r.sin())
+}
+
+/// The angle the oracle's own rounding picks for a raw angle, in degrees.
+fn oracle_step(degrees: f64) -> f64 {
+    math_round(degrees / STEP_DEGREES) * STEP_DEGREES
+}
+
+/// The oracle's `getLockedLinearCursorAlignSize` (`sizeHelpers.ts@1118751f:187-254`),
+/// transcribed whole: the rounded step, the two axis branches, and the two lines solved
+/// against each other. Written as the **intersection** rather than as a projection, so
+/// that it is a second reading of the oracle and not the engine's own arithmetic restated.
+fn oracle_locked(dx: f64, dy: f64) -> (f64, f64) {
+    let locked = math_round(dy.atan2(dx) / STEP_RADIANS) * STEP_RADIANS;
+    if locked == 0.0 {
+        return (dx, 0.0);
+    }
+    if locked == std::f64::consts::FRAC_PI_2 {
+        return (0.0, dy);
+    }
+    // locked angle line y = mx + b, then the line through the cursor across it
+    let (a1, b1, c1) = (locked.tan(), -1.0, 0.0);
+    let (a2, b2, c2) = (-1.0 / a1, -1.0, dy - (-1.0 / a1) * dx);
+    let den = a1 * b2 - a2 * b1;
+    ((b1 * c2 - b2 * c1) / den, (c1 * a2 - c2 * a1) / den)
+}
+
+/// A placed line, the grid released so the pointer arrives raw, and **the point its end
+/// hangs from**.
+///
+/// Two things here are not obvious and both would make an angle assertion quietly wrong.
+/// The grid comes off first, because on it the pointer is rounded to a cell before the
+/// lock ever sees it, so the drag below would be a different drag. And the anchor is the
+/// line's *other* end, not the point under the pointer: dragging an end holds the segment
+/// to a ray drawn from the far end of it (`engine/pointer_move.rs:392`, where a handle
+/// takes `points[i - 1]`), which is the oracle's `originX`/`originY`. Measuring from the
+/// dragged point instead would report every angle below as wrong by the segment's own.
+fn raw_pointer_line() -> (DrawEngine, (f64, f64)) {
+    let mut engine = placed_line();
+    engine.set_ctrl_held(true);
+    let anchor = first_point(&engine);
+    (engine, anchor)
+}
+
+/// **Q** — the half that can fail. The locked angle is **exactly** the oracle's step, not
+/// merely a multiple of it. A 45-degree lock gives 0, 45, 180, 315 for these four raw
+/// angles and a lock that does nothing gives 20, 35, 160, 340 — so this is the assertion
+/// that separates 15 degrees from 45, and "is a multiple of 15" is not: every 45 is a
+/// multiple of 15, which is how the 45-degree build passed the pair above.
+#[test]
+fn the_lock_lands_on_exactly_15_30_165_and_345_degrees() {
+    for (raw, want) in [(20.0, 15.0), (35.0, 30.0), (160.0, 165.0), (-20.0, 345.0)] {
+        let (dx, dy) = drag_at(raw);
+        let (x, y) = constrain_to_angle(dx, dy);
+        let got = bearing(x, y);
+        assert!(
+            (got - want).abs() < 1e-9,
+            "a drag at {raw} degrees locked to {got} degrees, not {want}"
+        );
+    }
+}
+
+/// **R** — the other half of the pair, and it belongs to the gesture rather than to
+/// `constrain_to_angle`, which always locks. With nothing held the endpoint is the
+/// pointer, so the angle is the raw one to the last decimal; a lock applied
+/// unconditionally would fail the gesture pair below. The four raw angles are the ones
+/// the Q above uses, so the two halves are the same four drags read two ways.
+#[test]
+fn the_raw_angles_are_the_ones_the_lock_is_measured_from() {
+    for raw in [20.0, 35.0, 160.0, -20.0] {
+        let (dx, dy) = drag_at(raw);
+        let want = raw.rem_euclid(360.0);
+        assert!(
+            (bearing(dx, dy) - want).abs() < 1e-9,
+            "a drag built at {raw} degrees reported {}, not {want}",
+            bearing(dx, dy)
+        );
+        // Each raw angle sits in its own 15-degree cell, off the step by more than the
+        // tolerance: a Q/R pair is only a pair if the Q actually moved the number.
+        assert!(
+            (raw - oracle_step(raw)).abs() > 2.0,
+            "{raw} degrees is too near {want} to tell a lock from no lock"
+        );
+    }
+}
+
+/// The length **through** the lock, which is the assertion the constant alone does not
+/// buy. The oracle keeps the component of the drag *along* the locked ray and drops the
+/// one across it (`sizeHelpers.ts@1118751f:236-250`), so the endpoint is the pointer's
+/// orthogonal projection onto that ray: `DRAG * cos(delta)` from the anchor, not `DRAG`.
+///
+/// A rotated delta keeps `DRAG` exactly, so it is wrong here by
+/// `DRAG * (1 - cos(delta))` — 12 world units on the first case below and 0.76 on the
+/// gentlest, both far outside the tolerance. **This is what a 45-degree build cannot
+/// pass either**: at 45 a raw 20-degree drag locks flat, and a rotated delta puts its
+/// width at 200 where the oracle's flat lock keeps `200 * cos(20 degrees)`.
+#[test]
+fn the_lock_keeps_the_component_along_the_locked_ray() {
+    for raw in [20.0, 35.0, 160.0, -20.0, -170.0, 85.0, 95.0, 4.0] {
+        let (dx, dy) = drag_at(raw);
+        let (x, y) = constrain_to_angle(dx, dy);
+        let delta = (raw - oracle_step(raw)).to_radians();
+        let want = DRAG * delta.cos();
+        let got = x.hypot(y);
+        assert!(
+            (got - want).abs() < 1e-9,
+            "a drag at {raw} degrees came out {got} from the anchor, not the \
+             projection's {want} — the delta was rotated rather than intersected"
+        );
+    }
+}
+
+/// The two cases the oracle writes out as separate branches
+/// (`sizeHelpers.ts@1118751f:229-234`): a flat lock **zeroes the height** and keeps the
+/// width, a square lock **zeroes the width** and keeps the height. Asserted as exact
+/// zeros, because that is what the branches do and what a projection left to `sin_cos`
+/// answers with a unit of noise instead.
+#[test]
+fn a_flat_lock_zeroes_the_height_and_a_square_lock_the_width() {
+    for raw in [4.0, -6.0, 174.0] {
+        let (dx, dy) = drag_at(raw);
+        let (x, y) = constrain_to_angle(dx, dy);
+        assert_eq!(
+            y, 0.0,
+            "a drag at {raw} degrees should lock flat, got ({x}, {y})"
+        );
+        assert!(
+            (x - DRAG * raw.to_radians().cos()).abs() < 1e-9,
+            "a flat lock should keep the width, got {x}"
+        );
+    }
+    for raw in [88.0, 95.0] {
+        let (dx, dy) = drag_at(raw);
+        let (x, y) = constrain_to_angle(dx, dy);
+        assert_eq!(
+            x, 0.0,
+            "a drag at {raw} degrees should lock square, got ({x}, {y})"
+        );
+        assert!(
+            (y - DRAG * raw.to_radians().sin()).abs() < 1e-9,
+            "a square lock should keep the height, got {y}"
+        );
+    }
+}
+
+/// **Swept, not sampled.** For every raw angle on a one-degree grid, both signs, all four
+/// call sites' input shape — a displacement from an anchor, which is the only thing any
+/// of the four hands over — the locked endpoint is the oracle's ray-intersection, to the
+/// last bit the two are comparable at.
+#[test]
+fn every_raw_angle_locks_onto_the_oracles_ray_intersection() {
+    for tenth in -3600..3600 {
+        let raw = f64::from(tenth) / 10.0;
+        let (dx, dy) = drag_at(raw);
+        let got = constrain_to_angle(dx, dy);
+        let want = oracle_locked(dx, dy);
+        assert!(
+            (got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9,
+            "a drag at {raw} degrees locked to {:?}, the oracle says {:?}",
+            got,
+            want
+        );
+    }
+}
+
+/// The lock is **idempotent**: locking an already-locked delta must not move it. A drag
+/// re-reads its own output on every pointer move, so a lock that kept re-rounding would
+/// walk the endpoint along the ray instead of holding it.
+#[test]
+fn locking_an_already_locked_delta_changes_nothing() {
+    for raw in [0.0, 7.0, 20.0, 35.0, 88.0, 160.0, -20.0, -95.0, 179.0] {
+        let (dx, dy) = drag_at(raw);
+        let once = constrain_to_angle(dx, dy);
+        let twice = constrain_to_angle(once.0, once.1);
+        assert!(
+            (once.0 - twice.0).abs() < 1e-12 && (once.1 - twice.1).abs() < 1e-12,
+            "locking {raw} degrees twice moved it: {:?} then {:?}",
+            once,
+            twice
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The same lock, through a real gesture
+// ---------------------------------------------------------------------------
+
+/// **Q**, the wiring: the same four drags as the pair above, taken through a press on the
+/// end handle, land on exactly 15, 30, 165 and 345 degrees from the anchor.
+#[test]
+fn shift_locks_a_dragged_endpoint_to_exactly_the_oracles_step() {
+    for (raw, want) in [(20.0, 15.0), (35.0, 30.0), (160.0, 165.0), (-20.0, 345.0)] {
+        let (mut engine, anchor) = raw_pointer_line();
+        let (dx, dy) = drag_at(raw);
+        drag_end_to_shifted(&mut engine, (anchor.0 + dx, anchor.1 + dy), true);
+        let (x, y) = last_point(&engine);
+        let got = bearing(x - anchor.0, y - anchor.1);
+        assert!(
+            (got - want).abs() < 1e-9,
+            "a drag at {raw} degrees locked to {got} degrees, not {want}"
+        );
+    }
+}
+
+/// **R**, the wiring: the identical gesture with nothing held puts the endpoint on the
+/// raw pointer, angle and all. This is the half that fails on a build which locks
+/// unconditionally.
+#[test]
+fn without_shift_a_dragged_endpoint_keeps_the_pointer_angle_exactly() {
+    for raw in [20.0, 35.0, 160.0, -20.0] {
+        let (mut engine, anchor) = raw_pointer_line();
+        let (dx, dy) = drag_at(raw);
+        let target = (anchor.0 + dx, anchor.1 + dy);
+        drag_end_to_shifted(&mut engine, target, false);
+        assert_at("no shift", last_point(&engine), target);
+        let (x, y) = last_point(&engine);
+        let want = raw.rem_euclid(360.0);
+        let got = bearing(x - anchor.0, y - anchor.1);
+        assert!(
+            (got - want).abs() < 1e-9,
+            "an unlocked drag reported {got} degrees, not {want}"
+        );
+    }
+}
+
+/// The length assertion again, this time as a person would meet it: the endpoint is the
+/// anchor plus the drag's component along the locked ray, so it sits on that ray and at
+/// the projected distance — not at the dragged distance.
+#[test]
+fn a_locked_endpoint_sits_on_the_locked_ray_at_the_projected_distance() {
+    let (mut engine, anchor) = raw_pointer_line();
+    let (dx, dy) = drag_at(20.0);
+    drag_end_to_shifted(&mut engine, (anchor.0 + dx, anchor.1 + dy), true);
+    let (x, y) = last_point(&engine);
+    let (rx, ry) = (x - anchor.0, y - anchor.1);
+    let want = DRAG * (20.0f64 - 15.0).to_radians().cos();
+    assert!(
+        (rx.hypot(ry) - want).abs() < 1e-9,
+        "the endpoint landed {} from the anchor, not the projection's {want}",
+        rx.hypot(ry)
+    );
+    // On the ray: nothing of the drag is left across it, measured across the **locked**
+    // angle rather than the raw one — the whole claim is that the endpoint left the raw
+    // direction and joined the locked one.
+    let locked = oracle_step(20.0).to_radians();
+    let across = rx * locked.sin() - ry * locked.cos();
+    assert!(
+        across.abs() < 1e-9,
+        "the endpoint is {across} off the locked ray"
     );
 }
 

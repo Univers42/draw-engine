@@ -283,13 +283,25 @@ impl HandleKind {
     }
 }
 
-/// The angle that points the element's top at the pointer.
+/// The angle that points the element's top at the pointer, quantised to 15 degrees when
+/// `locked`.
 ///
 /// Measured from the same pivot the painter turns about, which for a line or arrow is the
 /// middle of its points rather than `x + width / 2` — that expression sits outside a
 /// leftward arrow entirely, so turning one used to track a pointer relative to a centre
 /// beside the arrow instead of inside it.
-pub fn rotate_element(element: &DrawElement, wx: f64, wy: f64) -> f64 {
+///
+/// The lock is the oracle's own (`resizeElements.ts@1118751f:229-233`), and a **parameter**
+/// rather than engine state because it is one there too
+/// (`shouldRotateWithDiscreteAngle`, `:215`) and because `move_pointer` already carries
+/// Shift as an argument. Note that it is not the same rule as the linear drag's: this one
+/// floors to the step, that one rounds to the nearest, and they part company on the
+/// negative side. See [`crate::math::shift_locked_angle`].
+pub fn rotate_element(element: &DrawElement, wx: f64, wy: f64, locked: bool) -> f64 {
     let c = crate::scene::geometry::rotation_center(element);
-    (wy - c.y).atan2(wx - c.x) + std::f64::consts::PI / 2.0
+    let angle = (wy - c.y).atan2(wx - c.x) + std::f64::consts::PI / 2.0;
+    if locked {
+        return crate::math::shift_locked_angle(angle);
+    }
+    angle
 }

@@ -152,7 +152,8 @@ impl DrawEngine {
                     .iter()
                     .filter_map(|id| self.scene.get(id).cloned())
                     .collect();
-                for next in crate::selection::group_transform::rotate_group(&elements, frame, world)
+                for next in
+                    crate::selection::group_transform::rotate_group(&elements, frame, world, square)
                 {
                     self.scene.put(next);
                 }
@@ -279,7 +280,7 @@ impl DrawEngine {
             }
             Interaction::Rotate { ref id } => {
                 if let Some(mut element) = self.scene.get(id).cloned() {
-                    element.angle = rotate_element(&element, world.x, world.y);
+                    element.angle = rotate_element(&element, world.x, world.y, square);
                     // An arrow turned on its own lets go of both ends, as in Excalidraw
                     // (`packages/element/src/resizeElements.ts@1118751f:241-252`): its ends are
                     // being placed by the turn, and holding them to shapes would fight it.
