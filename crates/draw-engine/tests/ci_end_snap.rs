@@ -19,6 +19,31 @@
 //!    the free branch rather than composing with it — but it grid-snaps the pointer first
 //!    (`:1916`), so the two are ordered: grid, then angle.
 //!
+//! # Two recorded divergences in the angle lock, not fixed here
+//!
+//! The step is `SHIFT_LOCKING_ANGLE = Math.PI / 12` — **15 degrees**
+//! (`packages/common/src/constants.ts@1118751f:31`), used by both
+//! `getLockedLinearCursorAlignSize` (`sizeHelpers.ts@1118751f:196-197`) and the creation
+//! path's `getPerfectElementSize` (`:171-172`). This engine's `constrain_to_angle` steps
+//! by `PI / 4` (`interaction/linear_drag.rs:17`), and it has **four** call sites in this
+//! area: a dragged endpoint (`engine/pointer_move.rs:399`), a preview point
+//! (`engine/multi_linear.rs:279`), a drag-drawn line (`interaction/linear_drag.rs:32`) and
+//! an elbow end (`engine/elbow.rs:87`).
+//!
+//! The brief for this task placed the 45/15 divergence in the *rotation* path. It is not
+//! there: `selection/transform.rs` calls none of the four, and its own open rule is a
+//! different defect — that `rotate_element` takes only the pointer position, so a rotation
+//! is not quantised at all (`registry.ts`, "15. Transform engine", `^Angle snapping$`).
+//!
+//! Second, the two languages keep the *length* by different geometry. This one rotates
+//! the delta onto the locked angle; the oracle intersects the locked ray with the line
+//! through the cursor perpendicular to it (`sizeHelpers.ts@1118751f:236-250`), and zeroes
+//! one component outright for the horizontal and vertical cases (`:229-234`). They agree
+//! only when the angle is already locked.
+//!
+//! Neither is fixed here: both are the owner's, and the tests below assert the oracle's
+//! own floor — a multiple of 15 degrees — rather than blessing this engine's 45.
+//!
 //! **What is not in the list**, each with the line that keeps it out:
 //!
 //! - another element's points, midpoints or edges: `maybeCacheReferenceSnapPoints` — the
@@ -311,56 +336,89 @@ fn holding_ctrl_takes_a_dragged_endpoint_off_the_grid() {
 // ---------------------------------------------------------------------------
 
 /// Shift replaces the free branch rather than composing with it
-/// (`linearElementEditor.ts@1118751f:542-567`): one drag, one segment, one multiple of
-/// 45 degrees out of the pivot at (100, 100).
+/// (`linearElementEditor.ts@1118751f:542-557`) — this is the second entry in the ordered
+/// list, and it is a Q/R pair of its own.
+///
+/// Asserted as **a multiple of 15 degrees**, which is the oracle's `SHIFT_LOCKING_ANGLE`
+/// (`packages/common/src/constants.ts@1118751f:31`, `Math.PI / 12`) and is therefore the
+/// oracle's own floor. This engine's `constrain_to_angle` steps by `PI / 4`
+/// (`interaction/linear_drag.rs:17`) — every 45 degrees is a multiple of 15, so the
+/// assertion is true here and would stay true if the step were corrected, while failing on
+/// an unquantised angle, on 30-degree steps, or on any step that is not a multiple of the
+/// oracle's. Pinning 45 here would have pinned a **known divergence** as though it were
+/// the reference; see the module header.
+///
+/// The length is deliberately not asserted. `constrain_to_angle` preserves it, and so does
+/// the oracle — but by different geometry, and that difference is a second recorded
+/// divergence rather than something this test should bless either way.
 #[test]
-fn shift_holds_a_dragged_endpoint_to_a_multiple_of_45_degrees() {
+fn shift_locks_a_dragged_endpoint_to_a_multiple_of_15_degrees() {
     let mut engine = placed_line();
     drag_end_to_shifted(&mut engine, (337.0, 173.0), true);
     let (x, y) = last_point(&engine);
     let (dx, dy) = (x - 100.0, y - 100.0);
-    let length = dx.hypot(dy);
-    let angle = dy.atan2(dx).to_degrees();
     assert!(
-        length > 0.0,
-        "the drag was degenerate, so nothing was measured"
+        dx.hypot(dy) > 0.0,
+        "the drag was degenerate, nothing was measured"
     );
-    for step in -4..=4 {
-        if (angle - (step * 45) as f64).abs() < 1e-6 {
+    let angle = dy.atan2(dx).to_degrees();
+    for step in -12..=12 {
+        if (angle - (step * 15) as f64).abs() < 1e-6 {
             return;
         }
     }
-    panic!("expected a multiple of 45 degrees, got {angle}");
+    panic!("expected a multiple of 15 degrees, got {angle}");
 }
 
-/// Q and R together. The grid runs **first** and the angle is measured from the
-/// grid-snapped pointer (`linearElementEditor.ts@1118751f:1916`), so on a 20-unit grid
-/// switching the grid off changes which segment comes out — which is the order, stated as
-/// a difference rather than as a comment.
+/// The other half of that pair, and the one that can fail: **without** Shift the endpoint
+/// is the pointer, and its direction is whatever the pointer's is — 18.4 degrees off the
+/// pivot here, which is not a multiple of 15. A test asserting only that Shift locks would
+/// also pass on a build that locked unconditionally.
 #[test]
-fn the_angle_lock_is_measured_from_the_grid_snapped_pointer() {
+fn without_shift_a_dragged_endpoint_is_just_the_pointer() {
+    let mut engine = placed_line();
+    drag_end_to(&mut engine, (337.0, 173.0));
+    // The grid snapped the pointer, so that is where the endpoint is.
+    assert_at("no shift", last_point(&engine), (340.0, 180.0));
+    let (x, y) = last_point(&engine);
+    let angle = (y - 100.0).atan2(x - 100.0).to_degrees();
+    for step in -12..=12 {
+        assert!(
+            (angle - (step * 15) as f64).abs() > 1e-6,
+            "the endpoint was locked to {angle} degrees with no modifier held"
+        );
+    }
+}
+
+/// The order of the two entries, as a difference rather than as a comment. The grid runs
+/// **first**, and the angle is measured from the pointer the grid left behind
+/// (`linearElementEditor.ts@1118751f:1916`, which grid-snaps before calling
+/// `getLockedLinearCursorAlignSize`), so switching the grid off changes the segment that
+/// comes out.
+#[test]
+fn the_angle_lock_is_measured_from_the_pointer_the_grid_left_behind() {
     let mut on_grid = placed_line();
     drag_end_to_shifted(&mut on_grid, (337.0, 173.0), true);
-    let snapped = last_point(&on_grid);
-
     let mut off_grid = placed_line();
     off_grid.set_ctrl_held(true);
     drag_end_to_shifted(&mut off_grid, (337.0, 173.0), true);
-    let raw = last_point(&off_grid);
 
-    // The pivot is the line's other point, (100, 100). The angle lock preserves the
-    // distance from the pivot to the pointer it was given, so the length of the segment
-    // says which pointer that was.
-    let on_grid_length = (snapped.0 - 100.0).hypot(snapped.1 - 100.0);
-    let raw_length = (raw.0 - 100.0).hypot(raw.1 - 100.0);
-    let measured_from_grid = (340.0 - 100.0f64).hypot(180.0 - 100.0);
-    let measured_from_pointer = (337.0 - 100.0f64).hypot(173.0 - 100.0);
-
-    assert_close(on_grid_length, measured_from_grid);
-    assert_close(raw_length, measured_from_pointer);
-    assert!(
-        (measured_from_grid - measured_from_pointer).abs() > 1.0,
-        "the two pointers must be measurably different, or the pair proves nothing"
+    assert_ne!(
+        last_point(&on_grid),
+        last_point(&off_grid),
+        "the grid and the angle lock must be ordered, or one of them is not running"
+    );
+    // Both are locked; only the point they were locked from differs.
+    // The grid half was measured from (340, 180); the Ctrl half from (337, 173) itself.
+    assert_ne!(
+        last_point(&on_grid),
+        (340.0, 180.0),
+        "with the grid on the press should have been rounded first"
+    );
+    assert_ne!(
+        last_point(&off_grid),
+        (337.0, 173.0),
+        "with Ctrl held the raw pointer should have been the one used"
     );
 }
 
