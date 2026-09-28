@@ -18,6 +18,15 @@ pub fn assert_close(a: f64, b: f64) {
     assert!((a - b).abs() < EPS, "expected {a} ~= {b}");
 }
 
+/// [`assert_close`] with a note of what was being compared.
+///
+/// For the cases where a bare "expected a ~= b" would not say **which** half of a pair
+/// failed, or which of a few hundred swept cases. The note comes last so a call reads as
+/// the two numbers it compares and then what they mean.
+pub fn assert_close_msg(a: f64, b: f64, why: impl std::fmt::Display) {
+    assert!((a - b).abs() < EPS, "expected {a} ~= {b} ({why})");
+}
+
 pub fn assert_point_close(a: Point, b: Point) {
     assert_close(a.x, b.x);
     assert_close(a.y, b.y);
