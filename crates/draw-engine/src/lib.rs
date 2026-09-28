@@ -33,7 +33,7 @@ pub use engine::{
     TextEditSession,
 };
 pub use export::{
-    elements_from_json, scene_to_json, scene_to_svg, ExportFrame, OsidrawFile,
+    elements_from_json, scene_to_json, scene_to_svg, ExportFrame, ExportOptions, OsidrawFile,
     DEFAULT_EXPORT_PADDING,
 };
 pub use freehand::points_bounds;

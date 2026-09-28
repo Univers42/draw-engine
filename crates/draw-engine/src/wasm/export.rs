@@ -16,7 +16,7 @@ use crate::engine::DrawEngine;
 
 /// Paints the whole scene into a canvas of the frame's own size, and hands back the PNG.
 ///
-/// `transparent` is the oracle's `exportBackground`, negated: it passes
+/// `options.background` is the oracle's `exportBackground`, which it passes as
 /// `viewBackgroundColor: null` when the background is not wanted
 /// (`export.ts@1118751f:263`) and `bootstrapCanvas` then paints no background at all
 /// (`helpers.ts@1118751f:96-107`) — a fresh canvas is already fully transparent, so
@@ -25,10 +25,10 @@ use crate::engine::DrawEngine;
 pub fn export_png(
     engine: &DrawEngine,
     frame: &crate::export::ExportFrame,
-    transparent: bool,
+    options: &crate::export::ExportOptions,
 ) -> Option<js_sys::Promise> {
     let (canvas, ctx) = super::paint::make_layer(frame.pixel_width(), frame.pixel_height())?;
-    super::paint::paint_static(&ctx, &engine.export_view(frame), None, !transparent);
+    super::paint::paint_static(&ctx, &engine.export_view(frame), None, options.background);
     Some(png_blob(canvas))
 }
 

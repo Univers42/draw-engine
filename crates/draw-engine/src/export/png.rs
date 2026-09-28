@@ -17,11 +17,55 @@ use crate::scene::is_frame;
 /// (`packages/common/src/constants.ts@1118751f:398`), in world units, added to every side.
 pub const DEFAULT_EXPORT_PADDING: f64 = 10.0;
 
-/// One export's target: the scene cut to its own bounds, at a chosen scale.
+/// What an export is asked for. One type for both formats, because the oracle asks the
+/// same six questions of a PNG and an SVG of the same drawing under the same six names —
+/// `exportToCanvas` (`export.ts@1118751f:184-194`) and `exportToSvg`
+/// (`export.ts@1118751f:293-305`) differ only in that the canvas is a raster.
+///
+/// **`scene_to_svg` does not take this yet.** Its `padding` and its always-drawn
+/// background are 4.5's to move over, and until then this is where the policy lives for
+/// the PNG path alone — which is still the point of putting it here rather than in the
+/// painter: 4.2 and 4.5 change what is *in* this struct, not where they change it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExportOptions {
+    /// `exportPadding` — the oracle's 10 (`constants.ts@1118751f:398`), in world units.
+    pub padding: f64,
+    /// `exportScale` — device pixels per CSS pixel for the PNG
+    /// (`export.ts@1118751f:199-203`), and the multiplier on the SVG root's `width` and
+    /// `height` for the vector one (`export.ts@1118751f:358-359`).
+    pub scale: f64,
+    /// `exportBackground` — whether there is paper at all. False leaves the canvas as
+    /// transparent as a fresh one already is, and drops the SVG's `<rect>`
+    /// (`export.ts@1118751f:458`).
+    pub background: bool,
+    /// Whether a frame's name is drawn. The oracle gates this once, for both formats
+    /// (`export.ts@1118751f:169-172`, inside `prepareElementsForRender`), so ours is one
+    /// flag and not a per-format argument.
+    pub frame_labels: bool,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        Self {
+            padding: DEFAULT_EXPORT_PADDING,
+            // 1, not the device pixel ratio: `EXPORT_SCALES.includes(devicePixelRatio) ?
+            // devicePixelRatio : 1` (`appState.ts@1118751f:20-22`) is a fact about the
+            // browser the *host* can see and the engine cannot, and 1 is what that
+            // expression answers on a dpr-1 machine anyway.
+            scale: 1.0,
+            background: true,
+            frame_labels: true,
+        }
+    }
+}
+
+/// One export's target: the box the picture is cut to, and everything asked for about it.
 ///
 /// The oracle's [`exportToCanvas`](packages/excalidraw/scene/export.ts@1118751f:180-284)
-/// carries the same four numbers around — `minX`, `minY`, `width`, `height` from
-/// `getCanvasSize`, then `scale` — and this is them named.
+/// carries the same numbers around — `minX`, `minY`, `width`, `height` from
+/// `getCanvasSize`, then `scale` — and this is them named. Built by [`Self::for_bounds`],
+/// which takes bounds rather than elements, so a selection or a single frame frames
+/// itself the same way a whole scene does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExportFrame {
     /// The scene's own bounds: the union of what each element *draws*, turned ones
@@ -36,10 +80,32 @@ pub struct ExportFrame {
     /// ratio when that happens to be one of its three and 1 otherwise
     /// (`appState.ts@1118751f:20-22`).
     pub scale: f64,
-    padding: f64,
+    /// The margin, kept on the frame so the camera that consumes it is one call rather
+    /// than a pair. Public because 4.2 reads it to place its own frame export, which the
+    /// oracle does at `exportPadding = 0` (`export.ts@1118751f:228-230`).
+    pub padding: f64,
+    /// Whether a frame's name is drawn. See [`ExportOptions::frame_labels`].
+    pub frame_labels: bool,
 }
 
 impl ExportFrame {
+    /// A target of `bounds` — the whole scene's, a selection's, or one frame's. The one
+    /// constructor: everything else is a question of *which* bounds.
+    ///
+    /// `distance(minX, maxX) + exportPadding * 2` — the same sum the SVG exporter makes
+    /// (`export/svg.rs`), and the same one the oracle makes for both formats
+    /// (`export.ts@1118751f:571-572`).
+    pub fn for_bounds(bounds: WorldBounds, options: &ExportOptions) -> Self {
+        Self {
+            bounds,
+            width: bounds.max_x - bounds.min_x + options.padding * 2.0,
+            height: bounds.max_y - bounds.min_y + options.padding * 2.0,
+            scale: options.scale,
+            padding: options.padding,
+            frame_labels: options.frame_labels,
+        }
+    }
+
     /// The whole scene as one export target — `getCanvasSize` over
     /// `getRootElements(elementsForRender)`, which is what the oracle measures
     /// (`export.ts@1118751f:232-235, 566-575`).
@@ -48,19 +114,9 @@ impl ExportFrame {
     /// render path measures without cloning the scene, and so does this.
     pub fn for_scene<'a>(
         elements: impl IntoIterator<Item = &'a DrawElement> + Clone,
-        padding: f64,
-        scale: f64,
+        options: &ExportOptions,
     ) -> Self {
-        let bounds = root_bounds(elements);
-        Self {
-            bounds,
-            // `distance(minX, maxX) + exportPadding * 2` — the same sum the SVG exporter
-            // makes (`export/svg.rs`), and the same one the oracle makes for both formats.
-            width: bounds.max_x - bounds.min_x + padding * 2.0,
-            height: bounds.max_y - bounds.min_y + padding * 2.0,
-            scale,
-            padding,
-        }
+        Self::for_bounds(root_bounds(elements), options)
     }
 
     /// The canvas's width in device pixels.
