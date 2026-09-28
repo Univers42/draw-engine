@@ -5,8 +5,7 @@ use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
 use crate::scene::{
-    create_element, default_element_style, element_bounds, merge_style, DrawElement,
-    DrawElementType, Geometry,
+    create_element, default_element_style, merge_style, DrawElement, DrawElementType, Geometry,
 };
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
@@ -32,6 +31,13 @@ impl DrawEngine {
         // Snapped once, here, so every gesture that starts from a pointer position lands
         // on the grid together. Applying it per-tool is how one of them ends up exempt.
         let world = self.snap_gesture(self.screen_to_world(sx, sy));
+        // …and then to the objects around it, for the tools the oracle gives that to; the
+        // long form of why is on `snap_press` and the tool list on `snaps_press_origin`.
+        let world = if self.snaps_press_origin() {
+            self.snap_press(world)
+        } else {
+            world
+        };
         if is_shape_tool(self.tool) {
             self.begin_shape(world);
             return;
@@ -55,7 +61,17 @@ impl DrawEngine {
                 self.mark_along(at, at);
                 self.alt_held = duplicate;
             }
-            DrawTool::Freedraw | DrawTool::AutoShape => self.begin_freedraw(world),
+            // A freedraw press is the **raw** pointer, and is the one place the oracle
+            // passes a bare `null` grid to `getGridPoint`
+            // (`App.tsx@1118751f:9899-9902`; a `null` grid returns the point unchanged,
+            // `packages/common/src/points.ts@1118751f:74-80`). It is unrounded *because*
+            // the stroke's points are the raw pointer less this origin
+            // (`:11181-11196`) — rounding the press alone would shift every point by up
+            // to half a cell, which is the shake `points.ts:68` warns of. So the move
+            // half goes with it, and neither is routed through the grid at all.
+            DrawTool::Freedraw | DrawTool::AutoShape => {
+                self.begin_freedraw(self.screen_to_world(sx, sy))
+            }
             DrawTool::Text => self.begin_text(sx, sy, world),
             DrawTool::Lasso => {
                 self.interaction = Some(Interaction::Lasso {
@@ -273,6 +289,56 @@ impl DrawEngine {
         self.scene.add(element);
         self.interaction = Some(Interaction::Freedraw { id, start: world });
         self.request_draw();
+    }
+
+    /// Whether this tool's **press** snaps to the objects around it, as Excalidraw's
+    /// `isActiveToolNonLinearSnappable` decides (`snapping.ts@1118751f:1402-1414`).
+    ///
+    /// It lists rectangle, ellipse, diamond, frame, magicframe, image and text — and not
+    /// a line, not the selection, and not a sticky note. The first two absences are not
+    /// omissions: this engine's linear tools draft from a grid-snapped press and nothing
+    /// else, which is what the oracle's `getGridPoint` at
+    /// `App.tsx@1118751f:10235-10239` does, and a sticky note is absent from the oracle's
+    /// list itself.
+    ///
+    /// **The figure tool is ours and has no oracle at all** — `rg '"figure"'` over
+    /// Excalidraw @1118751f finds nothing — so nothing in that list speaks for it. It
+    /// drafts as an ordinary shape and is given the shape's answer, which is the
+    /// conservative reading of a tool that behaves like one. Its sibling
+    /// [`DrawTool::AutoShape`] drafts as a *stroke* and takes the stroke's rule, because
+    /// that is what it is made of. Both are one line to change if the owner says otherwise.
+    pub(crate) fn snaps_press_origin(&self) -> bool {
+        is_shape_tool(self.tool) || matches!(self.tool, DrawTool::Frame | DrawTool::Text)
+    }
+
+    /// A press origin, already on the grid, pulled onto the nearest nearby object's box.
+    ///
+    /// The oracle's `originSnapOffset`. Its press origin is
+    /// `originInGrid + originSnapOffset` (`App.tsx@1118751f:13388-13394`, and
+    /// `dragElements.ts@1118751f:390-391`), where the grid's half is the `originInGrid` of
+    /// `:9228-9236` and the object's half comes from the **hover's**
+    /// `getSnapLinesAtPointer` (`:7866-7897`).
+    ///
+    /// The oracle computes it on hover so the user sees the alignment before pressing. The
+    /// **rule** it is applying is the press, so that is where it is applied here: the
+    /// preview is the part left out, and leaving it out changes when the shape appears to
+    /// settle, not where it settles.
+    ///
+    /// The reach is the same `SNAP_DISTANCE / zoom` a move's is, and the candidates are
+    /// the same reference boxes, because both come out of `getPointSnaps`.
+    fn snap_press(&self, point: Point) -> Point {
+        if !self.objects_snap_gesture(self.ctrl_held) {
+            return point;
+        }
+        let snap = crate::interaction::snap_points(
+            &[point],
+            &self.snap_targets(|_| false),
+            super::SNAP_PX / self.camera.scale,
+        );
+        Point {
+            x: point.x + snap.dx,
+            y: point.y + snap.dy,
+        }
     }
 
     /// Starts a text gesture, without yet knowing which of the two it is.
@@ -830,32 +896,10 @@ impl DrawEngine {
         // document, and cloning them only to read four numbers off each was the single
         // most expensive thing about picking up a shape on a large board.
         //
-        // Culled to the viewport as well. An alignment guide to something off screen is
-        // drawn where nobody can see it, so the shape appears to stick for no reason —
-        // and gathering candidates from the whole document makes `snap_move` cost the
-        // size of the board on *every frame of every drag*. Excalidraw gathers its
-        // candidates from the visible elements for the same two reasons.
-        //
         // Once, here, rather than per frame: the viewport does not move during a drag.
-        let view = crate::visible_world_rect(self.camera, self.width, self.height);
-        let static_bounds = self
-            .scene
-            .iter_ordered()
-            .filter(|el| {
-                !moving.contains(&el.id)
-                    && el
-                        .container_id
-                        .as_ref()
-                        .is_none_or(|id| !moving.contains(id))
-            })
-            .map(element_bounds)
-            .filter(|b| {
-                b.min_x <= view.max_x
-                    && b.max_x >= view.min_x
-                    && b.min_y <= view.max_y
-                    && b.max_y >= view.min_y
-            })
-            .collect();
+        // The culling itself, and the two reasons for it, are in `snap_targets` — which
+        // drawing and resizing now share, so the candidate set is gathered one way.
+        let static_bounds = self.snap_targets(|id| moving.contains(id));
         self.interaction = Some(Interaction::Move {
             ids: origins.keys().cloned().collect(),
             start: world,
