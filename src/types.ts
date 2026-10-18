@@ -446,6 +446,12 @@ export interface PngExport {
   selectionOnly?: boolean;
 }
 
+/** What a thumbnail export is asked for. The size is the engine's, so there is no scale. */
+export interface ThumbnailExport {
+  /** See [`PngExport.darkMode`]. */
+  darkMode?: boolean;
+}
+
 /**
  * The SVG export's options: the PNG's minus the raster one, plus the two the vector path
  * honours too.

@@ -34,11 +34,12 @@ pub use engine::{
     TextEditRequest, TextEditSession,
 };
 pub use export::{
-    dark_mode_filter, elements_from_json, font_face_files, insert_text_chunk, restore,
-    scene_payload, scene_to_json, scene_to_svg, ClipboardCopy, ClipboardFormat, ClipboardHost,
-    ClipboardRefusal, ExportFrame, ExportOptions, ExportPalette, ExportScopeKind, OsidrawFile,
-    PngError, Restore, RestoreRefusal, ShippedFace, DEFAULT_EXPORT_PADDING, SCENE_FORMAT,
-    SCENE_PAYLOAD_VERSION, SHIPPED_FONT_FACES,
+    dark_mode_filter, elements_from_json, fit_thumbnail, font_face_files, insert_text_chunk,
+    restore, scene_payload, scene_to_json, scene_to_svg, thumbnail_options, thumbnail_scale,
+    ClipboardCopy, ClipboardFormat, ClipboardHost, ClipboardRefusal, ExportFrame, ExportOptions,
+    ExportPalette, ExportScopeKind, OsidrawFile, PngError, Restore, RestoreRefusal, ShippedFace,
+    DEFAULT_EXPORT_PADDING, SCENE_FORMAT, SCENE_PAYLOAD_VERSION, SHIPPED_FONT_FACES,
+    THUMBNAIL_MAX_SIDE,
 };
 pub use freehand::points_bounds;
 pub use history::SnapshotHistory;

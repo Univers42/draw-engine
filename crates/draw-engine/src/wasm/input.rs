@@ -1015,6 +1015,20 @@ impl WasmEngine {
         super::export::export_png(&engine.engine, &scope, &options)
     }
 
+    /// The whole scene as a thumbnail PNG: longest side at most 480 px, no scene embedded.
+    ///
+    /// The scale is [`crate::export::fit_thumbnail`]'s, so the host passes only the dark
+    /// switch and does no size arithmetic. Same return as `exportPng`: `undefined` where
+    /// no canvas could be made, a promise of a `Blob` or `null` otherwise.
+    #[wasm_bindgen(js_name = exportThumbnail)]
+    pub fn export_thumbnail(&self, dark_mode: Option<bool>) -> Option<js_sys::Promise> {
+        let options = crate::export::thumbnail_options(dark_mode.unwrap_or(false));
+        let engine = self.cell.borrow();
+        let mut scope = engine.engine.export_scope(false, &options);
+        scope.frame = crate::export::fit_thumbnail(scope.frame);
+        super::export::export_png(&engine.engine, &scope, &options)
+    }
+
     /// One clipboard copy: whether the host may make it, what to write it as, of what, and
     /// the vector payload.
     ///
