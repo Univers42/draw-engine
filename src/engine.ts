@@ -39,6 +39,7 @@ import type {
   StylePatch,
   TextAlign,
   TextEditLayout,
+  ThumbnailExport,
   VerticalAlign,
   ZOrderMode,
 } from "./types";
@@ -1140,6 +1141,15 @@ export class DrawEngine {
       options.selectionOnly,
       options.darkMode,
     );
+    return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
+  }
+
+  /**
+   * The whole scene as a small PNG, no scene embedded. The engine caps the longest side
+   * at 480 px; the host passes nothing but the dark switch.
+   */
+  exportThumbnail(options: ThumbnailExport = {}): Promise<Blob | null> {
+    const pending = this.inner.exportThumbnail(options.darkMode);
     return pending === undefined ? Promise.resolve(null) : pending.then(encodedBlob);
   }
 

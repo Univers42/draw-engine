@@ -9,6 +9,7 @@ pub use palette::{dark_mode_filter, ExportPalette};
 pub mod roundtrip;
 pub mod scope;
 pub mod svg;
+pub mod thumbnail;
 
 pub use clipboard::*;
 pub use font_face::*;
@@ -18,6 +19,7 @@ pub use png_chunk::*;
 pub use roundtrip::*;
 pub use scope::*;
 pub use svg::*;
+pub use thumbnail::*;
 
 /// Why a byte sequence is not a PNG we can walk.
 ///
