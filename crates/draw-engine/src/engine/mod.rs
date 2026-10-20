@@ -307,6 +307,10 @@ pub struct DrawEngine {
     style_preview: HashMap<String, Option<DrawElement>>,
     /// The text open in the host's editor. See `text_session.rs`.
     text_session: Option<TextEditSession>,
+    /// Increments when a font face finishes loading and there is at least one text in a
+    /// family. The layer key includes this so a frame painted with the fallback is never
+    /// reused. Not part of the scene revision — it is local to this client.
+    fonts_epoch: u64,
     /// The node cluster being previewed while Ctrl/Cmd+Arrow is held. `None` between
     /// gestures. See `flowchart.rs`.
     flowchart_creator: Option<flowchart::FlowchartCreator>,
@@ -407,6 +411,7 @@ impl DrawEngine {
             copied_styles: None,
             style_preview: HashMap::new(),
             text_session: None,
+            fonts_epoch: 0,
             flowchart_creator: None,
             flowchart_navigator: flowchart::FlowchartNavigator::default(),
             conversion_font_sizes: None,

@@ -68,6 +68,9 @@ pub fn chrome_digest(view: &PaintView) -> u64 {
     // The eraser's marks are painted into the layer, faded, so the layer is only good
     // for the marks it was painted with.
     eat(&view.erasing_revision.to_le_bytes());
+    // The fonts epoch changes when a font face finishes loading. A layer painted with
+    // the fallback must not be reused after the real face arrives.
+    eat(&view.fonts_epoch.to_le_bytes());
     hash
 }
 

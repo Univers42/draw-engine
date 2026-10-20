@@ -41,6 +41,10 @@ pub struct PaintView<'a> {
     /// signal that moved with the camera would throw the layer away exactly when it was
     /// most worth keeping.
     pub scene_revision: u64,
+    /// Increments when a font face finishes loading and there is at least one text in a
+    /// family. The layer key includes this so a frame painted with the fallback is never
+    /// reused. Not part of the scene revision — it is local to this client.
+    pub fonts_epoch: u64,
     /// The elements the gesture in progress changes each frame, drawn live over a cached
     /// picture of everything else. Empty between gestures. See `engine/live.rs`.
     pub live: &'a std::collections::HashSet<String>,
@@ -422,6 +426,7 @@ impl DrawEngine {
             visible
         };
         let scene_revision = self.scene.revision();
+        let fonts_epoch = self.fonts_epoch;
 
         // Computed before the struct literal takes ownership of `selected`.
         let group_box = if selected.len() > 1 {
@@ -542,6 +547,7 @@ impl DrawEngine {
             // document responsive when you are zoomed in on one corner of it.
             elements,
             scene_revision,
+            fonts_epoch,
             live: self.scene.live(),
             static_revision: self.scene.static_revision(),
             erasing: &self.erasing,

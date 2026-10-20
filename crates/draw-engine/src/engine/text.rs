@@ -612,7 +612,13 @@ impl DrawEngine {
     ///
     /// Divergence: Excalidraw only drops its caches and repaints here
     /// (`Fonts.onLoaded`, `packages/excalidraw/fonts/Fonts.ts@1118751f:106-148`), so a box
-    /// sized in a fallback's widths keeps them until the text is next edited.
+    /// sized in a fallback's widths keeps them until the text is next edited. This engine
+    /// also re-lays every text (a box sized in the fallback's widths grows to the real
+    /// face's), and Excalidraw does not.
+    ///
+    /// Excalidraw: `Fonts.onLoaded` (`packages/excalidraw/fonts/Fonts.ts@1118751f:106-148`)
+    /// invalidates every text's cached shape (and its container's), and re-renders the
+    /// scene whether or not any size changed.
     ///
     /// ponytail: an arrow bound to a shape that grew here is re-routed at the next edit
     /// of either — re-routing now would be an unstamped change to the arrow.
@@ -626,7 +632,7 @@ impl DrawEngine {
             })
             .cloned()
             .collect();
-        let mut changed = false;
+        let has_text_in_family = !texts.is_empty();
         for text in texts {
             let mut laid = self.laid_out(&text);
             if text.container_id.is_none() {
@@ -641,13 +647,17 @@ impl DrawEngine {
                 laid.text.y = at.y;
             }
             if let Some(container) = laid.container {
-                changed |= self.scene.replace_unrecorded(container);
+                self.scene.replace_unrecorded(container);
             }
             if laid.text != text {
-                changed |= self.scene.replace_unrecorded(laid.text);
+                self.scene.replace_unrecorded(laid.text);
             }
         }
-        if changed {
+        // Excalidraw: onLoaded always re-renders when there is any text in a family,
+        // whether or not the layout changed. The cached layer was painted with the
+        // fallback, so we must force a full redraw.
+        if has_text_in_family {
+            self.fonts_epoch += 1;
             self.request_draw();
         }
     }
