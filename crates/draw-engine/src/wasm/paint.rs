@@ -13,6 +13,7 @@ use crate::render::arrowheads::{
 use crate::render::cache::{shape_fingerprint, ShapeCache};
 use crate::render::default_arrowhead;
 use crate::render::opts::{dash_array, generate_rough_options};
+use crate::render::scroll::{chrome_digest, layer_key, LayerKey};
 use crate::scene::element::StrokeStyle;
 use crate::scene::{DrawElement, DrawElementType};
 use crate::selection::{selection_corners_padded, selection_handles, HandleKind};
@@ -838,26 +839,6 @@ pub(crate) fn make_layer(
     Some((canvas, ctx))
 }
 
-/// Everything painted into the layer that is not an element.
-fn chrome_digest(view: &PaintView) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |bytes: &[u8]| {
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x1000_0000_01b3);
-        }
-    };
-    eat(view.theme.background.as_bytes());
-    eat(view.theme.grid.as_bytes());
-    eat(&[u8::from(view.grid.enabled)]);
-    eat(&view.grid.size.to_bits().to_le_bytes());
-    eat(&(view.grid.step as u64).to_le_bytes());
-    // The eraser's marks are painted into the layer, faded, so the layer is only good
-    // for the marks it was painted with.
-    eat(&view.erasing_revision.to_le_bytes());
-    hash
-}
-
 /// The box an element can paint into, in device pixels.
 fn device_bounds(view: &PaintView, element: &DrawElement) -> crate::scene::geometry::Rect {
     let world = crate::render::bounds::render_bounds(element);
@@ -873,7 +854,6 @@ fn device_bounds(view: &PaintView, element: &DrawElement) -> crate::scene::geome
 
 /// Marks a layer key with what it holds, so a picture of one part of the scene can never
 /// be taken for a picture of another that happens to share the numbers.
-const WHOLE_SCENE: u64 = 0x5ce3_e000;
 const BELOW_LIVE: u64 = 0xb3_10e0;
 const ABOVE_LIVE: u64 = 0xab_0e00;
 
@@ -1203,7 +1183,7 @@ pub(crate) fn paint_static(
 
 impl Painter for CanvasPainter<'_> {
     fn paint(&mut self, view: &PaintView) {
-        use crate::render::scroll::{plan_layer, LayerKey, LayerPlan};
+        use crate::render::scroll::{plan_layer, LayerPlan};
 
         let ctx = self.ctx;
         let dpr = view.dpr;
@@ -1211,18 +1191,7 @@ impl Painter for CanvasPainter<'_> {
             (view.width * dpr).round().max(1.0) as u32,
             (view.height * dpr).round().max(1.0) as u32,
         );
-        let key = LayerKey {
-            scale: view.camera.scale,
-            dpr,
-            width: view.width,
-            height: view.height,
-            // The whole scene's revision, not a digest of the visible elements: the
-            // culled set changes as the camera moves, so a digest of it invalidated the
-            // layer on every pan — which is precisely the frame the layer exists for.
-            // Measured before the change: 120 redraws and zero scrolls across a pan.
-            content: view.scene_revision,
-            chrome: chrome_digest(view) ^ WHOLE_SCENE,
-        };
+        let key = layer_key(view);
 
         let drew_everything = LAYERS.with(|cell| {
             let mut slot = cell.borrow_mut();

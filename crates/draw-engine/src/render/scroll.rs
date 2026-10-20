@@ -27,6 +27,7 @@
 
 use crate::camera::{Camera, WorldBounds};
 use crate::scene::geometry::Rect;
+use crate::PaintView;
 
 /// Everything about a frame that, if it changes, invalidates the whole layer.
 ///
@@ -44,6 +45,42 @@ pub struct LayerKey {
     pub content: u64,
     /// Theme and grid, which are painted into the layer but are not elements.
     pub chrome: u64,
+}
+
+/// Marks a layer key as holding the whole scene (background, grid, elements, frame names).
+pub const WHOLE_SCENE: u64 = 0x5ce3_e000;
+
+/// Computes the chrome digest for a paint view — theme, grid, eraser marks, fonts epoch.
+/// This is the part of the layer key that changes when non-element chrome changes.
+pub fn chrome_digest(view: &PaintView) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+    };
+    eat(view.theme.background.as_bytes());
+    eat(view.theme.grid.as_bytes());
+    eat(&[u8::from(view.grid.enabled)]);
+    eat(&view.grid.size.to_bits().to_le_bytes());
+    eat(&(view.grid.step as u64).to_le_bytes());
+    // The eraser's marks are painted into the layer, faded, so the layer is only good
+    // for the marks it was painted with.
+    eat(&view.erasing_revision.to_le_bytes());
+    hash
+}
+
+/// Builds the `LayerKey` for a whole-scene paint view.
+pub fn layer_key(view: &PaintView) -> LayerKey {
+    LayerKey {
+        scale: view.camera.scale,
+        dpr: view.dpr,
+        width: view.width,
+        height: view.height,
+        content: view.scene_revision,
+        chrome: chrome_digest(view) ^ WHOLE_SCENE,
+    }
 }
 
 /// What the painter should do with the layer it already has.
