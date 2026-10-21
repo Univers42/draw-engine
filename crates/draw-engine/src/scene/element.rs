@@ -544,6 +544,12 @@ pub struct DrawElement {
     /// field (there is none: `kind` is always present when this is `Some`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub figure: Option<FigureParams>,
+    /// Dynamic size: `1/zoom` for an element made zoomed out, in `[0.1, 10]`. Its
+    /// `stroke_width` and `font_size` are stored already multiplied, and it is drawn as
+    /// the element it stands for at 100%, scaled (`render::shape::element_drawable`).
+    /// Absent on everything else, which draws exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_scale: Option<f64>,
     pub version: u32,
     pub version_nonce: u32,
     pub updated: f64,
@@ -670,6 +676,7 @@ pub fn create_element(
         created: None,
         base_font_size: None,
         figure: None,
+        size_scale: None,
         version: 1,
         version_nonce: rand_int(),
         updated: now,

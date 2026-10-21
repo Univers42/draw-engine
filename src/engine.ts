@@ -441,6 +441,18 @@ export class DrawEngine {
     return this.inner.getObjectsSnap();
   }
 
+  /** Dynamic size: an element made while zoomed out gets `sizeScale = 1/zoom` and looks
+   *  on screen as it would at 100%. Off until the host turns it on, so an engine nobody
+   *  configures draws Excalidraw's elements, field for field. */
+  setDynamicSize(on: boolean): void {
+    this.inner.setDynamicSize(on);
+  }
+
+  /** Whether dynamic size is on. */
+  dynamicSize(): boolean {
+    return this.inner.dynamicSize();
+  }
+
   /** `prefers-reduced-motion`: an eased camera move (fit, zoom to selection, zoom
    *  in/out/reset) lands at once rather than animating while this is set. Kept current by
    *  `bindCanvas` — WASM has no `matchMedia` of its own. */

@@ -346,6 +346,12 @@ export interface DrawElement extends DrawElementStyle {
    */
   figure?: FigureParams;
   /**
+   * Dynamic size: `1/zoom` for an element made zoomed out, in `[0.1, 10]`. Its
+   * `strokeWidth` and `fontSize` are stored already multiplied, and it is drawn as the
+   * element it stands for at 100%, scaled. Absent on everything else.
+   */
+  sizeScale?: number;
+  /**
    * A frame's place on the presentation path (`setPresentationPath`). Absent on everything
    * else, and on a frame nobody has placed.
    */

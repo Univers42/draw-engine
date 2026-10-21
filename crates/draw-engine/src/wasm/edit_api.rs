@@ -413,4 +413,17 @@ impl WasmEngine {
         serde_json::to_string(&self.cell.borrow().engine.color_counts(background))
             .unwrap_or_else(|_| "[]".into())
     }
+
+    /// Turns dynamic size on or off. When on, elements created while zoomed out get a
+    /// sizeScale so they look the same on screen as at 100% zoom.
+    #[wasm_bindgen(js_name = setDynamicSize)]
+    pub fn set_dynamic_size(&self, on: bool) {
+        self.cell.borrow_mut().engine.set_dynamic_size(on);
+    }
+
+    /// Returns whether dynamic size is currently enabled.
+    #[wasm_bindgen(js_name = dynamicSize)]
+    pub fn dynamic_size(&self) -> bool {
+        self.cell.borrow().engine.dynamic_size()
+    }
 }

@@ -226,6 +226,10 @@ pub struct DrawEngine {
     /// short of holding a modifier through every drag. Holding Ctrl/Cmd inverts it for one
     /// gesture either way; see `move_selection`.
     objects_snap: bool,
+    /// Dynamic size: an element made zoomed out gets `size_scale = 1/zoom` and looks on
+    /// screen as it would at 100% (`docs/reference/dynamic-size.md` in the app). Off by
+    /// default, so an engine nobody configures makes Excalidraw's elements.
+    dynamic_size: bool,
     /// The shape a dragged arrow endpoint would attach to, if released now.
     ///
     /// The painter outlines it, so the attachment is visible before it is committed —
@@ -386,6 +390,7 @@ impl DrawEngine {
             clipboard_buffer: None,
             snap_guides: Vec::new(),
             objects_snap: false,
+            dynamic_size: false,
             binding_highlight: None,
             binding_point: None,
             binding_snaps: None,
@@ -505,6 +510,15 @@ impl DrawEngine {
 
     pub fn objects_snap(&self) -> bool {
         self.objects_snap
+    }
+
+    /// Turns dynamic size on or off. Elements already made keep the scale they have.
+    pub fn set_dynamic_size(&mut self, on: bool) {
+        self.dynamic_size = on;
+    }
+
+    pub fn dynamic_size(&self) -> bool {
+        self.dynamic_size
     }
 
     /// `prefers-reduced-motion`: a preference like the grid and object-snap above, kept
