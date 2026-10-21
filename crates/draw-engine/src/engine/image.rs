@@ -1,5 +1,5 @@
 use crate::engine::DrawEngine;
-use crate::scene::{create_element, default_element_style, fit_image, DrawElementType, Geometry};
+use crate::scene::{default_element_style, fit_image, DrawElementType, Geometry};
 
 impl DrawEngine {
     /// Put an image on the board, sized to the viewport and centred on a point.
@@ -37,7 +37,7 @@ impl DrawEngine {
         // An image brings its own appearance. Merging the current element style would
         // give it a stroke colour and a fill it cannot use, and a sloppiness that would
         // make the *frame* round it wobble.
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             DrawElementType::Image,
             Geometry {
                 x: fit.x,
@@ -89,7 +89,7 @@ impl DrawEngine {
             return None;
         }
 
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             DrawElementType::Embed,
             Geometry {
                 x: fit.x,

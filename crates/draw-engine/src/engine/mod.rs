@@ -5,8 +5,8 @@ use crate::history::SnapshotHistory;
 use crate::interaction::{DrawTool, SnapGuide};
 use crate::render::{light_theme, DrawTheme, GridSettings};
 use crate::scene::{
-    default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch, Scene, TextAlign,
-    VerticalAlign,
+    create_element, default_element_style, DrawElement, DrawElementStyle, DrawElementStylePatch,
+    DrawElementType, Geometry, Scene, TextAlign, VerticalAlign,
 };
 use crate::text::layout::DEFAULT_FONT_SIZE;
 
@@ -519,6 +519,38 @@ impl DrawEngine {
 
     pub fn dynamic_size(&self) -> bool {
         self.dynamic_size
+    }
+
+    /// The `size_scale` a new element gets: `1/zoom`, clamped to `[0.1, 10]` so every
+    /// scaled width and font size stays inside the contract's limits. `None` with the
+    /// setting off, or at 100%, so an element drawn there is the oracle's, field for field.
+    pub(crate) fn compute_size_scale(&self) -> Option<f64> {
+        if !self.dynamic_size {
+            return None;
+        }
+        let scale = (1.0 / self.camera.scale).clamp(0.1, 10.0);
+        (scale != 1.0).then_some(scale)
+    }
+
+    /// [`create_element`] at the camera's [`Self::compute_size_scale`]: the width and the
+    /// size the gesture starts from are multiplied, and the scale recorded.
+    fn create_element_with_dynamic_size(
+        &self,
+        kind: DrawElementType,
+        geometry: Geometry,
+        mut style: DrawElementStyle,
+        now: f64,
+    ) -> DrawElement {
+        let size_scale = self.compute_size_scale();
+        let mut geometry = geometry;
+        if let Some(scale) = size_scale {
+            style.stroke_width *= scale;
+            geometry.width *= scale;
+            geometry.height *= scale;
+        }
+        let mut element = create_element(kind, geometry, style, now);
+        element.size_scale = size_scale;
+        element
     }
 
     /// `prefers-reduced-motion`: a preference like the grid and object-snap above, kept

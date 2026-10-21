@@ -459,8 +459,10 @@ impl DrawEngine {
         let zoom = self.camera.scale;
         let click = note.width * zoom < super::DRAGGING_THRESHOLD_PX
             && note.height * zoom < super::DRAGGING_THRESHOLD_PX;
+        // A dynamic-size note is the 100% note at its scale (`size_scale`).
+        let scale = note.size_scale.unwrap_or(1.0);
         if click {
-            let size = DEFAULT_STICKY_NOTE_SIZE;
+            let size = DEFAULT_STICKY_NOTE_SIZE * scale;
             // Centred on the raw press, then the grid — and Ctrl takes the grid away, the
             // oracle's `childEvent[KEYS.CTRL_OR_CMD] ? null : this.getEffectiveGridSize()` at
             // `App.tsx@1118751f:11825`. Half the default size need not be on the grid, so the
@@ -474,8 +476,8 @@ impl DrawEngine {
             let line_height = crate::text::font::family(self.next_font_family)
                 .map_or(crate::render::TEXT_LINE_HEIGHT, |family| family.line_height);
             let (min_width, min_height) = sticky_min_size(self.next_font_size, line_height);
-            let mut width = note.width.max(min_width);
-            let mut height = note.height.max(min_height);
+            let mut width = note.width.max(min_width * scale);
+            let mut height = note.height.max(min_height * scale);
             if !shift {
                 width = width.max(height);
                 height = width;

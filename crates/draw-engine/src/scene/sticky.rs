@@ -105,12 +105,14 @@ pub fn label_ceiling(label: &DrawElement, container: Option<&DrawElement>) -> f6
 }
 
 /// `getStickyNoteCornerRadius`: a small rounding, proportional to the short side and
-/// capped, where every other shape's is adaptive.
+/// capped, where every other shape's is adaptive. The cap is in drawing units, so a
+/// dynamic-size note's grows with it (`size_scale`).
 pub fn sticky_corner_radius(element: &DrawElement) -> f64 {
     if element.roundness.is_none() {
         return 0.0;
     }
-    (element.width.abs().min(element.height.abs()) * CORNER_RADIUS_RATIO).min(MAX_CORNER_RADIUS)
+    let cap = MAX_CORNER_RADIUS * element.size_scale.unwrap_or(1.0);
+    (element.width.abs().min(element.height.abs()) * CORNER_RADIUS_RATIO).min(cap)
 }
 
 /// `seededRandom` (`packages/common/src/random.ts@1118751f:24-32`), mulberry32: the same
@@ -180,7 +182,36 @@ fn point_at_distance(from: Point, to: Point, distance: f64) -> Point {
 /// down and right with its own jitter — rounded, and with one corner lifted off the board
 /// at the roughest setting. The lifted corner comes from the note's seed, so the paper and
 /// its shadow agree, and it stays put through redraws and resizes.
+///
+/// A dynamic-size note is traced as the note it stands for at 100% and scaled, so its
+/// jitter, shadow offset and lifted corner look the same on screen at any zoom.
 pub fn sticky_path_commands(element: &DrawElement, shadow: bool) -> Vec<StickyPathCommand> {
+    let s = element.size_scale.unwrap_or(1.0);
+    if !(s.is_finite() && s > 0.0) || s == 1.0 {
+        return unit_path_commands(element, shadow);
+    }
+    let mut unit = element.clone();
+    unit.size_scale = None;
+    unit.width /= s;
+    unit.height /= s;
+    let scale = |p: Point| Point {
+        x: p.x * s,
+        y: p.y * s,
+    };
+    unit_path_commands(&unit, shadow)
+        .into_iter()
+        .map(|command| match command {
+            StickyPathCommand::Move(p) => StickyPathCommand::Move(scale(p)),
+            StickyPathCommand::Line(p) => StickyPathCommand::Line(scale(p)),
+            StickyPathCommand::Quadratic { control, point } => StickyPathCommand::Quadratic {
+                control: scale(control),
+                point: scale(point),
+            },
+        })
+        .collect()
+}
+
+fn unit_path_commands(element: &DrawElement, shadow: bool) -> Vec<StickyPathCommand> {
     let points = if shadow {
         sticky_render_points(element, STICKY_NOTE_SHADOW_OFFSET, 1)
     } else {
@@ -287,6 +318,9 @@ pub fn sticky_fingerprint(element: &DrawElement, shadow: bool) -> u64 {
     // stored value entirely and derives the radius from width and height, already in the
     // key above.
     eat(&[u8::from(element.roundness.is_some())]);
+    if let Some(scale) = element.size_scale {
+        eat(&scale.to_bits().to_le_bytes());
+    }
     h
 }
 
@@ -427,22 +461,32 @@ pub struct StickyFooter {
     pub text: String,
     pub x: f64,
     pub y: f64,
+    /// [`STICKY_NOTE_FOOTER_FONT_SIZE`] at the note's `size_scale`.
+    pub font_size: f64,
 }
 
 /// `getStickyNoteFooter`: the date, right-aligned in the bottom padding — `None` for a
 /// note under the floor (the creation draft), where it would run into the top padding,
 /// and for an unknown date. The form is chosen by the body's width, never measured.
 pub fn sticky_footer(element: &DrawElement, now: f64) -> Option<StickyFooter> {
-    let (w, h) = (element.width.abs(), element.height.abs());
+    // Decided on the note at 100% and placed at its scale (`size_scale`).
+    let s = element.size_scale.unwrap_or(1.0);
+    let (w, h) = (element.width.abs() / s, element.height.abs() / s);
     if w < STICKY_NOTE_MIN_SIZE || h < STICKY_NOTE_MIN_SIZE {
         return None;
     }
     let short = w - STICKY_NOTE_PADDING * 2.0 < STICKY_NOTE_FOOTER_MIN_BODY_WIDTH_FOR_YEAR;
     Some(StickyFooter {
         text: sticky_date_label(element.created, short, now)?,
-        x: w - STICKY_NOTE_PADDING,
-        y: h - STICKY_NOTE_FOOTER_BASELINE_FROM_BOTTOM,
+        x: (w - STICKY_NOTE_PADDING) * s,
+        y: (h - STICKY_NOTE_FOOTER_BASELINE_FROM_BOTTOM) * s,
+        font_size: STICKY_NOTE_FOOTER_FONT_SIZE * s,
     })
+}
+
+/// The width of the line that shades a note's edge, at its `size_scale`.
+pub fn sticky_edge_width(element: &DrawElement) -> f64 {
+    STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0 * element.size_scale.unwrap_or(1.0)
 }
 
 /// `getStickyNoteMinSize`: the smallest note a gesture may make — one line at the label's

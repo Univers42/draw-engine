@@ -25,12 +25,19 @@ pub fn dash_array_dotted(stroke_width: f64) -> [f64; 2] {
 }
 
 /// The dash pattern a stroke style implies, in the units Canvas2D's `setLineDash` wants.
+///
+/// A dynamic-size element's pattern is its 100% pattern scaled: the stored width already
+/// carries `size_scale`, the oracle's constants do not, so the pattern is computed on the
+/// unit width and scaled as a whole.
 pub fn dash_array(element: &DrawElement) -> Option<[f64; 2]> {
-    match element.stroke_style {
-        StrokeStyle::Solid => None,
-        StrokeStyle::Dashed => Some(dash_array_dashed(element.stroke_width)),
-        StrokeStyle::Dotted => Some(dash_array_dotted(element.stroke_width)),
-    }
+    let s = element.size_scale.unwrap_or(1.0);
+    let unit = element.stroke_width / s;
+    let pattern = match element.stroke_style {
+        StrokeStyle::Solid => return None,
+        StrokeStyle::Dashed => dash_array_dashed(unit),
+        StrokeStyle::Dotted => dash_array_dotted(unit),
+    };
+    Some(pattern.map(|v| v * s))
 }
 
 fn is_linear(kind: DrawElementType) -> bool {

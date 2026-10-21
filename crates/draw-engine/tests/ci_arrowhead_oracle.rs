@@ -138,6 +138,7 @@ fn every_case_matches_the_oracles_getarrowheadpoints() {
             position,
             case.arrowhead,
             case.offset_multiplier,
+            1.0,
         );
 
         let what = || {

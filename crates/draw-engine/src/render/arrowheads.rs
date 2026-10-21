@@ -143,6 +143,9 @@ fn degrees_to_radians(degrees: f64) -> f64 {
 /// for the head's own placement. `ops` is [`curve_path_ops`] of the body's own rough
 /// shape — see the module doc for why.
 ///
+/// `size_scale` is the element's sizeScale (1/z for dynamic size), used to scale the
+/// arrowhead so it looks the same on screen at any zoom. Defaults to 1.0.
+///
 /// Returns the oracle's flat coordinate array: 3 numbers (`[cx, cy, diameter]`) for a
 /// circle, 6 for everything else but a diamond, 8 for a diamond. `None` where the oracle
 /// returns `null` — no head, no shape yet, or too few ops to read a curve from.
@@ -153,6 +156,7 @@ pub fn get_arrowhead_points(
     position: Position,
     arrowhead: Arrowhead,
     offset_multiplier: f64,
+    size_scale: f64,
 ) -> Option<Vec<f64>> {
     if arrowhead == Arrowhead::None {
         return None;
@@ -202,7 +206,7 @@ pub fn get_arrowhead_points(
     let nx = (x2 - x1) / distance;
     let ny = (y2 - y1) / distance;
 
-    let size = get_arrowhead_size(arrowhead);
+    let size = get_arrowhead_size(arrowhead) * size_scale;
 
     let length = {
         let point_at = |i: usize| element_points.get(i).copied().unwrap_or([0.0, 0.0]);
@@ -378,15 +382,27 @@ fn outline_circle(points: Option<Vec<f64>>, diameter_scale: f64) -> Vec<Arrowhea
 /// belong to whoever paints or exports the primitives (`wasm/paint.rs`, `export/svg.rs`),
 /// which disagree on how faithfully they sketch a shape but must not disagree on what
 /// shape it is.
+///
+/// `size_scale` is the element's sizeScale (1/z for dynamic size), used to scale the
+/// arrowhead so it looks the same on screen at any zoom. Defaults to 1.0.
 pub fn arrowhead_shapes(
     element_points: &[[f64; 2]],
     stroke_width: f64,
     ops: &[Op],
     position: Position,
     arrowhead: Arrowhead,
+    size_scale: f64,
 ) -> Vec<ArrowheadPrimitive> {
     let points = |kind: Arrowhead, offset: f64| {
-        get_arrowhead_points(element_points, stroke_width, ops, position, kind, offset)
+        get_arrowhead_points(
+            element_points,
+            stroke_width,
+            ops,
+            position,
+            kind,
+            offset,
+            size_scale,
+        )
     };
 
     match arrowhead {
@@ -507,6 +523,7 @@ mod tests {
             Position::End,
             Arrowhead::None,
             0.0,
+            1.0,
         )
         .is_none());
         assert!(arrowhead_shapes(
@@ -515,6 +532,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::None,
+            1.0,
         )
         .is_empty());
     }
@@ -528,6 +546,7 @@ mod tests {
             Position::End,
             Arrowhead::Arrow,
             0.0,
+            1.0,
         )
         .is_none());
     }
@@ -537,8 +556,16 @@ mod tests {
     fn the_tip_lands_on_the_endpoint() {
         let points = [[0.0, 0.0], [100.0, 0.0]];
         let ops = straight_ops(points[0], points[1]);
-        let p =
-            get_arrowhead_points(&points, 2.0, &ops, Position::End, Arrowhead::Arrow, 0.0).unwrap();
+        let p = get_arrowhead_points(
+            &points,
+            2.0,
+            &ops,
+            Position::End,
+            Arrowhead::Arrow,
+            0.0,
+            1.0,
+        )
+        .unwrap();
         assert!((p[0] - 100.0).abs() < 1e-9);
         assert!((p[1] - 0.0).abs() < 1e-9);
     }
@@ -614,7 +641,14 @@ mod tests {
     fn a_circle_head_returns_a_center_and_diameter() {
         let points = [[0.0, 0.0], [100.0, 0.0]];
         let ops = straight_ops(points[0], points[1]);
-        let shapes = arrowhead_shapes(&points, 2.0, &ops, Position::End, Arrowhead::CircleOutline);
+        let shapes = arrowhead_shapes(
+            &points,
+            2.0,
+            &ops,
+            Position::End,
+            Arrowhead::CircleOutline,
+            1.0,
+        );
         assert_eq!(shapes.len(), 1);
         assert!(matches!(
             shapes[0],
@@ -629,7 +663,7 @@ mod tests {
     fn a_triangle_head_is_a_solid_three_point_polygon() {
         let points = [[0.0, 0.0], [100.0, 0.0]];
         let ops = straight_ops(points[0], points[1]);
-        let shapes = arrowhead_shapes(&points, 2.0, &ops, Position::End, Arrowhead::Triangle);
+        let shapes = arrowhead_shapes(&points, 2.0, &ops, Position::End, Arrowhead::Triangle, 1.0);
         assert_eq!(shapes.len(), 1);
         match &shapes[0] {
             ArrowheadPrimitive::Polygon(pts, FillRole::Solid) => assert_eq!(pts.len(), 3),
@@ -641,7 +675,14 @@ mod tests {
     fn a_diamond_head_is_a_four_point_polygon() {
         let points = [[0.0, 0.0], [100.0, 0.0]];
         let ops = straight_ops(points[0], points[1]);
-        let shapes = arrowhead_shapes(&points, 2.0, &ops, Position::End, Arrowhead::DiamondOutline);
+        let shapes = arrowhead_shapes(
+            &points,
+            2.0,
+            &ops,
+            Position::End,
+            Arrowhead::DiamondOutline,
+            1.0,
+        );
         assert_eq!(shapes.len(), 1);
         match &shapes[0] {
             ArrowheadPrimitive::Polygon(pts, FillRole::Outline) => assert_eq!(pts.len(), 4),
@@ -659,6 +700,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::CardinalityMany,
+            1.0,
         );
         assert_eq!(shapes.len(), 2);
         let ArrowheadPrimitive::Line([_, a]) = shapes[0] else {
@@ -683,6 +725,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::CardinalityOneOrMany,
+            1.0,
         );
         assert_eq!(one_or_many.len(), 3, "two fork lines plus the one tick");
 
@@ -692,6 +735,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::CardinalityExactlyOne,
+            1.0,
         );
         assert_eq!(exactly_one.len(), 2, "two parallel ticks");
 
@@ -701,6 +745,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::CardinalityZeroOrOne,
+            1.0,
         );
         assert!(zero_or_one
             .iter()
@@ -715,6 +760,7 @@ mod tests {
             &ops,
             Position::End,
             Arrowhead::CardinalityZeroOrMany,
+            1.0,
         );
         assert_eq!(zero_or_many.len(), 3, "two fork lines plus the circle");
     }

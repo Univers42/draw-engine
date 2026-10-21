@@ -152,27 +152,42 @@ impl DrawEngine {
     /// A new, empty text in the next style: the family chosen last, Excalifont until one
     /// is, with that family's line height (`newTextElement`,
     /// `packages/element/src/newElement.ts@1118751f:330-390`).
-    pub(crate) fn new_text_element(&self, geometry: Geometry) -> DrawElement {
+    pub(crate) fn new_text_element(
+        &self,
+        geometry: Geometry,
+        size_scale: Option<f64>,
+    ) -> DrawElement {
         let style = merge_style(&default_element_style(), &self.next_style);
         let mut element = create_element(DrawElementType::Text, geometry, style, self.now_ms);
         element.text = Some(String::new());
         element.original_text = Some(String::new());
-        element.font_size = Some(self.next_font_size);
+        let font_size = self.next_font_size;
+        element.font_size = Some(if let Some(scale) = size_scale {
+            font_size * scale
+        } else {
+            font_size
+        });
         element.font_family = Some(self.next_font_family);
         element.line_height =
             crate::text::font::family(self.next_font_family).map(|family| family.line_height);
         element.text_align = self.next_text_align;
         element.vertical_align = self.next_vertical_align;
+        element.size_scale = size_scale;
         element
     }
 
     fn create_label(&mut self, container: &DrawElement) -> DrawElement {
-        let mut label = self.new_text_element(Geometry {
-            x: container.x,
-            y: container.y,
-            width: 0.0,
-            height: 0.0,
-        });
+        // A label takes its container's sizeScale so it matches its shape.
+        let size_scale = container.size_scale;
+        let mut label = self.new_text_element(
+            Geometry {
+                x: container.x,
+                y: container.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            size_scale,
+        );
         // As big as an empty line, and placed by `apply_bindings` below. Not laid out:
         // that could grow the shape for a label that is then abandoned untyped.
         let (width, height) = self.with_measure(|measure| {
@@ -431,12 +446,16 @@ impl DrawEngine {
             }
         }
         let font_size = self.next_font_size;
-        let mut element = self.new_text_element(Geometry {
-            x: world.x,
-            y: world.y,
-            width: 4.0,
-            height: font_size,
-        });
+        let size_scale = self.compute_size_scale();
+        let mut element = self.new_text_element(
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 4.0,
+                height: font_size,
+            },
+            size_scale,
+        );
         let at = self.text_creation_point(&element, world);
         element.x = at.x;
         element.y = at.y;

@@ -10,7 +10,7 @@
 //! cache depends on it.
 
 use draw_rough::renderer::Segment;
-use draw_rough::{generator, Drawable, Options};
+use draw_rough::{generator, Drawable, Op, Options};
 
 use crate::render::opts::generate_rough_options;
 use crate::scene::element::{DrawElement, DrawElementType};
@@ -33,6 +33,9 @@ const ADAPTIVE_RADIUS: f64 = 32.0;
 /// ignored. Replacing the field with the typed form is a schema change that has to
 /// carry a migration, and is tracked separately.
 pub fn corner_radius(x: f64, element: &DrawElement) -> f64 {
+    // A dynamic-size element keeps the corners it would have at 100%: the adaptive rule's
+    // drawing-unit constants grow with it (`size_scale`, `docs/reference/dynamic-size.md`).
+    let size_scale = element.size_scale.unwrap_or(1.0);
     if element.roundness.is_none() {
         return 0.0;
     }
@@ -56,11 +59,11 @@ pub fn corner_radius(x: f64, element: &DrawElement) -> f64 {
         | DrawElementType::Image
         | DrawElementType::Frame
         | DrawElementType::Embed => {
-            let cutoff = ADAPTIVE_RADIUS / PROPORTIONAL_RADIUS;
+            let cutoff = (ADAPTIVE_RADIUS / PROPORTIONAL_RADIUS) * size_scale;
             if x <= cutoff {
                 x * PROPORTIONAL_RADIUS
             } else {
-                ADAPTIVE_RADIUS
+                ADAPTIVE_RADIUS * size_scale
             }
         }
         // Diamonds and linear elements use the proportional rule.
@@ -163,7 +166,50 @@ fn elbow_segments(points: &[[f64; 2]]) -> Vec<Segment> {
 /// Returns `None` for element types that are not drawn through rough at all — text is
 /// laid out and filled directly, and freedraw uses a stroke outline rather than a
 /// sketched path.
+///
+/// A dynamic-size element (`size_scale` other than 1) is sketched as the element it
+/// stands for at 100% and the result scaled up, so every rule rough measures in drawing
+/// units — jitter, bowing, the length gain, hachure, corners — looks the same on screen
+/// at any zoom. The seed is the element's, so it is the same hand-drawn stroke.
 pub fn element_drawable(element: &DrawElement) -> Option<Drawable> {
+    match element.size_scale {
+        Some(s) if s.is_finite() && s > 0.0 && s != 1.0 => {
+            unit_drawable(&at_unit_scale(element, s)).map(|drawable| scaled(drawable, s))
+        }
+        _ => unit_drawable(element),
+    }
+}
+
+/// `element` as it would have been drawn at 100%: every length divided by `s`.
+fn at_unit_scale(element: &DrawElement, s: f64) -> DrawElement {
+    let mut unit = element.clone();
+    unit.size_scale = None;
+    unit.width /= s;
+    unit.height /= s;
+    unit.stroke_width /= s;
+    unit.corner_radius = unit.corner_radius.map(|r| r / s);
+    if let Some(points) = unit.points.as_mut() {
+        for p in points.iter_mut() {
+            p[0] /= s;
+            p[1] /= s;
+        }
+    }
+    unit
+}
+
+fn scaled(mut drawable: Drawable, s: f64) -> Drawable {
+    for set in &mut drawable.sets {
+        for op in &mut set.ops {
+            match op {
+                Op::Move(d) | Op::LineTo(d) => d.iter_mut().for_each(|v| *v *= s),
+                Op::BCurveTo(d) => d.iter_mut().for_each(|v| *v *= s),
+            }
+        }
+    }
+    drawable
+}
+
+fn unit_drawable(element: &DrawElement) -> Option<Drawable> {
     // Absolute: a negative extent means the element is mirrored on that axis, and the
     // mirror is a sign in the painter's transform, not a different shape. Generating from
     // the signed value would rebuild every op on a flip and — because rough's jitter is

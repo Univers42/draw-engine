@@ -86,12 +86,16 @@ impl DrawEngine {
     /// sizes itself to its glyphs, as `autoResize: !isTextUnwrapped` asks
     /// (`App.tsx@1118751f:5048`).
     fn pasted_text_element(&self, source: &str, x: f64, y: f64, max_width: f64) -> DrawElement {
-        let mut element = self.new_text_element(Geometry {
-            x,
-            y,
-            width: 0.0,
-            height: 0.0,
-        });
+        let size_scale = self.compute_size_scale();
+        let mut element = self.new_text_element(
+            Geometry {
+                x,
+                y,
+                width: 0.0,
+                height: 0.0,
+            },
+            size_scale,
+        );
         let font = layout::font_of(&element);
         let line_height = crate::scene::resolved_line_height(&element);
         let (drawn, width, height, unwrapped) = self.with_measure(|measure| {

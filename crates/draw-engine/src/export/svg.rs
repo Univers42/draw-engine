@@ -10,12 +10,15 @@ use crate::scene::binding::linear_endpoints;
 use crate::scene::element::{DrawElement, DrawElementType, StrokeStyle};
 use crate::scene::geometry::normalize_rect;
 
-fn dash(style: StrokeStyle) -> &'static str {
-    match style {
-        StrokeStyle::Solid => "",
-        StrokeStyle::Dashed => " stroke-dasharray=\"8 6\"",
-        StrokeStyle::Dotted => " stroke-dasharray=\"2 4\"",
-    }
+/// The export's dash pattern, in drawing units, so a dynamic-size element's grows with it.
+fn dash(element: &DrawElement) -> String {
+    let (on, off) = match element.stroke_style {
+        StrokeStyle::Solid => return String::new(),
+        StrokeStyle::Dashed => (8.0, 6.0),
+        StrokeStyle::Dotted => (2.0, 4.0),
+    };
+    let s = element.size_scale.unwrap_or(1.0);
+    format!(" stroke-dasharray=\"{} {}\"", on * s, off * s)
 }
 
 /// A flipped image's transform: the mirror the canvas applies, about the same centre.
@@ -78,7 +81,15 @@ fn arrowhead_svg(
     };
     let kind = default_arrowhead(element, end);
     let points = element.points.as_deref().unwrap_or(&[[0.0, 0.0]]);
-    let shapes = arrowhead_shapes(points, element.stroke_width, ops, position, kind);
+    let size_scale = element.size_scale.unwrap_or(1.0);
+    let shapes = arrowhead_shapes(
+        points,
+        element.stroke_width,
+        ops,
+        position,
+        kind,
+        size_scale,
+    );
 
     let stroke = palette.color(&element.stroke_color).into_owned();
     let fill_of = |role: FillRole| palette.arrowhead_fill(role, &element.stroke_color);
@@ -142,7 +153,7 @@ fn closed_line_svg(element: &DrawElement, palette: &ExportPalette<'_>) -> Option
         "<polygon points=\"{pts}\" stroke=\"{}\" stroke-width=\"{}\" fill=\"{fill}\"{} opacity=\"{}\"{transform}/>",
         palette.color(&element.stroke_color),
         element.stroke_width,
-        dash(element.stroke_style),
+        dash(element),
         element.opacity / 100.0
     ))
 }
@@ -184,7 +195,7 @@ fn linear_body_svg(element: &DrawElement, palette: &ExportPalette<'_>) -> String
     let stroke = palette.color(&element.stroke_color);
     let shaft = format!(
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{stroke}\" stroke-width=\"{}\" stroke-linecap=\"round\" fill=\"none\" opacity=\"{opacity}\"{}/>",
-        start.x, start.y, end.x, end.y, element.stroke_width, dash(element.stroke_style)
+        start.x, start.y, end.x, end.y, element.stroke_width, dash(element)
     );
 
     if element.kind != DrawElementType::Arrow {
@@ -231,7 +242,7 @@ fn element_svg<'a>(
         palette.fill(&element.background_color),
         element.opacity / 100.0
     );
-    let dash = dash(element.stroke_style);
+    let dash = dash(element);
     let transform = if element.angle != 0.0 {
         format!(
             " transform=\"rotate({} {} {})\"",
@@ -343,9 +354,9 @@ fn element_svg<'a>(
 /// never goes stale; `now` only decides whether it shows the year.
 pub(crate) fn sticky_svg(element: &DrawElement, now: f64, palette: &ExportPalette<'_>) -> String {
     use crate::scene::sticky::{
-        sticky_footer, sticky_path_commands, sticky_path_data, STICKY_NOTE_EDGE_SHADOW_OPACITY,
-        STICKY_NOTE_EDGE_SHADOW_WIDTH, STICKY_NOTE_FOOTER_FONT_FAMILY,
-        STICKY_NOTE_FOOTER_FONT_SIZE, STICKY_NOTE_FOOTER_OPACITY, STICKY_NOTE_SHADOW_OPACITY,
+        sticky_edge_width, sticky_footer, sticky_path_commands, sticky_path_data,
+        STICKY_NOTE_EDGE_SHADOW_OPACITY, STICKY_NOTE_FOOTER_FONT_FAMILY,
+        STICKY_NOTE_FOOTER_OPACITY, STICKY_NOTE_SHADOW_OPACITY,
     };
     let opacity = element.opacity / 100.0;
     let opacity = if opacity == 1.0 {
@@ -358,9 +369,10 @@ pub(crate) fn sticky_svg(element: &DrawElement, now: f64, palette: &ExportPalett
     let clip = format!("sticky-note-clipPath-{}", escape_xml(&element.id));
     let footer = sticky_footer(element, now).map_or(String::new(), |footer| {
         format!(
-            "<text x=\"{}\" y=\"{}\" font-family=\"{STICKY_NOTE_FOOTER_FONT_FAMILY}\" font-size=\"{STICKY_NOTE_FOOTER_FONT_SIZE}px\" text-anchor=\"end\" direction=\"ltr\" fill=\"{}\" fill-opacity=\"{STICKY_NOTE_FOOTER_OPACITY}\">{}</text>",
+            "<text x=\"{}\" y=\"{}\" font-family=\"{STICKY_NOTE_FOOTER_FONT_FAMILY}\" font-size=\"{}px\" text-anchor=\"end\" direction=\"ltr\" fill=\"{}\" fill-opacity=\"{STICKY_NOTE_FOOTER_OPACITY}\">{}</text>",
             footer.x,
             footer.y,
+            footer.font_size,
             escape_xml(&palette.color(&element.stroke_color)),
             escape_xml(&footer.text)
         )
@@ -378,7 +390,7 @@ pub(crate) fn sticky_svg(element: &DrawElement, now: f64, palette: &ExportPalett
         element.width / 2.0,
         element.height / 2.0,
         escape_xml(&palette.fill(&element.background_color)),
-        STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0,
+        sticky_edge_width(element),
     )
 }
 

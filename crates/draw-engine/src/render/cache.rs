@@ -101,6 +101,11 @@ impl ShapeKey {
         if crate::scene::elbow::is_elbow(element) {
             eat(&[2]);
         }
+        // A dynamic-size element is sketched at 100% and scaled (`element_drawable`).
+        if let Some(scale) = element.size_scale {
+            eat(&[3]);
+            eat(&scale.to_bits().to_le_bytes());
+        }
         // Linear geometry lives in the points, not in width and height.
         if let Some(points) = element.points.as_deref() {
             eat(&(points.len() as u64).to_le_bytes());

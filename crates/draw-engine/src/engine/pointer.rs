@@ -4,9 +4,7 @@ use crate::engine::multi_linear::is_double_tap;
 use crate::engine::{DrawEngine, Interaction};
 use crate::interaction::{is_linear_tool, is_shape_tool, DrawTool};
 use crate::scene::binding::{set_anchor, End};
-use crate::scene::{
-    create_element, default_element_style, merge_style, DrawElement, DrawElementType, Geometry,
-};
+use crate::scene::{default_element_style, merge_style, DrawElement, DrawElementType, Geometry};
 use crate::selection::{hit_handle, selection_handles, HandleKind};
 
 impl DrawEngine {
@@ -131,7 +129,7 @@ impl DrawEngine {
     /// the same weight, with the same corners, so it reads as a boundary rather than as
     /// something someone drew. That is why this cannot just be another shape tool.
     fn begin_frame(&mut self, world: Point) {
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             DrawElementType::Frame,
             Geometry {
                 x: world.x,
@@ -159,7 +157,7 @@ impl DrawEngine {
             return;
         };
         let style = merge_style(&default_element_style(), &self.next_style);
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             kind,
             Geometry {
                 x: world.x,
@@ -199,7 +197,7 @@ impl DrawEngine {
         style.stroke_color = normalize_sticky_stroke(&self.next_sticky_stroke);
         style.background_color = normalize_sticky_background(&self.next_sticky_background);
         style.fill_style = crate::scene::FillStyle::Solid;
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             DrawElementType::StickyNote,
             Geometry {
                 x: world.x,
@@ -234,7 +232,7 @@ impl DrawEngine {
             return;
         };
         let style = merge_style(&default_element_style(), &self.next_style);
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             kind,
             Geometry {
                 x: world.x,
@@ -273,7 +271,7 @@ impl DrawEngine {
 
     fn begin_freedraw(&mut self, world: Point) {
         let style = merge_style(&default_element_style(), &self.next_style);
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             DrawElementType::Freedraw,
             Geometry {
                 x: world.x,
@@ -348,12 +346,16 @@ impl DrawEngine {
     /// editor cannot open here the way it used to — `end_text` opens it, once the
     /// gesture has said how wide the thing is.
     fn begin_text(&mut self, sx: f64, sy: f64, world: Point) {
-        let element = self.new_text_element(Geometry {
-            x: world.x,
-            y: world.y,
-            width: 0.0,
-            height: 0.0,
-        });
+        let size_scale = self.compute_size_scale();
+        let element = self.new_text_element(
+            Geometry {
+                x: world.x,
+                y: world.y,
+                width: 0.0,
+                height: 0.0,
+            },
+            size_scale,
+        );
         let id = element.id.clone();
         self.scene.add(element);
         let press = self.screen_to_world(sx, sy);

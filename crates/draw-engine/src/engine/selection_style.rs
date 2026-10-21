@@ -442,7 +442,8 @@ impl DrawEngine {
                 figure_sides.add(figure::resolved_sides(params.kind, params.sides));
                 figure_ratio.add(figure::resolved_ratio(params.kind, params.ratio));
             }
-            stroke_width.add(element.stroke_width);
+            let size_scale = element.size_scale.unwrap_or(1.0);
+            stroke_width.add(element.stroke_width / size_scale);
             stroke_style.add(element.stroke_style);
             roughness.add(element.roughness);
             opacity.add(element.opacity);
@@ -468,10 +469,11 @@ impl DrawEngine {
             if let Some(text) = text {
                 // A note's label shows its ceiling, the size picked, never the size its
                 // fit shrank it to (`getBaseFontSize`, `actionProperties.tsx@1118751f:1057`).
+                let text_size_scale = text.size_scale.unwrap_or(1.0);
                 font_size.add(if text.font_size.is_some() {
-                    self.user_font_size(text)
+                    self.user_font_size(text) / text_size_scale
                 } else {
-                    super::DEFAULT_FONT_SIZE
+                    super::DEFAULT_FONT_SIZE / text_size_scale
                 });
                 font_family.add(resolved_font_family(text).unwrap_or(crate::text::FontKey::LEGACY));
                 if text.container_id.is_some() {
@@ -879,7 +881,16 @@ impl DrawEngine {
         // and an arrow bound to the outline needs it re-resolved (`relayout_figure_labels`,
         // `apply_bindings` below).
         let figure_ids = figure_target_ids(&targets, &patch);
-        for (element, patch) in targets {
+        for (element, mut patch) in targets {
+            // Scale stroke_width and font_size by the element's sizeScale so the panel
+            // works in "key" units (thin/bold/extra bold, S/M/L/XL) relative to sizeScale.
+            let size_scale = element.size_scale.unwrap_or(1.0);
+            if let Some(sw) = patch.stroke_width {
+                patch.stroke_width = Some(sw * size_scale);
+            }
+            if let Some(fs) = patch.font_size {
+                patch.font_size = Some(fs * size_scale);
+            }
             self.put_styled(element, &patch);
         }
         if patch.stroke_color.is_some() {
@@ -946,7 +957,15 @@ impl DrawEngine {
             || patch.figure_ratio.is_some();
         let mut changed = false;
         let mut figure_ids: Vec<String> = Vec::new();
-        for (element, patch) in self.style_targets(&patch) {
+        for (element, mut patch) in self.style_targets(&patch) {
+            // Scale stroke_width and font_size by the element's sizeScale.
+            let size_scale = element.size_scale.unwrap_or(1.0);
+            if let Some(sw) = patch.stroke_width {
+                patch.stroke_width = Some(sw * size_scale);
+            }
+            if let Some(fs) = patch.font_size {
+                patch.font_size = Some(fs * size_scale);
+            }
             let id = element.id.clone();
             let is_figure = touches_figure_geometry && element.kind == DrawElementType::Figure;
             if self.put_styled(element, &patch) {
@@ -1070,7 +1089,13 @@ impl DrawEngine {
             };
             let before = element.clone();
             element.background_color.clone_from(&from.background_color);
-            element.stroke_width = from.stroke_width;
+            // Styles travel as keys (`size_scale`): the copy's width at 100%, at the
+            // target's own scale.
+            let (from_scale, to_scale) = (
+                from.size_scale.unwrap_or(1.0),
+                element.size_scale.unwrap_or(1.0),
+            );
+            element.stroke_width = from.stroke_width / from_scale * to_scale;
             element.stroke_color.clone_from(&from.stroke_color);
             element.stroke_style = from.stroke_style;
             element.fill_style = from.fill_style;
@@ -1093,7 +1118,8 @@ impl DrawEngine {
                     .as_deref()
                     .and_then(|id| copied.iter().find(|el| el.id == id));
                 let size = if from_text && from.font_size.is_some() {
-                    crate::scene::sticky::label_ceiling(from, copied_container)
+                    crate::scene::sticky::label_ceiling(from, copied_container) / from_scale
+                        * to_scale
                 } else {
                     super::DEFAULT_FONT_SIZE
                 };

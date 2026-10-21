@@ -1580,8 +1580,8 @@ fn paint_element(
 /// its ink. Never through rough.js.
 fn paint_sticky(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawElement) {
     use crate::scene::sticky::{
-        sticky_footer, STICKY_NOTE_EDGE_SHADOW_OPACITY, STICKY_NOTE_EDGE_SHADOW_WIDTH,
-        STICKY_NOTE_FOOTER_FONT_FAMILY, STICKY_NOTE_FOOTER_FONT_SIZE, STICKY_NOTE_SHADOW_OPACITY,
+        sticky_footer, STICKY_NOTE_EDGE_SHADOW_OPACITY, STICKY_NOTE_FOOTER_FONT_FAMILY,
+        STICKY_NOTE_SHADOW_OPACITY,
     };
     if element.width == 0.0 && element.height == 0.0 {
         return;
@@ -1602,7 +1602,7 @@ fn paint_sticky(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawEl
         // Set raw inside the save: `restore` puts back what the caches believe is set.
         ctx.save();
         ctx.clip_with_path_2d(&paper);
-        ctx.set_line_width(STICKY_NOTE_EDGE_SHADOW_WIDTH * 2.0);
+        ctx.set_line_width(crate::scene::sticky::sticky_edge_width(element));
         let _ = ctx.set_line_dash(&js_sys::Array::new());
         let _ = js_sys::Reflect::set(
             ctx.as_ref(),
@@ -1614,7 +1614,8 @@ fn paint_sticky(ctx: &CanvasRenderingContext2d, view: [f64; 6], element: &DrawEl
 
         if let Some(footer) = sticky_footer(element, frame_now()) {
             ctx.set_font(&format!(
-                "{STICKY_NOTE_FOOTER_FONT_SIZE}px {STICKY_NOTE_FOOTER_FONT_FAMILY}"
+                "{}px {STICKY_NOTE_FOOTER_FONT_FAMILY}",
+                footer.font_size
             ));
             FONT.with(|f| *f.borrow_mut() = None);
             ctx.set_text_align("right");
@@ -1851,7 +1852,15 @@ fn paint_arrowheads(ctx: &CanvasRenderingContext2d, element: &DrawElement, backg
 
     for (position, end) in [(Position::Start, "start"), (Position::End, "end")] {
         let kind = default_arrowhead(element, end);
-        for primitive in arrowhead_shapes(points, element.stroke_width, &ops, position, kind) {
+        let size_scale = element.size_scale.unwrap_or(1.0);
+        for primitive in arrowhead_shapes(
+            points,
+            element.stroke_width,
+            &ops,
+            position,
+            kind,
+            size_scale,
+        ) {
             paint_arrowhead_primitive(ctx, element, &base, dotted_dash, &primitive, background);
         }
     }

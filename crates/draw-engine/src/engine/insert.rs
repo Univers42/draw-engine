@@ -5,7 +5,7 @@
 //! Ctrl/Cmd+Arrow (`flowchart.rs`) grows a connected diagram off it.
 
 use crate::engine::DrawEngine;
-use crate::scene::{create_element, DrawElementType, Geometry};
+use crate::scene::{DrawElementType, Geometry};
 
 /// A new rectangle/diamond/ellipse's width and height, centred on the insertion point.
 const DEFAULT_SHAPE_SIZE: (f64, f64) = (120.0, 60.0);
@@ -38,7 +38,7 @@ impl DrawEngine {
         }
         let centre = self.screen_to_world(sx, sy);
         let (width, height) = DEFAULT_SHAPE_SIZE;
-        let mut element = create_element(
+        let mut element = self.create_element_with_dynamic_size(
             kind,
             Geometry {
                 x: centre.x - width / 2.0,

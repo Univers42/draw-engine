@@ -360,6 +360,8 @@ fn clone_flowchart_node(
         now,
     );
     node.corner_radius = template.corner_radius;
+    // The node is the template's twin, drawn at the template's scale (`size_scale`).
+    node.size_scale = template.size_scale;
     if kind == DrawElementType::StickyNote {
         // `newStickyNoteElement`'s `baseHeight ?? height` (`newElement.ts@1118751f:241`).
         node.base_height = Some(template.base_height.unwrap_or(template.height));
@@ -413,7 +415,9 @@ fn binding_arrow(
         LinkDirection::Right => at(t.x - pad, t.y + t.height / 2.0),
         LinkDirection::Left => at(t.x + t.width + pad, t.y + t.height / 2.0),
     };
-    let arrow = create_element(DrawElementType::Arrow, Geometry::default(), style, now);
+    let mut arrow = create_element(DrawElementType::Arrow, Geometry::default(), style, now);
+    // Its width is the source's, so its heads and dashes are measured at the source's scale.
+    arrow.size_scale = source.size_scale;
     let mut arrow = linear_from_endpoints(arrow, start, end);
     arrow.elbowed = Some(true);
     arrow.start_arrowhead = None;

@@ -173,7 +173,7 @@ fn base_of(
     head: Arrowhead,
     offset: f64,
 ) -> [f64; 2] {
-    let p = get_arrowhead_points(points, STROKE_WIDTH, ops, position, head, offset)
+    let p = get_arrowhead_points(points, STROKE_WIDTH, ops, position, head, offset, 1.0)
         .unwrap_or_else(|| panic!("{head:?} at {position:?} produced no points"));
     [p[0], p[1]]
 }
@@ -244,7 +244,7 @@ fn no_two_heads_draw_the_same_picture() {
 
     for head in HEADS {
         for position in [Position::Start, Position::End] {
-            let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head);
+            let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head, 1.0);
             assert!(!shapes.is_empty(), "{head:?} at {position:?} drew nothing");
             let key = shape_key(&shapes);
             let who = format!("{head:?} at {position:?}");
@@ -353,6 +353,7 @@ fn a_crowfoot_opens_toward_the_tip_at_twenty_five_degrees() {
                 &ops,
                 position,
                 Arrowhead::CardinalityMany,
+                1.0,
             ));
             let size = get_arrowhead_size(Arrowhead::CardinalityMany);
             assert!(
@@ -414,6 +415,7 @@ fn a_one_mark_is_a_perpendicular_bar_centred_on_the_axis() {
                 &ops,
                 position,
                 Arrowhead::CardinalityOne,
+                1.0,
             );
             check_one_bar(index, (&points, &ops), position, &single_line(&shapes));
         }
@@ -482,7 +484,7 @@ fn a_marks_ink_stays_inside_the_line_it_ends_on() {
             for position in [Position::Start, Position::End] {
                 let tip = endpoint(&points, position);
                 let axis = inward(&points, position);
-                for shape in arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head) {
+                for shape in arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head, 1.0) {
                     for corner in outline(&shape) {
                         let (inside, _) = resolve([corner[0] - tip[0], corner[1] - tip[1]], axis);
                         assert!(
@@ -510,7 +512,7 @@ fn a_marks_ink_stays_inside_the_line_it_ends_on() {
 fn a_compound_mark_is_its_simple_parts_in_the_oracles_order() {
     for (index, (points, ops)) in bowed_corpus(12).into_iter().enumerate() {
         for (compound, parts) in compound_offsets() {
-            let drawn = arrowhead_shapes(&points, STROKE_WIDTH, &ops, Position::End, compound);
+            let drawn = arrowhead_shapes(&points, STROKE_WIDTH, &ops, Position::End, compound, 1.0);
             let want: Vec<ArrowheadPrimitive> = parts
                 .iter()
                 .flat_map(|(part, offset)| part_at(&points, &ops, Position::End, *part, *offset))
@@ -569,7 +571,8 @@ fn part_at(
     part: Arrowhead,
     offset: f64,
 ) -> Vec<ArrowheadPrimitive> {
-    let Some(p) = get_arrowhead_points(points, STROKE_WIDTH, ops, position, part, offset) else {
+    let Some(p) = get_arrowhead_points(points, STROKE_WIDTH, ops, position, part, offset, 1.0)
+    else {
         return Vec::new();
     };
     match part {
@@ -606,6 +609,7 @@ fn a_zero_circle_is_an_outline_hole_at_eight_tenths_scale() {
                 &ops,
                 Position::End,
                 head,
+                1.0,
             ))
             .expect("a zero mark carries a circle")
             .clone();
@@ -640,7 +644,7 @@ fn no_mark_reaches_past_the_culling_pad() {
         for head in HEADS {
             for position in [Position::Start, Position::End] {
                 let tip = endpoint(&points, position);
-                for shape in arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head) {
+                for shape in arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head, 1.0) {
                     for vertex in sampled(&shape) {
                         let reach = distance(vertex, tip);
                         assert!(
@@ -695,8 +699,8 @@ fn moving_the_line_moves_every_mark_with_it() {
         let moved_ops = move_ops(&ops, shift);
         for head in HEADS {
             for position in [Position::Start, Position::End] {
-                let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head);
-                let after = arrowhead_shapes(&moved, STROKE_WIDTH, &moved_ops, position, head);
+                let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head, 1.0);
+                let after = arrowhead_shapes(&moved, STROKE_WIDTH, &moved_ops, position, head, 1.0);
                 assert_eq!(
                     shapes.len(),
                     after.len(),
@@ -736,9 +740,15 @@ fn turning_the_line_turns_every_mark_about_its_own_endpoint() {
                     [x * cos - y * sin + about[0], x * sin + y * cos + about[1]]
                 };
                 let (turned_points, turned_ops) = turn_body(&points, &ops, &spin);
-                let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head);
-                let after =
-                    arrowhead_shapes(&turned_points, STROKE_WIDTH, &turned_ops, position, head);
+                let shapes = arrowhead_shapes(&points, STROKE_WIDTH, &ops, position, head, 1.0);
+                let after = arrowhead_shapes(
+                    &turned_points,
+                    STROKE_WIDTH,
+                    &turned_ops,
+                    position,
+                    head,
+                    1.0,
+                );
                 for (was, now) in shapes
                     .iter()
                     .flat_map(outline)
