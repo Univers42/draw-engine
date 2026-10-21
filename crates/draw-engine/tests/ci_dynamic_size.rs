@@ -320,3 +320,31 @@ fn the_style_panel_speaks_in_keys_relative_to_the_scale() {
         "extra bold, at its scale"
     );
 }
+
+/// A picture or an embed is already fitted to the view it is placed in (`fit_image`), so it
+/// looks the same on screen at any zoom without a scale — and it has no outline to thicken.
+/// Scaling it again would make it `1/z` times too big and move it off the point it was
+/// placed at.
+#[test]
+fn a_picture_or_an_embed_is_placed_as_without_the_setting() {
+    const PIXEL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    let place = |dynamic: bool| {
+        let mut engine = engine_with_scene(vec![]);
+        engine.set_dynamic_size(dynamic);
+        at_zoom(&mut engine, 0.5);
+        engine.insert_image(PIXEL, 400.0, 300.0, 300.0, 200.0);
+        engine.insert_embed("https://youtu.be/dQw4w9WgXcQ", 600.0, 450.0);
+        engine.get_scene()
+    };
+    let (on, off) = (place(true), place(false));
+    assert_eq!(on.len(), 2, "both were placed");
+    for (on, off) in on.iter().zip(&off) {
+        assert_eq!(on.size_scale, None, "{:?}: no scale", on.kind);
+        assert_eq!(
+            (on.x, on.y, on.width, on.height),
+            (off.x, off.y, off.width, off.height),
+            "{:?}: fitted to the view, once",
+            on.kind
+        );
+    }
+}
