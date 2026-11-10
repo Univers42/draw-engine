@@ -99,8 +99,18 @@ impl DrawEngine {
     /// outline a few units off an intersection lights whatever that intersection is over, and
     /// near the tolerance's edge it lights **nothing** at all.
     pub fn hover_pointer(&mut self, sx: f64, sy: f64) {
-        if self.tool != DrawTool::Arrow || self.interaction.is_some() || self.multi_linear.is_some()
-        {
+        if self.interaction.is_some() || self.multi_linear.is_some() {
+            return;
+        }
+        if self.tool == DrawTool::Select {
+            let next = self.pressed_at(sx, sy).map(|el| el.id.clone());
+            if next != self.hovered_id {
+                self.hovered_id = next;
+                self.request_draw();
+            }
+            return;
+        }
+        if self.tool != DrawTool::Arrow {
             return;
         }
         let world = self.screen_to_world(sx, sy);
@@ -145,8 +155,12 @@ impl DrawEngine {
         if self.interaction.is_some() || self.multi_linear.is_some() {
             return;
         }
+        let hover_changed = self.hovered_id.take().is_some();
         if self.binding_highlight.take().is_some() {
             self.binding_point = None;
+            self.request_draw();
+        }
+        if hover_changed {
             self.request_draw();
         }
     }
