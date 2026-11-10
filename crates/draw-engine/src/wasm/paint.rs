@@ -2059,6 +2059,16 @@ fn paint_overlay(ctx: &CanvasRenderingContext2d, view: &PaintView) {
         }
     }
 
+    if let Some(hovered) = view.hovered {
+        // Hover feedback is deliberately an outline only: it previews the click without
+        // adding handles or changing the committed selection.
+        ctx.save();
+        set_stroke(ctx, &view.theme.accent);
+        ctx.set_global_alpha(0.75);
+        paint_element_outline(ctx, view, hovered);
+        ctx.restore();
+    }
+
     if view.selected.len() == 1 {
         paint_shape_selection(ctx, view, view.selected[0]);
         paint_radius_handles(ctx, view);

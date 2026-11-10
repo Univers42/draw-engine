@@ -283,6 +283,8 @@ pub struct DrawEngine {
     settled_selection: std::rc::Rc<stamp::SelectionState>,
     /// Between a press and its release, when what the press selects is not settled yet.
     pointer_open: bool,
+    /// Element currently under the pointer in the Select tool, for immediate hover feedback.
+    hovered_id: Option<String>,
     /// The right-button session in progress, if one is. Outlives the gesture it holds,
     /// because the platform's `contextmenu` can arrive after the release that ended it —
     /// see [`Self::consumes_context_menu`] and [`crate::pan`].
@@ -406,6 +408,7 @@ impl DrawEngine {
             history_seq: 0,
             settled_selection: std::rc::Rc::default(),
             pointer_open: false,
+            hovered_id: None,
             secondary_pan: None,
             suppress_next_context_menu: false,
             remote_refused: std::collections::HashMap::new(),
@@ -803,6 +806,9 @@ impl DrawEngine {
     }
 
     pub fn set_tool(&mut self, tool: DrawTool) {
+        if self.tool != tool {
+            self.hovered_id = None;
+        }
         self.set_tool_step(tool);
         self.refresh_live();
     }

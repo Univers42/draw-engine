@@ -61,6 +61,8 @@ pub struct PaintView<'a> {
     /// picture of the board, which it changes on every press without touching.
     pub flowchart_pending: Vec<&'a DrawElement>,
     pub selected: Vec<&'a DrawElement>,
+    /// The selectable element currently beneath the pointer, before a press commits selection.
+    pub hovered: Option<&'a DrawElement>,
     /// Where a multi-selection's box and handles go: around what a transform carries,
     /// the same box the handles are hit on. `None` when fewer than two are carried.
     pub group_box: Option<WorldBounds>,
@@ -169,6 +171,7 @@ fn without_editor_chrome(view: &mut PaintView<'_>) {
     view.flowchart_pending = Vec::new();
     view.laser = Vec::new();
     view.peer_lasers = Vec::new();
+    view.hovered = None;
     view.peer_marks = Vec::new();
     view.snap_guides = Vec::new();
     view.linear_handles = Vec::new();
@@ -403,6 +406,11 @@ impl DrawEngine {
             .filter_map(|id| self.scene.get(id))
             .filter(|el| !el.is_deleted)
             .collect();
+        let hovered = self
+            .hovered_id
+            .as_deref()
+            .and_then(|id| self.scene.get(id))
+            .filter(|el| !el.is_deleted);
         let lasso = match &self.interaction {
             Some(super::Interaction::Lasso { path, .. }) => path.clone(),
             _ => Vec::new(),
@@ -554,6 +562,7 @@ impl DrawEngine {
             erasing_revision: self.erasing_revision,
             flowchart_pending,
             selected,
+            hovered,
             group_box,
             marquee,
             lasso,
