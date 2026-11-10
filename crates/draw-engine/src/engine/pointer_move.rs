@@ -4,7 +4,9 @@ use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
 use crate::scene::{scene_bounds, DrawElement, DrawElementType};
-use crate::selection::{elements_in_marquee_among, resize_element_within, rotate_element, HandleKind};
+use crate::selection::{
+    elements_in_marquee_among, resize_element_within, rotate_element, HandleKind,
+};
 
 const MARQUEE_MIN_DRAG: f64 = 2.0;
 
