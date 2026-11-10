@@ -202,6 +202,31 @@ fn pointer_select_tool_click_empty_canvas_clears_selection() {
 }
 
 #[test]
+fn pointer_marquee_selects_objects_before_pointerup() {
+    let first = filled(box_at(40.0, 40.0, 40.0, 40.0));
+    let second = filled(box_at(120.0, 40.0, 40.0, 40.0));
+    let outside = filled(box_at(260.0, 40.0, 40.0, 40.0));
+    let mut engine = engine_with_scene(vec![first.clone(), second.clone(), outside]);
+    engine.set_tool(DrawTool::Select);
+
+    engine.begin_pointer(20.0, 20.0, false, false);
+    engine.move_pointer(180.0, 100.0, false, false);
+
+    // The button is still held here. The live band must already have selected both objects
+    // inside it; waiting for `end_pointer` is the regression this test prevents.
+    let mut selected = engine.get_selection();
+    selected.sort();
+    let mut expected = vec![first.id, second.id];
+    expected.sort();
+    assert_eq!(selected, expected);
+
+    engine.end_pointer();
+    let mut after_release = engine.get_selection();
+    after_release.sort();
+    assert_eq!(after_release, expected);
+}
+
+#[test]
 fn pointer_eraser_tool_deletes_clicked_element() {
     // Filled, so a click in the middle lands on it: a transparent shape is hit only on
     // its outline. This test is about which tool does what, not about that rule.

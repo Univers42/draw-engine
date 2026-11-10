@@ -4,7 +4,9 @@ use crate::interaction::constrain_to_angle;
 use crate::interaction::{linear_from_drag, rect_from_drag, snap_move};
 use crate::scene::binding::{anchor, anchor_for_drop, set_anchor, Anchor, End, EndDrop};
 use crate::scene::{scene_bounds, DrawElement, DrawElementType};
-use crate::selection::{resize_element_within, rotate_element, HandleKind};
+use crate::selection::{elements_in_marquee_among, resize_element_within, rotate_element, HandleKind};
+
+const MARQUEE_MIN_DRAG: f64 = 2.0;
 
 impl DrawEngine {
     /// `invert_snap` is the host's Ctrl/Cmd: it flips object snapping for this move, on
@@ -313,6 +315,22 @@ impl DrawEngine {
                 Some(Interaction::Laser)
             }
             Interaction::Marquee { start, base, .. } => {
+                // Resolve the band continuously, not only in `end_pointer`. This makes the
+                // selection visible while the button is still held, which is important for
+                // large boards: the user must be able to see which objects the live band will
+                // capture before deciding where to release. Keep the original selection as
+                // the additive base, so Shift-drag remains stable while the caught set changes.
+                let rect = crate::selection::marquee_rect(start.x, start.y, world.x, world.y);
+                let dragged = (rect.max_x - rect.min_x).abs() > MARQUEE_MIN_DRAG
+                    || (rect.max_y - rect.min_y).abs() > MARQUEE_MIN_DRAG;
+                let mut ids = base.clone();
+                if dragged {
+                    ids.extend(elements_in_marquee_among(
+                        self.scene.iter_ordered().filter(|el| !self.untouchable(el)),
+                        rect,
+                    ));
+                }
+                self.select_caught(ids);
                 // The rubber band is chrome: nothing in the scene changes as it grows, so
                 // nothing else will mark the frame dirty. Without this the rectangle was
                 // never painted at all — the state followed the pointer perfectly and the
