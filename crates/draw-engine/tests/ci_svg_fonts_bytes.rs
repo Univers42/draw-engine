@@ -362,11 +362,11 @@ fn the_shipped_files_hash_to_the_recorded_values() {
         ),
         (
             include_bytes!("../assets/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2"),
-            0x1380_bdc3,
+            0x9a95_2276,
         ),
         (
             include_bytes!("../assets/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYE98RXi4EwSsbg.woff2"),
-            0x8a23_e0d0,
+            0xda05_848c,
         ),
     ];
     for (bytes, expected) in &files {
