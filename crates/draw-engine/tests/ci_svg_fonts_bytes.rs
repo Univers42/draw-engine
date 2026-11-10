@@ -91,11 +91,11 @@ const SHIPPED_CRC32: [(&str, u32); 10] = [
     ),
     (
         "Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYEF8RXi4EwQ.woff2",
-        0x1380_bdc3,
+        0x9a95_2276,
     ),
     (
         "Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYE98RXi4EwSsbg.woff2",
-        0x8a23_e0d0,
+        0xda05_848c,
     ),
 ];
 
