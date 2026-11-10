@@ -171,6 +171,7 @@ fn without_editor_chrome(view: &mut PaintView<'_>) {
     view.flowchart_pending = Vec::new();
     view.laser = Vec::new();
     view.peer_lasers = Vec::new();
+    view.hovered = None;
     view.peer_marks = Vec::new();
     view.snap_guides = Vec::new();
     view.linear_handles = Vec::new();
